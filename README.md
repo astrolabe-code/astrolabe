@@ -1,6 +1,7 @@
 - # Astrolabe · 星盘
 
   **读懂代码的坐标系。**
+[![DOI](https://zenodo.org/badge/1375415628.svg)](https://doi.org/10.5281/zenodo.22827012)
 
   > 你读懂的每一行代码，都有人带、有人确认、留得住。
 

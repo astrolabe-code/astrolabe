@@ -169,7 +169,7 @@
 
   ## 作者
 
-  **（你的昵称）** · @mahvm[https://github.com/mahvm]
+  **mahvm** · @mahvm[https://github.com/mahvm]
 
   ---
 

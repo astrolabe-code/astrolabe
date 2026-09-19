@@ -1,0 +1,18 @@
+# ===========================================================================
+# Astrolabe · 开发环境（覆盖文件）
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# ★ 因为源码本来就已经 bind mount（docker-compose.yml 的 web.volumes），
+#   改代码【自动生效】—— 这里只是把命令换成开发用的 runserver
+# ===========================================================================
+
+services:
+  web:
+    command: python manage.py runserver 0.0.0.0:8000     # ⚠ 仅开发用
+    environment:
+      DEBUG: "True"
+
+  worker:
+    command: python manage.py run_worker --reload

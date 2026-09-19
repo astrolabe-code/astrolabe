@@ -1,0 +1,38 @@
+# ===========================================================================
+# Astrolabe · ★ 企业版（覆盖文件 —— 叠加在 docker-compose.yml 之上）
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.enterprise.yml up -d --build
+#
+# ★ 企业版 = 公开版 + 企业功能（多租户 / SSO / 审计报表 / 白标）
+#   ⚠ 企业功能【一期不做】（PRODUCT-VERSIONS.md F 节）
+#   ⇒ 本文件当前只体现【构建目标】与【部署形态】的差异
+#
+# ⚠ 企业版的两条硬约束（PRODUCT-VERSIONS.md C / F 节）：
+#   ① 企业模块源码【不进公开仓库】
+#   ② 功能必须【可开可关】地设计（将来可收回进公开版付费层）
+# ===========================================================================
+
+services:
+  web:
+    build:
+      target: enterprise                  # ★★ 关键：改用企业版构建目标
+    environment:
+      ASTROLABE_EDITION: enterprise
+
+  worker:
+    # ⚠ 与 docker-compose.yml 同款纪律：❌ **不要在这里 build** ——
+    #   否则 worker 会拿到**独立镜像 tag**，只重建 web 时它会静默留在旧镜像（见 B132）。
+    #   ★ 企业版若要换构建目标，应改【web】那一处（worker / heat 复用它的镜像）。
+    image: astrolabe-web
+    build:
+      target: enterprise
+    environment:
+      ASTROLABE_EDITION: enterprise
+
+  nginx:
+    ports:
+      # ★ 企业版部署在【客户内网】—— 通常是独占，直接用 80 / 443
+      #   （公开版用 8080，是为了在本机与旧站共存；企业版无此顾虑）
+      - "80:80"
+      - "443:443"

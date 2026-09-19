@@ -1,0 +1,30 @@
+# Astrolabe · Python 依赖
+#
+# ⚠ 【公开版】依赖清单 —— `/home/ma/astrolabe/app/` 是公开版源码（将来开源的就是它）
+#    ★ 企业版专属依赖请放将来的 `enterprise/` 独立目录，❌ 不要加到本文件
+#
+# ⚠ TODO（发布前）：锁定精确版本，保证可复现构建
+
+# ---- Web 框架 ----
+Django==5.1.4
+djangorestframework==3.15.2
+
+# ---- ASGI 服务器（ARCHITECTURE.md：Web 层用 ASGI 就绪的配置）----
+gunicorn==23.0.0
+uvicorn==0.34.0
+
+# ---- 数据库 / 缓存 ----
+psycopg[binary]==3.2.3        # PostgreSQL 驱动
+redis==5.2.1                  # 作业队列 + 邻域缓存（JOB-MODEL.md J9）
+
+# ---- ★★ 解析器（公开版核心，「标准」的一部分 —— S2.1 第 1/2 项）----
+#   ★ 统一接口见 codeparser/base.py；语言注册表见 codeparser/registry.py
+tree-sitter==0.23.2
+tree-sitter-python==0.23.6    # Python
+tree-sitter-c==0.23.4         # C
+tree-sitter-cpp==0.23.4       # C++
+tree-sitter-java==0.23.5      # Java
+# ⚠ 汇编：无成熟语法包 ⇒ 一期用轻量符号提取（B116 方案 A），见 codeparser/asm.py
+
+# ---- 其他 ----
+python-dotenv==1.0.1

@@ -1,30 +1,57 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Copy, Link as LinkIcon, Plus, ShieldAlert, ShieldOff } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Link as LinkIcon,
+  Plus,
+  Power,
+  ShieldAlert,
+  ShieldOff,
+} from 'lucide-react'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
+import ConfirmDialog from '../components/ui/ConfirmDialog'
+import CopyField from '../components/ui/CopyField'
 import Input from '../components/ui/Input'
+import Modal from '../components/ui/Modal'
 import { errorMessage } from '../api/errors'
-import type { InviteInfo } from '../api/types'
+import type { AppSettingInfo, InviteInfo } from '../api/types'
 import { useMe } from '../hooks/useMe'
-import { useCreateInvite, useInvites, useRevokeInvite } from '../query/invites'
+import { useAdminSettings, useUpdateSettings } from '../query/admin'
+import { INVITES_PAGE_SIZE, useCreateInvite, useInvites, useRevokeInvite } from '../query/invites'
 
 /**
- * ★★★ 管理页 —— 一期只做【邀请码管理】（`B171`）
+ * ★★★ 管理页 —— **邀请码 + 注册开关**（`B171` 建 · ★★ `B172` 三项扩充）
  *
- * ## ⚠★★ 权限：**这里的管理员判断【只决定"显不显示"】**
+ * ## ★★ 权限：**这里的管理员判断【只决定"显不显示"】**
  *
- * ★ 真正的判定在后端（★ `web/views/invites.py` 的三个端点都带 `@staff_only`）⚠
+ * ★ 真正的判定在后端（★ `web/views/invites.py` 与 `web/views/admin.py` 都带 `@staff_only`）⚠
  * ⇒ ★★ 就算有人在控制台里把这个页面**强行渲染出来**，
  *   ★ 他也**只会拿到 `403`** —— ★★ 这不是"运气好"，★ 而是**设计如此** ✅
  * ⇒ ★ **所以本页的检查是"体验"**（★ 非管理员看到一句得体的说明，★ 而不是一片空白）⚠
  *
- * ## ★★ 分享链接：**前端自己拼**（★ 不用后端返回的 `invite.url`）
+ * ## ★★★ `B172` 加的三样
+ *
+ * | # | 加什么 | 为什么 |
+ * |---|---|---|
+ * | ① | **注册 / 邀请 / 登录开关** | ★ 用户原话：「**管理员管理页面应该有打开和关闭注册以及邀请的按钮**」 |
+ * | ② | **列表分页** | ★ 用户原话：「**已发出列表太长了，应该分页**」 |
+ * | ③ | **自写弹窗**（★ 替代 `window.prompt`）| ★ 用户原话：「**显示注册邀请连接的弹窗是浏览器自带的，把我服务器IP地址都显示了，你应该自己写一个弹窗，这样以后弹窗可以通用**」 |
+ *
+ * ## ⚠★★ 第 ③ 条的真实根因（★ 值得记一笔）
+ *
+ * ★ 所有者从 `http://192.168.3.91:5173` 访问 —— ★★ **那不是安全上下文**
+ * ⇒ ★ **`navigator.clipboard` 是 `undefined`** ⇒ ★ 原来的 `catch` 降级**必然触发**
+ * ⇒ ⚠★ 而 `window.prompt` **会把整条 URL（含服务器 IP）显示在标题栏** ⚠
+ * ⇒ ★★ 现在改用 `ui/Modal` + `ui/CopyField` —— ★ 后者有**三级降级**（★ 见该文件）✅
+ *
+ * ## ★ 分享链接：**前端自己拼**（★ 不用后端返回的 `invite.url`）
  *
  * ★ 原因见 `shareUrl()` 的说明 —— ⚠ 后端那个用了**未配置**的 `ASTROLABE_SPA_URL` ⚠
  *
  * ## ⚠ 一期【不】做的（★ 归 `2e`）
- * ★ 审核队列（`admin/reviews/`）· ★ 参数中心（三个开关 / 配额）· ★ 账单之类
+ * ★ 审核队列（`admin/reviews/`）· ★ 配额 / 令牌 TTL 等**其余参数**（★ 本页只挑注册相关的四个）· ★ 账单
  */
 
 /** ★ SPA 的基路径（★ `vite.config.ts` 的 `base: '/app/'`，⚠ 与 `BrowserRouter` 的 basename 一致） */
@@ -42,6 +69,17 @@ export function shareUrl(token: string): string {
   return `${window.location.origin}${SPA_BASE}/register?invite=${encodeURIComponent(token)}`
 }
 
+/**
+ * ★★ 管理页的**开关清单**（`B172`）
+ *
+ * ⚠★ 为什么**硬编码这四个 key**、而不是把 `appsettings.KEYS` 全列出来：
+ * ★ 参数中心里还有配额、令牌 TTL、OAuth 时限…（★ 十几个）——
+ * ★★ 而那些是"调参"，★ 本页是"**管理开关**" ⚠
+ * ⇒ ★ 挑出**与"能不能注册 / 能不能登录 / 站还开不开"直接相关的四个** ✅
+ * （★ 将来要调其余参数，★ 再单独做一个"全部参数"页 —— ⚠ 那时也只是**加**一个列表，★ 不漏改这里）
+ */
+const GATE_KEYS = ['registration_open', 'invite_required', 'login_open', 'paused'] as const
+
 /** ★ 一条邀请的展示状态（★ 与后端 `is_usable()` 的口径一致）*/
 function statusOf(inv: InviteInfo): { text: string; color: string } {
   if (inv.revoked) return { text: '已撤销', color: 'var(--err)' }
@@ -57,6 +95,70 @@ function fmtDate(iso: string | null): string {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+/**
+ * ★ 一个开关（`B172`）
+ *
+ * ⚠★★ 三条设计（★ 都为了"**别让管理员误操作**"）：
+ * ① ★ **`editable === false` ⇒ 禁用 + 说明原因**（★ 门禁类只有 superuser 能改）——
+ *    ⚠★ 而不是"点了再吃 403"（★ 那是让用户白点一次）⚠
+ * ② ★ `paused` 是**重锤**（★ `KeySpec` 原文：「这不是普通开关」）⇒ ★ **必须二次确认** ⚠
+ * ③ ★ 提交中禁用 ⇒ ⚠ 防止连点导致竞态（★ 点两次 = 两次写库 + 两条审计）
+ */
+function SettingRow({
+  item,
+  busy,
+  onToggle,
+}: {
+  item: AppSettingInfo
+  busy: boolean
+  onToggle: (item: AppSettingInfo, next: boolean) => void
+}) {
+  const value = !!item.value
+  return (
+    <label
+      className="flex items-start gap-3 py-3"
+      style={{
+        cursor: item.editable && !busy ? 'pointer' : 'not-allowed',
+        opacity: item.editable ? 1 : 0.55,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={value}
+        disabled={!item.editable || busy}
+        onChange={(e) => onToggle(item, e.target.checked)}
+        style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+      />
+      <span className="flex-1">
+        <span className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold" style={{ fontSize: 13.5 }}>
+            {item.label}
+          </span>
+          <code className="text-text-faint" style={{ fontSize: 11 }}>
+            {item.key}
+          </code>
+          {item.gated && (
+            <span
+              className="flex items-center gap-1"
+              style={{ fontSize: 11, color: 'var(--warn, var(--err))' }}
+            >
+              <Power size={11} />
+              门禁
+            </span>
+          )}
+          {!item.editable && (
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>（需要超级管理员）</span>
+          )}
+        </span>
+        {/* ⚠★ `KeySpec` 的 `note` —— ★★ "没有说明的参数是灾难"，★ 所以那句说明必须真的显示出来 */}
+        <span className="block text-text-sub mt-1" style={{ fontSize: 12, lineHeight: 1.7 }}>
+          {item.note}
+        </span>
+      </span>
+    </label>
+  )
+}
+
 export default function AdminInvites() {
   const me = useMe()
   const isStaff = !!me.data?.is_staff
@@ -65,9 +167,16 @@ export default function AdminInvites() {
   const [validDays, setValidDays] = useState('7')
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
-  const [copied, setCopied] = useState('')
+  /** ★★ `B172`：生成成功后**弹出自写弹窗**显示链接（❌ 不再 `window.prompt`） */
+  const [created, setCreated] = useState<InviteInfo | null>(null)
+  /** ★★ `B172`：待二次确认的重锤开关（★ 目前只有 `paused`） */
+  const [confirmPaused, setConfirmPaused] = useState<boolean | null>(null)
+  /** ★★ `B172` 分页 —— ★ 0 基页码（★ 换成 offset 就是 `page * PAGE_SIZE`） */
+  const [page, setPage] = useState(0)
 
-  const invites = useInvites(isStaff)
+  const invites = useInvites(isStaff, { limit: INVITES_PAGE_SIZE, offset: page * INVITES_PAGE_SIZE })
+  const settings = useAdminSettings(isStaff)
+  const updateSettings = useUpdateSettings()
   const create = useCreateInvite()
   const revoke = useRevokeInvite()
 
@@ -75,27 +184,40 @@ export default function AdminInvites() {
     e.preventDefault()
     setErr('')
     try {
-      await create.mutateAsync({
+      const inv = await create.mutateAsync({
         // ⚠★ 后端限 `max_uses` 1–200 · `valid_days` 1–3650 —— ★ 越界会 400（★ 这里先转数字）
         max_uses: Number(maxUses) || 1,
         valid_days: Number(validDays) || 7,
         note,
       })
       setNote('')
+      // ★★ 弹出**自写弹窗**显示链接 —— ★ 这正是 `B172` 第 ④ 条要修的 ✅
+      setCreated(inv)
     } catch (e2) {
       setErr(errorMessage(e2, '生成失败，请重试。'))
     }
   }
 
-  async function copyLink(token: string) {
-    const url = shareUrl(token)
+  /**
+   * ★ 改一个开关
+   *
+   * ⚠★ `paused` 走**二次确认** —— ★ 它是 `gated=True` 的重锤（★ 打开后**所有人**都被拦）⚠
+   */
+  async function handleToggle(item: AppSettingInfo, next: boolean) {
+    setErr('')
+    if (item.key === 'paused') {
+      setConfirmPaused(next)
+      return
+    }
+    await submitSetting(item.key, next)
+  }
+
+  async function submitSetting(key: string, next: boolean) {
+    setErr('')
     try {
-      await navigator.clipboard.writeText(url)
-      setCopied(token)
-      window.setTimeout(() => setCopied(''), 2000)
-    } catch {
-      // ⚠ 剪贴板 API 在非 HTTPS / 无权限时会失败 —— ★ 退化成"让用户自己复制"
-      window.prompt('复制这条链接：', url)
+      await updateSettings.mutateAsync({ [key]: next })
+    } catch (e2) {
+      setErr(errorMessage(e2, '修改失败，请重试。'))
     }
   }
 
@@ -133,24 +255,67 @@ export default function AdminInvites() {
     )
   }
 
-  const list = invites.data || []
+  const list = invites.data?.invites || []
+  const total = invites.data?.total ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / INVITES_PAGE_SIZE))
+  // ★ 顺序按后端清单排（★ 后端返回的是 `KEYS` 的声明顺序）——
+  //   ⚠ 用 `find` 而不是"按 GATE_KEYS 顺序再排"：★ 这样**后端没给的键不会凭空出现** ✅
+  const gateItems = GATE_KEYS.map((k) => settings.data?.settings.find((s) => s.key === k)).filter(
+    (s): s is AppSettingInfo => !!s,
+  )
 
   return (
     <AppLayout
-      title="邀请码管理"
+      title="管理与邀请"
       crumbs={[{ label: '工作区', to: '/workspace' }, { label: '管理' }]}
       actions={
         <Button
           variant="ghost"
           icon={<Plus size={15} />}
           loading={invites.isFetching}
-          onClick={() => invites.refetch()}
+          onClick={() => {
+            invites.refetch()
+            settings.refetch()
+          }}
         >
           刷新
         </Button>
       }
     >
-      {/* ---------------- 生成 ---------------- */}
+      {err && <div className="error mb-4">{err}</div>}
+
+      {/* ---------------- ① 注册 / 登录开关（★ `B172`） ---------------- */}
+      <div className="card p-5 mb-5">
+        <h3 className="m-0" style={{ fontSize: 15 }}>
+          注册与登录
+        </h3>
+        <p className="text-text-sub m-0 mt-1 mb-2" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+          ★ 改一下就会**立刻生效**（★ 后端每次请求都读实时值，❌ 没有缓存）。
+          <br />★ 每个开关下面那句话是它**为什么存在** —— ★ 改之前请读一遍。
+        </p>
+
+        {settings.isLoading && <p className="text-text-faint m-0 py-3">正在加载参数…</p>}
+        {settings.isError && (
+          <p className="m-0 py-3" style={{ color: 'var(--err)' }}>
+            {errorMessage(settings.error, '参数加载失败。')}
+          </p>
+        )}
+
+        {gateItems.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--card-border)' }}>
+            {gateItems.map((item) => (
+              <SettingRow
+                key={item.key}
+                item={item}
+                busy={updateSettings.isPending}
+                onToggle={handleToggle}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ---------------- ② 生成 ---------------- */}
       <div className="card p-5 mb-5">
         <h3 className="m-0 mb-4" style={{ fontSize: 15 }}>
           生成一个新邀请
@@ -187,8 +352,6 @@ export default function AdminInvites() {
             />
           </div>
 
-          {err && <div className="error mt-3">{err}</div>}
-
           <div className="mt-4">
             <Button type="submit" variant="primary" loading={create.isPending} icon={<Plus size={15} />}>
               生成邀请
@@ -197,12 +360,40 @@ export default function AdminInvites() {
         </form>
       </div>
 
-      {/* ---------------- 列表 ---------------- */}
+      {/* ---------------- ③ 列表（★ `B172` 加分页） ---------------- */}
       <div className="card p-0 overflow-hidden">
-        <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--card-border)' }}>
+        <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--card-border)' }}>
           <h3 className="m-0" style={{ fontSize: 15 }}>
-            已发出的邀请（{list.length}）
+            已发出的邀请（共 {total}）
           </h3>
+          {pageCount > 1 && (
+            // ★★ `B172` 分页 —— ★ 显示"第几页 / 共几页"，⚠ 而不是让用户自己数
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="icon-btn"
+                title="上一页"
+                aria-label="上一页"
+                disabled={page === 0 || invites.isFetching}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="text-text-sub" style={{ fontSize: 12.5 }}>
+                第 {page + 1} / {pageCount} 页
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                title="下一页"
+                aria-label="下一页"
+                disabled={!invites.data?.has_more || invites.isFetching}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
         {invites.isLoading && <p className="p-5 text-text-faint m-0">正在加载…</p>}
@@ -212,7 +403,9 @@ export default function AdminInvites() {
           </p>
         )}
         {!invites.isLoading && !invites.isError && list.length === 0 && (
-          <p className="p-5 text-text-faint m-0">还没有发出过邀请。</p>
+          <p className="p-5 text-text-faint m-0">
+            {total > 0 && page > 0 ? '这一页没有内容 —— 试试回到上一页。' : '还没有发出过邀请。'}
+          </p>
         )}
 
         {list.length > 0 && (
@@ -251,12 +444,13 @@ export default function AdminInvites() {
                           <button
                             type="button"
                             className="icon-btn"
-                            title={copied === inv.token ? '已复制' : '复制分享链接'}
-                            aria-label="复制分享链接"
+                            title="查看 / 复制分享链接"
+                            aria-label="分享链接"
                             disabled={!inv.usable}
-                            onClick={() => copyLink(inv.token)}
+                            // ★★ `B172`：★ 点它**打开自写弹窗**（❌ 不再直接复制 + 失败弹 prompt）✅
+                            onClick={() => setCreated(inv)}
                           >
-                            {copied === inv.token ? <LinkIcon size={13} /> : <Copy size={13} />}
+                            <LinkIcon size={13} />
                           </button>
                           <button
                             type="button"
@@ -285,6 +479,54 @@ export default function AdminInvites() {
         <br />
         ⚠★ 生成时**有效期必须 &gt; 0** —— ★ 这是 `U4.7` 规则 2（「否则泄露了就永久有效」）。
       </p>
+
+      {/* ---------- ★★ `B172`：分享链接弹窗（★ 自写，❌ 不是浏览器 prompt） ---------- */}
+      <Modal
+        open={!!created}
+        title="邀请链接已生成"
+        onClose={() => setCreated(null)}
+        footer={
+          <Button variant="primary" onClick={() => setCreated(null)}>
+            好了
+          </Button>
+        }
+      >
+        {created && (
+          <>
+            <p className="text-text-sub m-0 mb-3" style={{ fontSize: 12.5, lineHeight: 1.8 }}>
+              ★ 把下面这条链接发给对方，★ 他打开就能注册。
+              <br />⚠★ 生成时**有效期必须 &gt; 0** —— ★ 这是 `U4.7` 规则 2（「否则泄露了就永久有效」）。
+            </p>
+            <CopyField
+              label="分享链接"
+              value={shareUrl(created.token)}
+              hint={`★ 可用 ${created.max_uses} 次 · ★ 到期 ${fmtDate(created.expires_at)}${
+                created.note ? ` · ★ 备注：${created.note}` : ''
+              }`}
+            />
+          </>
+        )}
+      </Modal>
+
+      {/* ---------- ★★ `B172`：重锤开关的二次确认（★ `paused`） ---------- */}
+      <ConfirmDialog
+        open={confirmPaused !== null}
+        title={confirmPaused ? '确认「整站停服」？' : '确认恢复服务？'}
+        message={
+          confirmPaused
+            ? '★ 打开后【所有人】（含已登录）都会被拦 —— ★ 这是重锤，不要当普通开关用。\n\n★ 确定要停服吗？'
+            : '★ 恢复后所有人可以正常访问。\n\n★ 确定恢复吗？'
+        }
+        confirmText={confirmPaused ? '停服' : '恢复'}
+        // ★★ 停服是**破坏性动作** ⇒ ★★ 按钮用红色（★ `danger`）—— ⚠ 让"确认"这一步真的有分量
+        danger={confirmPaused === true}
+        onCancel={() => setConfirmPaused(null)}
+        onConfirm={async () => {
+          const next = confirmPaused
+          setConfirmPaused(null)
+          if (next !== null) await submitSetting('paused', next)
+        }}
+      />
     </AppLayout>
   )
 }

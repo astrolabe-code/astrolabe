@@ -3,7 +3,7 @@
 用法（在容器里）：
     docker compose exec -T web sh -c "python manage.py shell < /app/scripts/smoke_password_auth.py"
 
-★★★ 本脚本验证**四件事**：
+★★★ 本脚本验证**七件事**：
 
 1. ★★★ **`registration_open` 的新语义（`B170`）** —— 这是本批改动的**全部要害**：
    ★ `true`  ⇒ 入口可见 + 可注册
@@ -13,6 +13,14 @@
 3. ★★ **登录**：对 / 错 / 停用 / `login_open=false`
 4. ★★★ **一条安全底线**：★ **「用户名不存在」与「密码错误」必须返回【同一句话 + 同一个 code】**
    —— ★ 否则等于**免费告诉攻击者哪些用户名存在** ⚠
+
+★ `B172` 补的三条（★ 详见 ⑩ / ⑪ / ⑫ 三段）：
+
+5. ★★★ **参数中心**（`/api/admin/settings/`）—— ★ 管理页「开关注册 / 邀请」的数据源。
+   ⚠★ 关键断言：★ **非法值必须 400**（❌ 不能静默变成 `False` —— 那会让"开注册"看起来成功、实际把关掉了）
+6. ★★ **邀请分页**（`?limit=&offset=`）—— ★ 原实现是 `qs[:limit]`，★ **物理上取不到第二页** ⚠
+7. ★★★ **工作区只显示我的项目**（`/api/projects/?mine=1`）——
+   ★ 关键断言：★★ **不含别人的「公开」项目**（★ 那正是改前"工作区混着别人项目"的根因）⚠
 
 ⚠ 全程**不碰真实第三方**（★ 这条链路本来就不涉及 OAuth）。
 """
@@ -25,7 +33,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 
 from core import appsettings, invites
-from core.models import Invite
+from core.models import Invite, Project
 from web import auth as web_auth
 
 FAILED: list[str] = []
@@ -258,6 +266,155 @@ check(
 check("★ 匿名 ⇒ 401（★ 与 403 不是一回事）", c.get("/api/invites/").status_code, 401)
 
 # ===========================================================================
+print()
+print("=" * 80)
+print("⑩ ★★★ `B172` 参数中心：`GET` / `POST /api/admin/settings/`")
+print("=" * 80)
+# ⚠★ 这一段补的是**三条真需求**（★ 用户提的 ① ② ③）：
+#   ★ ① 管理页要能开关注册 / 邀请  ⇒ `admin/settings/`
+#   ★★ ② 邀请列表要分页           ⇒ `?offset=` + `total`
+#   ★★ ③ 工作区只显示我的项目      ⇒ `?mine=1`
+
+r = adm.get("/api/admin/settings/")
+check("★★★ staff 能读参数（★ 这是「管理页开关」的数据源）", r.status_code, 200)
+data = r.json().get("data", {})
+keys = {s["key"] for s in data.get("settings", [])}
+check(
+    "★★ 含四个门禁 / 注册开关",
+    {"registration_open", "invite_required", "login_open", "paused"} <= keys,
+    True,
+)
+check(
+    "★★ 含 can_edit_gated（★ 前端据此置灰，❌ 不自己猜 is_superuser）",
+    "can_edit_gated" in data,
+    True,
+)
+paused_item = next(s for s in data["settings"] if s["key"] == "paused")
+check("★★ paused 标了 gated=True", paused_item["gated"], True)
+check(
+    "★★ 每个参数都带 label / note（★「没说明的参数是灾难」）",
+    all(s.get("label") and s.get("note") for s in data["settings"]),
+    True,
+)
+
+# ---- 写：合法值应生效 ----
+r = adm.post(
+    "/api/admin/settings/",
+    json.dumps({"values": {"registration_open": True}}),
+    content_type="application/json",
+)
+check("★★ 能改参数", r.status_code, 200)
+check("★ 返回里带上新值", r.json()["data"]["applied"]["registration_open"], True)
+check("★★★ 改动【立刻生效】（★ 门禁每次请求读实时值）", appsettings.get("registration_open"), True)
+
+# ---- 写：非法值必须被【拒绝】，❌ 不能静默变成 False ----
+# ⚠★★ 这是本段【最重要】的断言 ——
+#   ★ `appsettings._coerce()` 对 `"abc"` 这类值是**静默吞掉**的（`except: pass`），
+#   ★★ 若视图层不校验，管理员的「开注册」会**看起来成功了、实际把入口关掉** ⚠
+r = adm.post(
+    "/api/admin/settings/",
+    json.dumps({"values": {"registration_open": "abc"}}),
+    content_type="application/json",
+)
+check("★★★ 非法值 ⇒ 400（★ 不是静默变 False）", r.status_code, 400)
+check("★ 原因码 = bad_value", r.json()["error"]["code"], "bad_value")
+
+r = adm.post(
+    "/api/admin/settings/",
+    json.dumps({"values": {"no_such_key": 1}}),
+    content_type="application/json",
+)
+check("★★ 未注册的键 ⇒ 400 unknown_key", r.json()["error"]["code"], "unknown_key")
+
+_set("registration_open", False)
+
+# ---- 门禁类：非 superuser 的 staff 必须被拒（U2.4 两级）----
+print()
+print("⑩b ★★★ 门禁类参数：非 superuser 的 staff 【必须被拒】（U2.4 两级权限）")
+print("=" * 80)
+# ⚠★ 这里**直接在参数层验**，而不是造一个 staff 账号去打 HTTP ——
+#   ★★ 因为判定**本来就在 `set_value()`**（★ 见 `views/admin.py` 文件头「纪律只有一处」）⚠
+#   ★ 视图那一层只负责把它翻成 403 ⇒ ★ 打 HTTP 只是**多绕一圈验证同一个判定** ⚠
+smoke_staff, _ = U.objects.get_or_create(username="smoke_pw_staff")
+smoke_staff.is_staff = True
+smoke_staff.is_superuser = False
+smoke_staff.save(update_fields=["is_staff", "is_superuser"])
+try:
+    appsettings.set_value("paused", True, actor=smoke_staff)
+    check("★★★ 非 superuser 改门禁类 ⇒ 应被拒", "没被拒", "被拒")
+except PermissionError:
+    check("★★★ 非 superuser 改门禁类 ⇒ 被拒", True, True)
+check("★★ paused 的值【没被改掉】（★ 拒绝要彻底）", appsettings.get("paused"), False)
+
+# ===========================================================================
+print()
+print("=" * 80)
+print("⑪ ★★★ `B172` 邀请分页（★ 用户：「已发出列表太长了，应该分页」）")
+print("=" * 80)
+r = adm.get("/api/invites/?limit=2&offset=0")
+check("★★ limit=2 ⇒ 最多 2 条", len(r.json()["data"]["invites"]) <= 2, True)
+d0 = r.json()["data"]
+check("★★★ 返回 total（★ 前端据它算页数）", isinstance(d0.get("total"), int), True)
+check(
+    "★ 返回 limit / offset / has_more",
+    all(k in d0 for k in ("limit", "offset", "has_more")),
+    True,
+)
+check("★ limit 回显且被钳过", d0["limit"], 2)
+
+r2 = adm.get("/api/invites/?limit=2&offset=2")
+d2 = r2.json()["data"]
+check("★★★ offset=2 真的翻到第二页（★ 原实现 `qs[:limit]` 物理上做不到）", d2["offset"], 2)
+check(
+    "★ 第二页与第一页不重复",
+    {i["token"] for i in d0["invites"]} & {i["token"] for i in d2["invites"]},
+    set(),
+)
+
+r3 = adm.get("/api/invites/?limit=99999")
+check("★★ limit 越界被钳到 200（★ 只读参数钳制是安全的，❌ 不报错）", r3.json()["data"]["limit"], 200)
+
+# ===========================================================================
+print()
+print("=" * 80)
+print("⑫ ★★★ `B172` 项目列表 `?mine=1`（★ 用户：「工作区只显示他的项目」）")
+print("=" * 80)
+# ★ 造两个项目：一个属于 admin，一个属于别人（★ 而且**把它设成公开** —— 这才是关键）
+mine_proj, _ = Project.objects.get_or_create(
+    name="smoke-b172-mine",
+    defaults=dict(owner=admin, provider="github", repo_url="https://github.com/a/b"),
+)
+other_proj, _ = Project.objects.get_or_create(
+    name="smoke-b172-other",
+    defaults=dict(
+        owner=u1, provider="github", repo_url="https://github.com/a/c", is_public=True
+    ),
+)
+
+r = adm.get("/api/projects/?mine=1")
+refs = {p["project_ref"] for p in r.json()["projects"]}
+check("★★★ mine=1 ⇒ 含自己的项目", mine_proj.project_ref in refs, True)
+check("★★★ mine=1 ⇒ 【不含】别人的（★ 即使它是公开的）", other_proj.project_ref in refs, False)
+check("★★★ mine=1 ⇒ 每一条 mine 都为 True", all(p["mine"] for p in r.json()["projects"]), True)
+
+refs_all = {p["project_ref"] for p in adm.get("/api/projects/").json()["projects"]}
+check(
+    "★★ 不带 mine ⇒ 【含】别人的公开项目（★ `Home` 探索页依赖这条）",
+    other_proj.project_ref in refs_all,
+    True,
+)
+
+check(
+    "★★★ 游客访问 mine=1 ⇒ 空列表（❌ 不是 401 —— 工作区对游客开放）",
+    c.get("/api/projects/?mine=1").json()["projects"],
+    [],
+)
+
+mine_proj.delete()
+other_proj.delete()
+smoke_staff.delete()
+
+# ===========================================================================
 # 复位开关（★ 让脚本可重复跑、不影响别的冒烟）
 # ===========================================================================
 _set("registration_open", False)
@@ -271,5 +428,5 @@ if FAILED:
     for f in FAILED:
         print(f"   · {f}")
 else:
-    print("★★★★★ 全部通过（注册 / 登录 / 邀请码 / 门禁语义都成立）")
+    print("★★★★★ 全部通过（注册 / 登录 / 邀请码 / 门禁语义 / ★ 参数中心 / ★ 分页 / ★ mine 过滤）")
 print("=" * 80)

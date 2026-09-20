@@ -45,11 +45,15 @@ import type {
  */
 
 /** ★ 可见项目列表（公开 + 自己的；游客只见公开） */
-export function useProjects() {
+export function useProjects(opts: { mine?: boolean } = {}) {
+  const mine = !!opts.mine
   return useQuery({
-    queryKey: ['projects'],
+    // ⚠★ `mine` 必须进 key —— ★ 否则"工作区（只看我的）"会命中"首页（公开+我的）"的缓存 ⚠
+    queryKey: ['projects', { mine }],
     queryFn: async (): Promise<ProjectSummary[]> => {
-      const data = unwrap(await apiGet<ProjectListData>('/api/projects/', 'spread'))
+      const data = unwrap(
+        await apiGet<ProjectListData>(`/api/projects/${mine ? '?mine=1' : ''}`, 'spread'),
+      )
       return data.projects || []
     },
   })

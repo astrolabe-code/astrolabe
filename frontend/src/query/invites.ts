@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { InviteInfo } from '../api/types'
+import type { InviteInfo, InviteListData } from '../api/types'
 
 /**
  * ★ 邀请数据层（`B171` · ★ 管理页用）
@@ -16,23 +16,43 @@ import type { InviteInfo } from '../api/types'
  * ## ★ 端点
  * | 方法 | 路径 | 说明 |
  * |---|---|---|
- * | `GET` | `/api/invites/` | ★ 列表（⚠ `limit ≤ 200`）|
+ * | `GET` | `/api/invites/?limit=&offset=` | ★ 列表（⚠ `limit ≤ 200`；★ `B172` 加的分页）|
  * | `POST` | `/api/invites/` | ★ 生成（`max_uses` 1–200 · `valid_days` 1–3650 · `note`）|
  * | `POST` | `/api/invites/<token>/revoke/` | ★ 撤销 |
  */
 
+/** ★ `B172` 默认每页条数（★ 与后端 `DEFAULT_PAGE_SIZE = 20` 对齐） */
+export const INVITES_PAGE_SIZE = 20
+
 /**
- * ★ 邀请列表 —— ⚠★ **`enabled` 必须由调用方给**（★ 通常传 `me.is_staff`）。
+ * ★ 邀请列表（★ **分页** —— `B172`）—— ⚠★ **`enabled` 必须由调用方给**（★ 通常传 `me.is_staff`）。
  *
  * ★ 未登录 / 非管理员时调它**必然 403** —— ★ 而那次失败**没有意义**（★ 只是白打一发）⚠
+ *
+ * ⚠★ `B172` 起**返回整个 `InviteListData`**（❌ 不再是裸数组）——
+ * ★★ 因为前端要 `total` 才能算页数（★ 原实现只能显示"当前这 50 条"）⚠
  */
-export function useInvites(enabled: boolean) {
+export function useInvites(
+  enabled: boolean,
+  opts: { limit?: number; offset?: number } = {},
+) {
+  const limit = opts.limit ?? INVITES_PAGE_SIZE
+  const offset = opts.offset ?? 0
   return useQuery({
-    queryKey: ['invites'],
+    // ⚠★ 页码必须进 key —— ★ 否则翻页会命中上一页的缓存（★ 看起来"按钮点了没反应"）⚠
+    queryKey: ['invites', { limit, offset }],
     enabled,
-    queryFn: async (): Promise<InviteInfo[]> => {
-      const d = unwrap(await apiGet<{ invites: InviteInfo[] }>('/api/invites/', 'data'))
-      return d.invites || []
+    queryFn: async (): Promise<InviteListData> => {
+      const d = unwrap(
+        await apiGet<InviteListData>(`/api/invites/?limit=${limit}&offset=${offset}`, 'data'),
+      )
+      return {
+        invites: d.invites || [],
+        total: d.total ?? (d.invites || []).length,
+        limit: d.limit ?? limit,
+        offset: d.offset ?? offset,
+        has_more: !!d.has_more,
+      }
     },
   })
 }

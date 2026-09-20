@@ -27,7 +27,12 @@ export default function Workspace() {
   const q = params.get('q') || ''
   const [createOpen, setCreateOpen] = useState(false)
 
-  const projects = useProjects()
+  // ★★★ `B172`：**`mine: true`** —— ★★ 工作区**只显示自己的项目**
+  //   （★ 用户原话：「用户的项目工作区只显示他的项目，不要把所有人的项目都显示了」）
+  // ⚠★ 游客也照样带 `mine=1` —— ★ 后端对未登录返回**空列表**（❌ 不是 401），
+  //   ★★ 于是游客看到的是"登录后在这里看到你的项目"，❌ 而不是别人的项目 ⚠
+  // ★ 而「别人的公开项目」的入口在 **`Home`（首页探索页）** —— ★ 它调的是不带 `mine` 的同一端点 ✅
+  const projects = useProjects({ mine: true })
   const me = useMe()
   const authed = !!me.data?.authenticated
 
@@ -69,9 +74,9 @@ export default function Workspace() {
                 className="input"
                 style={{ paddingLeft: 32, width: 260 }}
                 value={q}
-                placeholder="按名称 / 简介 / 归属过滤"
+                placeholder="在我的项目里过滤"
                 onChange={(e) => setQuery(e.target.value)}
-                aria-label="过滤项目"
+                aria-label="过滤我的项目"
               />
             </div>
             {authed ? (
@@ -113,11 +118,15 @@ export default function Workspace() {
         {projects.isSuccess && list.length === 0 && (
           <div className="card">
             <EmptyState
-              title={q ? '没有匹配的项目' : '还没有项目'}
+              title={q ? '没有匹配的项目' : authed ? '你还没有项目' : '登录后在这里管理你的项目'}
               hint={
                 q
-                  ? `没有名称、简介或归属包含「${q}」的项目，试试换个关键词。`
-                  : '新建一个项目并填写仓库地址，服务端会从仓库拉取源码、解析并生成代码图谱。'
+                  ? `你的项目里没有名称、简介或仓库地址包含「${q}」的，试试换个关键词。`
+                  : authed
+                    ? '新建一个项目并填写仓库地址，服务端会从仓库拉取源码、解析并生成代码图谱。'
+                    : // ★ `B172`：★ 工作区**只显示自己的** ⇒ 游客看到的是一句得体的说明
+                      //   （★ 而**不是**别人的项目 —— 那正是 `B172` 要修掉的东西）✅
+                      '工作区只显示你自己的项目。想看别人的公开项目，请到首页探索。'
               }
               action={
                 q ? (
@@ -137,7 +146,8 @@ export default function Workspace() {
         {projects.isSuccess && list.length > 0 && (
           <>
             <div className="faint mb-3">
-              共 {list.length} 个项目{q ? `（已按「${q}」过滤）` : ''}
+              {/* ★ `B172`：★ 这里显示的是**我的**数量（⚠ 不再是"一共看到了几个项目"）*/}
+              我的项目 {list.length} 个{q ? `（已按「${q}」过滤）` : ''}
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {list.map((p) => (

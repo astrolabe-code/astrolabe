@@ -490,3 +490,58 @@ export interface InviteInfo {
    */
   url: string
 }
+
+/**
+ * ★★ `GET /api/invites/` → **①型**
+ *
+ * ★ `B172` 新增分页 —— ⚠★ 没有这四件套，前端就只能"猜还有没有下一页" ⚠
+ * （★ 后端依据：`web/views/invites.py::collection()` 的 `ok({...})`）
+ */
+export interface InviteListData {
+  invites: InviteInfo[]
+  /** ★ 已发出的**总数**（★ 前端据它算总页数） */
+  total: number
+  /** ★ 本页请求的条数上限（★ 后端钳过：1–200） */
+  limit: number
+  /** ★ 本页的起始偏移 */
+  offset: number
+  /** ★ 后面还有吗 */
+  has_more: boolean
+}
+
+/* ------------------------------------------------------- 参数中心（U2.4 · B172） */
+
+/**
+ * ★ 一个可配置参数（`B172`）—— ★ 字段逐个对照 `web/views/admin.py::_setting_json()`。
+ *
+ * ⚠★★ **`label` / `note` 是"给人看"的** ——
+ * ★ `core/appsettings.py` 的 `KeySpec` 文档写着「**没有说明的参数是灾难**」，
+ * ★★ 所以那句说明**必须真的显示在管理页上**，❌ 而不是只躺在代码注释里 ⚠
+ */
+export interface AppSettingInfo {
+  key: string
+  value: boolean | number | string | Record<string, any>
+  /** ★ 控件类型（★ 前端据它挑开关 / 数字框）—— ⚠ 不是 Python 类型名（那是实现细节） */
+  type: 'bool' | 'int' | 'dict' | 'str'
+  /** ★ 人类可读的名字 */
+  label: string
+  /** ★ 为什么存在 / 改它会怎样 */
+  note: string
+  /** ★★ **门禁类** —— ★ 影响全站可用性，⚠ 只有 `superuser` 能改 */
+  gated: boolean
+  /**
+   * ★★ **当前用户能不能改它** —— ★ 由**后端算好**给前端。
+   *
+   * ⚠★ 为什么不让前端自己判：★ `auth.user_json()` **刻意不返回 `is_superuser`**
+   * （★ 原文：「★ 前端用不到，而**多给一个字段就多一分泄露面**」）
+   * ⇒ ★★ **前端根本猜不出来** ⚠ ⇒ ★ 所以这个字段**必须由后端给** ✅
+   */
+  editable: boolean
+}
+
+/** ★ `GET` / `POST /api/admin/settings/` → **①型** */
+export interface AdminSettingsData {
+  settings: AppSettingInfo[]
+  /** ★ 当前用户够不够格改门禁类（★ 即 `is_superuser`） */
+  can_edit_gated: boolean
+}

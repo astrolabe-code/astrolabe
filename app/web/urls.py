@@ -13,7 +13,18 @@
 from django.urls import path, register_converter
 
 from core.refs import ProjectRefConverter
-from web.views import auth, curate, graph, invites, jobs_api, me, projects, publish, review
+from web.views import (
+    admin,
+    auth,
+    curate,
+    graph,
+    invites,
+    jobs_api,
+    me,
+    projects,
+    publish,
+    review,
+)
 
 # ⚠ 必须在 URL 解析之前注册
 register_converter(ProjectRefConverter, "project_ref")
@@ -59,6 +70,12 @@ urlpatterns = [
     path("admin/reviews/", review.queue, name="admin-reviews"),
     path("admin/reviews/<int:review_id>/approve/", review.approve, name="admin-review-approve"),
     path("admin/reviews/<int:review_id>/reject/", review.reject, name="admin-review-reject"),
+
+    # ------------------------------------------------------ 管理员：参数中心（U2.4 / U2.5）
+    # ★★ `B172`：**注册 / 邀请的开关**（★ 用户要的"管理页要有打开和关闭注册以及邀请的按钮"）。
+    # ⚠★ 权限分两层（★ `U2.4`）：★ 本端点只要 `staff`，★ 而【门禁类参数】的写入
+    #   **由 `appsettings.set_value()` 自己拦 superuser**（★ 见 `views/admin.py` 文件头）。
+    path("admin/settings/", admin.settings_view, name="admin-settings"),
 
     # ------------------------------------------------------------ 项目
     path("projects/", projects.collection, name="project-collection"),

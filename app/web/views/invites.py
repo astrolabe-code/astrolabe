@@ -37,6 +37,16 @@ MAX_USES_CAP = 200
 #: ★ 有效期上限（10 年）—— ⚠ 防手滑写成 36500（那等于"永不过期"，正是 `U4.7` 规则 2 要防的）
 MAX_VALID_DAYS = 3650
 
+#: ★ 一页最多返回多少条（⚠ 防管理员一页拉 5000 条把浏览器拖死）
+MAX_PAGE_SIZE = 200
+
+#: ★★ 默认每页条数 —— ★ `B172` 从 `50` 改成 `20`
+#: （★ 用户原话：「**已发出列表太长了，应该分页**」）
+DEFAULT_PAGE_SIZE = 20
+
+#: ★ `offset` 的上限（⚠ 挡住"翻到第 10 万页"这类没有意义的查询）
+MAX_OFFSET = 1_000_000
+
 
 def _int_in_range(body: dict, key: str, low: int, high: int, default: int) -> tuple[int | None, str]:
     """★ 取一个**在范围内**的整数 —— ★★ **非法就报错，❌ 不钳制**。
@@ -59,6 +69,32 @@ def _int_in_range(body: dict, key: str, low: int, high: int, default: int) -> tu
     if not (low <= got <= high):
         return None, f"{key} 必须在 {low} ~ {high} 之间"
     return got, ""
+
+
+def _clamp_int(raw, low: int, high: int, default: int) -> int:
+    """★ 取一个**钳到区间内**的整数 —— ★★ 非法值 ⇒ 默认值。
+
+    ⚠★★ **它与 `_int_in_range` 的分工，两者绝不能混用**：
+
+    | 场景 | 用哪个 | 越界时 |
+    |---|---|---|
+    | ★ **写入**（`POST` 的 `max_uses` / `valid_days`）| `_int_in_range` | ★★ **报错** |
+    | ★ **只读查询**（`?limit=` / `?offset=`）| ★ 本函数 | ★ **钳到边界** |
+
+    ★ 写入必须报错 —— ★ 因为"写错了"是**要让人知道**的事：
+      ⚠ `valid_days=0` 若被悄悄改成 1，就成了一张「明天就过期」的码（★ 见 `_int_in_range` 的说明）。
+
+    ★★ 只读查询则**钳制是安全的** —— ★ 用户传 `?limit=99999` 想表达的是"**尽量多给我几条**"，
+      ⇒ ★ 给他**上限**（`MAX_PAGE_SIZE`）**完全符合预期** ✅
+      ⚠★ 而这正是原来那个写法的问题：★ `_int_in_range` 越界返回 `None`，
+        ★ 再 `or default` ⇒ ★★ **他要一大把，只拿到 20 条** —— ⚠ 那是"静默地少给了" ⚠
+    """
+    try:
+        got = int(raw)
+    except (TypeError, ValueError):
+        # ★ 非法（`?limit=abc`）⇒ 用默认值 —— ⚠ 只读查询不值得为它报错
+        return default
+    return max(low, min(got, high))
 
 
 def _invite_json(inv) -> dict:
@@ -117,14 +153,21 @@ def collection(request: HttpRequest) -> JsonResponse:
     if request.method == "POST":
         return _create(request)
 
-    # ⚠ `limit` 是**只读参数**，钳制它是安全的（❌ 不会"静默改变用户的意图"：
-    #   ★ 用户要的是"尽量多给我几条"，给 200 条完全符合预期）
-    limit, _ = _int_in_range({"limit": request.GET.get("limit")}, "limit", 1, 200, 50)
-    limit = limit or 50
+    # ★★ `B172`：改用 `_clamp_int` —— ★ 只读查询 ⇒ 越界就**钳到边界** ✅
+    #   ⚠★ 改之前是 `_int_in_range(...)` + `or DEFAULT` ⇒ ★ `?limit=99999` 会**变成 20 条** ⚠
+    #     （★ 而用户那句话的本意是"**尽量多给我几条**"）——
+    #     ⚠★ 这一条是**冒烟脚本抓出来的**（★ 我原来的注释写着"钳制是安全的"，★ 而实现并没钳）⚠
+    limit = _clamp_int(request.GET.get("limit"), 1, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE)
+    # ★★ 没有它就**物理上取不到第二页**（★ 原实现是 `qs[:limit]`）⚠
+    offset = _clamp_int(request.GET.get("offset"), 0, MAX_OFFSET, 0)
 
     from core.models import Invite
 
-    qs = Invite.objects.order_by("-created_at")[:limit]
+    qs = Invite.objects.order_by("-created_at")
+    # ★★ `total` = **已发出的总数**（★ 前端据此算总页数）——
+    #   ⚠ 它**不受**下面 `usable` 的**页内过滤**影响（★ 口径见那段注释）
+    total = qs.count()
+    rows = list(qs[offset : offset + limit])
     # ⚠★★ `B171` 修：这里原本写的是 `body_qs` —— ★★ 那个名字**在这份文件里从未定义过** ⚠
     #   ⇒ 后果：★★ **任何 `GET /api/invites/` 都必然 500**（★ 一个躺了很久的 bug）
     #   ★ 本意显然是读【查询参数】`?usable=1` ⇒ ★ 改成 `request.GET` ✅
@@ -133,9 +176,23 @@ def collection(request: HttpRequest) -> JsonResponse:
     #     ★ **从没打过 `GET /api/invites/` 这条列表接口** ⚠
     #   ⇒ ★★ 教训：★ **"接口已实现"≠"接口被验证过"** —— ★ 本条的登记里我（AI）
     #      **凭"代码看起来完备"就断言了"后端完全就绪"**，⚠ 那是不该的 ⚠
+    #
+    #   ⚠★ `B172` 补一句**限制**：★ `usable=1` 是**页内过滤** ——
+    #      ★ 它先按 `offset/limit` 切好页，★ 再筛当页 ⇒ ★ 所以第二页可能比第一页条目少 ⚠
+    #      （★ 前端目前**不传**它；★ 要"只看可用的"请拉大 `limit` —— ★ 邀请的量级不大，够用）
     if request.GET.get("usable") == "1":
-        qs = [i for i in qs if i.is_usable()]
-    return ok({"invites": [_invite_json(i) for i in qs]})
+        rows = [i for i in rows if i.is_usable()]
+
+    return ok(
+        {
+            "invites": [_invite_json(i) for i in rows],
+            # ★★ `B172` 分页四件套 —— ★ 前端据 `total` / `limit` 算页数（⚠ 不用自己猜）
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(rows) < total,
+        }
+    )
 
 
 def _create(request: HttpRequest) -> JsonResponse:

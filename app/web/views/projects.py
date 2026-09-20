@@ -118,8 +118,25 @@ def collection(request: HttpRequest) -> JsonResponse:
         return _create(request)
 
     user = getattr(request, "user", None)
+    authed = bool(user and user.is_authenticated)
     qs = Project.objects.all()
-    if not (user and user.is_authenticated):
+
+    if request.GET.get("mine") == "1":
+        # ★★★ `B172`：**我的工作区** —— ★★ 只给【自己的项目】。
+        #
+        # ⚠★ 改之前的口径是：★ 游客 ⇒ 公开 · ★ 登录 ⇒ 公开 + 自己的 · ★ staff ⇒ **完全不过滤** ⚠
+        #   ⇒ ★★ 后果：★ 工作区里**混着别人的公开项目**（★ 实测：那 15 张卡片全是 `smoke_*` 的），
+        #      ★ 而 staff（所有者）看到的是**全部 84 个** ⚠
+        #   ★★ 用户原话：「**用户的项目工作区只显示他的项目，不要把所有人的项目都显示了**」
+        #
+        # ⚠★ **staff 也照样按 `owner` 过滤** —— ★ 否则"我的工作区"对他就不成立 ⚠
+        # ★ 未登录 ⇒ **空列表**（❌ 不是 401）—— ★ 工作区对游客开放，★ 只是"他还没有项目" ✅
+        # ★★ 而「别人的公开项目」去哪看：★ **`Home`（首页探索页）** ——
+        #    ★ 它调的是**不带 `mine` 的**同一个端点 ⇒ ★★ 两个页面从此用**不同参数** ✅
+        if not authed:
+            return ok_flat(projects=[])
+        qs = qs.filter(owner=user)
+    elif not authed:
         # ★ 游客只看公开项目（否则登录与否就没区别了）
         qs = qs.filter(is_public=True)
     elif not user.is_staff:

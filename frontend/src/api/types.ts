@@ -28,52 +28,77 @@ export interface WhoAmI {
 
 /* ---------------------------------------------------------------- 项目 */
 
-/** GET /api/projects/ → ② 展开形态 {projects:[…]} */
+/** ★ GET /api/projects/ → ② 展开形态 `{ok,projects:[…]}`
+ *
+ * ⚠★ 与旧项目的差别（`B164` 对账）—— **字段名与字段集都变了**：
+ * - ★★★ 主键叫 **`project_ref`**（❌ 不是 `key`）
+ * - ⚠ **没有** `icon` / `icon_lucide` / `category` / `score`（★ 新后端不做图标/分类/评分）
+ * - ✅ **新增** `provider` / `repo_url` / `commit` / `graph_rev` / `node_count` / `edge_count` / `created_at`
+ *
+ * 依据：`app/web/views/projects.py::_project_json()`
+ */
 export interface ProjectSummary {
-  key: string
+  project_ref: string
   name: string
-  icon?: string
-  icon_lucide?: string
-  category?: string
   desc?: string
   is_public?: boolean
-  score?: number
-  owner?: string | null
+  /** github / gitee —— ★ B109：源码只能服务端拉取，所以托管平台是必填项 */
+  provider?: string
+  repo_url?: string
+  commit?: string
+  owner?: string
+  /** ★ 前端靠它决定是否渲染「设置 / 解析」入口 */
   mine?: boolean
-  /** idle / parsing / done / error */
+  /** none / queued / running / done / error */
   status?: string
   /** 0–100 */
   progress?: number
+  graph_rev?: number
+  node_count?: number
+  edge_count?: number
+  created_at?: string
 }
 
 export interface ProjectListData {
   projects: ProjectSummary[]
 }
 
-/** POST /api/projects/ → ② {ok,key,name,category} */
+/** ★ POST /api/projects/ → **①型** `{ok,data:{project_ref,name}}`（★ status 201）
+ *
+ * ⚠★★ 入参与旧项目**完全不同** —— 见 `views/projects.py::_create()`：
+ * - ★★ **`repo_url` 与 `provider` 都是必填**（⚠ 缺则 400 `missing_fields` / `invalid_provider`）
+ * - 可选：`commit`（默认 HEAD）· `desc` · `is_public`
+ * - ❌ 没有 `category` / `icon`
+ */
 export interface CreatedProject {
-  key: string
+  project_ref: string
   name: string
-  category?: string
 }
 
-/** PUT /api/projects/<key>/ → ② {ok,key,name,icon,icon_lucide,category,desc} */
+/** ★ PATCH /api/projects/&lt;project_ref&gt;/ → ①型（⚠ 是 **PATCH**，❌ 不是 PUT） */
 export interface UpdatedProject {
-  key: string
+  project_ref: string
   name: string
-  icon?: string
-  icon_lucide?: string
-  category?: string
   desc?: string
+  is_public?: boolean
 }
 
-/** GET /api/projects/<key>/progress/ → ② */
+/** ★ GET /api/projects/&lt;project_ref&gt;/progress/ → **①型** `{ok,data:{…}}`
+ *
+ * 依据 `views/projects.py::progress()` —— ⚠ 字段与旧项目不同：
+ * ★ 新增 `stage` / `job_id` / `queue_position` / `graph_rev`；❌ **没有** `graph_ready`
+ */
 export interface ProgressData {
-  key: string
-  progress: number
+  /** none / queued / running / done / error */
   status: string
+  /** 0–100 */
+  progress: number
+  stage?: string
+  job_id?: number | null
+  queue_position?: number | null
+  /** ⚠ 只有本人 / 管理员才拿得到（后端按权限裁剪） */
   error?: string
-  graph_ready: boolean
+  graph_rev?: number
 }
 
 /* ---------------------------------------------------------------- 图谱 */

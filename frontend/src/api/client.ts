@@ -124,6 +124,17 @@ export function apiPut<T = any>(path: string, body?: unknown, kind: EnvelopeKind
   return api<T>(path, kind, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) })
 }
 
+/**
+ * ★ PATCH（`B164` 新增）
+ *
+ * ⚠★ 为什么需要它：新后端 `projects.detail` 的写方法是
+ * `@require_http_methods(["GET", "PATCH", "DELETE"])` —— ★★ **是 PATCH，❌ 不是 PUT**。
+ * ★ 旧前端只有 `apiPut`（旧站用 PUT）⇒ ★ 照搬会得到 **405**。
+ */
+export function apiPatch<T = any>(path: string, body?: unknown, kind: EnvelopeKind = 'spread') {
+  return api<T>(path, kind, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) })
+}
+
 export function apiDelete<T = any>(path: string, body?: unknown, kind: EnvelopeKind = 'spread') {
   return api<T>(path, kind, { method: 'DELETE', body: body === undefined ? undefined : JSON.stringify(body) })
 }

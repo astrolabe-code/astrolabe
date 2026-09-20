@@ -123,7 +123,7 @@ export default function Home() {
             {focus && suggestions.length > 0 && (
               <div className="hero-suggest">
                 {suggestions.map((p) => (
-                  <button key={p.key} type="button" onClick={() => (window.location.href = `/project/${p.key}/`)}>
+                  <button key={p.project_ref} type="button" onClick={() => (window.location.href = `/app/p/${p.project_ref}`)}>
                     <span>{p.name}</span>
                     <span className="s-desc">{p.owner ? `@${p.owner}` : '公开项目'}</span>
                   </button>

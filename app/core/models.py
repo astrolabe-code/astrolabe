@@ -634,9 +634,13 @@ class OAuthState(TimeStampedModel):
 
     ACTION_LOGIN = "login"
     ACTION_PUBLISH = "publish"
+    #: ★★★ `B169`：**拉取代码**（★ 对**已有项目**发起）——
+    #:   ⚠★ 与 `ACTION_PUBLISH` 一样**必须当场校验归属**：★ 两者都会让服务端**去拉一个远端仓库** ⚠
+    ACTION_FETCH = "fetch"
     ACTION_CHOICES = [
         (ACTION_LOGIN, "登录 / 注册"),
         (ACTION_PUBLISH, "发布项目（需★当场校验归属）"),
+        (ACTION_FETCH, "拉取代码（需★当场校验归属）"),
     ]
 
     #: ★ 随机串（★ primary key ⇒ **天然唯一**）

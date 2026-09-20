@@ -295,10 +295,18 @@ def start(
     cid, _ = _client(p)
 
     ttl = int(appsettings.get("oauth.state_ttl_seconds") or 600)
+
+    # ⚠★★ 未知的 `action` **必须 raise**，❌ **不能静默退回 `ACTION_LOGIN`**（`B169` 修正）——
+    #   ★★ 否则一个拼错/漏登记的意图（如 `"fetch"` 忘了加进 `ACTION_CHOICES`）会**悄悄变成"登录"**：
+    #      ★ 用户以为在拉代码，实际回来发现**只是登录了**，⚠ 而且**全程没有任何报错**（极难排查）⚠
+    #   ★ 这与 `B147` 的另一条纪律同一口径：**让错误在开发期暴露**（❌ 不静默降级）。
+    if action not in dict(OAuthState.ACTION_CHOICES):
+        raise OAuthError(f"未知的 OAuth 意图：{action!r}")
+
     st = OAuthState.objects.create(
         state=secrets.token_urlsafe(24),
         provider=p.key,
-        action=action if action in dict(OAuthState.ACTION_CHOICES) else OAuthState.ACTION_LOGIN,
+        action=action,
         invite_token=(invite_token or "").strip()[:64],
         next_url=(next_url or "")[:512],
         repo=(repo or "")[:512],
@@ -758,6 +766,53 @@ def verify_repo_ownership(
 # ===========================================================================
 # 维护
 # ===========================================================================
+
+
+def record_ownership_audit(
+    *,
+    user,
+    provider: str,
+    repo_full_name: str,
+    verdict: OwnershipVerdict,
+    project_ref: str = "",
+    verify_account: str = "",
+    now: datetime | None = None,
+) -> None:
+    """★★★ **归属校验留痕**（`B169`）—— ★ 写一条 `AuditLog`。
+
+    ★ 依据：`backend-design.md` 的 `[Gate 0]` 原文 ——
+    > 「留痕：`verify_provider` / `verify_account` / `verified_at` → `AuditLog`」
+
+    ⚠★★ **通过和拒绝【都要记】** —— ★ 只记通过的话，
+      ★ 「**谁试过拉别人的库**」这个问题就**永远答不上来** ⚠
+      ★★ 而那恰恰是**防侵权的第一个信号**（★ 用户的目标就是"只准拉他有控制权的代码"）⚠
+
+    ★ 为什么把它**抽成公共函数**：⚠★ 现在有**两个**地方要留痕
+      （`core/publish.py::publish_project` 与 `web/views/auth.py::_run_fetch`）——
+      ★★ 各写一遍 ⇒ ⚠ **早晚有一处会漏**（★ 同 `U4.8` 那条"判断收敛到一处"的纪律）⚠
+    """
+    from django.utils import timezone
+
+    from core.models import AuditLog
+
+    AuditLog.objects.create(
+        actor=user,
+        action="project.ownership_verified" if verdict.ok else "project.ownership_rejected",
+        # ⚠★ 有项目就挂项目，没有（如"发布时建的还没建出来"）就挂仓库串 —— ★ 两者都可追
+        target_kind="project" if project_ref else "repo",
+        target_id=(project_ref or repo_full_name)[:128],
+        detail={
+            "ok": verdict.ok,
+            "reason_code": verdict.reason_code,
+            "message": (verdict.message or "")[:300],
+            # ★ 设计要求的三项
+            "verify_provider": provider,
+            "verify_account": verify_account,
+            "verified_at": (now or timezone.now()).isoformat(),
+            # ⚠★ 顺带记「验的是哪个库」—— ★ 否则日后只看到"通过"，却不知道验的什么
+            "repo": repo_full_name,
+        },
+    )
 
 
 def purge_expired_states(*, now: datetime | None = None) -> int:

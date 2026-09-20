@@ -157,6 +157,22 @@ def publish_project(
         provider_user_id=identity.provider_user_id,
         fetcher=fetcher,
     )
+    # ★★ 留痕（`backend-design.md` 的 `[Gate 0]` 要求：verify_provider / verify_account / verified_at）
+    #   ★ 走公共函数（`core/oauth.py::record_ownership_audit`）——
+    #   ⚠★ `web/views/auth.py::_run_fetch()` 用的是**同一份**逻辑（❌ 不各写一遍）
+    #   ⚠ **通过和拒绝都要记** —— ★ 否则"谁试过拉别人的库"就答不上来 ⚠
+    #
+    # ⚠★ 注意时机：★ 此刻**项目还没建出来**（建项目在下面）⇒ ★ 先挂 `repo` 串。
+    #   ★ 为什么不建完再记：★ 建项目**会因为配额/许可被回滚**（下面 `set_rollback`）——
+    #     ★★ 而"他试过拉这个库"这件事**必须留下**，⚠ 不能跟着回滚一起消失 ⚠
+    oauth.record_ownership_audit(
+        user=user,
+        provider=provider,
+        repo_full_name=repo_full_name,
+        verdict=own,
+        verify_account=getattr(identity, "login", ""),
+    )
+
     if not own.ok:
         return _fail(r, step="ownership", code=own.reason_code, message=own.message)
     r.steps["ownership"] = {"ok": True, "repo": own.repo.get("full_name") or repo_full_name}

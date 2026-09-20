@@ -166,7 +166,9 @@ check("★★★ 图已生成", Node.objects.filter(project_ref=pub.project_ref)
 check("★★★ **定版标记已置**（★ 与写图同一事务）", project.is_graph_built, True)
 check("★ 且钉住了 ref（★ 走本地目录 ⇒ 标成 local）", project.resolved_ref, "local")
 
-# ---- 第二次：补投一个作业 ----
+# ---- 第二次：**绕过 API 直接投一个作业**（★ 测的是【作业层】自己的防线，`B169`）----
+#    ⚠★ 注意：★ API 那条路（`POST …/fetch/`）**根本不会让已定版的项目投递**
+#      （★ 见下面第 ③ 节的 409）—— ★ 这一节测的是"**万一有人绕过 API**"时的纵深防御 ✅
 Node_before = Node.objects.filter(project_ref=pub.project_ref).count()
 from jobs import dispatch  # noqa: E402
 
@@ -174,7 +176,7 @@ job2, _ = dispatch.submit(
     kind=Job.KIND_PARSE, project_ref=pub.project_ref,
     payload={"project_id": project.pk, "provider": PROVIDER,
              "repo_full_name": "o/r", "repo_url": project.repo_url, "commit": ""},
-    dedup_key=f"parse:{pub.project_ref}:again",
+    dedup_key=f"second:{pub.project_ref}:again",
 )
 execute(job2)
 job2.refresh_from_db()
@@ -212,11 +214,11 @@ except ValueError:
 # ===========================================================================
 print()
 print("=" * 80)
-print("③ ★★★ `parse` 端点 ⇒ 409 + 引导语（★ 用户看到就知道怎么办）")
+print("③ ★★★ `fetch` 端点 ⇒ 409 + 引导语（★ 用户看到就知道怎么办）")
 print("=" * 80)
 raw, _ = auth.issue_token(u)
 c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-r = c.post(f"/api/projects/{pub.project_ref}/parse/", content_type="application/json")
+r = c.post(f"/api/projects/{pub.project_ref}/fetch/", content_type="application/json")
 check("★★★ 已定版 ⇒ 409", r.status_code, 409)
 check("★ 原因码 = graph_immutable", r.json()["error"]["code"], "graph_immutable")
 msg = r.json()["error"]["message"]

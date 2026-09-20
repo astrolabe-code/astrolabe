@@ -56,6 +56,18 @@ export interface ProjectSummary {
   graph_rev?: number
   node_count?: number
   edge_count?: number
+  /**
+   * ★★★ `B169` 新增：**是否已定版**（★ 代码已拉下**且**解析完成）。
+   *
+   * ★ 前端靠它决定「**拉取代码**」按钮的显隐：
+   * - ★ `true` ⇒ **不给按钮**（点了必然 409 `graph_immutable`）
+   * - ★ `false` / 缺省 ⇒ **给按钮** —— ★★ 注意**包含"拉取失败 / 解析失败"**
+   *   （★ 所有者裁定：**失败还允许再发起**）⚠
+   *
+   * ⚠★ 为什么不用 `status` 判断：`status` 是**作业状态**（`Job.state`），
+   * ★ 而"定版"是 **`Project.is_graph_built`** —— ★ 两者不是一回事 ⚠
+   */
+  graph_built?: boolean
   created_at?: string
 }
 

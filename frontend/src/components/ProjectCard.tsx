@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FolderGit2, Globe, Lock, Pencil, Play, Trash2, User } from 'lucide-react'
+import { CloudDownload, FolderGit2, Globe, Lock, Pencil, Trash2, User } from 'lucide-react'
 import type { ProjectSummary } from '../api/types'
 import { errorMessage } from '../api/errors'
-import { useDeleteProject, useTriggerParse, useUpdateProject } from '../query/projects'
+import { useDeleteProject, useStartFetch, useUpdateProject } from '../query/projects'
 import ParseStatus from './ParseStatus'
 import ProjectEditModal from './ProjectEditModal'
 import ConfirmDialog from './ui/ConfirmDialog'
@@ -15,7 +15,7 @@ interface ProjectCardProps {
   canManage?: boolean
 }
 
-type DialogKey = 'public' | 'parse' | 'delete'
+type DialogKey = 'public' | 'fetch' | 'delete'
 
 /**
  * ★ 项目卡片（`B164` 改写）
@@ -32,13 +32,23 @@ type DialogKey = 'public' | 'parse' | 'delete'
  * |---|---|
  * | ★★ `project.key` ⇒ **`project.project_ref`** | ⚠ 主键字段名不同（★ 照搬会「页面空白」） |
  * | ★★ 图标由 `projectIcon(project.icon_lucide)` ⇒ **固定图标** | ❌ 新后端没有图标字段 |
- * | ★★★ `useReparse` ⇒ **`useTriggerParse`**，★ 且**文案改了** | ⚠★ `B155` 之后它是「**补投**」，★ **不是「重新解析」** —— ★ 文案若还写"覆盖当前图数据"，那是**错的**（★ 后端会 409 拒绝） |
+ * | ★★★ `useReparse` ⇒ **`useStartFetch`**（`B169`） | ⚠★ 原写法叫「**补投**」—— ★★ **那是 AI 自己发明的语义，所有者从没要过**；★ 现在是「**发起拉取授权**」（★ 真正的动作在 OAuth 回调里） |
+ * | ★★★ 「补投解析」按钮 ⇒ **「拉取代码」按钮** | ★ 所有者原话：「**只有一个拉取 github 或 gitee 代码的按钮，拉了就解析，不给用户一点搞破坏的机会**」 |
+ * | ★★ 按钮显隐：`!hasData` ⇒ **`!graph_built`** | ⚠★ 见下方 `canFetch` 的说明 —— ★ 两者在"失败"这个情形上**恰好相反** |
  * | ★ `status !== 'idle'` ⇒ `status !== 'none'` | ★ 新后端用 `none` 表示"还没解析" |
  */
 export default function ProjectCard({ project, canManage = false }: ProjectCardProps) {
   // ★ 对齐旧站：owner 项须「本人 + 已登录」
   const mine = !!project.mine && canManage
   const hasData = project.status !== 'none'
+  /**
+   * ★★★ 「拉取代码」按钮的显示条件（`B169`）—— ⚠★ **不能用 `hasData`**：
+   * ★ `hasData` 说的是"**作业跑过**"，★ 而闸门看的是"**是否定版**"（`graph_built`）。
+   * ★★ 两者在「**拉取失败 / 解析失败**」这个最常见的情形上**恰好相反**：
+   *   ⚠ 那时 `hasData = true`、`graph_built = false` —— ★ 若用 `hasData` 就**不给按钮**，
+   *   ★★ 而那恰恰是所有者明确要求「**还允许再发起**」的情形 ⚠
+   */
+  const canFetch = !project.graph_built
   const ref = project.project_ref
 
   const [dialog, setDialog] = useState<DialogKey | null>(null)
@@ -46,7 +56,7 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
   const [error, setError] = useState('')
 
   const update = useUpdateProject(ref)
-  const parse = useTriggerParse(ref)
+  const fetchStart = useStartFetch(ref, '/workspace')
   const del = useDeleteProject(ref)
 
   const close = () => {
@@ -74,7 +84,22 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
   const confirmPublic = () =>
     runAction(() => update.mutateAsync({ is_public: !project.is_public }), update.error, close)
 
-  const confirmParse = () => runAction(() => parse.mutateAsync(), parse.error, close)
+  /**
+   * ★★★ 「拉取代码」—— ⚠★ **它不投递作业，而是把用户【送去授权】**（`B169`）。
+   *
+   * ★ 为什么不能在这里直接投递：⚠ 本平台**不保存 `access_token`**（`B148`）
+   * ⇒ ★ 不拿到 token 就**无法验证"这个库是不是他的"** ⚠
+   * ⇒ ★★ 所以这里只跳转；★ **归属校验 + 投递（拉取 + 解析）都在 OAuth 回调里完成** ✅
+   */
+  const confirmFetch = () =>
+    runAction(
+      () => fetchStart.mutateAsync(),
+      fetchStart.error,
+      (r) => {
+        // ★ 授权页在**第三方域名**上 ⇒ ★ 只能整页跳转（❌ 不是路由跳转）
+        window.location.href = r.authorize_url
+      },
+    )
 
   const confirmDelete = () => runAction(() => del.mutateAsync(), del.error, close)
 
@@ -94,16 +119,20 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
       danger: project.is_public,
       onConfirm: confirmPublic,
     },
-    parse: {
-      title: '补投解析',
-      // ★★★ B155 之后语义是「补投」—— ⚠ 文案不能说"覆盖当前图数据"（那会 409）
+    fetch: {
+      title: '拉取代码',
+      // ★★★ `B169`：★ 文案要说清三件事 —— **去哪儿 · 为什么 · 我们不留你的 token**
       message:
-        '确定补投一次解析吗？\n\n' +
-        '★ 仅当项目【还没有定版】时才会真的开始。\n' +
-        '★ 已经解析过的项目【不会】重新生成图 —— 那时后端会拒绝，' +
-        '需要另一个版本请【新建项目】。',
-      confirmText: '补投解析',
-      onConfirm: confirmParse,
+        `将从「${project.repo_url || '项目仓库'}」拉取源码并解析。\n\n` +
+        '接下来会跳转到 GitHub / Gitee 授权：\n' +
+        '★ 这一步是为了确认【这个仓库确实属于你】——\n' +
+        '   ★ 只允许拉取你有控制权的代码，避免侵权。\n' +
+        '★ 本站【不会保存】你的授权 token，用完即丢。\n' +
+        '★ 拉取与解析一次完成，之后【不允许重新拉取】；\n' +
+        '   需要另一个版本请新建项目，想重来请删了重建。\n\n' +
+        '确定继续？',
+      confirmText: '去授权并拉取',
+      onConfirm: confirmFetch,
     },
     delete: {
       title: '删除项目',
@@ -121,7 +150,7 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
   }
 
   const active = dialog ? dialogs[dialog] : null
-  const pending = update.isPending || parse.isPending || del.isPending
+  const pending = update.isPending || fetchStart.isPending || del.isPending
 
   return (
     <div className="card hoverable flex flex-col p-5">
@@ -198,11 +227,12 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
               {project.is_public ? <Lock size={14} /> : <Globe size={14} />}
             </button>
           )}
-          {/* ★ 未定版才给「补投」入口 —— ⚠ 已定版点了必然 409，索性不给按钮 */}
-          {mine && !hasData && (
-            <button type="button" className="icon-btn" title="补投解析" aria-label="补投解析"
-                    onClick={() => setDialog('parse')}>
-              <Play size={14} />
+          {/* ★★★ `B169`：**只有一个「拉取代码」按钮**（★ 所有者原话："拉了就解析"）
+              ⚠★ 已定版才不给 —— ★ **未定版（含拉取/解析失败）都要给**（★ 失败还允许再发起） */}
+          {mine && canFetch && (
+            <button type="button" className="icon-btn" title="拉取代码" aria-label="拉取代码"
+                    onClick={() => setDialog('fetch')}>
+              <CloudDownload size={14} />
             </button>
           )}
           {mine && (

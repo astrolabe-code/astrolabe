@@ -66,10 +66,14 @@ urlpatterns = [
     ),
     # ------------------------------------------------------------ 解析
     # ★ 新设计的入口（`B109`：源码只能服务端拉取 ⇒ ❌ 没有 zip 上传这条路）
+    # ★★★ `B169`：**拉取代码** —— ★ 原名 `parse/`，改名是因为「parse」这个字
+    #   ⚠ **正是那个错的遗迹**：★ 它暗示"可以反复解析"，★ 而这个动作的真实语义是「**拉取**」⚠
+    # ⚠★ 注意语义：★ 本端点**只负责发起授权**（★ 真正的"拉取 + 解析"在 OAuth 回调里，
+    #   见 `views/auth.py::_run_fetch()`）—— ★ 与 `publish/start/` 同构 ✅
     path(
-        "projects/<project_ref:project_ref>/parse/",
-        projects.parse,
-        name="project-parse",
+        "projects/<project_ref:project_ref>/fetch/",
+        projects.start_fetch,
+        name="project-fetch",
     ),
     path(
         "projects/<project_ref:project_ref>/progress/",

@@ -27,15 +27,21 @@ import type {
  *
  * ## ⚠★★ 一个必须理解的语义变化：`useTriggerParse` **不是「重新解析」**
  *
- * ★ `B155`（图不可变）之后，`POST …/parse/` 的语义是「**补投**」：
+ * ★★★ `B169`：**「拉取代码」**（★ 端点原叫 `parse/` —— ⚠★ 而它当时带着一个 **「补投」** 语义，
+ *   ★★ **那是 AI 自己加的，所有者从没要过**）：
  *
  * | 项目状态 | 行为 |
  * |---|---|
- * | ★ 未定版（图还没生成） | ✅ 允许投递（★ 正当用途：★ **作业失败/丢了，重投一次**） |
- * | ★★ 已定版 | ★★ **409 `graph_immutable`** —— ⚠ **不会重新解析** |
+ * | ★ **未定版**（含**拉取失败 / 解析失败**） | ✅ **允许再发起**（★ 所有者裁定：失败可重试） |
+ * | ★★ **已定版**（★ 代码已拉下**且**解析完成） | ★★ **409 `graph_immutable`** + 引导语 |
  *
- * ⇒ ★★ 调用方**必须**处理这个 409（★ 见 `useTriggerParse` 的 `onError`）——
- * ★ 它**不是错误**，★ 而是一个**明确的业务答复**：⚠ 要另一个版本请**新建项目**。
+ * ⚠★ **注意：这里【没有】"投递"这个动作** ——
+ * ★ 前端只拿到 `authorize_url`，★ 然后**整页跳转**到 GitHub / Gitee；
+ * ★★ 真正的「**归属校验 + 投递（拉取 + 解析）**」发生在 **OAuth 回调里**
+ * （★ 因为**只有那一刻能拿到 `access_token`**，⚠ 而本平台**不保存它** —— `B148`）⚠
+ *
+ * ⇒ ★★ 所以调用方拿到 409 时**别当故障**：★ 后端消息里已经写清了出路
+ *   （★ **要另一个版本 ⇒ 新建项目**；★ **想重来 ⇒ 删了重建**）✅
  */
 
 /** ★ 可见项目列表（公开 + 自己的；游客只见公开） */
@@ -133,28 +139,45 @@ export function useDeleteProject(projectRef: string) {
   })
 }
 
+/** ★ SPA 内部路径 ⇒ **浏览器可打开的路径**（★ 带上 `base`，即 `/app`） */
+function spaPath(internal: string): string {
+  const base = (import.meta.env.BASE_URL || '/app/').replace(/\/$/, '')
+  return `${base}${internal.startsWith('/') ? internal : `/${internal}`}`
+}
+
 /**
- * ★★ 触发解析 —— **「补投」语义**（⚠★ 不是"重新解析"，见文件头说明）
+ * ★★★ **发起「拉取代码」授权**（`B169`）—— ⚠★ **它不投递作业，只拿回一个授权 URL**。
  *
- * ★ 已定版的项目会拿到 **409 `graph_immutable`** —— ★ 调用方应当把它
- * **展示成引导语**（★ 后端已经在错误消息里写清了出路），★ 而不是当成故障。
+ * ## ★★ 为什么必须是两步（★ 这不是设计缺陷，是"不保存凭据"必然的代价）
+ * ⚠★ 本平台**不保存 `access_token`**（`B148`）⇒ ★ 无法在"投递"那一刻替用户去问
+ * GitHub「这个库是不是他的」⇒ ★★ **只能让用户当场授权一次** ✅
+ * → ★ 与 `useCreateProject` 那条发布链**完全同构**（★ 真正的动作都在 OAuth 回调里）。
+ *
+ * ## ★ 调用方要做什么
+ * ```ts
+ * const r = await startFetch.mutateAsync({})
+ * window.location.href = r.authorize_url      // ★ 跨域授权页 ⇒ 只能整页跳转
+ * ```
+ *
+ * ⚠★ **`next_url` 必须带 `/app` 前缀**（★ 由 `spaPath` 负责）——
+ * ★ 因为后端会把它**原样用作 302 的 Location**，★ 那是**浏览器跳转**、不经过 router 的 basename ⚠
+ *
+ * ## ★ 409 怎么办
+ * ★ 已定版的项目会拿到 **409 `graph_immutable`** —— ★ 前端**不该给按钮**（★ 见 `ProjectCard`），
+ * ★ 但**万一**拿到（★ 比如时间差），★ 把它**展示成引导语**即可，❌ 不是故障 ✅
  */
-export function useTriggerParse(projectRef: string) {
-  const qc = useQueryClient()
+export function useStartFetch(projectRef: string, nextInternal = '/workspace') {
   return useMutation({
-    mutationFn: async () =>
-      unwrap(await apiPost<{ job_id: number; state: string; created: boolean }>(
-        `/api/projects/${encodeURIComponent(projectRef)}/parse/`,
-        {},
-        'data',
-      )),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['progress', projectRef] })
-      qc.invalidateQueries({ queryKey: ['jobs', projectRef] })
-      qc.invalidateQueries({ queryKey: ['project', projectRef] })
-      qc.invalidateQueries({ queryKey: ['projects'] })
-    },
-    // ★ 409 不改任何缓存 —— 图没变，重新拉也是白拉
+    mutationFn: async (): Promise<{ authorize_url: string; state: string; repo: string }> =>
+      unwrap(
+        await apiPost<{ authorize_url: string; state: string; repo: string }>(
+          `/api/projects/${encodeURIComponent(projectRef)}/fetch/`,
+          { next_url: spaPath(nextInternal) },
+          'data',
+        ),
+      ),
+    // ★ 刻意**不 invalidate 任何缓存**：★ 此刻还什么都没变
+    //   （★ 真正开始拉取要等用户从 GitHub 授权回来 —— 那时页面已整页重载）✅
   })
 }
 

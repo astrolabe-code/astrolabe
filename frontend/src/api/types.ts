@@ -382,3 +382,78 @@ export interface Diagnostics {
     cycles: number
   }
 }
+
+/* ---------------------------------------------------------------- 认证（U4） */
+
+/**
+ * ★ 认证相关类型（`B170` · ★ 用户名 + 密码）
+ *
+ * ⚠★ 字段**逐个对照后端**写，❌ 不照抄旧项目：
+ * | 端点 | 后端依据 |
+ * |---|---|
+ * | `GET /api/auth/providers/` | `views/auth.py::providers()` + `invites.RegistrationGate.to_dict()` |
+ * | `POST /api/auth/login/` | `views/auth.py::login()`（★ 契约 §12 定形）|
+ * | `POST /api/auth/register/` | `views/auth.py::register()` |
+ */
+
+/** ★ 一种可用的登录方式（⚠★ 只有"真的配好了"的 OAuth provider 才在这里） */
+export interface AuthProviderInfo {
+  /** ★ `github` / `gitee` */
+  key: string
+  /** ★ 展示名（★ 用它，⚠ 前端不写死） */
+  label: string
+}
+
+/**
+ * ★★ **注册门禁**（`U4.6` 的开关组合 —— ★ 语义由 `B170` 重新定义）
+ *
+ * ⚠★★ **两个字段含义不同，别混用**：
+ *
+ * | 字段 | 它说的是 |
+ * |---|---|
+ * | ★★ **`registration_open`** | 【**注册入口是否对所有人可见**】← ★ 前端**只看这个**来决定显不显示注册按钮 |
+ * | ★ `allowed` | 【**后端是否放行注册**】 |
+ *
+ * ⚠★ `registration_open === false` 时，`allowed` **仍然是 `true`** ——
+ * ★★ 因为「**入口隐藏**」≠「注册被禁止」：★ **持邀请码者仍可注册** ✅（`B170`）
+ */
+export interface RegistrationGate {
+  allowed: boolean
+  invite_required: boolean
+  /** ⚠★ 整站停服 —— ★ 优先级**高于一切**（连授权都不该发起） */
+  paused: boolean
+  /** ★★ 注册入口是否**对所有人可见**（★ 隐藏时，只有拿到邀请链接的人才看得到注册页） */
+  registration_open: boolean
+  /** ★ 给用户看的原因（★ 后端文案优先，⚠ 前端不做二次改写） */
+  message: string
+}
+
+/** ★ `GET /api/auth/providers/` → **①型** */
+export interface AuthProvidersData {
+  providers: AuthProviderInfo[]
+  registration: RegistrationGate
+}
+
+/**
+ * ★ 后端返回的用户投影 —— ⚠★★ **只有这五个字段**。
+ *
+ * ⚠★ `auth.user_json()` **刻意不返回** `email` / `is_superuser` ——
+ * ★ 理由（原文）：「★ 前端用不到，而**多给一个字段就多一分泄露面**」⚠
+ * ⇒ ★★ **不要凭空声明 `is_superuser`**（★ 那是旧站 `whoami/` 的字段，★ 新后端**没有 `whoami/`**）⚠
+ */
+export interface AuthUser {
+  id: number
+  username: string
+  is_staff: boolean
+  /** ★ 第三方头像 URL —— ⚠ 密码注册的用户是**空串** */
+  avatar: string
+  /** ★ 有可用密码吗（★ `B170` 之后注册的用户都是 `true`）*/
+  has_password: boolean
+}
+
+/** ★ 登录 / 注册的响应（★ `B170`）—— ★ 契约 §12：`data:{token, user, exp}` */
+export interface AuthTokenData {
+  token: string
+  exp: string
+  user: AuthUser
+}

@@ -145,11 +145,25 @@ def registration_gate(*, settings_map: dict[str, Any] | None = None) -> Registra
             allowed=False, paused=True, registration_open=bool(s.get("registration_open")),
             message="站点正在维护，暂时无法注册。",
         )
+
+    # ★★★ `B170`：**`registration_open` 的语义 = 「注册入口的可见性」**，❌ **不是"彻底关掉注册"**
+    #   · ★ `True`  ⇒ ★ 入口【对所有人可见】+ 可注册
+    #   · ★★ `False` ⇒ ★ 入口【隐藏】（前端不显示），★ **但持邀请码者仍可注册** ✅
+    #
+    #   ⚠★★ 为什么这样改（★ 这一段必须留住）：
+    #     ★ 邀请码本身就是【**最强的准入凭证**】—— ★ 关掉入口是为了"**不让人随便注册**"，
+    #     ⚠★ **而不是"连我亲手邀请的人也不让进"**；
+    #     ★★ 旧写法（`allowed=False`）会让**所有者发出去的每一个邀请码都变成废纸** ⚠
+    #   ★ 注意 `allowed=True` **不等于"入口可见"** —— 入口可见性看 `registration_open`，
+    #     ★ 前端拿到的 `to_dict()` 里**两者都有**，⚠ 别混用（★ 见 `U4.6` 的说明）。
     if not s.get("registration_open"):
         return RegistrationGate(
-            allowed=False, registration_open=False,
-            message="本站当前未开放注册，请等待邀请。",
+            allowed=True,
+            invite_required=True,          # ★★ 入口隐藏时 **强制要码**
+            registration_open=False,
+            message="本站当前仅限邀请注册 —— 请使用你收到的邀请链接。",
         )
+
     return RegistrationGate(
         allowed=True,
         invite_required=bool(s.get("invite_required")),

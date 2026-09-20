@@ -38,13 +38,17 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib.auth import authenticate, get_user_model
+from django.db import transaction
 from django.http import HttpRequest, HttpResponseRedirect, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from core import invites, oauth
+from core import appsettings, invites, oauth
 from core.models import OAuthState
 from web import auth
 from web.http import fail, ok, read_json, safe_next_url
@@ -364,6 +368,183 @@ def _failure(message: str, *, as_json: bool) -> JsonResponse | HttpResponseRedir
     if as_json:
         return fail(message, 401, code="oauth_failed")
     return _redirect_with_fragment(_spa_url(), error=message)
+
+
+# ===========================================================================
+# /api/auth/login/ · /api/auth/register/     ★ 用户名 + 密码（`B170` · `U4.9`）
+# ===========================================================================
+
+#: ★ 用户名规则（`B170`）：★ 3–30 位，★ 允许中英文 / 数字 / 下划线 / 连字符 / 点
+#: ⚠★ `\w` 在 Python `re` 里默认就是 `UNICODE` ⇒ ★ **中文自动可用**
+#: （★ 本项目是中文项目，★ 强制英文用户名没必要 —— ★ 一期）
+_USERNAME_RE = re.compile(r"^[\w.\-]{3,30}$", re.UNICODE)
+
+
+def _login_allowed() -> bool:
+    """★ `login_open` 门禁（`U4.6`）。
+
+    ⚠★ 语义（`U4.6` 原文）：★ **只拦【新登录】，❌ 不影响已有 token** ——
+      ★ 若它把已登录的人也踢出去，那它就是 `paused`（⚠ **别把这两个开关混成一个**）。
+    """
+    return bool(appsettings.get("login_open"))
+
+
+def _password_problem(password: str) -> str:
+    """★ 密码强度的**最低**校验（`B170` 一期）—— ★ 返回问题描述，空串 = 通过。
+
+    ⚠★ 刻意**只做最低** —— ★ `U4.2` 列的那一整套（撞库 / 锁定 / 验证码 / 重置邮件）
+      ★ 是**待办**；★ 而这里必须挡住的只有一件事：
+      ⚠★ **"123456" 这种一秒被猜到的密码** ⚠
+    """
+    if len(password) < 8:
+        return "密码至少 8 位。"
+    if len(password) > 128:
+        return "密码太长了（最多 128 位）。"
+    if password.isdigit() or password.isalpha():
+        return "密码不能是纯数字或纯字母。"
+    return ""
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def register(request: HttpRequest) -> JsonResponse:
+    """★★★ **注册**（`B170`）—— ★ 用户名 + 密码 +（可能）邀请码。
+
+    ## ★★ 门禁**只问一处**
+    ★ `invites.registration_gate()` —— ★ `U4.8` 的纪律：★ 判断**收敛到一处** ⚠
+    （★ 不要在这里再写一遍开关判断 —— ★ 两处写一遍，**早晚有一处会漏**）
+
+    ## ★ 两种情形（★ 由 `registration_open` 决定，⚠ 语义见 `B170`）
+    · ★ `True`  ⇒ 入口**可见** · ★ 按 `invite_required` 决定要不要码
+    · ★★ `False` ⇒ 入口**隐藏**（★ 只有拿到邀请链接的人才看得到这个页面）
+      ⇒ ★★ **强制要码**（★ `gate.invite_required` 恒为 `True`）
+
+    ## ⚠★ 一期范围
+    ★ 只做「能注册」：★ **邮箱验证 / 验证码 / 撞库防护** ⇒ **待办** ⚠
+    """
+    gate = invites.registration_gate()
+    if gate.paused:
+        return fail(gate.message or "站点正在维护", 503, code="paused")
+    if not gate.allowed:
+        return fail(gate.message or "本站当前未开放注册。", 403, code="registration_closed")
+
+    body = read_json(request)
+    username = str(body.get("username") or "").strip()
+    password = str(body.get("password") or "")
+    invite_token = str(body.get("invite_token") or "").strip()
+
+    if not username or not password:
+        return fail("请填写用户名和密码", 400, code="missing_fields")
+
+    if not _USERNAME_RE.match(username):
+        return fail(
+            "用户名需 3–30 位，只能用中英文、数字、下划线、连字符和点。",
+            400,
+            code="bad_username",
+        )
+
+    problem = _password_problem(password)
+    if problem:
+        return fail(problem, 400, code="weak_password")
+
+    User = get_user_model()
+    if User.objects.filter(username__iexact=username).exists():
+        # ⚠★ **注册时必须说清"这个名字被占了"** —— ★ 这与登录**刻意不同**：
+        #   · 登录要含糊（★ 防账号枚举，见 `login()`）⚠
+        #   · ★ 而注册**躲不掉** —— ★ 不说的话，用户只会**反复试同一个名字** ⚠
+        return fail("这个用户名已经被占用了，换一个吧。", 409, code="username_taken")
+
+    # ★ 需要码时**先预检**（⚠ 不消耗）—— ★ 同 `U4.8`：「★ 校验通过前不消耗」
+    if gate.invite_required:
+        c = invites.check(invite_token)
+        if not c.ok:
+            return fail(c.message or "邀请凭证无效。", 400, code="bad_invite")
+
+    # ★★★ 建号 + 核销 **必须同一事务**（`U4.7` 纪律 2：★ 核销与建号**同生共死**）——
+    #   ⚠★ 否则会出现「**码被消耗了、账号却没建成**」⇒ ★ 用户**白白损失一个邀请码**且**无法自证** ⚠
+    with transaction.atomic():
+        user = User.objects.create_user(username=username, password=password)
+        if invite_token:
+            r = invites.redeem(invite_token, user)
+            if not r.ok:
+                # ★★ 主动回滚 ⇒ **不留"号建了、码没用上"的孤儿账号**
+                transaction.set_rollback(True)
+                return fail(r.message or "邀请凭证无效。", 400, code="invite_failed")
+
+    raw, token = auth.issue_token(
+        user,
+        provider="password",
+        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
+        remember=True,
+    )
+    return ok(
+        {
+            "token": raw,
+            "exp": token.expires_at.isoformat(),
+            "user": auth.user_json(user),
+        },
+        status=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def login(request: HttpRequest) -> JsonResponse:
+    """★★★ **用户名 + 密码 登录**（`B170` · `U4.9`）。
+
+    ★ 契约 §12 定好了形状：★ `POST /api/auth/login/` ⇒ `data:{token, user, exp}`，
+    ★★ 且**显式 `csrf_exempt`** —— ★ 因为此刻**还没有 token**，★ Bearer 那条路走不到 ⚠
+
+    ## ⚠★★ 一条安全底线（★ 一期就必须有）
+    ★ **「用户名不存在」与「密码错误」返回【同一句话 + 同一个状态码 + 同一个 code】** ——
+      ★ 否则等于**免费告诉攻击者"哪些用户名存在"**（★ 那正是 `U4.2` 第 3 条说的难题）⚠
+    ★★ 注意：★ 只在**文案**上含糊是不够的，⚠ **code 也必须一样** ⚠
+
+    ## ⚠★ 一期范围
+    ★ 只做"能登进来"：★ **失败计数 / 锁定 / 验证码 / 防撞库** ⇒ **待办** ⚠
+      ★ 一期唯一的前置补偿：★ `login_open` 开关（★ 出事时能一键停掉新登录）
+    """
+    if not _login_allowed():
+        return fail("本站当前未开放登录，请稍后再试。", 503, code="login_closed")
+
+    body = read_json(request)
+    username = str(body.get("username") or "").strip()
+    password = str(body.get("password") or "")
+    if not username or not password:
+        return fail("请填写用户名和密码", 400, code="missing_fields")
+
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        # ⚠★ 刻意**不区分**"没这个人"与"密码错了" —— ★ 见函数文档
+        #
+        # ⚠★★ **被停用的账号也会落到这里** ——
+        #   ★ Django 的 `ModelBackend.authenticate()` 内部会调 `user_can_authenticate()`
+        #     （★ 它检查 `is_active`）⇒ ★★ **停用的用户直接返回 `None`** ⚠
+        #   ⇒ ★ 所以下面那个 `is_active` 分支**目前走不到**
+        #     （★ 保留它是因为"换 backend 就变了"，⚠ 不是死代码洁癖）
+        #
+        #   ⚠ 取舍（★ 如实记下）：★ **不让"账号已停用"成为一句可用的提示** ——
+        #     ★ 因为它会**确认"这个用户名存在"**（★ 那就是**免费的用户名枚举信号**）⚠
+        #   ★★ 代价：★ 被停用的用户**只会看到"用户名或密码不正确"**，⚠ 他会反复试 ——
+        #     ★ 这是**一期明确接受的代价**（★ 待办：将来可考虑"只对管理员显示停用原因"）
+        return fail("用户名或密码不正确。", 401, code="bad_credentials")
+    if not user.is_active:
+        # ⚠ 见上：★ 当前 `ModelBackend` 走不到这里（★ 留着是为了不依赖某个 backend 的实现细节）
+        return fail("这个账号已被停用。", 403, code="account_disabled")
+
+    raw, token = auth.issue_token(
+        user,
+        provider="password",
+        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
+        remember=bool(body.get("remember", True)),
+    )
+    return ok(
+        {
+            "token": raw,
+            "exp": token.expires_at.isoformat(),
+            "user": auth.user_json(user),
+        }
+    )
 
 
 # ===========================================================================

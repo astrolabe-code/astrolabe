@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Home, LogOut, Moon, Sun, User } from 'lucide-react'
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { useTheme } from '../hooks/useTheme'
-import { SPA_LINKS } from '../legacy'
-import { apiPost } from '../api/client'
-import { useAuthStore } from '../store/authStore'
+import { useLogout } from '../query/auth'
 
 /**
  * ★ 顶栏（B163 精简版）
@@ -29,7 +27,7 @@ import { useAuthStore } from '../store/authStore'
  */
 export default function TopNav() {
   const { theme, toggle } = useTheme()
-  const clear = useAuthStore((s) => s.clear)
+  const logout = useLogout()
   const [open, setOpen] = useState(false)
   const linksRef = useRef<HTMLDivElement>(null)
   const burgerRef = useRef<HTMLButtonElement>(null)
@@ -56,10 +54,15 @@ export default function TopNav() {
     return () => document.removeEventListener('click', onDoc)
   }, [open])
 
-  /** ★ 退出：走 API（⚠ 不是 GET），★ 清本地 token 后回首页 */
+  /**
+   * ★ 退出：走 API（⚠★ **不是 GET** —— 否则浏览器的**预取 / 链接扫描**会把你登出）
+   *
+   * ★ 改走 `useLogout()`（`B170`）—— ★ 它在 **`onSettled`** 里清本地登录态：
+   *   ⚠★ **哪怕请求失败也清** —— ★ 否则用户会卡在"点了退出、但界面还是登录状态"
+   *     这种最别扭的状态里 ⚠
+   */
   async function handleLogout() {
-    await apiPost('/api/auth/logout/', undefined, 'data')
-    clear()
+    await logout.mutateAsync().catch(() => undefined)
     navigate('/', { replace: true })
   }
 
@@ -94,12 +97,12 @@ export default function TopNav() {
               </span>
             </span>
           ) : (
-            <a className="nav-btn ghost-btn nav-user" href={SPA_LINKS.login} title="登录">
+            <Link className="nav-btn ghost-btn nav-user" to="/login" title="登录">
               <span className="nav-avatar">
                 <User size={14} />
               </span>
               <span>游客</span>
-            </a>
+            </Link>
           )}
         </div>
       </div>
@@ -128,9 +131,9 @@ export default function TopNav() {
               退出
             </button>
           ) : (
-            <a className="nav-btn ghost-btn" href={SPA_LINKS.login}>
+            <Link className="nav-btn ghost-btn" to="/login">
               登录
-            </a>
+            </Link>
           )}
         </div>
         {!isHome && (

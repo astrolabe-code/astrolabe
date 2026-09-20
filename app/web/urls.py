@@ -27,6 +27,12 @@ urlpatterns = [
     #   （用户名密码）**已被 `B143` 标注为「一期不实现」**。
     # ⚠ 顺序有讲究：`<str:provider>/start/` 必须排在具体路径之后，
     #   否则未来新增 `/api/auth/tokens/` 这类固定路径会被 `<str:provider>` 吃掉。
+    # ★★★ `B170`：**用户名 + 密码**（★ `U4.9`）——
+    #   ⚠★ **必须排在 `<str:provider>/…` 之前**：★ 否则 `login` / `register` 会被
+    #      `<str:provider>` 吃掉（★ 被当成一个 provider 名去解析）⚠（★ 同下面那条提醒）
+    #   ★ 两者都 `csrf_exempt`（★ 见 `views/auth.py`：★ 此刻**还没有 token**）
+    path("auth/login/", auth.login, name="auth-login"),
+    path("auth/register/", auth.register, name="auth-register"),
     path("auth/providers/", auth.providers, name="auth-providers"),
     path("auth/me/", auth.me, name="auth-me"),
     path("auth/logout/", auth.logout, name="auth-logout"),

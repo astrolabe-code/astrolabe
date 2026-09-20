@@ -44,8 +44,21 @@ import type {
  *   （★ **要另一个版本 ⇒ 新建项目**；★ **想重来 ⇒ 删了重建**）✅
  */
 
-/** ★ 可见项目列表（公开 + 自己的；游客只见公开） */
-export function useProjects(opts: { mine?: boolean } = {}) {
+/**
+ * ★ 可见项目列表（公开 + 自己的；游客只见公开）
+ *
+ * ## ★★ `B173`：加了 `staleTime` 参数
+ *
+ * ⚠★ 为什么需要它：★ `Home`（首页）原本**自带** `staleTime: 60_000`，
+ * ★★ 而直接换成 `useProjects()` 会**默默把它丢掉**（★ `useQuery` 默认 `0`）
+ *   ⇒ ★ 首页每次挂载都重拉一遍全量列表 ⚠
+ * ⇒ ★★ 所以把那个值**显式传进来** —— ★ 而不是悄悄改掉首页的节奏 ✅
+ *
+ * ## ⚠★ `mine` 必须进 `queryKey`
+ * ★ 否则「工作区（只看我的）」会命中「首页（公开 + 我的）」的缓存 ⚠
+ * （★ 这两份数据**本来就不同** —— ★ 见 `B172` 的 `?mine=1`）
+ */
+export function useProjects(opts: { mine?: boolean; staleTime?: number } = {}) {
   const mine = !!opts.mine
   return useQuery({
     // ⚠★ `mine` 必须进 key —— ★ 否则"工作区（只看我的）"会命中"首页（公开+我的）"的缓存 ⚠
@@ -56,6 +69,10 @@ export function useProjects(opts: { mine?: boolean } = {}) {
       )
       return data.projects || []
     },
+    // ⚠★ `staleTime` **刻意不进 `queryKey`** ——
+    //   ★ 它不是"取哪一份数据"（那是 `mine`），★ 而是"多久算过期"（缓存策略）✅
+    //   ⇒ ★ 把它塞进 key 反而会让同一个查询出现两份缓存 ⚠
+    staleTime: opts.staleTime ?? 0,
   })
 }
 

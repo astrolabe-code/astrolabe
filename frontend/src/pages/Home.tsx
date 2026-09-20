@@ -1,12 +1,14 @@
 import { Suspense, lazy, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { apiGet } from '../api/client'
-import type { ProjectListData, ProjectSummary } from '../api/types'
+// ★ `B173`：删掉 `useQuery` / `apiGet` / `ProjectListData` ——
+//   ★ 项目列表改走 `useProjects()`（★ 口径只有一处），★ 这三个都**不再需要** ✅
+//   （⚠ 保留 `ProjectSummary` —— ★ 下面的 `suggestions` 还要用它做类型）
+import type { ProjectSummary } from '../api/types'
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { SPA_LINKS } from '../legacy'
 import { useInView } from '../hooks/useInView'
+import { useProjects } from '../query/projects'
 import DemoWindow from '../components/DemoWindow'
 
 // D40:卡片预览图谱懒加载(进入视口才请求 vis-network 分包)
@@ -29,14 +31,21 @@ export default function Home() {
 
   const { data: me } = useMe()
 
-  const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: async () => {
-      const r = await apiGet<ProjectListData>('/api/projects/', 'spread')
-      return r.ok ? r.data.projects || [] : []
-    },
-    staleTime: 60_000,
-  })
+  // ★★★ `B173`：改用 `useProjects()` —— ★★ 口径**只有一处**（URL 拼接 + `unwrap` 都在数据层）✅
+  //
+  //   ⚠★ 改之前这里是**自己拼 URL、自己吞错**：
+  //       `return r.ok ? r.data.projects || [] : []`
+  //     ⇒ ★★ 后端 500 / 网络断时，它会**静默变成空数组** ——
+  //       ★ 而首页拿这个数组**只做搜索建议** ⇒ ★★ 后果是"搜索框一条建议也不给"，
+  //       ⚠ 用户以为「搜不到」，★ 而**不知道是接口挂了** ⚠
+  //       （★ 与 `_int_in_range` 注释里骂的"静默做错事"是同一类）
+  //   ★ 现在走 `unwrap()` ⇒ ★ 错误**会抛出去** ⇒ ★ `isError` 真的有值 ✅
+  //     ⇒ ★ 将来首页要提示"搜索暂时不可用"时，★ **有这个信号可用** ✅
+  //
+  // ⚠★★ `staleTime: 60_000` **必须显式带上** —— ★ 它是首页**原有**的节奏：
+  //   ★ `useProjects()` 的默认值是 `0`（`useQuery` 的默认）⇒
+  //   ★★ 不传就会变成"每次挂载都重拉一遍全量列表" ⚠
+  const { data: projects } = useProjects({ staleTime: 60_000 })
 
   const user = me ?? ({ authenticated: false } as Me)
   const name = user.is_staff ? '老大' : user.username || ''

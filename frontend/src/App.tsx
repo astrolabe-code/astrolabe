@@ -6,6 +6,8 @@ import Home from './pages/Home'
 import Workspace from './pages/Workspace'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import AdminInvites from './pages/AdminInvites'
+import InviteLanding from './pages/InviteLanding'
 import { setUnauthorizedHandler } from './api/client'
 import { useAuthStore } from './store/authStore'
 
@@ -62,6 +64,12 @@ export default function App() {
             （★ 注册页在"入口隐藏"时也**必须能直接打开** —— ★ 那是被邀请的人唯一的入口）✅ */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        {/* ★★ `B171`：**管理页** —— ⚠★ 注意：★ 这里的"谁能进"是**页面自己判断**的，
+            ★ 而**真正的拦截在后端**（`web/views/invites.py` 三个端点都带 `@staff_only`）⚠ */}
+        <Route path="/admin" element={<AdminInvites />} />
+        {/* ★★ `B171`：邀请链接落地 —— ★ `/invite/<token>` ⇒ 转发到注册页
+            （★ 让"后端拼的链接形态"与"管理页生成的链接形态"**都能用**）✅ */}
+        <Route path="/invite/:token" element={<InviteLanding />} />
         {/* ⚠ 以下页面属后续批次（需先接对应数据层）：
             /p/:key · /p/:key/graph · /search · /analysis · /node/* · /me
             ★ 暂时一律回首页 —— ❌ 不做"跳旧站"那种降级（本项目没有旧站） */}

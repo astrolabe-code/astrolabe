@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Home, LogOut, Moon, Sun, User } from 'lucide-react'
+import { ArrowLeft, Home, LogOut, Moon, Shield, Sun, User } from 'lucide-react'
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { useTheme } from '../hooks/useTheme'
@@ -125,6 +125,16 @@ export default function TopNav() {
           ☰
         </button>
         <div ref={linksRef} className={`nav-links${open ? ' open' : ''}`}>
+          {/* ★★ `B171`：**管理入口** —— ★★ **只有 `is_staff` 才渲染** ⚠
+              ⚠★ 但请记住：★ 这里的判断**只决定"显不显示按钮"** ——
+                ★ **真正的权限在后端**（`web/views/invites.py` 的 `@staff_only`）⚠
+                ★★ 「把按钮藏起来」**不等于**安全：★ 有人手输 `/app/admin` 一样会被后端挡住 ✅ */}
+          {me.is_staff && (
+            <Link className="nav-btn ghost-btn" to="/admin">
+              <Shield size={15} />
+              管理
+            </Link>
+          )}
           {me.authenticated ? (
             <button className="nav-btn ghost-btn logout" onClick={handleLogout} data-nav-logout>
               <LogOut size={15} />

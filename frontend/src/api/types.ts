@@ -457,3 +457,36 @@ export interface AuthTokenData {
   exp: string
   user: AuthUser
 }
+
+/* ---------------------------------------------------------------- 邀请（U4.7） */
+
+/**
+ * ★ 一条邀请（`B171`）—— ★ 字段**逐个对照** `web/views/invites.py::_invite_json()`。
+ *
+ * ⚠★ `token` **是会返回的** —— ★ 这看似"泄露"，★ 实则不然：
+ * ★★ **管理员本来就要把这个凭证发出去**（★ 那正是它的用途）⚠
+ */
+export interface InviteInfo {
+  /** ★ 凭证本体（★ 分享链接就是带着它） */
+  token: string
+  /** ★ 谁发的（★ 连带责任：`U4.7` 规则 3） */
+  invited_by: string
+  /** ★ 已用次数 */
+  used: number
+  /** ★ 最多可用几次（★ 默认 1 = 用一次即失效） */
+  max_uses: number
+  /** ★ 现在还能用吗（★ 未撤销 · 未过期 · 没用完 —— 三者都满足才为 `true`） */
+  usable: boolean
+  expires_at: string | null
+  revoked: boolean
+  note: string
+  created_at: string | null
+  /**
+   * ⚠★ **后端拼的那条链接 —— 别直接用** ⚠
+   *
+   * ★ 它拼的是 `{ASTROLABE_SPA_URL}/invite/{token}`，★ 而**实测该配置是未填的默认值**
+   * （`http://localhost:8080`）⇒ ★★ **那条链接打不开** ⚠
+   * ⇒ ★★★ **请用 `AdminInvites.tsx` 里的 `shareUrl()` 自己拼**（★ 它用当前 origin）✅
+   */
+  url: string
+}

@@ -26,6 +26,7 @@ from django.test import Client
 
 from core import appsettings, invites
 from core.models import Invite
+from web import auth as web_auth
 
 FAILED: list[str] = []
 
@@ -217,6 +218,44 @@ check("★★★ code 与密码错完全一致（★ 不泄露「这个用户名
       r.json()["error"]["code"], "bad_credentials")
 u1.is_active = True
 u1.save(update_fields=["is_active"])
+
+# ===========================================================================
+print()
+print("=" * 80)
+print("⑨ ★★ 管理端：`GET /api/invites/`（★ `B171` 修过一个【必然 500】的 bug）")
+print("=" * 80)
+# ⚠★ 这一段是**补的** —— ★ 上一轮 AI 凭"代码看起来完备"就断言了"后端已就绪"，
+#   ★★ 结果 `GET /api/invites/` 里有个 `body_qs`（**从未定义过**）⇒ **必然 500** ⚠
+#   ★ 教训：★ **"接口已实现" ≠ "接口被验证过"** ⚠
+admin_raw, _ = web_auth.issue_token(admin)
+adm = Client(HTTP_AUTHORIZATION=f"Bearer {admin_raw}")
+
+r = adm.get("/api/invites/")
+check("★★★ 管理员能列邀请（★ 修前必然 500）", r.status_code, 200)
+check("★★ 返回里是 invites 数组", isinstance(r.json().get("data", {}).get("invites"), list), True)
+
+r = adm.post(
+    "/api/invites/",
+    json.dumps({"max_uses": 1, "valid_days": 1, "note": "smoke-b171"}),
+    content_type="application/json",
+)
+check("★★ 能生成邀请", r.status_code, 201)
+new_inv = r.json().get("data", {})
+check("★★ 返回里带 token（★ 管理员本来就要把它发出去）", bool(new_inv.get("token")), True)
+check("★ 与 max_uses 一致", new_inv.get("max_uses"), 1)
+
+# ★★★ 非管理员必须被拒 —— ★ 这条是 `B171` 的**核心安全断言**：
+#   ⚠★ 前端"藏起管理按钮"【不等于】安全，★ **真正的拦截在后端 `@staff_only`** ⚠
+#   ⚠★ 注意两种情形**不是一回事**，别混：
+#     · ★ **已登录但非管理员** ⇒ **403**（★ 后端认出你了，只是不给你这个权限）
+#     · ★ **匿名**（没带 token）⇒ **401**（★ 后端根本不知道你是谁）
+user_raw, _ = web_auth.issue_token(u1)
+check(
+    "★★★ 已登录但非管理员 ⇒ 403（★ 前端藏按钮 ≠ 安全）",
+    Client(HTTP_AUTHORIZATION=f"Bearer {user_raw}").get("/api/invites/").status_code,
+    403,
+)
+check("★ 匿名 ⇒ 401（★ 与 403 不是一回事）", c.get("/api/invites/").status_code, 401)
 
 # ===========================================================================
 # 复位开关（★ 让脚本可重复跑、不影响别的冒烟）

@@ -125,7 +125,15 @@ def collection(request: HttpRequest) -> JsonResponse:
     from core.models import Invite
 
     qs = Invite.objects.order_by("-created_at")[:limit]
-    if body_qs.get("usable") == "1":
+    # ⚠★★ `B171` 修：这里原本写的是 `body_qs` —— ★★ 那个名字**在这份文件里从未定义过** ⚠
+    #   ⇒ 后果：★★ **任何 `GET /api/invites/` 都必然 500**（★ 一个躺了很久的 bug）
+    #   ★ 本意显然是读【查询参数】`?usable=1` ⇒ ★ 改成 `request.GET` ✅
+    #
+    #   ⚠ 为什么它能躺这么久：★ `smoke_auth_api.py` 只测了"注册门禁那几个开关"，
+    #     ★ **从没打过 `GET /api/invites/` 这条列表接口** ⚠
+    #   ⇒ ★★ 教训：★ **"接口已实现"≠"接口被验证过"** —— ★ 本条的登记里我（AI）
+    #      **凭"代码看起来完备"就断言了"后端完全就绪"**，⚠ 那是不该的 ⚠
+    if request.GET.get("usable") == "1":
         qs = [i for i in qs if i.is_usable()]
     return ok({"invites": [_invite_json(i) for i in qs]})
 

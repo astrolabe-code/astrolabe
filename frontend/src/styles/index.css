@@ -1,0 +1,11 @@
+/* 样式入口:先加载站点 token 与语义类,再挂 Tailwind(D20)
+   Tailwind 只负责布局工具类,外观一律由下面的语义类决定 */
+@import "./tokens.css";
+@import "./components.css";
+@import "./skyfx.css";
+@import "./home.css";
+@import "./login.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

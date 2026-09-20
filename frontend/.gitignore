@@ -1,0 +1,23 @@
+# ★ 前端专属忽略清单（B163）
+# ⚠ 根目录的 .gitignore 覆盖了整个仓库，但它只写了 `dist/`，
+#   ★★ 【没有】`node_modules` ⇒ 必须在本地补一份，否则会误入库。
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.sln

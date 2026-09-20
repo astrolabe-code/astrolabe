@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 迁移期 SPA 固定挂 /app/(D26):用 base 让相对资源在任意子路由下都解析正确 -->
+    <base href="/app/" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小铃铛 · 首页</title>
+    <!-- 主题防闪变:CSS 解析前同步设置 data-theme(与旧站同 key/同元素,外置脚本以满足 CSP script-src 'self')
+         用相对路径,避免 Vite 在 dev 下把 base 再拼一次(/app/app/...) -->
+    <script src="theme-init.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

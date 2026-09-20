@@ -1,0 +1,146 @@
+/* ============================================================
+   小铃铛 · 设计 token(D18/D20)
+   与旧站 assets/static/css/base.css 同名同值(浅色默认 + 夜穹深色变体)
+   —— 视觉 1:1,但去掉了旧文件里的历史 hack 与重复规则
+   ============================================================ */
+:root {
+  /* 色彩 */
+  --bg: #eef3f9;
+  --bg-deep: #e6edf6;
+  --card: #ffffff;
+  --card-border: rgba(30, 64, 105, 0.10);
+  --card-border-hover: rgba(8, 145, 178, 0.50);
+  --text-main: #101d33;
+  --text-sub: #57687f;
+  --text-faint: #93a2b8;
+  --accent: #0891b2;
+  --accent-strong: #0e7490;
+  --accent-dim: rgba(8, 145, 178, 0.10);
+  --ok: #059669;
+  --warn: #d97706;
+  --err: #dc2626;
+  /* 天空/组件(浅色) */
+  --sky-top: #a3c4d8;
+  --sky-mid: #d5e5ed;
+  --sky-low: #ffffff;
+  --nav-bg-a: rgba(163, 196, 216, 0.85);
+  --nav-bg-b: rgba(188, 213, 227, 0.80);
+  --nav-border: rgba(255, 255, 255, 0.35);
+  --nav-btn-bg: rgba(255, 255, 255, 0.55);
+  --nav-btn-bg-hover: rgba(255, 255, 255, 0.8);
+  --input-bg: #ffffff;
+  --th-bg: rgba(238, 243, 249, 0.7);
+  --tr-hover: rgba(8, 145, 178, 0.045);
+  --scroll-track: rgba(238, 243, 249, 0.6);
+  --scroll-thumb: rgba(148, 163, 184, 0.4);
+  --scroll-thumb-hover: rgba(148, 163, 184, 0.6);
+  --dlg-bg: #ffffff;
+  --mask-bg: rgba(13, 25, 45, 0.45);
+  --shadow-card: 0 1px 3px rgba(15, 30, 60, 0.05);
+  --shadow-card-hover: 0 12px 28px rgba(15, 30, 60, 0.10);
+  --shadow-btn-accent: 0 0 16px rgba(8, 145, 178, 0.35);
+  --shadow-dlg: 0 18px 50px rgba(15, 30, 60, 0.30);
+  /* 黎明特效层(浅色) */
+  --fx-beam: radial-gradient(ellipse 52% 90% at 50% 0%,
+      rgba(255, 246, 226, 0.72), rgba(255, 236, 205, 0.36) 30%,
+      rgba(255, 226, 190, 0.13) 52%, rgba(255, 220, 180, 0.05) 70%, transparent 84%);
+  --fx-vignette: inset 0 150px 120px -60px rgba(62, 84, 118, 0.18);
+  --fx-star-glow: rgba(255, 255, 255, 0.75);
+  --fx-star-glow-big: rgba(255, 255, 255, 0.95);
+  --fx-star-glow-dim: rgba(255, 255, 255, 0.45);
+  --fx-mstar: 0 0 6px 2px rgba(255, 255, 255, 0.95), 0 0 20px 7px rgba(226, 240, 255, 0.40);
+  --fx-dust: rgba(255, 255, 255, 0.95);
+  /* 代码窗口(浅色) */
+  --code-bg: #f6f8fa;
+  --code-bar: #edf2f7;
+  --code-border: rgba(30, 64, 105, 0.15);
+  --code-text: #24292f;
+  --code-dim: #6a737d;
+  --code-key: #0550ae;
+  --code-str: #0a7a3f;
+  --code-fn: #953800;
+  --code-com: #6a737d;
+  --code-num: #cf222e;
+  --code-dec: #8250df;
+  /* 尺寸 */
+  --radius: 14px;
+  --radius-sm: 9px;
+  /* 字体 */
+  --font-ui: "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+}
+
+/* ============================================================
+   深色模式(夜穹):data-theme="dark"
+   ============================================================ */
+[data-theme="dark"] {
+  --bg: #16213e;
+  --bg-deep: #101b2e;
+  --card: #252536;
+  --card-border: rgba(148, 163, 184, 0.18);
+  --card-border-hover: rgba(77, 184, 214, 0.55);
+  --text-main: #d4d4d4;
+  --text-sub: #8b8b9e;
+  --text-faint: #6b6b80;
+  --accent: #4db8d6;
+  --accent-strong: #6dc8e0;
+  --accent-dim: rgba(77, 184, 214, 0.14);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --code-bg: #1e1e2e;
+  --code-bar: #252536;
+  --code-border: rgba(148, 163, 184, 0.15);
+  --code-text: #d7e2f2;
+  --code-dim: #7a8aa5;
+  --code-key: #7dd3fc;
+  --code-str: #86efac;
+  --code-fn: #fcd34d;
+  --code-com: #55607a;
+  --code-num: #fca5a5;
+  --code-dec: #c084fc;
+  --sky-top: #0f3460;
+  --sky-mid: #16213e;
+  --sky-low: #1a1a2e;
+  --nav-bg-a: rgba(15, 52, 96, 0.85);
+  --nav-bg-b: rgba(22, 33, 62, 0.80);
+  --nav-border: rgba(148, 163, 184, 0.15);
+  --nav-btn-bg: rgba(37, 37, 54, 0.6);
+  --nav-btn-bg-hover: rgba(37, 37, 54, 0.9);
+  --input-bg: #1e1e2e;
+  --th-bg: rgba(30, 41, 59, 0.7);
+  --tr-hover: rgba(77, 184, 214, 0.08);
+  --scroll-track: rgba(30, 41, 59, 0.6);
+  --scroll-thumb: rgba(100, 116, 139, 0.5);
+  --scroll-thumb-hover: rgba(100, 116, 139, 0.7);
+  --dlg-bg: #252536;
+  --mask-bg: rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 2px 16px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 12px 28px rgba(0, 0, 0, 0.45);
+  --shadow-btn-accent: 0 0 16px rgba(77, 184, 214, 0.35);
+  --shadow-dlg: 0 18px 50px rgba(0, 0, 0, 0.55);
+  --fx-beam: radial-gradient(ellipse 52% 90% at 50% 0%,
+      rgba(120, 180, 220, 0.30), rgba(90, 150, 200, 0.16) 30%,
+      rgba(70, 130, 190, 0.08) 52%, rgba(60, 120, 180, 0.04) 70%, transparent 84%);
+  --fx-vignette: inset 0 150px 120px -60px rgba(0, 0, 0, 0.55);
+  --fx-star-glow: rgba(255, 255, 255, 0.85);
+  --fx-star-glow-big: rgba(255, 255, 255, 1);
+  --fx-star-glow-dim: rgba(255, 255, 255, 0.6);
+  --fx-mstar: 0 0 8px 3px rgba(255, 255, 255, 1), 0 0 24px 9px rgba(160, 210, 255, 0.55);
+  --fx-dust: rgba(200, 225, 255, 0.9);
+}
+
+/* 深色模式:实心主按钮用暗一档天青(亮 accent 留给文字/高亮) */
+[data-theme="dark"] .btn.primary {
+  background: #23768f;
+  color: #eaf6fb;
+}
+[data-theme="dark"] .btn.primary:hover {
+  background: #2a87a4;
+  box-shadow: 0 0 14px rgba(77, 184, 214, 0.30);
+}
+
+/* 主题切换平滑过渡(颜色相关) */
+body, .topnav, .card, .btn, .input, .dlg, table.data th, table.data td {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}

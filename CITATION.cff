@@ -1,0 +1,25 @@
+# 引用本项目的标准格式（GitHub 会据此显示 "Cite this repository" 按钮）
+cff-version: 1.2.0
+message: "如果你在研究、文档或产品中使用了本项目，请按以下格式引用。"
+title: "Astrolabe · 星盘 —— 读懂代码的坐标系"
+abstract: >
+  面向代码阅读与理解的知识沉淀平台。以「不可变代码快照 + 永久锚点」为基础，
+  让解释、阅读路径与讨论能够钉在具体代码行上并被长期复用。
+type: software
+authors:
+  - family-names: 马洪阳
+    alias: mahvm
+    email: astrolabe-code@foxmail.com
+    website: "https://github.com/mahvm"
+repository-code: "https://github.com/astrolabe-code/astrolabe"
+url: "https://github.com/astrolabe-code/astrolabe"
+# ★ 本项目未采用标准 SPDX 许可 ⇒ 用 URL 指向 LICENSE（❌ 不用 license: 字段）
+license-url: "https://github.com/astrolabe-code/astrolabe/blob/main/LICENSE"
+keywords:
+  - code-comprehension
+  - code-explanation
+  - code-graph
+  - code-navigation
+  - knowledge-sharing
+version: 0.2.0
+date-released: 2026-09-19

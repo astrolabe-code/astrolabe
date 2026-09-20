@@ -46,22 +46,45 @@ services:
       retries: 10
 
   # ============================ 队列 / 缓存 ============================
+  #
+  # ★★★ 用 **Valkey**，❌ 不用 `redis:7-alpine`（`B159`）
+  #
+  # ⚠★ 为什么换：★ Redis 自 **7.4 起改成 RSALv2 / SSPLv1 双许可**（★ 不再是开源）
+  #   ⇒ 实测本机原先跑的就是 **`Redis server v=7.4.11`**（⚠ 正是那个版本）。
+  #
+  # ★★ SSPL 的触发条件是「**把该软件作为服务提供给第三方**」—— ★ 本平台**只是内部自用**
+  #   （★ Redis 只给 Web 层与 Worker 用，❌ 不对外提供服务）⇒ ★ **实际并不触发**。
+  #   ⚠★ 但**能从源头避免就避免** —— ★ 省得将来还要解释一遍。
+  #
+  # ★★★ Valkey = **Redis 7.2 的 BSD-3-Clause 分支**（★ 由 **Linux Foundation** 托管，
+  #   ★ 由原 Redis 核心维护者主导）⇒ ★ **协议完全兼容、命令行工具一一对应**。
+  #
+  # ⚠★★ 两条**刻意保持不变**的东西（★ 改了会出问题）：
+  #
+  # | 保持 | 为什么 |
+  # |---|---|
+  # | ★★ **服务名仍叫 `redis`** | ⚠ 因为 `REDIS_URL=redis://redis:6379/0` **拿服务名当主机名** —— ★ 改名会**直接断开连接** |
+  # | ★ Python 客户端仍是 `redis==5.2.1` | ★ 它是 **MIT**，★ 且 **Valkey 协议兼容** ⇒ ❌ 无需更换 |
+  #
+  # ⚠★ 另一处**刻意**的改动：★ 镜像 tag **钉到 minor 版本**（`8.0-alpine`，❌ 不是 `8-alpine`）——
+  #   ★ 因为**这次问题的根因就是「tag 没钉住」**：`redis:7-alpine` 会滚到最新的 7.x，
+  #   ★★ 于是**在无人察觉的情况下**从 BSD 滚到了 SSPL ⚠
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8.0-alpine
     restart: unless-stopped
     command: >
-      redis-server
+      valkey-server
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --appendonly yes
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
-    # ★ 不暴露端口 —— Redis 不需要外部访问
+    # ★ 不暴露端口 —— 队列/缓存不需要外部访问
 
   # ============================ ① Web 层 ============================
   #

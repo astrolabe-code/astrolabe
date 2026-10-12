@@ -101,7 +101,8 @@ from graph.models import ORIGIN_MANUAL, Edge, Node
 #: ⚠ `node_id` / `project_ref` / `origin` / 时间戳**不在其中**（★ 它们不是"内容"）
 _NODE_FIELDS: tuple[str, ...] = (
     "kind", "name", "qname", "file_path", "line", "line_end",
-    "lang", "signature", "doc", "extra",
+    # ⚠★ `B176`：此表曾含 `"doc"` —— ★ 随节点字段一并移除（★ 修补不允许写入注释内容）✅
+    "lang", "signature", "extra",
 )
 
 #: ★ 允许修补的边字段
@@ -359,7 +360,7 @@ def _do_add_node(project_ref: str, c: dict) -> CurateResult:
         line_end=int(c["line_end"]) if c.get("line_end") else None,
         lang=(c.get("lang") or "")[:32],
         signature=(c.get("signature") or "")[:512],
-        doc=c.get("doc") or "",
+        # ⚠★ `B176`：此处曾写 `doc=c.get("doc") or ""` —— ★ 已随节点字段移除 ✅
         extra=c.get("extra") or {},
         origin=ORIGIN_MANUAL,      # ★ 规则 2
     )

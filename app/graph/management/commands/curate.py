@@ -138,7 +138,8 @@ class Command(BaseCommand):
         parser.add_argument("--line-end", type=int, default=0, dest="line_end")
         parser.add_argument("--lang", default="")
         parser.add_argument("--signature", default="")
-        parser.add_argument("--doc", default="")
+        # ⚠★ `B176`：此表曾含 `--doc` —— ★ 若不删，传了会被**静默忽略**
+        #   （★ 而这个项目一路禁止"静默做错事"）⇒ ★ 一并移除，★ 传了会直接报"未知参数"✅
         parser.add_argument("--qname", default="")
         parser.add_argument("--vid", type=int, default=0)
 
@@ -233,7 +234,7 @@ class Command(BaseCommand):
             line_end=opts["line_end"] or None,
             lang=opts["lang"],
             signature=opts["signature"],
-            doc=opts["doc"],
+            # ⚠★ `B176`：此处曾写 `doc=opts["doc"]` —— ★ 已随节点字段移除 ✅
         )
 
     def _summary(self, project_ref: str) -> None:

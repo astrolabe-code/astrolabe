@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from codeparser.scanner import scan_and_parse
 from graph.writer import GraphImmutable, write_graph
@@ -90,6 +91,11 @@ def run_parse_job(job: Job) -> None:
     outcome = _license_gate(job, project, root)
     if outcome != "pass":
         _finish(job, payload, outcome=outcome, extra={"license": outcome})
+        # ★★★ `B176` ②：许可没过 ⇒ **不会解析** ⇒ ★ 源码**立刻删** ——
+        #   ⚠★ 这里刚拉下来的源码已经**没有任何用途**，★ 而继续留着就是"持有他人代码"。
+        #   ★（★ 待审核 `awaiting_review` 也一样：★ 放行时重投的作业会**自己重新拉**
+        #      —— 见 `web/views/review.py`：「B153 之后不再要求 source_path」）
+        _drop_source(project, payload, root)
         return
 
     # ---------------------------------------------------------- ② 扫描 + 解析
@@ -128,6 +134,8 @@ def run_parse_job(job: Job) -> None:
         # ⚠ 走到这里说明**前两道都没拦住**（例如图是被并发写进去的）——
         #   ★ 不当作系统故障：★ 图已经是定版状态，**这正是我们要的结果**。
         _finish(job, payload, outcome=OUTCOME_ALREADY_BUILT, extra={"note": str(exc)[:200]})
+        # ★★ `B176` ②：图已定版 ⇒ 刚拉下来的那份源码**毫无用处** ⇒ ★ 立刻删
+        _drop_source(project, payload, root)
         return
 
     log.info(
@@ -157,6 +165,14 @@ def run_parse_job(job: Job) -> None:
         },
     )
 
+    # ================================================ ⑤ ★★★ 源码「用完即删」
+    #   ★★ **所有者原话**：「只拉下来解析，**解析之后就删掉**」
+    #   ★ 此刻：★ 图已经落库、★ 回执已经写好 ⇒ ★ **这一份源码再无任何用途** ⚠
+    #   ⇒ ★ **立刻删掉** —— ★ 这是「不留源码」的**主路径** ✅
+    #   ⚠ 异常残留（作业被杀 / 进程重启）由 `storage.purge_stale_sources()`
+    #     兜底，★ 它挂在 `heat_flush --loop` 的维护循环里（每轮顺手清一次）。
+    _drop_source(project, payload, root)
+
 
 #: ★ 作业的三种归宿（★ 写进 `payload.outcome`）
 #:   ⚠★ 刻意**不用 `failed` 表达"许可没过"** ——
@@ -179,6 +195,48 @@ def _project_for(payload: dict, project_ref: str):
         if got is not None:
             return got
     return Project.objects.filter(project_ref=project_ref).first()
+
+
+def _drop_source(project, payload: dict, root: str) -> None:
+    """★★ `B176` ②：本项目这一轮用完了 ⇒ ★ **立刻删掉存储空间里的源码**。
+
+    ★★ **所有者原话**：「只拉下来解析，**解析之后就删掉**」、
+      「**节点里只保存函数签名以及他所在的文件**，解析成功之后，**立刻删除**」。
+
+    ⚠★ **只删我们自己管理的那一份**（= `storage.release()`）——
+      ★ 若 `root` 来自 `payload["path"]`（★ staff 内部调试传的**容器里的目录**），
+        ★★ 那是**别人的目录** ⇒ ★ **绝不能删** ⚠
+      （★ 这是 `_safe_source_path` 那条纪律的延伸：**我们只碰自己接管的路径**）
+
+    ★ 顺手把记账行也一起删 —— 因为 `release()` 本来就是「删目录 + 删记账」两件事，
+      ⚠ 只删目录会留下"记账虚高"，★ 而 `storage.audit()` 自己就把那种状态判为**缺陷**。
+    """
+    if project is None or not root:
+        return
+
+    # ⚠★ 调试路径（payload 里显式给了 path）⇒ 不是我们的目录 ⇒ 不碰
+    if (payload.get("path") or "").strip():
+        return
+
+    from core import storage
+
+    try:
+        managed = storage.project_dir(project.project_ref)
+    except ValueError:
+        return
+
+    try:
+        if os.path.realpath(root) != os.path.realpath(managed):
+            return
+    except OSError:
+        return
+
+    freed = storage.release(project.project_ref)
+    log.info(
+        "源码已删除 project_ref=%s 释放=%d 字节（★ B176②：不留源码）",
+        project.project_ref,
+        freed,
+    )
 
 
 def _fetch_source(job: Job, payload: dict, project) -> str:

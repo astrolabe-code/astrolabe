@@ -282,9 +282,15 @@ job.refresh_from_db()
 check("★★ 作业归宿 = parsed", job.payload.get("outcome"), "parsed")
 check("★★★ 图真的出来了（源码是作业自己拉的）",
       Node.objects.filter(project_ref=pub.project_ref).count() > 0, True)
-check("★ 源码落在存储空间里",
-      os.path.isfile(os.path.join(storage.project_dir(pub.project_ref), "main.py")), True)
-check("★★ 且已记账", storage.project_usage(pub.project_ref)[1] >= 2, True)
+# ★★★ `B176` ②（2026-10-12）：这一条从「断言还在」**反转**为「断言没了」——
+#   ★★ 所有者原话：「只拉下来解析，**解析之后就删掉**」
+#   ⇒ ★ 上面 `execute(job)` 是**成功**归宿 ⇒ ★ 源码**此刻必须已经不在了** ⚠
+check("★★★ 源码【已被删除】（B176②：解析成功即删）",
+      os.path.isdir(storage.project_dir(pub.project_ref)), False)
+check("★★ 且记账已释放（★ 与 `audit()` 同一口径：没目录就不该留着记账）",
+      storage.project_usage(pub.project_ref), (0, 0))
+check("★★★ 但【图留下了】（★ 删的只是源码，不是成果）",
+      Node.objects.filter(project_ref=pub.project_ref).count() > 0, True)
 
 # ===========================================================================
 print()

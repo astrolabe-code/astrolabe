@@ -282,7 +282,9 @@ class TreeSitterParser(Parser):
                     line_end=node.end_point[0] + 1,
                     lang=self.lang,
                     signature=signature,
-                    doc=self._leading_comment(node, src),
+                    # ⚠★★ `B176`：此处曾传 `doc=self._leading_comment(node, src)` ——
+                    #   ★ 那是【逐字的注释正文】，★ 是节点里唯一属于"源码内容"的东西 ⚠
+                    #   ⇒ ★ 已删除（连同下面那个 `_leading_comment` 方法）✅
                     extra={"ts_type": node.type},
                 )
                 result.nodes.append(parsed)
@@ -331,16 +333,8 @@ class TreeSitterParser(Parser):
 
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _leading_comment(node: Node, src: bytes) -> str:
-        """尽量取紧邻的上一行注释作为 `doc`（⚠ 尽力而为，取不到就空）。"""
-        prev = node.prev_sibling
-        if prev is None:
-            return ""
-        if prev.type in ("comment", "line_comment", "block_comment"):
-            text = _text(prev, src)
-            # 去掉注释符号，只留正文
-            for prefix in ("///", "//!", "//", "#", "/*", "*", "*/"):
-                text = text.replace(prefix, "")
-            return text.strip()[:1000]
-        return ""
+    # ⚠★★ `B176`（2026-10-12）：**本处曾有一个 `_leading_comment()` 静态方法** ——
+    #   ★ 它的唯一用途是给 `ParsedNode.doc` 取「紧邻的上一行注释正文」。
+    #   ★★ 所有者裁定「节点里只保存函数签名 + 它所在的文件」⇒ ★ 注释属于**逐字的源码内容** ⚠
+    #   ⇒ ★ **连同 `doc` 一起删除**：解析产物里不再有任何逐字代码 ✅
+    #   ★ 依据：`docs/backend-decisions.md` `B176`

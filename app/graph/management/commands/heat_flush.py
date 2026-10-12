@@ -15,6 +15,12 @@
   · ★ 常驻 + `restart: unless-stopped` ⇒ 崩了自动拉起，**不需要额外的调度器**
   · ★ 独立于 `worker` ⇒ worker 卡在一个长解析上时，**热度仍能正常落库**
 
+★★★ `B176` ②：**这个维护循环还兼做第二件事** —— ★ **清理滞留超过 1 小时的源码**
+  （★ `core/storage.py::purge_stale_sources`）。
+  ⚠★ 为什么必须有个兜底：★「解析成功就删」只覆盖**正常路径** ——
+    ★ 作业被杀、解析崩溃、容器重启都会留下**没人认领的目录** ⚠
+    ⇒ ★ 没有它 ⇒ ★★ 源码会**永久留在磁盘上**（★ 而那正是 `B176` 要消除的东西）。
+
 用法：
     python manage.py heat_flush                       # ★ 合并全部项目，跑完退出
     python manage.py heat_flush --loop --interval 900 # ★ 常驻：每 15 分钟合并一次
@@ -30,6 +36,7 @@ import time
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from core import storage
 from graph import cache, heat
 
 
@@ -94,6 +101,34 @@ class Command(BaseCommand):
                     self.stdout.write(f"[{stamp}] 无待合并增量")
             except Exception as exc:  # noqa: BLE001 —— ★ 一轮失败不能终止整个调度
                 self.stderr.write(self.style.ERROR(f"热度合并失败（将在下一轮重试）：{exc}"))
+
+            # ---------------------------------------------------------------
+            # ★★★ `B176` ②：第二件维护活 —— ★ 清掉滞留过久的源码
+            #
+            # ⚠★ 为什么和热度合并放在同一个循环里：★ 它们的性质完全相同 ——
+            #   ★ 都是"周期性的、可重入的、失败不影响业务"的维护动作 ⚠
+            #   ★★ 而且 `heat` 容器本来就是**维护调度**（见本文件顶部）⇒
+            #      ★ 挂在这里**不需要新增第 7 个容器**（★ 那会让部署更复杂）✅
+            #
+            # ⚠ 单独 try：★ 清理失败**不能连累**热度合并（★ 反过来也一样）
+            try:
+                purged = storage.purge_stale_sources()
+                if purged:
+                    total = sum(p["bytes"] for p in purged)
+                    stamp2 = timezone.localtime().strftime("%Y-%m-%d %H:%M:%S")
+                    self.stdout.write(
+                        f"[{stamp2}] ★ 清理残留源码 {len(purged)} 份 · 释放 {total} 字节"
+                        f"（B176②：超时未删的兜底）"
+                    )
+                    for p in purged[:10]:
+                        self.stdout.write(
+                            f"     - {p['project_ref']}（滞留 {p['age_minutes']} 分钟）"
+                        )
+            except Exception as exc:  # noqa: BLE001 —— ★ 清理失败不该终止调度
+                self.stderr.write(
+                    self.style.ERROR(f"残留源码清理失败（将在下一轮重试）：{exc}")
+                )
+
             time.sleep(interval)
 
     def _status(self, projects, metrics):

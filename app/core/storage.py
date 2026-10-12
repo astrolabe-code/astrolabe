@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -451,6 +452,64 @@ def release(project_ref: str) -> int:
         pass
     ProjectStorage.objects.filter(project_ref=project_ref).delete()
     return freed
+
+
+#: ★★ `B176` ②：源码在存储空间里的**最长滞留时间**（分钟）——
+#:   ⚠★ 正常路径下源码在**解析成功那一刻**就被删了（见 `jobs/tasks.py::_drop_source`）；
+#:   ★ 这个上限只管**异常残留**（★ 作业被杀 / 解析崩溃 / 容器重启）。
+SOURCE_TTL_MINUTES = 60
+
+
+def purge_stale_sources(*, minutes: int = SOURCE_TTL_MINUTES) -> list[dict]:
+    """★★ **兜底清理**：把存储空间里滞留超过 `minutes` 的项目目录删掉（`B176` ②）。
+
+    ★★ **所有者原话**：「解析之后就删掉」＋「**存在超过 1 小时，也离开删除**」。
+
+    ⚠★ **为什么必须有它**：★「解析成功就删」只覆盖**正常路径** ——
+      ★ 而作业被杀、解析崩溃、容器重启都会留下**没人认领的目录** ⚠
+      ⇒ ★ 没有兜底 ⇒ ★★ 源码会**永久留在磁盘上**（★ 而那正是本条要消除的东西）。
+
+    ★ 判据用**目录 mtime**（★ 拉取完成后就不再变动）——
+      ⚠ 不用 `ProjectStorage.measured_at`：★ 残留目录可能**根本没有记账行**
+        （★ 记账是在采集成功之后才写的）。
+
+    ★ 只认**形态合法**的目录名（★ 与 `project_dir()` 同一套校验）——
+      ⚠ 别人手工丢进来的东西**不动它**（★ 我们不删自己不认识的东西）；
+      ⚠ **软链接也跳过**（★ `rmtree` 对软链接行为不可预期，干脆不碰）⚠
+    """
+    base = root()
+    if not os.path.isdir(base):
+        return []
+
+    cutoff = time.time() - max(int(minutes), 1) * 60
+    out: list[dict] = []
+
+    for entry in os.scandir(base):
+        try:
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+        except OSError:
+            continue
+
+        # ⚠★ 不是我们的目录（名字形态不对）⇒ 不碰
+        if not is_valid_project_ref(entry.name):
+            continue
+
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+
+        if mtime >= cutoff:
+            continue          # ★ 还在宽限期内
+
+        age_minutes = int((time.time() - mtime) / 60)
+        freed = release(entry.name)
+        out.append(
+            {"project_ref": entry.name, "bytes": freed, "age_minutes": age_minutes}
+        )
+
+    return out
 
 
 def measure(project_ref: str) -> tuple[int, int]:

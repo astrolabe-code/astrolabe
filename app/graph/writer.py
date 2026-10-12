@@ -179,7 +179,7 @@ def write_graph(
                 line_end=pn.line_end,
                 lang=pn.lang,
                 signature=(pn.signature or "")[:512],
-                doc=pn.doc or "",
+                # ⚠★ `B176`：此处曾写 `doc=pn.doc or ""` —— ★ 随 `ParsedNode.doc` 一并删除 ✅
                 origin="parsed",
                 extra=pn.extra or {},
             )

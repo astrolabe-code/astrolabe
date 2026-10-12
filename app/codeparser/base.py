@@ -56,7 +56,11 @@ class ParsedNode:
     line_end: int | None = None
     qname: str = ""         # 限定名（C++/Java 的 ns::Class::method）
     signature: str = ""     # ★ 签名原文（人能读、便于 AI 理解；重载靠它区分）
-    doc: str = ""           # 注释 / 文档串
+    # ⚠★★ `B176`（2026-10-12）：**本处曾有一个 `doc: str = ""`（注释 / 文档串）** ——
+    #   ★★ 所有者裁定：**节点里只保存「函数签名 + 它所在的文件」**，
+    #      ★ 而 `doc` 是【唯一逐字的代码内容】（★ 前导注释可能整段被抄下来）⚠
+    #   ⇒ ★ **删掉它** ⇒ 于是解析产物里**不再含任何逐字代码** ✅
+    #   ★ 依据：`docs/backend-decisions.md` `B176`（★ 「不留源码」那条的连带一项）
 
     # ★ 扩展位（GRAPH-SCHEMA.md S1 / S10：语言特有信息）
     extra: dict = field(default_factory=dict)

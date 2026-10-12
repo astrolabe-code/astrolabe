@@ -56,7 +56,12 @@ class Node(ProjectRefMixin, UidMixin, TimeStampedModel):
 
     lang = models.CharField(max_length=32)
     signature = models.CharField(max_length=512, blank=True, default="")
-    doc = models.TextField(blank=True, default="")
+    # ⚠★★ `B176`（2026-10-12）：**本处曾有一个 `doc = TextField()`（注释 / 文档串）** ——
+    #   ★★ 它是节点里**唯一逐字的代码内容**（★ 前导注释可能整段被抄下来）⚠
+    #   ★ 所有者裁定：「**节点里只保存函数签名以及他所在的文件**，
+    #      ★ 解析成功之后立刻删除（源码）」⇒ ★ **删掉这个字段** ✅
+    #   ★ 于是节点只剩：【文件名 + 行号 + 签名 + 元数据】—— ★ **不含任何逐字代码** ✅
+    #   ★ 依据：`docs/backend-decisions.md` `B176`
 
     # ★ 解析产物 or 维护者手工修补（GRAPH-STORAGE.md G1）
     origin = models.CharField(max_length=16, default=ORIGIN_PARSED)

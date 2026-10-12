@@ -235,9 +235,10 @@ def _auto_fields(lv: licensing.LicenseVerdict) -> dict:
 
 
 def _create_review(project: Project, user, lv: licensing.LicenseVerdict) -> ProjectReview:
-    """★ 建一条流水（★ **三种结论都必须建** —— 见模块文档）。"""
-    from django.utils import timezone
+    """★ 建一条流水（★ **三种结论都必须建** —— 见模块文档）。
 
+    ⚠★ 本函数**不需要** `timezone` —— 时间戳由 `_auto_fields()` 写（★ 见下）。
+    """
     common = {
         "project": project,
         "project_ref": project.project_ref,
@@ -249,10 +250,12 @@ def _create_review(project: Project, user, lv: licensing.LicenseVerdict) -> Proj
     }
 
     if lv.decision == DECISION_ALLOW:
-        # ★ 自动放行（⚠ 仍建流水：限额依据 + 审计）
-        return ProjectReview.objects.create(
-            **common, **_auto_fields(lv), decided_at=timezone.now()
-        )
+        # ★ 自动放行（⚠ 仍建流水：审计）
+        # ⚠★★ 这里【不要再传 `decided_at`】—— `_auto_fields()` 已经带了它 ⚠
+        #   ★★ 曾经重复传 ⇒ `TypeError: got multiple values for keyword argument 'decided_at'`
+        #      ⇒ ★ 后果：★ **任何"自动放行"的提交（即宽松许可）都会 500** ⚠
+        #   ⚠ 而这条分支长期没被跑到（★ 假仓库总落在"待核验"）⇒ ★ 一直没暴露 ⚠
+        return ProjectReview.objects.create(**common, **_auto_fields(lv))
 
     if lv.decision == DECISION_REJECT:
         return ProjectReview.objects.create(**common, **_auto_fields(lv))

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { GitBranch } from 'lucide-react'
+import { repoFullOf } from '../lib/repoFullOf'
+import { resolveRef } from '../lib/resolveRef'
 import { useCreateProject } from '../query/projects'
 import { errorMessage } from '../api/errors'
 import Modal from './ui/Modal'
@@ -43,6 +45,8 @@ export default function ProjectCreateModal({ open, onClose, onCreated }: Project
   const [desc, setDesc] = useState('')
   const [isPublic, setIsPublic] = useState(false)
   const [error, setError] = useState('')
+  /** ★★ `B182`：正在浏览器里解析 sha（★ 给用户一个「在查」的反馈）*/
+  const [resolving, setResolving] = useState(false)
   const create = useCreateProject()
 
   // ★ 每次关闭后重置表单，避免上次残留
@@ -67,12 +71,39 @@ export default function ProjectCreateModal({ open, onClose, onCreated }: Project
       return
     }
     setError('')
+    // ---- ⓵ ★★ `B182`：**先在浏览器里把分支解析成 sha** ⚠
+    //   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+    //     只有拉源码，才是我服务器做的吧？**」
+    //   · ★ 未认证 GitHub API 每 IP 每小时 60 次，★ 解析要 2 次
+    //     ⇒ ★★ 服务端做 ⇒ 每小时约 30 次创建就撞限，★ 所有用户一起被挡 ⚠
+    //   · ★★ 前端做 ⇒ 每个用户花自己的配额 ✅
+    //   ⚠★ **失败不阻断** —— ★ 那时不传 sha，★ 服务端自己解析（兜底）✅
+    let sha = ''
+    setResolving(true)
+    try {
+      const v = await resolveRef(provider, repoFullOf(repoUrl.trim()), commit.trim())
+      if (v.ok) {
+        sha = v.sha
+      } else {
+        // ⚠★ 私有 / 不存在 / 分支错 / 限流 ⇒ ★ **现在就告诉用户** ✅
+        //   ★★ 不要等提交上去才报（★ 那已经建出项目了，★ 回头还得删）⚠
+        setResolving(false)
+        setError(v.message)
+        return
+      }
+    } catch {
+      // ⚠ 网络炸了也照样提交 —— ★ 服务端会自己解析 ⚠
+    }
+    setResolving(false)
+
     const r = await create
       .mutateAsync({
         name: name.trim(),
         repo_url: repoUrl.trim(),
         provider,
         commit: commit.trim() || undefined,
+        // ⚠★ `B182`：把浏览器算好的 sha 带上 ⇒ ★ 服务端一次 API 都不发 ✅
+        sha: sha || undefined,
         desc,
         is_public: isPublic,
       })

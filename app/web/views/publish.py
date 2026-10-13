@@ -95,6 +95,14 @@ def start(request: HttpRequest) -> JsonResponse:
         name=str(body.get("name") or ""),
         desc=str(body.get("desc") or ""),
         source_path=source_path,
+        # ⚠★★ `B182`：**前端已经算好的 commit sha** ⚠
+        #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+        #     只有拉源码，才是我服务器做的吧？**」
+        #   · ★ 有它 ⇒ ★★ 服务端【一次 GitHub API 都不发】✅
+        #     （★ 未认证配额是每 IP 每小时 60 次，★ 由服务端扛 ⇒ 所有人一起被挡）⚠
+        #   · ★ 没有 ⇒ ★ 服务端自己解析（★ 兜底，★ 老客户端 / 前端失败时不坏）✅
+        #   ⚠★ 形态校验在 `core/publish.py::dispatch_parse` 里做（★ 不像就当没给）⚠
+        sha=str(body.get("sha") or ""),
     )
     if not pub.ok:
         # ★★ 失败一律**如实返回原因**（★ `U3.9`：说清为什么 + 该怎么办）

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CloudDownload, FolderGit2, Globe, Lock, Pencil, Trash2, User } from 'lucide-react'
 import type { ProjectSummary } from '../api/types'
+import type { StartedFetch } from '../query/projects'
 import { errorMessage } from '../api/errors'
+import { repoFullOf } from '../lib/repoFullOf'
 import { useDeleteProject, useStartFetch, useUpdateProject } from '../query/projects'
 import ParseStatus from './ParseStatus'
 import ProjectEditModal from './ProjectEditModal'
@@ -13,6 +15,10 @@ interface ProjectCardProps {
   project: ProjectSummary
   /** ★ 已登录（★ 写操作可用；★ 游客只看得到公开项目与只读入口） */
   canManage?: boolean
+  /** ★★ `B179`：**投出了作业** ⇒ 调用方去轮询进度 ✅ */
+  onFetched?: (r: StartedFetch) => void
+  /** ★★ `B179`：**复用了现成基图** ⇒ 没有作业，❌ 不能轮询 ⚠ */
+  onReused?: (r: StartedFetch) => void
 }
 
 type DialogKey = 'public' | 'fetch' | 'delete'
@@ -37,7 +43,12 @@ type DialogKey = 'public' | 'fetch' | 'delete'
  * | ★★ 按钮显隐：`!hasData` ⇒ **`!graph_built`** | ⚠★ 见下方 `canFetch` 的说明 —— ★ 两者在"失败"这个情形上**恰好相反** |
  * | ★ `status !== 'idle'` ⇒ `status !== 'none'` | ★ 新后端用 `none` 表示"还没解析" |
  */
-export default function ProjectCard({ project, canManage = false }: ProjectCardProps) {
+export default function ProjectCard({
+  project,
+  canManage = false,
+  onFetched,
+  onReused,
+}: ProjectCardProps) {
   // ★ 对齐旧站：owner 项须「本人 + 已登录」
   const mine = !!project.mine && canManage
   const hasData = project.status !== 'none'
@@ -56,7 +67,7 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
   const [error, setError] = useState('')
 
   const update = useUpdateProject(ref)
-  const fetchStart = useStartFetch(ref, '/workspace')
+  const fetchStart = useStartFetch(ref)
   const del = useDeleteProject(ref)
 
   const close = () => {
@@ -68,6 +79,12 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
     mutate: () => Promise<T>,
     errObj: unknown,
     onDone?: (r: T) => void,
+    /**
+     * ★★ `B179`：**复用了现成基图**时的回调（★ 与 `onDone` 分开）⚠
+     *   ★ 为什么必须分开：★ 复用意味着【没有作业】⇒
+     *     ★★ ❌ 不能走"轮询进度"那条路（★ 会去轮询一个不存在的作业）⚠
+     */
+    onReused?: (r: T) => void,
   ) => {
     setError('')
     const r = await mutate().catch((e: unknown) => {
@@ -78,6 +95,11 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
       setError(errorMessage(errObj, '操作失败，请重试'))
       return
     }
+    // ⚠★ 复用判定看 `reused` 字段（★ 只有「拉取代码」的返回里有它）
+    if (onReused && (r as { reused?: boolean }).reused) {
+      onReused(r as T)
+      return
+    }
     onDone?.(r as T)
   }
 
@@ -85,20 +107,35 @@ export default function ProjectCard({ project, canManage = false }: ProjectCardP
     runAction(() => update.mutateAsync({ is_public: !project.is_public }), update.error, close)
 
   /**
-   * ★★★ 「拉取代码」—— ⚠★ **它不投递作业，而是把用户【送去授权】**（`B169`）。
+   * ★★★ 「拉取代码」—— ★★ `B176` ① 之后【就地开始，不跳转】✅
    *
-   * ★ 为什么不能在这里直接投递：⚠ 本平台**不保存 `access_token`**（`B148`）
-   * ⇒ ★ 不拿到 token 就**无法验证"这个库是不是他的"** ⚠
-   * ⇒ ★★ 所以这里只跳转；★ **归属校验 + 投递（拉取 + 解析）都在 OAuth 回调里完成** ✅
+   * ⚠★ `B176` ① 之前这里是 `window.location.href = r.authorize_url`（★ 整页跳去第三方授权）——
+   *   ★★ 那套已经**整个退役**（★ 归属校验随 `B176` ① 删掉）⚠
+   *   · ★ 旧代码留着会跳到一个 `undefined` ⇒ ★ 页面跳到字面量 "undefined" ⚠
+   *
+   * ★★ `B182`：浏览器里**先把分支解析成 sha**（★ 不烧服务端的 API 配额）——
+   *   ★ 失败也不阻断（★ 服务端会自己解析）✅
+   *
+   * ⚠★ 三种结局（★ `B179`）：
+   *   · ★ 投出去了 ⇒ 有 `job_id` ⇒ 照旧轮询进度
+   *   · ★★ **复用了** ⇒ `job_id: null` + `reused: true` ⇒ ★ **也是成功**，直接就能看图 ⚠
+   *   · ★ 失败 ⇒ 如实展示原因
    */
   const confirmFetch = () =>
     runAction(
-      () => fetchStart.mutateAsync(),
+      () =>
+        fetchStart.mutateAsync({
+          // ⚠★ `provider` 可能是 `undefined`（★ 老数据）⇒ ★ 兜底成 'github'
+          //   ★★ 而 resolveRef 那边【认不出的平台会直接报错】⇒ ★ 不能把 undefined 传下去 ⚠
+          provider: project.provider || 'github',
+          repo_full: repoFullOf(project.repo_url || ''),
+          ref: '',
+        }),
       fetchStart.error,
-      (r) => {
-        // ★ 授权页在**第三方域名**上 ⇒ ★ 只能整页跳转（❌ 不是路由跳转）
-        window.location.href = r.authorize_url
-      },
+      // ⓷ 投出去了 ⇒ 让调用方去轮询进度（★ `onDone` 由页面传入）
+      (r) => onFetched?.(r),
+      // ⓸ ★★ 复用了 ⇒ 单独一条路（★ 没有作业，❌ 不能轮询）⚠
+      (r) => onReused?.(r),
     )
 
   const confirmDelete = () => runAction(() => del.mutateAsync(), del.error, close)

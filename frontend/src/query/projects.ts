@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
+import { resolveRef } from '../lib/resolveRef'
 import type {
   CreatedProject,
   ProgressData,
@@ -8,6 +9,24 @@ import type {
   ProjectSummary,
   UpdatedProject,
 } from '../api/types'
+
+/**
+ * ★★ 「拉取代码」的返回（★ `B179` 起有【三种结局】）⚠
+ *
+ * ⚠★ `job_id` 为 `null` **不代表失败** —— ★ `reused: true` 时它是 `null`，
+ *   ★★ 而那是**成功**（★ 这份代码已经有人解析过了，★ 直接就能看）✅
+ */
+export interface StartedFetch {
+  project_ref: string
+  job_id: number | null
+  job_state: string
+  /** ★★ `B179`：★ 是否复用了现成基图（★ 前端据此给不同文案）*/
+  reused?: boolean
+  /** ★ 复用了哪一版（★ 前端可显示"对应 commit ea42736…"）*/
+  sha?: string
+  message?: string
+  steps?: Record<string, unknown>
+}
 
 /**
  * ★ 项目数据层（`B164` · 前端第二阶段 2a）
@@ -100,9 +119,20 @@ export interface CreateProjectBody {
   provider: string
   /** ★ 可选，缺省 = HEAD */
   commit?: string
+  /**
+   * ★★ `B182`：**浏览器里已经算好的 commit sha** ⚠
+   *
+   * ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+   *    只有拉源码，才是我服务器做的吧？**」
+   *
+   * · ★ 带上它 ⇒ ★★ 服务端【一次 GitHub API 都不发】✅
+   *   （★ 未认证配额每 IP 每小时 60 次，★ 服务端扛 ⇒ 所有人一起被挡）⚠
+   * · ★ 不带 ⇒ ★ 服务端自己解析（★ 兜底）✅
+   */
+  sha?: string
   desc?: string
   is_public?: boolean
-}
+  }
 
 /**
  * ★ 新建项目
@@ -160,45 +190,66 @@ export function useDeleteProject(projectRef: string) {
   })
 }
 
-/** ★ SPA 内部路径 ⇒ **浏览器可打开的路径**（★ 带上 `base`，即 `/app`） */
-function spaPath(internal: string): string {
-  const base = (import.meta.env.BASE_URL || '/app/').replace(/\/$/, '')
-  return `${base}${internal.startsWith('/') ? internal : `/${internal}`}`
-}
-
 /**
- * ★★★ **发起「拉取代码」授权**（`B169`）—— ⚠★ **它不投递作业，只拿回一个授权 URL**。
+ * ★★★ **发起「拉取代码」**（★ `B176` ① 之后：**一步到底，不再跳转**）。
  *
- * ## ★★ 为什么必须是两步（★ 这不是设计缺陷，是"不保存凭据"必然的代价）
- * ⚠★ 本平台**不保存 `access_token`**（`B148`）⇒ ★ 无法在"投递"那一刻替用户去问
- * GitHub「这个库是不是他的」⇒ ★★ **只能让用户当场授权一次** ✅
- * → ★ 与 `useCreateProject` 那条发布链**完全同构**（★ 真正的动作都在 OAuth 回调里）。
+ * ## ⚠★★ `B182`：**先在浏览器里把分支解析成 sha**
  *
- * ## ★ 调用方要做什么
- * ```ts
- * const r = await startFetch.mutateAsync({})
- * window.location.href = r.authorize_url      // ★ 跨域授权页 ⇒ 只能整页跳转
+ * ★★ 所有者原话（逐字）：
+ *
+ * > 「**不对呀，这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+ * > 只有拉源码，才是我服务器做的吧？**」
+ *
+ * ```
+ * ★ 未认证 GitHub API 每 IP 每小时 60 次，★ 解析 sha 要 2 次
+ * ★★ 服务端做 ⇒ 每小时约 30 次拉取撞限，★ 所有用户一起被挡 ⚠
+ * ★★ 前端做   ⇒ 每个用户花自己的配额 ✅
  * ```
  *
- * ⚠★ **`next_url` 必须带 `/app` 前缀**（★ 由 `spaPath` 负责）——
- * ★ 因为后端会把它**原样用作 302 的 Location**，★ 那是**浏览器跳转**、不经过 router 的 basename ⚠
+ * ⚠★ **解析失败不影响功能** —— ★ 那时**不传 sha**，★ 服务端会自己解析（兜底）✅
+ *   （★ 所以这里是"省配额"的优化，★ ❌ 不是功能前提）⚠
  *
- * ## ★ 409 怎么办
- * ★ 已定版的项目会拿到 **409 `graph_immutable`** —— ★ 前端**不该给按钮**（★ 见 `ProjectCard`），
- * ★ 但**万一**拿到（★ 比如时间差），★ 把它**展示成引导语**即可，❌ 不是故障 ✅
+ * ## ★★ 返回值有三种结局（★ `B179` 起）
+ *
+ * | 结局 | 长什么样 | 前端该做什么 |
+ * |---|---|---|
+ * | ★ 投出去了 | 有 `job_id` | ★ 照旧轮询进度 ✅ |
+ * | ★★ **复用了** | `job_id: null` + `reused: true` | ★★ **这也是成功** ⇒ 直接就能看图 ⚠ |
+ * | ★ 失败 | 4xx + `error.code` | ★ 如实展示原因 ✅ |
+ *
+ * ⚠★ `B176` ① 之前这里是**两步**（拿授权 URL ⇒ 整页跳走 ⇒ 回调里才真正拉取）——
+ *   ★★ 那套已经**整个退役**了（★ 归属校验随 `B176` ① 一起删掉）⚠
  */
-export function useStartFetch(projectRef: string, nextInternal = '/workspace') {
+export function useStartFetch(projectRef: string) {
+  const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (): Promise<{ authorize_url: string; state: string; repo: string }> =>
-      unwrap(
-        await apiPost<{ authorize_url: string; state: string; repo: string }>(
+    mutationFn: async (body: {
+      provider: string
+      repo_full: string
+      ref?: string
+    }): Promise<StartedFetch> => {
+      // ---- ⓵ ★★ `B182`：浏览器里解析 sha（★ 失败就跳过，不阻断）----
+      let sha = ''
+      try {
+        const v = await resolveRef(body.provider, body.repo_full, body.ref || '')
+        if (v.ok) sha = v.sha
+      } catch {
+        // ⚠ 网络炸了也**照样提交** —— ★ 服务端会自己解析 ⚠
+      }
+
+      // ---- ⓶ 提交（★ 带上 sha ⇒ 服务端一次 API 都不发）----
+      return unwrap(
+        await apiPost<StartedFetch>(
           `/api/projects/${encodeURIComponent(projectRef)}/fetch/`,
-          { next_url: spaPath(nextInternal) },
+          { sha },
           'data',
         ),
-      ),
-    // ★ 刻意**不 invalidate 任何缓存**：★ 此刻还什么都没变
-    //   （★ 真正开始拉取要等用户从 GitHub 授权回来 —— 那时页面已整页重载）✅
+      )
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', projectRef] })
+      qc.invalidateQueries({ queryKey: ['progress', projectRef] })
+    },
   })
 }
 

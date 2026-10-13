@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -72,6 +73,19 @@ log = logging.getLogger(__name__)
 
 from core import appsettings, fetch, licensing, oauth, quota, storage, submission
 from core.models import Project, ProjectReview
+
+#: ★★ `B182`：前端传来的 commit sha 必须【长得像 sha】才采用 ⚠
+#:
+#: ★★ 为什么必须校验：★ 这个值**直接决定基图的身份**与**下载地址** ⚠
+#:   · ★ 前端传来一句怪话（★ 手滑 / 老客户端 / 恶意）⇒ ★ 会造出一个**身份错乱**的基图 ⚠
+#:   · ★ 而那种错是**静默的**：★ 查询按身份比，★ 永远对不上 ⇒ 每次都重新解析 ⚠
+#: ⇒ ★★ 所以不像就让**服务端自己解析**（★ 兜底那条路一直都在）✅
+#:
+#: ★ 形态：★ 7–64 位十六进制
+#:   · ★ GitHub 短 sha = 7 位，★ 完整 SHA-1 = 40 位
+#:   · ★★ 放到 64 位是为了**将来**（★ 平台若改用 SHA-256 就是 64 位）✅
+#:     ⚠ 而不必为此再改一次代码 + 再发一次迁移 ⚠
+_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 # ===========================================================================
 # 结果
@@ -128,9 +142,12 @@ def publish_project(
     name: str = "",
     desc: str = "",
     source_path: str = "",
+    # ⚠★ `B182`：**前端已经算好的 commit sha**（★ 空 ⇒ 由服务端自己解析）⚠
+    #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的**」
+    sha: str = "",
     priority: int | None = None,
     at: datetime | None = None,
-) -> PublishResult:
+    ) -> PublishResult:
     """★★ **发布一个项目** —— ★★ 见模块文档的完整链路。
 
     ⚠★★ `B176` ①（2026-10-12）：**本函数【不再需要任何第三方授权】** ⚠ ——
@@ -246,6 +263,8 @@ def publish_project(
         #   ⚠★ 见 `_safe_source_path()`：这是"不把任意路径交给作业"的最后一道。
         source_path=_safe_source_path(source_path, user),
         commit="",
+        # ⚠★ `B182`：把前端算好的 sha 透传下去 —— ★ 有它，服务端【一次 API 都不发】✅
+        sha=sha or "",
         priority=priority if priority is not None else _queue_priority(user),
     )
 
@@ -391,7 +410,13 @@ class DispatchOutcome:
 
 
 def dispatch_parse(
-    project: Project, *, source_path: str, commit: str, priority: int, ref: str = ""
+    project: Project,
+    *,
+    source_path: str,
+    commit: str,
+    priority: int,
+    ref: str = "",
+    sha: str = "",
 ) -> DispatchOutcome:
     """★★ **投递一个解析作业** —— ★★ **这是对外入口**（`B176` ① 之后由三处共用）⚠
 
@@ -434,26 +459,61 @@ def dispatch_parse(
 
     provider = (project.provider or "").strip().lower()
     repo_full = (fetch.repo_full_from_url(project.repo_url) or "").strip()
-    sha = ""
+    # ⚠★★ `B182`：这里【不能写 `sha = ""`】⚠ ——
+    #   ★★ 它会把调用方（前端）传进来的 sha **在判断之前就清掉** ⚠
+    #   · ★ 后果：★ 明明是"前端给了 sha"，★ 服务端却照样去解析（★ 白烧 2 次 API）⚠
+    #   · ★★ 而那种错是【静默的】—— ★ 功能照旧，★ 只是配额白白流走 ⚠
+    #   ⇒ ★★ 改成：★ 先收下前端给的（形态不像就丢掉），★ 再由下面决定要不要自己解析 ✅
+    sha = (sha or "").strip().lower()
 
     # ---- ⓪ ★★ `B179`：先定 sha（⚠ 只有"真要拉远端"时才需要）----
     #   ★ 调试路径（`source_path` 非空 ⇒ staff 指了容器里的目录）**跳过** ——
     #     ★ 那时源码不来自远端，★ 而 sha 由作业里兜底解析（见 `_base_graph_for`）。
     if repo_full.count("/") == 1 and not source_path:
-        try:
-            verdict = fetch.resolve_ref(provider, repo_full, ref)
-        except Exception:  # noqa: BLE001 —— ★ 网络炸了也要能继续（见函数文档的兜底）
-            verdict = None
+        # ⚠★★ `B182`（2026-10-13）：**前端可能已经把 sha 算好了** ⚠
+        #   ★★ 所有者原话（逐字）：
+        #   > 「**不对呀，这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+        #   > 只有拉源码，才是我服务器做的吧？**」
+        #
+        #   ★★ 为什么这样更好：
+        #     · ★ 未认证的 GitHub API 每小时每 IP 约 60 次，★ 而解析 sha 要 2 次
+        #       ⇒ ★★ 由服务端做 ⇒ 每小时约 30 次拉取就撞限，★ 而且【所有用户一起被挡】⚠
+        #     · ★★ 由前端做 ⇒ ★ 每个用户花【自己的】配额 ⇒ ★ 互不影响 ✅
+        #     · ★★ 服务端的 IP 彻底不参与这两次查询 ⚠
+        #
+        #   ★★ 为什么服务端还能信这个 sha（★ 不需要"信"）：
+        #     · ★ sha 同时决定【基图身份】与【下载地址】⇒ ★ 报什么就下什么 ⇒ 自证一致 ✅
+        #
+        #   ⚠★ 但**必须校验形态**（★ 否则前端传来一句怪话就能污染基图身份）——
+        #     ★ 不像样的 sha ⇒ ★ 当它没给，★ 回落到服务端自己解析 ⚠
+        # ★ `sha` 在上面已经**收下并规范化**过了 ⇒ ★ 这里直接判形态
+        given = sha
+        if given and not _SHA_RE.match(given):
+            log.info(
+                "前端给的 sha 形态不像（已忽略，改由服务端解析）project_ref=%s sha=%r",
+                project.project_ref, given[:40],
+            )
+            given = ""
 
-        if verdict is not None:
-            if not verdict.ok:
-                # ★★ 私有 / 不存在 / 限流 / 分支错 —— ★ 每条都有**用户能看懂**的文案 ⚠
-                return DispatchOutcome(
-                    failed=True, fail_code=verdict.reason_code,
-                    fail_message=verdict.message or "解析不出这个仓库的版本。",
-                )
-            sha = verdict.sha
+        if not given:
+            try:
+                verdict = fetch.resolve_ref(provider, repo_full, ref)
+            except Exception:  # noqa: BLE001 —— ★ 网络炸了也要能继续（见函数文档的兜底）
+                verdict = None
 
+            if verdict is not None:
+                if not verdict.ok:
+                    # ★★ 私有 / 不存在 / 限流 / 分支错 —— ★ 每条都有**用户能看懂**的文案 ⚠
+                    return DispatchOutcome(
+                        failed=True, fail_code=verdict.reason_code,
+                        fail_message=verdict.message or "解析不出这个仓库的版本。",
+                    )
+                given = verdict.sha
+        # ★★ 否则：★ 前端给了 sha ⇒ ★ **一次 API 都不发**，直接用 ✅
+
+        sha = given
+
+        if sha:
             # ---- ⓪-1 ★★ 「有没有同样的？」----
             from graph import binding
 
@@ -518,7 +578,9 @@ def approve_and_resume(
     note: str = "",
     source_path: str = "",
     commit: str = "",
-) -> tuple[ProjectReview, Any]:
+    # ⚠★ `B182`：同 `publish_project` —— ★ 前端算好的 sha（★ 空 ⇒ 服务端自己解析）
+    sha: str = "",
+    ) -> tuple[ProjectReview, Any]:
     """★★ **管理员放行 ⇒ 重投解析作业**（★ 链路第 ⑤ 步）。
 
     ⚠★ 为什么必须显式重投：★ 项目在「待审核」期间**没有解析、没有图**
@@ -549,7 +611,9 @@ def approve_and_resume(
     #   ⚠★ 三种都返回 `out.job` 就对了 —— ★ **不要写死 `None`**（★ 我犯过这个错：
     #     那会让"真的投了作业"也返回 `None` ⇒ 调用方以为没投 ⇒ 永远等不到图）⚠
     out = dispatch_parse(
-        project, source_path=source_path, commit=commit, priority=0
+        project, source_path=source_path, commit=commit, priority=0,
+        # ⚠★ `B182`：透传前端算好的 sha（★ 有它就不烧服务端的 API 配额）✅
+        sha=sha or "",
     )
     return review, out.job
 

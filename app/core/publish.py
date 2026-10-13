@@ -1,6 +1,6 @@
 """Astrolabe · 共享内核：**发布编排** —— ★★ 把散落的模块串成**一条链路**
 
-> 在此之前，`core/` 里的模块（许可核验 / 限额 / 邀请 / OAuth / 归属校验 / 审核）**各自独立**，
+> 在此之前，`core/` 里的模块（许可核验 / 限额 / 邀请 / OAuth / 审核）**各自独立**，
 > ★ 没有任何一个地方能回答「**用户从点『发布』到看到图，中间发生了什么**」。
 > ★★ 本模块就是那个答案。
 
@@ -9,32 +9,36 @@
 # ★★★ 完整链路（★ 每一步都能说出"不过时会怎样"）
 
 ```
-① 归属校验（Gate 0 第 ②③ 步）        ← core/oauth.py      ⚠ 同步（一次 API 调用，快）
-     │  不是你的仓库 / 是 Fork / 是组织仓库 ⇒ ❌ 拒绝，给出可读原因
-     ▼
-② 建 Project + 上传闸门               ← core/submission.py
+① 建 Project + 上传闸门               ← core/submission.py
      │  超限额 / 重复仓库 ⇒ ❌ 拒绝（★ 且【不留孤儿项目】）
      │  ★ 许可核验【推迟】（源码还没拉下来 —— 见 licensing.deferred()）
      ▼
-③ 投递 parse 作业                     ← jobs/dispatch.py  ⚠ O(毫秒) 两次写
+② 投递 parse 作业                     ← jobs/dispatch.py  ⚠ O(毫秒) 两次写
      │  ★ job_id 立刻返回（★ B115 ①：投递即入队，❌ 不得静默拒绝）
      ▼
-④ 【作业层】拉源码 → 许可核验 → 解析 → 写图   ← jobs/tasks.py
+③ 【作业层】拉源码 → 许可核验 → 解析 → 写图   ← jobs/tasks.py
      │  ★ 核验完 ⇒ submission.resolve_license() 把那条流水【就地更新】成真结论
      │  · 宽松 ⇒ ✅ 放行，继续解析
      │  · 其余 ⇒ ⚠ 停在「待人工审核」，**不解析**（★ U3.1 第 ④ 步）
      ▼
-⑤ 【管理员】放行 ⇒ ★ 重投作业 ⇒ 解析 ⇒ 图就出来了
+④ 【管理员】放行 ⇒ ★ 重投作业 ⇒ 解析 ⇒ 图就出来了
 ```
+
+★★★ `B176` ①（2026-10-12）：**这条链路原本的第 ① 步「归属校验」已【退役】** ⚠ ——
+★ 原本它要先拿 `access_token` 去问第三方「这库是不是你的」；
+★ ⇒ 现在**建项目不再要求任何第三方授权**，★ 于是 `publish_project()` 的同步部分**变短了** ✅
 
 ---
 
-# ★★ 为什么 ① 同步、④ 异步（这个切分是刻意的）
+# ★★ 为什么【发布】同步、而【拉源码 + 解析】异步（这个切分是刻意的）
 
 | 步骤 | 耗时 | 放哪 |
 |---|---|---|
-| ★ **归属校验** | ★ **一次 HTTP 调用** | ★ **同步**（不留作业、立刻能给用户答案） |
+| ★ **建项目 + 投递作业** | ★ **两次写库（O(毫秒)）** | ★ **同步**（立刻能给用户 `project_ref` / `job_id`） |
 | ★★ **拉源码 + 许可核验 + 解析** | ★★ **秒级到分钟级** | ★★ **异步**（⚠ 放同步会把 web 线程占死 —— `A3` 红线的本意） |
+
+⚠★ `B176` ① 之前，这里还有一行「★ **归属校验** —— 一次 HTTP 调用 —— 同步」——
+★★ 现在那一行**没有了**（★ 归属校验已退役；★ 见上）✅
 
 ---
 
@@ -63,7 +67,7 @@ from typing import Any
 from django.db import transaction
 
 from core import appsettings, fetch, licensing, oauth, quota, storage, submission
-from core.models import OAuthIdentity, Project, ProjectReview
+from core.models import Project, ProjectReview
 
 # ===========================================================================
 # 结果
@@ -110,27 +114,28 @@ def publish_project(
     user,
     *,
     provider: str,
-    access_token: str,
     repo_full_name: str,
     name: str = "",
     desc: str = "",
     source_path: str = "",
     priority: int | None = None,
-    fetcher: Any = None,
     at: datetime | None = None,
 ) -> PublishResult:
     """★★ **发布一个项目** —— ★★ 见模块文档的完整链路。
 
+    ⚠★★ `B176` ①（2026-10-12）：**本函数【不再需要任何第三方授权】** ⚠ ——
+      ★ 曾经它要 `access_token` 去**当场校验仓库归属**，★ 那一步已**退役** ⚠
+      （★ 原话：「我以前说用 github 验证库是不是属于本人，我觉得不行，删掉这个，有风险」）
+      ⇒ ★★ 于是 `access_token` / `fetcher` 两个参数**一并删掉** ✅
+      ★ 论证见 `docs/backend-decisions.md` 的 `B176` ⑥。
+
     Args:
-        user: 发布者（★ 必须已绑定该 provider 的第三方身份）
+        user: 发布者（★ ❌ **不再要求**已绑定该 provider 的第三方身份）
         provider: `github` / `gitee`
-        access_token: ★★ **本次授权拿到的 token** —— ⚠ **只在本函数内使用一次**
-            （★ 用来做归属校验，❌ **不落库**。见 `core/oauth.py` 模块文档）
         repo_full_name: `owner/repo`
         name: 项目显示名（⚠ 省略 ⇒ 用仓库名）
         source_path: ⚠★ **只给内部 / 管理员用的调试口子**（`B152`）——
-            ★ **普通用户不要传**：★ 他的源码应当由作业层从 `repo_url` 拉取，
-            ★ 而拉取**尚未实现** ⇒ 作业会**明确失败**（❌ 不是假装成功）。
+            ★ **普通用户不要传**：★ 他的源码应当由作业层从 `repo_url` 拉取。
             ⚠★ 之所以要这么分：★ `source_path` 能被用来**读容器里的任何目录**
             （★ 这台机器上还跑着数据库）⇒ ★ **不能对普通用户开放**。
         priority: 队列优先级（⚠ `None` ⇒ 从配额里取 `queue_priority`，★ VIP 先出图）
@@ -141,41 +146,14 @@ def publish_project(
     r = PublishResult()
 
     # ==================================================================
-    # ① ★★ 归属校验（Gate 0 第 ②③ 步）—— ⚠ 先做，因为后面每一步都很贵
+    # ① ★★★ `B176` ①（2026-10-12）：**归属校验已退役 —— 这里【什么都不做】**
+    #   ⚠ 本处原本是「身份绑定检查 + `verify_repo_ownership()` +
+    #     `record_ownership_audit()` 留痕 + `ownership` 步骤回执」⚠
+    #   ⇒ ★★ 现在**建项目不再要求任何第三方授权** ✅
+    #   ★★ 论证：见 `docs/backend-decisions.md` 的 `B176` ⑥ ——
+    #     ★ 旧方案付出了「承认知道风险」的代价，★ **却没换来真正的防护** ⚠
     # ==================================================================
-    identity = OAuthIdentity.objects.filter(user=user, provider=provider).first()
-    if identity is None:
-        return _fail(
-            r, step="identity", code="identity_missing",
-            message=f"请先用 {provider} 登录一次，确认账号归属后再发布。",
-        )
 
-    own = oauth.verify_repo_ownership(
-        provider, access_token,
-        repo_full_name=repo_full_name,
-        # ★★ 比【数字 ID】（⚠ 不比 login —— `U3.2` 坑 1：用户名会改）
-        provider_user_id=identity.provider_user_id,
-        fetcher=fetcher,
-    )
-    # ★★ 留痕（`backend-design.md` 的 `[Gate 0]` 要求：verify_provider / verify_account / verified_at）
-    #   ★ 走公共函数（`core/oauth.py::record_ownership_audit`）——
-    #   ⚠★ `web/views/auth.py::_run_fetch()` 用的是**同一份**逻辑（❌ 不各写一遍）
-    #   ⚠ **通过和拒绝都要记** —— ★ 否则"谁试过拉别人的库"就答不上来 ⚠
-    #
-    # ⚠★ 注意时机：★ 此刻**项目还没建出来**（建项目在下面）⇒ ★ 先挂 `repo` 串。
-    #   ★ 为什么不建完再记：★ 建项目**会因为配额/许可被回滚**（下面 `set_rollback`）——
-    #     ★★ 而"他试过拉这个库"这件事**必须留下**，⚠ 不能跟着回滚一起消失 ⚠
-    oauth.record_ownership_audit(
-        user=user,
-        provider=provider,
-        repo_full_name=repo_full_name,
-        verdict=own,
-        verify_account=getattr(identity, "login", ""),
-    )
-
-    if not own.ok:
-        return _fail(r, step="ownership", code=own.reason_code, message=own.message)
-    r.steps["ownership"] = {"ok": True, "repo": own.repo.get("full_name") or repo_full_name}
 
     repo_url = _repo_url(provider, repo_full_name)
     project_name = (name or repo_full_name.rsplit("/", 1)[-1])[:200]
@@ -189,16 +167,13 @@ def publish_project(
         return _fail(r, step="storage", code=cap.reason_code, message=cap.message)
     r.steps["storage"] = {"ok": True, **cap.to_dict()}
 
-    #  ★★★ 闸门 ②：**这个仓库（估计）放得下吗** —— ★★ 用的是**归属校验那次请求
-    #    已经拿到的 `repo.size`**（★ GitHub 单位是 KB）⇒ ⚠ **零额外开销**。
-    #  ⚠★ 它只是**估计值**（★ 见 `fetch.check_remote_size` 的两条坑），
-    #    ★ 所以**第三道（边解边数）必须留着** —— 见 `core/fetch.py`。
-    size_check = fetch.check_remote_size(own.repo, remaining_bytes=cap.remaining_bytes)
-    if not size_check.ok:
-        return _fail(r, step="storage", code=size_check.reason_code, message=size_check.message)
-    r.steps["remote_size"] = {
-        "ok": True, "estimated_bytes": size_check.bytes, "known": size_check.known
-    }
+    #  ⚠★★ `B176` ①：**「仓库大小预检」这一步【也没有了】**
+    #    ★ 它当初靠的是**归属校验那次请求顺带拿到的 `repo.size`**（★ 零额外开销）⚠
+    #    ⇒ ★ 归属校验一退役，★ **那个 `repo` 字典就不存在了** ⚠
+    #    ★★ 而**真正的防线一直不在这一层** —— `core/fetch.py` 的
+    #      「**边解边数**」硬闸门仍在（★ `max_bytes` / `max_files`）✅
+    #    ⚠★ 另：`B178` 已定「**取消存储空间配额**」⇒ 这一层的目的本就消失了 ⚠
+
 
     # ==================================================================
     # ② 建 Project + 上传闸门（★ 两者必须同一事务 —— 否则会留孤儿项目）
@@ -255,7 +230,7 @@ def publish_project(
     #  ⚠ 反过来（事务提交成功、入队失败）也有风险 ——
     #    ★ 但 `dispatch.submit` 已经把那种情况**显式置为 `failed` 并抛异常**
     #      （`B115` ①：❌ 绝不静默），★ 所以这里是**可观测**的，❌ 不是黑洞。
-    job, created = _dispatch_parse(
+    job, created = dispatch_parse(
         project,
         # ★★ 只放行**存储空间内**的路径（`B152`）——
         #   ⚠★ 见 `_safe_source_path()`：这是"不把任意路径交给作业"的最后一道。
@@ -336,8 +311,23 @@ def _queue_priority(user) -> int:
         return 0
 
 
-def _dispatch_parse(project: Project, *, source_path: str, commit: str, priority: int):
-    """★ 投递解析作业（★ 延迟 import —— 见模块文档的分层说明）。"""
+def dispatch_parse(project: Project, *, source_path: str, commit: str, priority: int):
+    """★★ **投递一个解析作业** —— ★★ **这是对外入口**（`B176` ① 之后由三处共用）⚠
+
+    | 谁调用 | 什么时候 |
+    |---|---|
+    | ★ `publish_project()` | ★ 建完项目 ⇒ 投递第一次拉取 |
+    | ★ `approve_and_resume()` | ★ 管理员放行之后 ⇒ 重投 |
+    | ★★ `web/views/projects.py::start_fetch()` | ★★ 用户点「拉取代码」（★ `B176` ①：**不再走 OAuth**）|
+
+    ⚠★★ **payload 只在这一处构造** —— ★ 三个调用方**共用同一份** ⚠
+      （★ 否则"作业该带什么"就会有三个版本，★ 早晚不一致 —— 同 `U4.8` 的收敛纪律）
+
+    ★ 作业靠 payload 里的 `provider` / `repo_full_name` / `repo_url`
+      **自己把源码拉下来**（`B153`，`core/fetch.py`）—— ★ 调用方**不需要**给目录 ✅
+
+    ★ 延迟 import —— 见模块文档的分层说明。
+    """
     from jobs import dispatch
     from jobs.models import Job
 
@@ -401,7 +391,7 @@ def approve_and_resume(
     if project.is_graph_built:
         return review, None
 
-    job, created = _dispatch_parse(
+    job, created = dispatch_parse(
         project, source_path=source_path, commit=commit, priority=0
     )
     return review, job

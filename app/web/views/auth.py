@@ -37,7 +37,7 @@
 
 from __future__ import annotations
 
-import json
+
 import re
 from urllib.parse import urlencode
 
@@ -49,7 +49,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from core import appsettings, invites, oauth
-from core.models import OAuthState
+# ⚠★ `B176` ①：`OAuthState` **不再需要** —— ★ 回调里已没有"发布/拉取意图"两条路 ✅
 from web import auth
 from web.http import fail, ok, read_json, safe_next_url
 
@@ -191,18 +191,15 @@ def callback(request: HttpRequest, provider: str) -> JsonResponse | HttpResponse
         remember=result.remember,
     )
 
-    # ---- ★★★ 发布意图：★ **只能在【这一刻】做** ----
-    #   ⚠★ 因为本平台**不保存 `access_token`**（`B148`）——
-    #      ★ `result.access_token` 是**唯一一次**能拿它去校验归属的机会，
-    #      ★ 用完即弃（⚠ 绝不落库）。
-    intent_result = None
-    st = result.state_row
-    if st is not None and st.action == OAuthState.ACTION_PUBLISH:
-        intent_result = _run_publish(result, st)
-    elif st is not None and st.action == OAuthState.ACTION_FETCH:
-        # ★★★ `B169`：**拉取代码**（★ 对**已有项目**发起）——
-        #   ★★ 「归属校验 + 投递作业」**都发生在这里**（⚠ 因为此刻才有 access_token）
-        intent_result = _run_fetch(result, st)
+    # ---- ★★★ `B176` ①：**这里原本还有「发布意图」/「拉取意图」两条路 —— 已退役** ----
+    #   ★ 以前 OAuth 回调不只是登录，★ 它还**顺手替用户完成一件事**：
+    #     ★ `ACTION_PUBLISH` ⇒ 建项目；★ `ACTION_FETCH` ⇒ 归属校验 + 投递作业 ⚠
+    #   ★★ 而它们之所以必须挤在这里，只有一个原因：
+    #     ★ **只有这一刻才拿得到 `access_token`**（`B148`：本平台不保存它）⚠
+    #   ★★★ 所有者裁定「**我觉得不行，删掉这个，有风险**」之后 ⇒
+    #     ★ 那两件事**都不再需要 token** ⇒ ★★ 各自挪回**普通的接口** ✅
+    #     （★ `POST /api/projects/publish/start/` · ★ `POST /api/projects/<ref>/fetch/`）
+    #   ⇒ ★★★ **于是本回调回到一件纯粹的事：登录。** ✅
 
     # ⚠★ 再次校验 `next_url`（★ 防的是"state 是几分钟前存的"这个时间差）
     target = safe_next_url(result.next_url) or _spa_url()
@@ -212,156 +209,33 @@ def callback(request: HttpRequest, provider: str) -> JsonResponse | HttpResponse
         "user": auth.user_json(result.user),
         "action": result.action,      # ★ `login` / `register` —— ★ 前端可据此显示欢迎语
     }
-    # ★★ `B169`：**意图结果**（★ `publish` / `fetch` 通用一个键）——
-    #   ⚠ 原名 `publish`，改为中性的 `intent_result`（★ 因为现在有两种意图了）
-    if intent_result is not None:
-        payload["intent_result"] = intent_result
 
     if as_json:
         return ok(payload)
-    # ⚠ fragment 只能放字符串 ⇒ 意图结果**序列化成一段 JSON**
-    #   （★ 前端 `JSON.parse` 即可；⚠ 不放 query 里 —— 那会进日志）
-    frag = {"token": raw, "exp": payload["exp"], "action": payload["action"]}
-    if intent_result is not None:
-        frag["intent_result"] = json.dumps(intent_result, ensure_ascii=False)
-    return _redirect_with_fragment(target, **frag)
-
-
-def _run_publish(result, st: OAuthState) -> dict:
-    """★★ 在回调里**真正执行发布**（★ 见 `web/views/publish.py` 模块文档）。
-
-    ⚠★ 这一段**必须吞掉业务失败**（❌ 不抛）—— ★ 因为用户**已经登录成功了**，
-      ⚠ 让"发布失败"把整个登录也搞挂，是**最糟的耦合**。
-      ⇒ ★ 发布失败就**如实返回失败原因**，让前端在发布页展示。
-    """
-    from core import publish as publish_core
-
-    intent = st.intent or {}
-    try:
-        pub = publish_core.publish_project(
-            result.user,
-            provider=result.provider,
-            access_token=result.access_token,     # ⚠ 用完即弃，❌ 不落库
-            repo_full_name=st.repo,
-            name=intent.get("name", ""),
-            desc=intent.get("desc", ""),
-            source_path=intent.get("source_path", ""),
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "reason_code": "internal", "message": f"发布失败：{exc}"[:400]}
-
-    return {
-        "ok": pub.ok,
-        "reason_code": pub.reason_code,
-        "message": pub.message,
-        "project_ref": pub.project_ref,
-        "job_id": pub.job.pk if pub.job is not None else None,
-        "steps": pub.steps,
-    }
-
-
-def _run_fetch(result, st: OAuthState) -> dict:
-    """★★★ 在回调里**真正执行「拉取代码」**（`B169`）。
-
-    ## ★ 它做三件事（★ 顺序不能换）
-    ① ★★★ **归属校验**（`verify_repo_ownership`）—— ★ 这是本条的**全部意义**：
-       ★★ 「**未通过 ⇒ 服务端不代为拉取**」（`backend-design.md` 的 `[Gate 0]` 原文）⚠
-    ② ★★ **留痕**（`AuditLog`）—— ★ 设计要求的那三项：
-       `verify_provider` / `verify_account` / `verified_at`（⚠ **通过和拒绝都要留**）
-    ③ ★ **投递作业** —— ★ 「拉取 + 解析」是**同一个作业**的连贯两步 ✅
-       （★ 正是所有者说的「**拉了就解析**」，★ 所以这里**不拆成两个动作**）
-
-    ## ⚠★ 一个必须守住的纪律
-    ★ **本函数【必须吞掉业务失败】**（★ 与 `_run_publish` 完全相同的原因）——
-      ⚠ 因为用户**已经登录成功了**；★ 让"拉取失败"把**整个登录**搞挂，是最糟的耦合 ⚠
-      ⇒ ★ 业务失败一律**用返回值表达**（❌ 不抛）✅
-
-    ## ★★ 与视图的纵深关系
-    ★ `waiting`：`start_fetch()`（`views/projects.py`）在**发起前**已经查过一遍
-      （★ 权限 · 定版闸门 · `repo_url` · `provider` · 身份绑定）——
-      ⚠★ 但那不能替代这里：★ **state 是几分钟前建的**，★ 中间项目可能被改/被删/已定版 ⚠
-      ⇒ ★★ **两处都查**（★ 与 `safe_next_url` 在 `start` 与 `callback` 两处都校验同一道理）✅
-    """
-    from core import oauth as oauth_core
-    from core.models import OAuthIdentity, Project
-    from jobs import dispatch
-    # ⚠★ `Job` 在 `jobs.models`，❌ **不在 `core.models`** ——
-    #   ★ 这类错**编译检查抓不到**（import 在函数体内），⚠ 只有运行到才会炸
-    from jobs.models import Job
-
-    ref = (st.project_ref or "").strip()
-    repo = (st.repo or "").strip()
-    intent = st.intent or {}
-
-    # ---- ① 项目必须还在、且**属于他**（★ 越权与"不存在"不可区分 —— 统一 404 口径）----
-    project = Project.objects.filter(project_ref=ref, owner=result.user).first()
-    if project is None:
-        return {"ok": False, "reason_code": "not_found", "message": "项目不存在或不属于你。"}
-
-    # ---- ② 定版闸门（★ 与视图**同一口径** —— 纵深防御）----
-    if project.is_graph_built:
-        return {
-            "ok": False,
-            "reason_code": "graph_immutable",
-            "message": "这个项目已经拉取并解析过了，图不会重新生成。",
-        }
-
-    # ---- ③ ★★★ 归属校验（★ 唯一的目的）----
-    #   ★ `result.identity` 在登录成功那一刻就已带上 ⇒ ★ 优先用它（少一次查询）；
-    #   ⚠★ **兜底**：万一上游没填，也要能查出来 —— ★ 否则会拿空 ID 去过校验，
-    #     ⚠ 那会导致**"明明是他的库也被拒"**（★ 一种最难排查的误拒）⚠
-    ident = result.identity or OAuthIdentity.objects.filter(
-        user=result.user, provider=result.provider
-    ).first()
-    own = oauth_core.verify_repo_ownership(
-        result.provider,
-        result.access_token,          # ⚠ 用完即弃，❌ **不落库**（`B148`）
-        repo_full_name=repo,
-        provider_user_id=ident.provider_user_id if ident is not None else "",
+    return _redirect_with_fragment(
+        target, token=raw, exp=payload["exp"], action=payload["action"]
     )
 
-    # ---- ④ ★★ 留痕（★ `[Gate 0]` 明确要求；⚠ **通过和拒绝都要记**）----
-    #   ★ 走公共函数 —— ⚠ 不要在这里再写一遍（★ `publish_project` 也要用同一份逻辑）
-    oauth_core.record_ownership_audit(
-        user=result.user,
-        provider=result.provider,
-        repo_full_name=repo,
-        verdict=own,
-        project_ref=project.project_ref,
-        verify_account=getattr(ident, "login", "") if ident is not None else "",
-    )
 
-    if not own.ok:
-        return {"ok": False, "reason_code": own.reason_code, "message": own.message}
-
-    # ---- ⑤ 投递作业（★ 拉取 + 解析：**同一个作业的两步，不可拆**）----
-    payload: dict = {
-        "project_id": project.pk,
-        "provider": project.provider,
-        "repo_full_name": repo,
-        "repo_url": project.repo_url,
-        "commit": project.commit,
-    }
-    # ⚠★ `source_path` 只对 staff 生效（★ 在 `start_fetch()` 里已按身份过滤过）
-    source_path = str(intent.get("source_path") or "")
-    if source_path:
-        payload["path"] = source_path
-
-    job, created = dispatch.submit(
-        kind=Job.KIND_PARSE,
-        project_ref=project.project_ref,
-        payload=payload,
-        # ★ 幂等：同一项目 + 同一 commit ⇒ 复用已有作业（⚠ 与 `B115 ④` 同一口径）
-        dedup_key=f"fetch:{project.project_ref}:{project.commit or 'head'}",
-    )
-    return {
-        "ok": True,
-        "reason_code": "",
-        "message": "已开始拉取代码并解析。",
-        "project_ref": project.project_ref,
-        "job_id": job.pk,
-        "created": created,
-    }
+# ===========================================================================
+# ★★★ `B176` ①（2026-10-12）：**`_run_publish()` / `_run_fetch()` 已【删除】**
+#
+#   ⚠ 它们原本是 OAuth 回调里的**两个"意图执行器"**：
+#     ★ `_run_publish()` ⇒ 建项目（★ 发布曾经被拆到授权回调里完成）⚠
+#     ★ `_run_fetch()`   ⇒ **归属校验（`verify_repo_ownership`）+ 留痕 + 投递作业** ⚠
+#
+#   ★★★ **所有者原话**：「**我以前说用 github 验证库是不是属于本人，
+#     我觉得不行，删掉这个，有风险。现在改为，只拉下来解析，解析之后就删掉**」
+#
+#   ⇒ ★ 两件事**都不再需要 `access_token`** ⇒ ★★ 各自有了**普通的接口** ✅
+#     · 建项目   → `web/views/publish.py::start()`        （`POST /api/projects/publish/start/`）
+#     · 拉取代码 → `web/views/projects.py::start_fetch()` （`POST /api/projects/<ref>/fetch/`）
+#
+#   ⚠★★ **别再往回调里加"顺手做一件事"的逻辑** ——
+#      ★ 那个模式的存在理由（"只有此刻有 token"）**已经消失了** ⚠
+#      ★★ 而它有个真实的害处：★ 业务失败会被【登录成功】掩盖
+#        （★ 当年只能靠"**吞掉异常**"来兜，⚠ 见 `B176` 之前那版的注释）⚠
+# ===========================================================================
 
 
 def _failure(message: str, *, as_json: bool) -> JsonResponse | HttpResponseRedirect:

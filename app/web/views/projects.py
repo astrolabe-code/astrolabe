@@ -14,19 +14,21 @@ from __future__ import annotations
 
 import json
 
-from django.conf import settings
 from django.db.models import Count
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from core import fetch, oauth, storage
-from core.models import OAuthIdentity, OAuthState, Project
+from core import publish as publish_core
+# ⚠★ `B176` ①：`OAuthIdentity` / `OAuthState` **不再需要** ——
+#   ★ 「拉取代码」已不走 OAuth（★ 不再要求绑定身份、不再建 state）✅
+from core.models import Project
 from graph.models import Edge, Node
 from graph.revision import current as graph_rev_of
 from jobs import dispatch
 from jobs.models import Job
 from web import permissions
-from web.http import fail, ok, ok_flat, safe_next_url
+from web.http import fail, ok, ok_flat
 
 # ---------------------------------------------------------------------------
 # 工具
@@ -241,22 +243,31 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
 
 
 # ---------------------------------------------------------------------------
-# /api/projects/<project_ref>/fetch/      ★ 拉取代码（`B169`：**取代**原来的 parse/）
+# /api/projects/<project_ref>/fetch/   ★ 拉取代码（`B169` 确立；★ `B176` ① 改为【一步】）
 # ---------------------------------------------------------------------------
 
 @require_http_methods(["POST"])
 def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
-    """★★★ **发起「拉取代码」授权**（`B169`）—— ★ 本视图**只负责发起**，真正的动作在 OAuth 回调里。
+    """★★★ **开始拉取代码**（★ `B176` ① 之后：**不再需要任何第三方授权**）。
 
-    ## ★ 为什么必须是两步
-    ⚠★ 因为本平台**不保存 `access_token`**（`B148`）⇒ ★ 无法在这里替用户去问 GitHub
-    "这个库是不是他的" ⇒ ★★ **只能让用户当场授权一次** ✅
-    → ★ 与 `projects/publish/start/` **完全同构**（★ 见 `views/publish.py` 的模块文档）。
+    ## ★★ 它现在做什么
+    ★ 校验通过之后 ★ **直接投递一个 `parse` 作业** ✅ —— ★ 作业会自己
+      ★ 从 `repo_url` 拉源码 → ★ 核验许可 → ★ 解析 → ★ 写图 → ★ **然后立刻删掉源码**（`B176` ②）⚠
 
-    ## ★★★ 它**取代**了什么 —— ★ 这段必须留住，否则「补投」又会被发明回来
-    ★ `B169` 之前这里是 `parse/`，而且带着一个 **「补投」** 语义（★ 未定版时可重投）。
-    ⚠★ **「补投」不是项目所有者要的** —— ★ `B155` 里他给的出路是「**删了项目重新建一个**」⚠
-    ⇒ ★★★ **本视图不允许任何形式的「重投」**：★ **要么从头发起一次授权，要么拒绝。**
+    ## ★★★ `B176` ① 之前它是什么样（★ 这段必须留住，否则"绕两步"会被重新发明）
+    ★ 以前这里**只负责"发起授权"**：★ 返回一个授权 URL ⇒
+      ⚠ 用户**整页跳走** ⇒ ★ 回到 OAuth 回调里**才真正开始拉取** ⚠
+    ★★ 之所以要那么绕，只有一个原因：★ 平台要拿 `access_token` 去
+      **当场校验"这库是不是你的"** ⚠
+    ★★★ **所有者裁定**（原话）：「**我以前说用 github 验证库是不是属于本人，
+      我觉得不行，删掉这个，有风险。现在改为，只拉下来解析，解析之后就删掉**」
+    ⇒ ★ **归属校验退役** ⇒ ★★ 于是「拉取」变成**一步**：★ **点一下就开始**，
+      ★ ❌ 不跳转、❌ 不授权 ✅
+
+    ## ★★★ 它**不允许任何形式的「重投」**（★ `B169` 立的规矩）
+    ★ `B169` 之前这里是 `parse/`，带着一个 **「补投」** 语义 ⚠
+    ⚠★ **「补投」不是所有者要的** —— ★ `B155` 里他给的出路是「**删了项目重新建一个**」⚠
+    ⇒ ★★ **要么从头发起一次拉取，要么拒绝。**
 
     ## ★ 闸门（★ 所有者裁定 · `B169`）
     | 项目状态 | 行为 |
@@ -288,7 +299,9 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
     if provider not in oauth.PROVIDERS:
         return fail("项目的托管平台必须是 github 或 gitee", 400, code="invalid_provider")
 
-    # ★★ 从 `repo_url` 反推 `owner/repo` —— ⚠ 反推不出来 ⇒ **归属校验连问都问不了** ⇒ 早失败
+    # ★★ 从 `repo_url` 反推 `owner/repo` —— ⚠ 反推不出来 ⇒ **作业就不知道该拉哪个库** ⇒ 早失败
+    #   ★（`B176` ① 之前这一步的理由是"归属校验连问都问不了"；★ 现在理由变了，
+    #     ★★ 但**它依然必要** —— ★ 见 `core/fetch.py::fetch_archive()`）✅
     repo = fetch.repo_full_from_url(project.repo_url)
     if repo.count("/") != 1 or any(seg in ("", ".", "..") for seg in repo.split("/")):
         return fail(
@@ -297,38 +310,31 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
             code="bad_repo",
         )
 
-    # ★★ 早失败（fail fast）：★ 没绑定过这个 provider 的身份 ⇒ **归属校验一定过不了**
-    #   ⚠ 所以别让用户白跑一趟 GitHub（★ 他回来只会看到"这不是你的仓库"）
-    #   ★ 与 `views/publish.py::start()` 的那道检查**同一口径** ✅
-    if not OAuthIdentity.objects.filter(user=request.user, provider=provider).exists():
-        return fail(
-            f"请先用 {provider} 登录一次，确认账号归属后再拉取。",
-            400,
-            code="identity_missing",
-        )
-
-    body = _body(request)
-    next_url = safe_next_url(str(body.get("next_url") or ""))
-    if next_url is None:
-        # ★★ 放行它 = 把 token 送给攻击者 —— 见 `web/http.py::safe_next_url`
-        return fail("next_url 不在允许的域名白名单内", 400, code="bad_next_url")
-
     # ⚠★ `source_path` 只对 staff 生效（`B152`：⚠ 它能让服务端读容器里任何目录）
     #   ★ 普通用户一律**不收**（★ 他的源码应当由作业层从 `repo_url` 拉取）
-    source_path = str(body.get("source_path") or "") if request.user.is_staff else ""
-
-    st = oauth.start(
-        provider,
-        action=OAuthState.ACTION_FETCH,
-        # ★★ 这两个必须带过去：★ 回调时**只剩 `state` 这一条线索**（见 `OAuthState` 文档）
-        project_ref=project.project_ref,
-        repo=repo,
-        intent={"source_path": source_path},
-        next_url=next_url,
-        remember=True,
-        base_url=getattr(settings, "ASTROLABE_BASE_URL", "").rstrip("/"),
+    source_path = (
+        str(_body(request).get("source_path") or "") if request.user.is_staff else ""
     )
-    return ok({"authorize_url": st.url, "state": st.state.state, "repo": repo})
+
+    # ★★★ `B176` ①：**直接投递作业** —— ★★ 与 `publish_project()` /
+    #   `approve_and_resume()` **共用同一处投递逻辑** ⚠
+    #   （⚠★ payload 只在那里构造一份 —— ❌ 绝不在本视图里再写一遍）
+    job, created = publish_core.dispatch_parse(
+        project, source_path=source_path, commit="", priority=0
+    )
+    if job is None:
+        # ★ 入队失败已在 `jobs/dispatch.py` 留痕，★ 这里只负责**如实上报**
+        return fail("投递作业失败，请稍后再试。", 500, code="dispatch_failed")
+
+    return ok(
+        {
+            "project_ref": project.project_ref,
+            "job_id": job.pk,
+            "job_state": job.state,
+            "created": created,
+            "repo": repo,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

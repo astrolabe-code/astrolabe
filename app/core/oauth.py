@@ -665,154 +665,32 @@ def _pick_username(User, base: str) -> str:
 
 
 # ===========================================================================
-# ③ Gate 0：归属校验（`U3.1` 第 ②③ 步）—— ★ 用刚拿到的 token **当场**做
+# ★★★ `B176` ①（2026-10-12）：**归属校验已【退役】**
+#
+#   ⚠ 本处原本是 **Gate 0 归属校验** —— 三件东西：`OwnershipVerdict`（数据类型）、
+#     `verify_repo_ownership()`、`record_ownership_audit()`（写 `AuditLog` 留痕）⚠
+#
+#   ★★★ **所有者原话**：「**我以前说用 github 验证库是不是属于本人，
+#     我觉得不行，删掉这个，有风险。现在改为，只拉下来解析，解析之后就删掉**」
+#
+#   ★★ **为什么删**（★ 论证见 `docs/backend-decisions.md` 的 `B176` ⑥）：
+#     ★ 旧方案付出了「**承认知道风险**」的代价，★ **却没换来真正的防护** ——
+#        ★ 它挡不住所有者自己在 `B142` 里列出的四条：
+#          ★ 归属 ≠ 版权 · ★ fork 可标记绕过 · ★ 许可可谎报 · ★ 洗稿 ⚠
+#     ⇒ ★★★ 正确的姿态不是「我验过了」，★ 而是
+#        「★ **我不留内容** · ★ **收到通知就处理**」（★ 后者见 `B176` ⑤ 举报下架通道）✅
+#
+#   ⚠★ **删掉它之后的连带**（★ 同一条决策的其它部分）：
+#     · `core/publish.py::publish_project()` ★ 不再需要 `access_token` ✅
+#     · `web/views/projects.py::start_fetch()` ★ 不再走 OAuth —— **直接投作业** ✅
+#     · `web/views/auth.py::callback()` ★ 只剩【登录】一条路 ✅
+#     · ⚠★ 于是「建项目」「拉取代码」**都不再要求任何第三方授权** ⚠
 # ===========================================================================
-
-
-@dataclass
-class OwnershipVerdict:
-    """★ 归属校验结论（★ `U3.1` 第 ②③ 步）。"""
-
-    ok: bool = False
-    reason_code: str = ""
-    #: ★★ **给用户看的原因** —— ★ 四步里任何一步不过都要能读懂为什么
-    message: str = ""
-    repo: dict = field(default_factory=dict)
-
-
-def verify_repo_ownership(
-    provider_key: str,
-    access_token: str,
-    *,
-    repo_full_name: str,
-    provider_user_id: str,
-    fetcher: HttpFetcher | None = None,
-) -> OwnershipVerdict:
-    """★★ **归属校验**（`U3.1`）：★ 只能拉**你自己的**仓库。
-
-    ★ 判据（★ 全部必须成立）：
-
-    | # | 判据 | 不过时 |
-    |---|---|---|
-    | **1** | ★★ `repo.owner.id == provider_user_id` | ★ 拒绝（"这不是你的仓库"） |
-    | **2** | ★★ `repo.fork == false` | ★ 拒绝（`U3.2` 坑 3：**你是 fork owner，但代码不是你写的**） |
-    | **3** | ★★ **个人仓库**（`owner.type != "Organization"`） | ★ 拒绝（`U3.2` 坑 2：★ 一期明确只放行个人仓库；⚠ 组织仓库属**企业版**范畴，见 `PRODUCT-VERSIONS` B3） |
-
-    ⚠★★ **两个必须守的口径**：
-
-    · ★ **比 `provider_user_id`（数字 ID），❌ 不比 `login`** ——
-      ⚠ 用户名能改（`U3.2` 坑 1），比 `login` 会让**改个名就绕过校验**。
-    · ★ 通过 ≠ 拥有版权 —— ★ 官方文案**只能写「已验证账号归属」**，
-      ⚠★ **绝不能写「已验证版权」**（`U3.6` / 契约 §20.7）。
-    """
-    f = fetcher or _default_fetcher
-    full = (repo_full_name or "").strip().strip("/")
-    if full.count("/") != 1:
-        return OwnershipVerdict(
-            ok=False, reason_code="bad_repo",
-            message="仓库格式应为 owner/repo，请检查后重试。",
-        )
-
-    try:
-        p = get_provider(provider_key)
-        repo = f.get_json(
-            p.repo_url_template.format(full=full),
-            headers={"Authorization": f"Bearer {access_token}", "User-Agent": p.user_agent},
-        )
-    except OAuthError as exc:
-        return OwnershipVerdict(ok=False, reason_code="api_error", message=str(exc))
-
-    if not isinstance(repo, dict) or repo.get("id") in (None, "", 0):
-        # ⚠★ 特别注意：**拉不到就当通过**是绝对不能有的行为
-        return OwnershipVerdict(
-            ok=False, reason_code="not_found",
-            message="找不到这个仓库（可能是私有仓库，或者名字写错了）。",
-        )
-
-    # ⚠ Gitee 把归属放在 `namespace`，GitHub 放在 `owner` —— ★ 两个都试
-    owner = repo.get("owner") or repo.get("namespace") or {}
-
-    # ---- ① ★★ 归属：比【数字 ID】（❌ 不比 login）----
-    if str(owner.get("id", "")) != str(provider_user_id):
-        return OwnershipVerdict(
-            ok=False, reason_code="not_owner", repo=repo,
-            message=(
-                f"这个仓库属于 {owner.get('login') or '其他人'}，不是你的账号。"
-                "本站只能发布你自己名下的仓库。"
-            ),
-        )
-
-    # ---- ② ★★ 拒绝 Fork ----
-    if repo.get("fork") is True:
-        parent = (repo.get("parent") or {}).get("full_name") or ""
-        return OwnershipVerdict(
-            ok=False, reason_code="fork", repo=repo,
-            message=(
-                "这是一个 Fork 仓库。Fork 的代码不是你写的，"
-                + (f"请到原作者仓库（{parent}）发布。" if parent else "请到原作者仓库发布。")
-            ),
-        )
-
-    # ---- ③ ★★ 只放行个人仓库 ----
-    if str(owner.get("type") or "").lower() == "organization":
-        return OwnershipVerdict(
-            ok=False, reason_code="organization", repo=repo,
-            message="本站一期只支持个人仓库，组织名下的仓库暂不支持。",
-        )
-
-    return OwnershipVerdict(ok=True, reason_code="ok", repo=repo, message="")
 
 
 # ===========================================================================
 # 维护
 # ===========================================================================
-
-
-def record_ownership_audit(
-    *,
-    user,
-    provider: str,
-    repo_full_name: str,
-    verdict: OwnershipVerdict,
-    project_ref: str = "",
-    verify_account: str = "",
-    now: datetime | None = None,
-) -> None:
-    """★★★ **归属校验留痕**（`B169`）—— ★ 写一条 `AuditLog`。
-
-    ★ 依据：`backend-design.md` 的 `[Gate 0]` 原文 ——
-    > 「留痕：`verify_provider` / `verify_account` / `verified_at` → `AuditLog`」
-
-    ⚠★★ **通过和拒绝【都要记】** —— ★ 只记通过的话，
-      ★ 「**谁试过拉别人的库**」这个问题就**永远答不上来** ⚠
-      ★★ 而那恰恰是**防侵权的第一个信号**（★ 用户的目标就是"只准拉他有控制权的代码"）⚠
-
-    ★ 为什么把它**抽成公共函数**：⚠★ 现在有**两个**地方要留痕
-      （`core/publish.py::publish_project` 与 `web/views/auth.py::_run_fetch`）——
-      ★★ 各写一遍 ⇒ ⚠ **早晚有一处会漏**（★ 同 `U4.8` 那条"判断收敛到一处"的纪律）⚠
-    """
-    from django.utils import timezone
-
-    from core.models import AuditLog
-
-    AuditLog.objects.create(
-        actor=user,
-        action="project.ownership_verified" if verdict.ok else "project.ownership_rejected",
-        # ⚠★ 有项目就挂项目，没有（如"发布时建的还没建出来"）就挂仓库串 —— ★ 两者都可追
-        target_kind="project" if project_ref else "repo",
-        target_id=(project_ref or repo_full_name)[:128],
-        detail={
-            "ok": verdict.ok,
-            "reason_code": verdict.reason_code,
-            "message": (verdict.message or "")[:300],
-            # ★ 设计要求的三项
-            "verify_provider": provider,
-            "verify_account": verify_account,
-            "verified_at": (now or timezone.now()).isoformat(),
-            # ⚠★ 顺带记「验的是哪个库」—— ★ 否则日后只看到"通过"，却不知道验的什么
-            "repo": repo_full_name,
-        },
-    )
 
 
 def purge_expired_states(*, now: datetime | None = None) -> int:

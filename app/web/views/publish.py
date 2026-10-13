@@ -1,37 +1,46 @@
-"""Astrolabe · ① Web 层：**发布**（★ 只负责"发起授权"）
+"""Astrolabe · ① Web 层：**发布**（★ `B176` ① 之后 —— **一步到底**）
 
-★ 依据 `USERS-AND-AUTH.md` `U3.1`（四步链路）· `B148`（不保存 `access_token`）· `B149`（发布编排）。
+★ 依据 `USERS-AND-AUTH.md` `U3.1` · `B149`（发布编排）· ★★ `B176` ①（**归属验证退役**）。
 
 ---
 
-# ★★★ 为什么发布是**两步**（而不是一个 POST 搞定）
+# ★★★ 为什么现在是【一个 POST 搞定】（★ 这一段是本模块的存在理由）
 
-⚠★ 因为本平台**不长期保存 `access_token`**（`B148`）：
+⚠★ `B176` ① 之前，发布是**两步** —— 原因只有一个：
+  ★ 平台要拿 `access_token` 去**当场校验仓库归属**，★ 而那要求用户**先去第三方授权一次** ⚠
+  ⇒ ★ 于是「发布」这个动作**被迫搬进了 OAuth 回调**里（★ 因为只有那一刻才有 token）。
+
+★★★ **所有者裁定**（原话）：
+
+> 「**我以前说用 github 验证库是不是属于本人，我觉得不行，删掉这个，有风险。
+> 现在改为，只拉下来解析，解析之后就删掉**」
+
+★ 归属校验一退役 ⇒ ★ **发布不再需要任何第三方授权** ⇒
+  ★★ 这一个 `POST` 就能**建项目 + 投递解析作业** ✅
 
 ```
-① POST /api/projects/publish/start/     ← 就是本模块
-      ⇒ 拿到 GitHub 授权 URL（★ 顺带把 name/desc/source_path 存进 state）
-                        ↓  用户去 GitHub 点授权
-② GET  /api/auth/<provider>/callback/    ← ★ 归属校验 + 建项目【都发生在这里】
-      ⇒ ★★ 因为此时才第一次、也是唯一一次拿到 token（用完即弃）
+POST /api/projects/publish/start/     ← 就是本模块
+   ⇒ 建 Project（含许可核验流水）+ 投递 parse 作业
+   ⇒ ★ 就地返回 { project_ref, job_id, job_state }
+   ⚠★ 不再有 `authorize_url` —— 也就不再有"整页跳第三方"这一步 ✅
 ```
 
-★ 所以"发布"这个动作**在 `auth.callback` 里完成** —— ⚠ 这不是设计缺陷，
-  ★★ 而是**"不保存凭据"必然的代价**（★ 换来的是 token 泄露这一类事故彻底不存在）。
+⚠★ **命名说明**：路由仍叫 `publish/start/`（★ 前端在用，⚠ 改路径是 `2b` 批次的事）——
+  ★★ 但**语义已经变了**：★ 它是「**建项目并开始拉取**」，❌ 不是「发起授权」⚠
 
-⚠ 一期说明：**服务端拉取源码尚未实现** ⇒ `source_path` 需要是**容器内已放好的目录**。
+★ 为什么退役反而更安全（★ 论证在 `docs/backend-decisions.md` 的 `B176` ⑥）：
+  ★★ 旧方案付出了「**承认知道风险**」的代价，★ **却没换来真正的防护** ⚠
 """
 
 from __future__ import annotations
 
-from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from core import invites, oauth
-from core.models import OAuthIdentity, OAuthState
+from core import publish as publish_core
 from web import permissions
-from web.http import fail, ok, read_json, safe_next_url
+from web.http import fail, ok, read_json
 
 
 def validate_repo(raw: str) -> tuple[str, str]:
@@ -46,7 +55,13 @@ def validate_repo(raw: str) -> tuple[str, str]:
 
 @require_http_methods(["POST"])
 def start(request: HttpRequest) -> JsonResponse:
-    """★ 发起「发布授权」—— ★★ 见模块文档（发布本身发生在回调里）。"""
+    """★★ **建项目 + 投递解析作业**（★ `B176` ①：**不再要求任何第三方授权**）。
+
+    ⚠★ 与 `B176` ① 之前相比，删掉的是中间那一跳：
+      ★ 以前要 `oauth.start(action=ACTION_PUBLISH)` ⇒ 返回授权 URL ⇒ 用户跳走 ⇒
+        ★ 回调里才真正建项目 ⚠
+      ★★ 现在**直接建** ✅
+    """
     user = permissions.current_user(request)
     if user is None:
         return fail("请先登录", 401, code="unauthenticated")
@@ -64,19 +79,6 @@ def start(request: HttpRequest) -> JsonResponse:
     if err:
         return fail(err, 400, code="bad_repo")
 
-    # ★★ 早失败（fail fast）：★ 没绑定过这个 provider 的身份 ⇒ **归属校验一定过不了**
-    #   ⚠ 所以别让用户白跑一趟 GitHub（★ 他回来只会看到"这不是你的仓库"）
-    if not OAuthIdentity.objects.filter(user=user, provider=provider).exists():
-        return fail(
-            f"请先用 {provider} 登录一次，确认账号归属后再发布。",
-            400,
-            code="identity_missing",
-        )
-
-    next_url = safe_next_url(str(body.get("next_url") or ""))
-    if next_url is None:
-        return fail("next_url 不在允许的域名白名单内", 400, code="bad_next_url")
-
     # ★★ **`source_path` 只对 staff 生效**（`B152`）——
     #   ⚠★ 它能被用来**读容器里的任何目录**（★ 这台机器上还跑着数据库）⇒
     #     ★ 普通用户一律**不收**（★ 他的源码应当由作业层从 `repo_url` 拉取）。
@@ -84,18 +86,29 @@ def start(request: HttpRequest) -> JsonResponse:
     #     （★ 与 `_safe_source_path()` 同一口径）。
     source_path = str(body.get("source_path") or "") if user.is_staff else ""
 
-    st = oauth.start(
-        provider,
-        action=OAuthState.ACTION_PUBLISH,
-        repo=repo,
-        # ★★ 用户在表单里填的东西必须跨过一次跳转活下来 —— ⚠ 见 `OAuthState.intent` 的说明
-        intent={
-            "name": str(body.get("name") or ""),
-            "desc": str(body.get("desc") or ""),
-            "source_path": source_path,
-        },
-        next_url=next_url,
-        remember=True,          # ★ 发布必然要登录，走长档
-        base_url=getattr(settings, "ASTROLABE_BASE_URL", "").rstrip("/"),
+    # ⚠★ 到这一步**已经没有"授权跳转"了**（★ `B176` ①）——
+    #   ★ 直接走编排：★ 建项目 → 建许可核验流水 → 投递作业 ✅
+    pub = publish_core.publish_project(
+        user,
+        provider=provider,
+        repo_full_name=repo,
+        name=str(body.get("name") or ""),
+        desc=str(body.get("desc") or ""),
+        source_path=source_path,
     )
-    return ok({"authorize_url": st.url, "state": st.state.state, "repo": repo})
+    if not pub.ok:
+        # ★★ 失败一律**如实返回原因**（★ `U3.9`：说清为什么 + 该怎么办）
+        return fail(
+            pub.message or "发布失败", 400, code=pub.reason_code or "publish_failed"
+        )
+
+    job = pub.job
+    return ok(
+        {
+            "project_ref": pub.project_ref,
+            "job_id": job.pk if job is not None else None,
+            "job_state": job.state if job is not None else "",
+            "message": pub.message,
+            "steps": pub.steps,
+        }
+    )

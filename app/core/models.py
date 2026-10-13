@@ -633,21 +633,32 @@ class OAuthState(TimeStampedModel):
     """
 
     ACTION_LOGIN = "login"
+
+    #: ⚠★★ `B176` ①（2026-10-12）：**下面两个 action 已【退役】—— 只留给历史数据读** ⚠
+    #:   ★ `ACTION_PUBLISH`：建项目（★ 发布曾经被**拆到授权回调里**完成）
+    #:   ★ `ACTION_FETCH`  ：拉取代码（`B169` 确立的）
+    #:   ★★★ 所有者裁定「**删掉归属验证，有风险**」之后 ⇒ ★ 那两件事
+    #:     **都不再需要 `access_token`** ⇒ ★★ 各自挪回了**普通的接口** ✅
+    #:     （★ `POST /api/projects/publish/start/` · ★ `POST /api/projects/<ref>/fetch/`）
+    #:   ⇒ ★★ **现在没有任何代码会创建这两个 action 的 state** ⚠
+    #:   ⚠★ 常量与 `choices` **刻意保留**（❌ 不删）—— ★ 因为库里还有历史行，
+    #:     ★ 删掉会让 `ACTION_CHOICES` 与实际数据对不上（★ 且要动一次迁移）⚠
+    #:   ★ 详见 `web/views/auth.py::callback()` 的说明与 `docs/backend-decisions.md` 的 `B176`。
     ACTION_PUBLISH = "publish"
-    #: ★★★ `B169`：**拉取代码**（★ 对**已有项目**发起）——
-    #:   ⚠★ 与 `ACTION_PUBLISH` 一样**必须当场校验归属**：★ 两者都会让服务端**去拉一个远端仓库** ⚠
     ACTION_FETCH = "fetch"
+
     ACTION_CHOICES = [
         (ACTION_LOGIN, "登录 / 注册"),
-        (ACTION_PUBLISH, "发布项目（需★当场校验归属）"),
-        (ACTION_FETCH, "拉取代码（需★当场校验归属）"),
+        (ACTION_PUBLISH, "发布项目（⚠ B176 ① 起已退役，仅历史数据）"),
+        (ACTION_FETCH, "拉取代码（⚠ B176 ① 起已退役，仅历史数据）"),
     ]
 
     #: ★ 随机串（★ primary key ⇒ **天然唯一**）
     state = models.CharField(max_length=64, primary_key=True)
     provider = models.CharField(max_length=16, choices=OAuthIdentity.PROVIDER_CHOICES)
 
-    #: ★★ **意图** —— ★ 决定回调时走「登录」还是「注册 + 当场校验归属」
+    #: ★★ **意图** —— ★★ `B176` ① 之后**只剩「登录 / 注册」一种**了 ⚠
+    #:   （★ 以前的「发布意图」「拉取意图」已退役 —— 见上面 `ACTION_PUBLISH` 的说明）
     action = models.CharField(max_length=16, choices=ACTION_CHOICES, default=ACTION_LOGIN)
 
     #: ★ 邀请码（★ `U4.8` 流程第 ② 步：**跳转前就填好**）

@@ -80,6 +80,14 @@ def edge_json(edge: Edge) -> dict[str, Any]:
       我们改成 **vid** 关联（理由见本文件顶部：uid 允许重复）。
     """
     return {
+        # ★★★ `B180`：**边的权威标识**（★ 补丁靠它指认"我改的是哪条边"）⚠
+        #   ★★ 为什么不给不行：★ `update_edge` / `remove_edge` 这些补丁带的是
+        #     `target_edge`（★ 就是这条边的**主键**）⚠
+        #   · ★ 而前端**只能靠 `id` 把它和边对上** —— ★ 光有 `from`/`to`/`type`
+        #     **对不上**（★ 同一个调用点可以是多行、多条边共用同样的两端）⚠
+        #   ⇒ ★★ 于是"前端整合"这件事对边就**做不到**了 ⚠
+        #   ★ 节点那边没这个问题 —— ★ 它们本来就带 `vid` ✅
+        "id": edge.pk,
         "from": edge.from_node_id,
         "to": edge.to_node_id,
         "type": edge.type,

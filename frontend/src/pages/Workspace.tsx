@@ -26,6 +26,14 @@ export default function Workspace() {
   const navigate = useNavigate()
   const q = params.get('q') || ''
   const [createOpen, setCreateOpen] = useState(false)
+  /**
+   * ★★ `B179`/`B182`：**拉取之后给用户一句话**（★ 因为这时页面不会跳走）⚠
+   *
+   * ⚠★ 两种结局的**说法必须不同**（★ 否则用户会以为"没反应"= 失败）：
+   *   · ★ 投出去了 ⇒ 「正在解析，稍等」
+   *   · ★★ **复用了现成基图** ⇒ 「**这个版本已经解析过了，直接就能看**」✅
+   */
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'info'; text: string } | null>(null)
 
   // ★★★ `B172`：**`mine: true`** —— ★★ 工作区**只显示自己的项目**
   //   （★ 用户原话：「用户的项目工作区只显示他的项目，不要把所有人的项目都显示了」）
@@ -57,6 +65,35 @@ export default function Workspace() {
   const goProject = (projectRef: string) => {
     setCreateOpen(false)
     navigate(`/p/${encodeURIComponent(projectRef)}`)
+  }
+
+  /**
+   * ★★ `B179`：**投出了解析作业**（★ 图还没出来）。
+   *
+   * ★ 这时只需让卡片自己更新状态 —— ★ `useStartFetch` 已经让
+   *   `['project', ref]` 与 `['progress', ref]` 失效 ⇒ ★ 卡片会自动轮询进度 ✅
+   *   （★ 所以这里**不跳转**：★ `/p/:key` 项目页还没做，★ 跳过去只会被打回首页）⚠
+   */
+  const onFetched = () => {
+    setNotice({
+      kind: 'info',
+      text: '开始拉取代码并解析 —— 这张卡片上会显示进度，★ 解析完成后就能打开。',
+    })
+  }
+
+  /**
+   * ★★★ `B182`：**复用了现成基图** —— ★★ 这是 `B179` 最值得告诉用户的一件事 ⚠
+   *
+   * ★★ 为什么必须说清：★ 这时**没有作业**（★ 不拉取、不解析），
+   *   ★★ 用户若拿"我在等进度"的心理预期去看，★ 会觉得"怎么什么都没发生" ⇒
+   *   ★ 误以为失败 ⚠（★ 而它其实是**最快的那条路**）⚠
+   */
+  const onReused = (r: { sha?: string }) => {
+    const ver = r.sha ? `（${r.sha.slice(0, 7)}）` : ''
+    setNotice({
+      kind: 'ok',
+      text: `这个版本${ver}已经有人解析过了 —— ★ 直接就能打开，没有重复拉取和解析。`,
+    })
   }
 
   return (
@@ -91,6 +128,32 @@ export default function Workspace() {
           </>
         }
       >
+        {/* ★★ `B179`/`B182`：拉取之后的**一句话反馈** ⚠
+            ⚠★ 必须有 —— 这时页面**不跳走**（`/p/:key` 还没做），
+              ★★ 没有它用户就不知道到底发生了什么 ⚠
+            ★ 两种结局的文案不同：★「正在解析」 vs ★「已经解析过了，直接能看」✅ */}
+        {notice && (
+          <div
+            className="card mb-4 flex items-start gap-3"
+            style={{
+              borderColor: notice.kind === 'ok' ? 'var(--accent)' : 'var(--line)',
+            }}
+          >
+            <span style={{ color: notice.kind === 'ok' ? 'var(--accent)' : 'var(--fg-dim)' }}>
+              {notice.kind === 'ok' ? '✓' : 'ℹ'}
+            </span>
+            <div className="flex-1 text-sm">{notice.text}</div>
+            <button
+              type="button"
+              className="faint text-sm"
+              aria-label="关闭提示"
+              onClick={() => setNotice(null)}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {projects.isLoading && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
@@ -151,7 +214,13 @@ export default function Workspace() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {list.map((p) => (
-                <ProjectCard key={p.project_ref} project={p} canManage={authed} />
+                <ProjectCard
+                  key={p.project_ref}
+                  project={p}
+                  canManage={authed}
+                  onFetched={onFetched}
+                  onReused={onReused}
+                />
               ))}
             </div>
           </>

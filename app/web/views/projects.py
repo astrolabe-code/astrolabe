@@ -23,7 +23,9 @@ from core import publish as publish_core
 # ⚠★ `B176` ①：`OAuthIdentity` / `OAuthState` **不再需要** ——
 #   ★ 「拉取代码」已不走 OAuth（★ 不再要求绑定身份、不再建 state）✅
 from core.models import Project
-from graph.models import Edge, Node
+# ★★ `B179`：`GraphPatch` / `ProjectBaseGraph` 也要用到 ——
+#   ★ 删除项目时要清掉"它自己的修改"与"它的绑定"（⚠ 但**不碰共享基图**）⚠
+from graph.models import Edge, GraphPatch, Node, ProjectBaseGraph
 from graph.revision import current as graph_rev_of
 from jobs import dispatch
 from jobs.models import Job
@@ -55,19 +57,39 @@ def _clamp(value, low: int, high: int, default: int) -> int:
 
 
 def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
-    """★ 一次查询取回所有项目的节点 / 边数量（❌ 不要每个项目查一次）。"""
-    nodes = dict(
-        Node.objects.filter(project_ref__in=project_refs)
-        .values_list("project_ref")
+    """★★ 一次查询取回所有项目的节点 / 边数量（❌ 不要每个项目查一次）。
+
+    ⚠★★ `B179`（2026-10-13）：数量**不再按 `project_ref` 数** ⚠ ——
+      ★ 图数据现在挂在【**基图**】上；★ 而 `project_ref` 那些行只表示
+        「★ 用户自己新增的节点」（★ 那是**另一份数据**）⚠
+      ⇒ ★★ 所以先查【项目 → 基图】的绑定，★ 再按基图数 ⚠
+      ★ 多个项目可能绑**同一份**基图 ⇒ ★ 它们数量相同 ——
+        ★★ 而这正是 `B179` 要的：★ **同一份源码版本只解析一次** ✅
+    """
+    binds = dict(
+        ProjectBaseGraph.objects.filter(project_ref__in=project_refs).values_list(
+            "project_ref", "base_graph_id"
+        )
+    )
+    bg_ids = list(binds.values())
+    if not bg_ids:
+        return {}, {}
+
+    by_bg_nodes = dict(
+        Node.objects.filter(base_graph_id__in=bg_ids)
+        .values_list("base_graph_id")
         # ⚠ 用 "pk" 而不是 "node_id"/"id" —— ★ 不依赖主键的**字段名**
         #   （`Node` 的主键叫 `node_id`，`Edge` 的叫 `id`，写死任一个都会炸）
         .annotate(n=Count("pk"))
     )
-    edges = dict(
-        Edge.objects.filter(project_ref__in=project_refs)
-        .values_list("project_ref")
+    by_bg_edges = dict(
+        Edge.objects.filter(base_graph_id__in=bg_ids)
+        .values_list("base_graph_id")
         .annotate(n=Count("pk"))
     )
+
+    nodes = {ref: by_bg_nodes.get(bg, 0) for ref, bg in binds.items()}
+    edges = {ref: by_bg_edges.get(bg, 0) for ref, bg in binds.items()}
     return nodes, edges
 
 
@@ -221,8 +243,17 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         #     他会觉得"我明明删了，为什么还是满的"，⚠ 这是最难解释的一类 bug）。
         freed = storage.release(project_ref)
 
+        # ⚠★★ `B179`（2026-10-13）：这里删的**只是这个项目自己的东西** ⚠
+        #   ★ `project_ref` 的那些节点 / 边 = **用户自己新增的**（★ 叠加层）⚠
+        #   ★ 它的修改记录（`GraphPatch`）
+        #   ★ 它的绑定关系（`ProjectBaseGraph`）
+        #   ★★★ **绝不删基图** —— ★ 基图是**共享**的，
+        #     ⚠ 删掉它 = 别的项目**当场变空**（★ 而且它们并没有做错任何事）⚠
+        #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ⇒ 最后解绑 ✅
+        GraphPatch.objects.filter(project_ref=project_ref).delete()
         Node.objects.filter(project_ref=project_ref).delete()
         Edge.objects.filter(project_ref=project_ref).delete()
+        ProjectBaseGraph.objects.filter(project_ref=project_ref).delete()
         Job.objects.filter(project_ref=project_ref).delete()
         # ⚠ 审核流水**刻意保留**（`B146`：append-only —— 删项目**不得**抹掉限额流水）
         project.delete()
@@ -319,19 +350,54 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
     # ★★★ `B176` ①：**直接投递作业** —— ★★ 与 `publish_project()` /
     #   `approve_and_resume()` **共用同一处投递逻辑** ⚠
     #   （⚠★ payload 只在那里构造一份 —— ❌ 绝不在本视图里再写一遍）
-    job, created = publish_core.dispatch_parse(
+    #
+    # ⚠★★ `B179`：它现在会**先问一句"有没有现成的基图"** ⚠
+    #   ★★ 所有者原话：「**拉去之前，看看现有的图数据里有没有同样的，
+    #     有同样的，就直接返回，不拉取，不解析，还快**」
+    #   ⇒ ★★ 所以返回值**有三种结局**（`DispatchOutcome`）：
+    #     · ★ 投出去了 ⇒ 有 `job_id`，前端照旧轮询进度
+    #     · ★★ **复用了** ⇒ **没有 `job_id`**，但这是**成功** ⇒ 另一种文案 ⚠
+    #     · ★ 失败 ⇒ 如实报原因（私有 / 限流 / 分支不存在）
+    out = publish_core.dispatch_parse(
         project, source_path=source_path, commit="", priority=0
     )
-    if job is None:
+
+    if out.failed:
+        # ★★ 解析不出 sha ⇒ ★★ **把真实原因给用户** ⚠
+        #   ★ 以前这里一律"投递失败"—— ★ 而真实原因常常是**传了私有仓库** ⚠
+        #     （★ 所有者原话：「**没有公开的仓库，去拉他干什么？……直接拒了他**」）
+        return fail(
+            out.fail_message or "拉取失败，请稍后再试。", 400, code=out.fail_code or "dispatch_failed"
+        )
+
+    if out.reused:
+        # ★★★ **这个版本已经有人解析过了** ⇒ ★★ 不拉取、不解析，直接就能看 ⚠
+        #   ⚠★ **刻意不给 `job_id`** —— ★ 真的没有作业（★ 给了前端就会去轮询一个不存在的东西）⚠
+        return ok(
+            {
+                "project_ref": project.project_ref,
+                "job_id": None,
+                "job_state": "reused",
+                "created": False,
+                "reused": True,
+                "sha": out.reused_sha,
+                "repo": repo,
+                "message": "这个仓库的同一个版本已经解析过了，直接就能看，不用再拉一次。",
+            }
+        )
+
+    if out.job is None:
         # ★ 入队失败已在 `jobs/dispatch.py` 留痕，★ 这里只负责**如实上报**
         return fail("投递作业失败，请稍后再试。", 500, code="dispatch_failed")
 
     return ok(
         {
             "project_ref": project.project_ref,
-            "job_id": job.pk,
-            "job_state": job.state,
-            "created": created,
+            "job_id": out.job.pk,
+            "job_state": out.job.state,
+            "created": out.created,
+            # ★★ `B179`：把 sha 回给前端（★ 前端可显示"对应 commit ea42736…"）✅
+            "sha": out.job.payload.get("sha", ""),
             "repo": repo,
         }
     )

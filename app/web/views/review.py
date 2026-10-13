@@ -124,7 +124,8 @@ def approve(request: HttpRequest, review_id: int) -> JsonResponse:
       ⚠ 别让管理员为了放行一个已解析的项目去翻目录）。
     """
     from core import publish
-    from graph.models import Node
+    # ★★ `B179`：用 `scope` 问"有没有图" —— ★ 它才知道该去读哪一份（★ 见 `graph/scope.py`）
+    from graph import scope
 
     review = _get_review(review_id)
     if review is None:
@@ -137,8 +138,13 @@ def approve(request: HttpRequest, review_id: int) -> JsonResponse:
     note = str(body.get("note") or "").strip()[:2000]
     source_path = str(body.get("source_path") or "").strip()[:512]
 
+    # ⚠★★ `B179`：这里要问的是「**这个项目绑定的那份基图里有没有节点**」⚠
+    #   ★ 而**不是**"`project_ref` 有没有行" —— ★ 那些行现在只表示
+    #     「★ 用户自己新增的节点」（★ 它是**另一份数据**）⚠
+    #   ★★ 问错了的后果是**静默**的：★ 会把"图已经在了"判成"图是空的"，
+    #     ★ 于是**多投一次作业**（★ 甚至以为要重新解析）⚠
     has_graph = bool(
-        review.project_ref and Node.objects.filter(project_ref=review.project_ref).exists()
+        review.project_ref and scope.nodes_of(review.project_ref).exists()
     )
 
     # ★★ `B153` 之后**不再要求 `source_path`** —— ★ 作业会**自己从远端拉**。

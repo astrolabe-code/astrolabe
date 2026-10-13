@@ -103,11 +103,18 @@ def start(request: HttpRequest) -> JsonResponse:
         )
 
     job = pub.job
+    # ⚠★ `B179`：**复用了现成基图**时 `job` 是 `None` —— ★ 而这是**成功** ⚠
+    #   ★★ 所以必须把 `reused` 一并告诉前端，★ 否则它看到 `job_id: null` 会以为失败了 ⚠
+    #   ★（★ 所有者原话：「**有同样的，就直接返回，不拉取，不解析，还快**」）
     return ok(
         {
             "project_ref": pub.project_ref,
             "job_id": job.pk if job is not None else None,
-            "job_state": job.state if job is not None else "",
+            "job_state": job.state if job is not None else ("reused" if pub.reused else ""),
+            # ★★ `B179`：两种"结局"的分界 —— ★ 前端据此给不同文案 ⚠
+            "reused": pub.reused,
+            # ★ 复用了哪一版（★ 前端可显示"对应 commit ea42736…"）✅
+            "sha": pub.reused_sha or (job.payload.get("sha", "") if job is not None else ""),
             "message": pub.message,
             "steps": pub.steps,
         }

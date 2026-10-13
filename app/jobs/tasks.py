@@ -63,6 +63,29 @@ def run_parse_job(job: Job) -> None:
         _finish(job, payload, outcome=OUTCOME_ALREADY_BUILT)
         return
 
+    # ---------------------------------------------------------- ⓪-0.5 ★★★ 基图（`B179`）
+    #   ★★ 解析产物写进【基图】，★ 而基图的身份是【仓库 + sha】⚠
+    #   ★★★ 所有者原话：「**拉去之前，看看现有的图数据里有没有同样的，
+    #     有同样的，就直接返回，不拉取，不解析，还快**」
+    #   ⚠★ 失败会 **`raise`**（★ 与 `_fetch_source` 同一口径 —— ★ 见 `_base_graph_for`）⚠
+    base_graph = _base_graph_for(job, payload, project)
+
+    if base_graph.built_at is not None:
+        # ★★★ **已经有现成的了** —— ★ 别的项目解析过**同一个 sha** ⚠
+        #   ⇒ ★★ **不拉取、不解析**：★ 绑上就完事 ✅（★ 这就是那条省算力的收益）
+        from graph import binding
+
+        binding.bind(project_ref, base_graph, requested_ref=(payload.get("ref") or ""))
+        _finish(
+            job, payload, outcome=OUTCOME_ALREADY_BUILT,
+            extra={"reused_base_graph": base_graph.sha[:12]},
+        )
+        log.info(
+            "复用现成基图 project_ref=%s base=%s@%s（★ 不拉取不解析）",
+            project_ref, base_graph.repo_full_name, base_graph.sha[:12],
+        )
+        return
+
     # ---------------------------------------------------------- ⓪ 源码从哪来
     if not root:
         # ★★ **从这里开始，源码由【作业层】自己拉**（`B153` / `core/fetch.py`）——
@@ -76,19 +99,32 @@ def run_parse_job(job: Job) -> None:
     #   ★★ **两条路都要钉**（★ 拉取的、和调试直接用本地目录的）——
     #   ⚠ 原先只在 `_fetch_source()` 里钉 ⇒ ★ 走 `path` 时 `resolved_ref` 会是空的，
     #     ★ 而"这张图是哪一版代码的"就没有答案了（`B155`）。
+    #
+    #   ⚠★★ `B179`（2026-10-13）：这里**改成钉 sha** ⚠ ——
+    #     ★★ 所有者原话：「**基图的数据一定要锚定 github 上的版本，用 sha 之类的**」
+    #     ★ 以前钉的是 `commit` 字面值，★ 而实测库里 258 个作业的 `commit` **全是空字符串** ⇒
+    #       ★★ 那一字段等于没钉（★ 而"HEAD"更是**会跑的名字**，⚠ 不是锚）⚠
+    #     ⇒ ★★ 现在钉 `_base_graph_for` 定下来的那个 sha ✅
+    #       （★ 作者再怎么提交，★ 这个 sha 指向的代码**不会变** ⚠）
     #   ★ 用 `local` 标明"这是容器里的目录，不是从远端拉的"（⚠ 别假装是某个 commit）。
-    if project is not None and not project.resolved_ref:
-        project.resolved_ref = (
-            (payload.get("commit") or "").strip() or ("local" if payload.get("path") else "HEAD")
+    if project is not None:
+        pinned = (
+            (payload.get("sha") or "").strip()
+            or (payload.get("commit") or "").strip()
+            or ("local" if payload.get("path") else "")
         )[:128]
-        project.save(update_fields=["resolved_ref", "updated_at"])
+        if pinned and (not project.resolved_ref or project.resolved_ref in ("HEAD", "local")):
+            project.resolved_ref = pinned
+            project.save(update_fields=["resolved_ref", "updated_at"])
 
     # ---------------------------------------------------------- ① ★★ 许可核验
     #   ★★ `U3.1` 第 ④ 步：**「通过后才允许解析」** —— 所以这一步在解析【之前】。
     #   ⚠ 许可核验由【作业】做（而不是同步流程），因为
     #     ★ 它需要源码，而源码只有作业层能拿到。
     _progress(job, 2, "核验许可证")
-    outcome = _license_gate(job, project, root)
+    # ★★ `B179`：许可结论**存在基图上** ⚠ —— ★ 它是"**源码版本的性质**"（★ 同一个 sha，
+    #   ★ 复用它的人不必重新核验）✅ ★ 而且 `B176` ④ 的"GPL ⇒ 只出节点"也落在那里 ⚠
+    outcome = _license_gate(job, project, root, base_graph=base_graph)
     if outcome != "pass":
         _finish(job, payload, outcome=outcome, extra={"license": outcome})
         # ★★★ `B176` ②：许可没过 ⇒ **不会解析** ⇒ ★ 源码**立刻删** ——
@@ -129,7 +165,9 @@ def run_parse_job(job: Job) -> None:
     #     ★ 见 `write_graph()` 的文档（那是**纵深防御的第二层**）。
     _progress(job, 82, f"写入图（{len(result.nodes)} 节点）")
     try:
-        stats = write_graph(project_ref, result)
+        # ★★★ `B179`：写进【基图】（★ 不再挂项目）——
+        #   ★★ 同一个 sha 的项目**共用这一份** ⚠
+        stats = write_graph(base_graph, result)
     except GraphImmutable as exc:
         # ⚠ 走到这里说明**前两道都没拦住**（例如图是被并发写进去的）——
         #   ★ 不当作系统故障：★ 图已经是定版状态，**这正是我们要的结果**。
@@ -138,9 +176,16 @@ def run_parse_job(job: Job) -> None:
         _drop_source(project, payload, root)
         return
 
+    # ★★★ `B179`：把项目**绑到这份基图**上 —— ★★ 并让「已经有图了」为真 ⚠
+    #   （★ 见 `graph/binding.py`：绑定时会置 `graph_built_at` + 让邻域缓存换代际）✅
+    from graph import binding
+
+    binding.bind(project_ref, base_graph, requested_ref=(payload.get("ref") or ""))
+
     log.info(
-        "写图完成 project_ref=%s 节点=%d(去重 %d) 边=%d(跳过 %d)",
-        project_ref, stats.nodes_written, stats.nodes_deduped,
+        "写图完成 project_ref=%s base=%s@%s 节点=%d(去重 %d) 边=%d(跳过 %d)",
+        project_ref, base_graph.repo_full_name, base_graph.sha[:12],
+        stats.nodes_written, stats.nodes_deduped,
         stats.edges_written, stats.edges_skipped,
     )
     if stats.unresolved_samples:
@@ -239,6 +284,76 @@ def _drop_source(project, payload: dict, root: str) -> None:
     )
 
 
+def _base_graph_for(job: Job, payload: dict, project):
+    """★★★ **定下这一次解析属于哪一份基图**（★ `B179`）—— ★ 顺带兜底解析 sha。
+
+    ★★ 所有者原话（逐字）：「**基图的数据一定要锚定 github 上的版本，用 sha 之类的**」
+
+    ## ★ sha 从哪来（两条路）
+
+    | 路 | sha 从哪来 | 为什么这样 |
+    |---|---|---|
+    | ★★ **正常** | ★ 调用方（发布 / 拉取那条路）**先解析好**，塞进 `payload["sha"]` ✅ | ★★ 因为**必须先查"有没有现成的基图"**（★ 那才是省算力的地方）⚠ |
+    | ⚠ **兜底** | ★ 这里**自己解析一次** ⚠ | ★ 老作业 / 调试命令（★ payload 里没带 sha）|
+
+    ⚠★ **失败一律 `raise`**（★ 与 `_fetch_source` 同一口径）——
+      ★ 由 worker 置 `failed`，★ 并把原因给用户看 ⚠
+      ★★ 尤其要**如实区分**：「私有 / 不存在」★ 是**用户的事**；
+        「查得太频繁」★ 是**我们的事**（★ 见 `core/fetch.py::FetchError`）⚠
+    """
+    from core import fetch
+    from graph import binding
+
+    provider = (
+        payload.get("provider") or (project.provider if project else "") or ""
+    ).strip().lower()
+    repo_full = (
+        payload.get("repo_full_name")
+        or (fetch.repo_full_from_url(project.repo_url) if project else "")
+    ).strip()
+    #: ★ 调试路径（★ 源码是容器里的一个目录）—— ★ 那时**没有远端仓库**可言
+    is_local = bool(str(payload.get("path") or "").strip())
+
+    # ⚠★ `B179`：**只有"真要拉远端"时才强制要仓库地址** ⚠
+    #   ★ 调试路径下项目可能根本没设 `repo_url`（★ staff 指了个目录就让解析）——
+    #     ★★ 那时拿"缺仓库"当失败是**错的**（★ 它本来就不需要仓库）⚠
+    if not provider or (not repo_full and not is_local):
+        raise ValueError("作业 payload 里缺少 provider / repo_full_name，无法定位仓库。")
+
+    ref = str(payload.get("ref") or "").strip()
+    sha = str(payload.get("sha") or "").strip()
+    default_branch = str(payload.get("default_branch") or "").strip()
+
+    if not sha:
+        # ★★ 兜底（⚠ 正常路径不会走到 —— 见函数文档）
+        if str(payload.get("path") or "").strip():
+            # ⚠★★ **调试路径：源码是容器里的一个目录** ⇒ ★ **没有 commit sha** ⚠
+            #   ★★ 绝不去网上解析（★ 那是假仓库 / 本地目录，★ 解析必然失败 ⇒ 把作业白白搞崩）⚠
+            #   ★ 用一个**一眼看得出是本地**的占位身份（★ 别假装是某个 commit）✅
+            #     （★ `blob_url` 会因此返回空 —— ★ 不给假链接，见 `graph/models.py`）
+            sha, default_branch = "local", ""
+        else:
+            _progress(job, 1, "解析版本")
+            v = fetch.resolve_ref(provider, repo_full, ref)
+            if not v.ok:
+                raise ValueError(v.message or "解析不出这个仓库的版本。")
+            sha, default_branch = v.sha, v.default_branch
+        payload.update({"sha": sha, "default_branch": default_branch, "ref": ref})
+        job.payload = {**payload}
+        job.save(update_fields=["payload"])
+
+    bg, created = binding.get_or_create(
+        provider, repo_full, sha, ref=ref, default_branch=default_branch
+    )
+    log.info(
+        "基图：%s base=%s@%s（%s）",
+        "新建" if created else "已存在",
+        repo_full, sha[:12],
+        "已建好" if bg.built_at else "待建",
+    )
+    return bg
+
+
 def _fetch_source(job: Job, payload: dict, project) -> str:
     """★★ **从远端把源码拉进"这个项目的存储空间"**（`B153` / `core/fetch.py`）。
 
@@ -279,7 +394,9 @@ def _fetch_source(job: Job, payload: dict, project) -> str:
         job.project_ref,
         provider,
         repo_full,
-        ref=(payload.get("commit") or ""),
+        # ★★★ `B179`：**按 sha 下载** ⚠ —— ★ 一份基图**永远**对应同一份代码 ✅
+        #   ★（⚠ 按分支名下载的话，作者一提交，同名基图的内容就变了）
+        ref=(payload.get("sha") or payload.get("commit") or ""),
         max_bytes=max_bytes,
         max_files=max_files,
         owner=owner,
@@ -299,7 +416,42 @@ def _fetch_source(job: Job, payload: dict, project) -> str:
     return storage.project_dir(job.project_ref)
 
 
-def _license_gate(job: Job, project, root: str) -> str:
+def _remember_license(base_graph, verdict) -> None:
+    """★★★ **把许可结论存到【基图】上**（★ `B179`）—— ★ 两处用处：
+
+    ① ★★ **复用时不必重新核验**（★ 同一个 sha，结论不会变）✅
+    ② ★★ `B176` ④：**传染性许可（GPL 等）⇒ 只出节点、不自动生成调用边** ⚠
+       —— ★ 那是**建图时**的决定，★ 所以必须落在基图上 ⚠
+       （★ 所有者原话：「**GPL 项目不解析，但生成节点图，不生成调用关系**」）⚠
+    """
+    if base_graph is None:
+        return
+
+    from core import licensing
+
+    detections = (verdict.evidence or {}).get("detections") or []
+    spdx = ""
+    if detections and isinstance(detections[0], dict):
+        spdx = str(detections[0].get("spdx") or "")
+
+    base_graph.license_decision = (verdict.decision or "")[:16]
+    base_graph.license_reason_code = (verdict.reason_code or "")[:32]
+    base_graph.license_reason_text = (verdict.reason_text or "")[:400]
+    base_graph.license_spdx = spdx[:64]
+    base_graph.license_evidence = verdict.evidence or {}
+    # ★★ `B176` ④：★ **只有"宽松许可"才自动生成调用关系** ⚠
+    base_graph.edges_generated = (
+        verdict.decision == licensing.DECISION_ALLOW and verdict.reason_code != "copyleft"
+    )
+    base_graph.save(
+        update_fields=[
+            "license_decision", "license_reason_code", "license_reason_text",
+            "license_spdx", "license_evidence", "edges_generated", "updated_at",
+        ]
+    )
+
+
+def _license_gate(job: Job, project, root: str, *, base_graph=None) -> str:
     """★★ **许可核验闸门**（`U3.1` 第 ④ 步）—— ★ 返回三种归宿之一。
 
     ★★ 关键动作是 `submission.resolve_license()`：★ 把那条「**待核验**」的流水
@@ -318,6 +470,9 @@ def _license_gate(job: Job, project, root: str) -> str:
     from core.models import ProjectReview
 
     verdict = licensing.evaluate(root)
+
+    # ★★ `B179`：结论存到【基图】上（★ 复用它的人不必再验；★ 且 GPL 的出图策略也在这）
+    _remember_license(base_graph, verdict)
 
     if project is None:
         # ⚠ 没有项目记录（如调试命令 `parse_project`）⇒ ★ 只记日志，**不阻断**

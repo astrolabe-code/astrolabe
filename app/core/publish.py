@@ -59,12 +59,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from django.db import transaction
+
+#: ★ 本模块的日志（★ `B179` 起要多记一条"复用了现成基图"—— ★ 那是**省下算力**的证据）⚠
+log = logging.getLogger(__name__)
 
 from core import appsettings, fetch, licensing, oauth, quota, storage, submission
 from core.models import Project, ProjectReview
@@ -88,6 +92,12 @@ class PublishResult:
     review: ProjectReview | None = None
     job: Any = None
     job_created: bool = False
+
+    #: ★★ `B179`：**复用了现成基图** ⇒ `job` 为 `None`，但这是**成功** ⚠
+    #   ⚠★ 视图层必须据此给用户**另一种文案**（★ 不是"投递失败"）⚠
+    reused: bool = False
+    #: ★ 复用了哪一版（★ 前端可以显示"对应 commit ea42736…"）✅
+    reused_sha: str = ""
 
     #: ★ 分步结果（★ 前端可以照着渲染"①②③④ 各是哪一步拦住的"）
     steps: dict[str, Any] = field(default_factory=dict)
@@ -230,7 +240,7 @@ def publish_project(
     #  ⚠ 反过来（事务提交成功、入队失败）也有风险 ——
     #    ★ 但 `dispatch.submit` 已经把那种情况**显式置为 `failed` 并抛异常**
     #      （`B115` ①：❌ 绝不静默），★ 所以这里是**可观测**的，❌ 不是黑洞。
-    job, created = dispatch_parse(
+    out = dispatch_parse(
         project,
         # ★★ 只放行**存储空间内**的路径（`B152`）——
         #   ⚠★ 见 `_safe_source_path()`：这是"不把任意路径交给作业"的最后一道。
@@ -238,7 +248,36 @@ def publish_project(
         commit="",
         priority=priority if priority is not None else _queue_priority(user),
     )
-    if job is None:
+
+    # ---- ⚠★ `B179`：**三种结局**，❌ 不能只看 `job is None` ----
+    if out.failed:
+        # ★★ 解析不出 sha（私有 / 不存在 / 限流 / 分支错）⇒ ★★ **如实报出原因** ⚠
+        #   ★ 以前这里一律说"投递失败"—— ★ 而真实原因常常是**用户传了私有仓库** ⚠
+        return _fail(
+            r, step="dispatch", code=out.fail_code or "enqueue_failed",
+            message=out.fail_message
+            or (
+                "项目已创建，但解析任务投递失败，请稍后重试或联系站长。"
+                "（这次提交仍然占用了你的上传额度）"
+            ),
+        )
+
+    if out.reused:
+        # ★★★ **已经有现成的基图了**（★ 别的项目解析过同一个 sha）⚠
+        #   ⇒ ★★ **没有作业**（⚠ 所以下面必须走这条分支，❌ 不能掉进 `job is None`）⚠
+        #   ★ 这正是所有者要的「**有同样的，就直接返回，不拉取，不解析，还快**」✅
+        r.ok = True
+        r.job = None                     # ⚠★ 刻意置空 —— 真的没有作业
+        r.job_created = False
+        r.reused = True                  # ★★ 让视图层能给出对的文案 ⚠
+        r.reused_sha = out.reused_sha
+        r.steps["dispatch"] = {
+            "ok": True, "reused": True, "sha": out.reused_sha, "job_id": None,
+        }
+        r.message = "这个仓库的同一个版本已经解析过了，直接就能看，不用再拉一次。"
+        return r
+
+    if out.job is None:
         # ★ 作业没投出去 ⇒ ★★ **如实告诉用户**（❌ 不假装"已受理"）
         return _fail(
             r, step="dispatch", code="enqueue_failed",
@@ -249,9 +288,13 @@ def publish_project(
         )
 
     r.ok = True
-    r.job = job
-    r.job_created = created
-    r.steps["dispatch"] = {"ok": True, "job_id": job.pk, "created": created}
+    r.job = out.job
+    r.job_created = out.created
+    r.steps["dispatch"] = {
+        "ok": True, "job_id": out.job.pk, "created": out.created,
+        # ★★ `B179`：把 sha 一并记进步骤（★ 事后能看出"这一版对应哪个 commit"）✅
+        "sha": out.job.payload.get("sha", ""),
+    }
     r.message = (
         "已受理，正在拉取源码并核验许可证，完成后会自动开始解析。"
     )
@@ -311,7 +354,45 @@ def _queue_priority(user) -> int:
         return 0
 
 
-def dispatch_parse(project: Project, *, source_path: str, commit: str, priority: int):
+@dataclass
+class DispatchOutcome:
+    """★★ `dispatch_parse()` 的返回值（★ `B179` 起**不再是裸 tuple**）⚠
+
+    ## ⚠★ 为什么必须换个类型
+
+    ★ `B179` 之前只有两种结果：★ 投出去了（`job`）· ★ 没投出去（`None`）。
+    ★★ `B179` 之后多出**第三种** —— ⚠★ **复用了现成的基图** ⚠
+
+    | 情形 | `job` | `reused` | `failed` | 调用方该怎么办 |
+    |---|---|---|---|---|
+    | ★ 投出去了 | ✅ 有 | `False` | `False` | ★ 照旧等作业 ✅ |
+    | ★★ **复用了** | ⚠ `None` | ✅ **`True`** | `False` | ★★ **这是成功** —— ★ 告诉用户"已经有了，直接看" ✅ |
+    | ★ 解析不出 sha | `None` | `False` | ✅ `True` | ★ **如实报原因**（私有 / 限流 / 分支不存在）⚠ |
+
+    ⚠★★ 如果把"复用"也返回 `job=None` ⇒ ★ 调用方会**误判成投递失败** ⚠
+      —— ★ 于是用户看到"投递失败"，★ 而事实上**图已经能看了**（★ 那是最难解释的一类 bug）⚠
+    """
+
+    job: Any = None
+    created: bool = False
+    #: ★★ `B179`：**复用了现成基图** —— ⚠ `job` 是 `None`，但这是**成功** ⚠
+    reused: bool = False
+    reused_sha: str = ""
+    base_graph: Any = None
+    #: ★★ 失败（★ 带**用户能看懂的原因**，❌ 不是笼统的"失败"）
+    failed: bool = False
+    fail_code: str = ""
+    fail_message: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """★ 只要不是失败就算成（★ 复用也是成）✅"""
+        return not self.failed
+
+
+def dispatch_parse(
+    project: Project, *, source_path: str, commit: str, priority: int, ref: str = ""
+) -> DispatchOutcome:
     """★★ **投递一个解析作业** —— ★★ **这是对外入口**（`B176` ① 之后由三处共用）⚠
 
     | 谁调用 | 什么时候 |
@@ -326,10 +407,68 @@ def dispatch_parse(project: Project, *, source_path: str, commit: str, priority:
     ★ 作业靠 payload 里的 `provider` / `repo_full_name` / `repo_url`
       **自己把源码拉下来**（`B153`，`core/fetch.py`）—— ★ 调用方**不需要**给目录 ✅
 
+    ## ★★★ `B179`：**拉取之前先问一句"有没有现成的"**
+
+    ★★ 所有者原话（逐字）：
+
+    > 「**用户拉一个图就解析一次，太浪费算力，应该是，拉去之前，看看现有的图数据里
+    > 有没有同样的，有同样的，就直接返回，不拉取，不解析，还快。**」
+
+    ⇒ ★★ 所以本函数现在**先解析 sha**（★ `core/fetch.py::resolve_ref`），★ 再按
+      【仓库 + sha】查基图：
+
+    | 查到 | 做什么 |
+    |---|---|
+    | ★★ **已经建好** | ★★ **绑上就返回，★ 不投作业** ⇒ 用户**秒回** ✅ |
+    | ★ 只有记录、还没建 | ★ 投作业（★ 让它去拉去解析）✅ |
+    | ⚠ 解析不出 sha | ★★ **不投作业，如实报原因** ⚠ |
+
+    ⚠★ **失败兜底（必须有的）**：★ `resolve_ref` 要**走网络** ——
+      ★★ 而所有者明确说过「github 在国内搞这些配置，很卡的」⚠
+      ⇒ ★★ 网络不通 ⇒ ★ **照旧投作业**（★ 让作业去扛、去重试），❌ 不让用户请求挂着 ⚠
+
     ★ 延迟 import —— 见模块文档的分层说明。
     """
     from jobs import dispatch
     from jobs.models import Job
+
+    provider = (project.provider or "").strip().lower()
+    repo_full = (fetch.repo_full_from_url(project.repo_url) or "").strip()
+    sha = ""
+
+    # ---- ⓪ ★★ `B179`：先定 sha（⚠ 只有"真要拉远端"时才需要）----
+    #   ★ 调试路径（`source_path` 非空 ⇒ staff 指了容器里的目录）**跳过** ——
+    #     ★ 那时源码不来自远端，★ 而 sha 由作业里兜底解析（见 `_base_graph_for`）。
+    if repo_full.count("/") == 1 and not source_path:
+        try:
+            verdict = fetch.resolve_ref(provider, repo_full, ref)
+        except Exception:  # noqa: BLE001 —— ★ 网络炸了也要能继续（见函数文档的兜底）
+            verdict = None
+
+        if verdict is not None:
+            if not verdict.ok:
+                # ★★ 私有 / 不存在 / 限流 / 分支错 —— ★ 每条都有**用户能看懂**的文案 ⚠
+                return DispatchOutcome(
+                    failed=True, fail_code=verdict.reason_code,
+                    fail_message=verdict.message or "解析不出这个仓库的版本。",
+                )
+            sha = verdict.sha
+
+            # ---- ⓪-1 ★★ 「有没有同样的？」----
+            from graph import binding
+
+            bg = binding.find(provider, repo_full, sha)
+            if binding.is_ready(bg):
+                # ★★★ **有，而且建好了** ⇒ ★★ 绑上就返回，★ **不拉取、不解析** ⚠
+                #   ★ 这正是「有同样的，就直接返回……还快」的落点 ✅
+                binding.bind(project.project_ref, bg, requested_ref=ref)
+                log.info(
+                    "复用现成基图（同步）project_ref=%s base=%s@%s ⇒ 不投作业",
+                    project.project_ref, repo_full, sha[:12],
+                )
+                return DispatchOutcome(
+                    reused=True, reused_sha=sha, base_graph=bg, created=False
+                )
 
     payload = {
         "project_id": project.pk,
@@ -339,21 +478,32 @@ def dispatch_parse(project: Project, *, source_path: str, commit: str, priority:
         "path": source_path or "",
         # ★★ 作业靠这三样自己把源码拉下来（★ 不再需要调用方提供目录）
         "provider": project.provider,
-        "repo_full_name": fetch.repo_full_from_url(project.repo_url),
+        "repo_full_name": repo_full,
         "repo_url": project.repo_url,
         "commit": commit,
+        # ★★ `B179`：**sha 一并带进 payload** ——
+        #   ⚠ 这样作业**不必再解析一次**（★ 省两次 API 调用），
+        #     ★★ 而且"按 sha 下载"才有依据（★ 一份基图永远对应同一份代码）⚠
+        "sha": sha,
+        # ★ 用户当时指定的分支 / tag（⚠ 空 ⇒ 默认分支）—— ★ 只作留痕
+        "ref": (ref or "")[:128],
     }
     try:
-        return dispatch.submit(
+        job, created = dispatch.submit(
             kind=Job.KIND_PARSE,
             project_ref=project.project_ref,
             payload=payload,
             priority=priority,
             # ★★ `B115` ④：同一项目同一版本重复投递 ⇒ **合并**（❌ 不是失败）
-            dedup_key=f"parse:{project.project_ref}:{commit or 'HEAD'}",
+            # ⚠★ `B179`：去重键**换成 sha** —— ★ 以前用 `commit or 'HEAD'`，
+            #   ★★ 而实测 `commit` 全是空 ⇒ 键永远是 `…:HEAD` ⇒ **两个不同版本会被并成一条** ⚠
+            dedup_key=f"parse:{project.project_ref}:{sha or commit or 'HEAD'}",
         )
+        return DispatchOutcome(job=job, created=created)
     except Exception:  # noqa: BLE001 —— ★ 入队失败已在 dispatch 里留痕，这里只负责如实上报
-        return None, False
+        return DispatchOutcome(
+            failed=True, fail_code="enqueue_failed", fail_message="投递作业失败，请稍后再试。"
+        )
 
 
 # ===========================================================================
@@ -391,10 +541,17 @@ def approve_and_resume(
     if project.is_graph_built:
         return review, None
 
-    job, created = dispatch_parse(
+    # ⚠★ `B179`：`dispatch_parse` 现在返回 `DispatchOutcome`（★ 三种结局）⚠
+    #   · ★ 投出去了 ⇒ `out.job` 有值 ⇒ ★ **照旧回给它**（★ 调用方要等这个作业）✅
+    #   · ★★ **复用了现成基图** ⇒ `out.job` 是 `None`，而**项目已经有图了**
+    #     （★ `binding.bind()` 已把 `graph_built_at` 置真）⇒ ★ **不用等，这正是"还快"** ✅
+    #   · ★ 失败 ⇒ `out.job` 也是 `None`（★ 失败原因在 `out.fail_message` 里）
+    #   ⚠★ 三种都返回 `out.job` 就对了 —— ★ **不要写死 `None`**（★ 我犯过这个错：
+    #     那会让"真的投了作业"也返回 `None` ⇒ 调用方以为没投 ⇒ 永远等不到图）⚠
+    out = dispatch_parse(
         project, source_path=source_path, commit=commit, priority=0
     )
-    return review, job
+    return review, out.job
 
 
 def public_projects():

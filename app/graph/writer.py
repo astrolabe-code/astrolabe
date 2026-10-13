@@ -23,9 +23,7 @@ from dataclasses import dataclass, field
 from django.db import transaction
 
 from codeparser.base import ParseResult
-from core.models import Project
-from graph import revision
-from graph.models import Edge, Node
+from graph.models import BaseGraph, Edge, Node
 
 #: 解析器给出的「延迟解析引用」前缀（约定见 `codeparser/base.py` 的 `ParsedEdge`）
 _UNRESOLVED = "unresolved#"
@@ -97,33 +95,41 @@ class GraphImmutable(Exception):
 
 
 def write_graph(
-    project_ref: str,
+    base_graph: BaseGraph,
     result: ParseResult,
     *,
     replace: bool = False,
     replace_reason: str = "",
 ) -> WriteStats:
-    """把一个项目的解析产物写进图。
+    """★★ **把一份解析产物写进【基图】**（★ `B179` · 2026-10-13）。
+
+    ## ⚠★★ `B179` 改了什么（★ 这一条是本函数的全部变化）
+
+    | | `B179` 之前 | `B179` 之后 |
+    |---|---|---|
+    | ★ 挂在谁身上 | ★ 一个**项目**（`project_ref`）| ★★ 一份**基图**（★ 按【仓库 + sha】—— 不属于任何用户 ⚠）|
+    | ★ 一份产物几个项目用 | ★ 一个（★ 换个项目就**重新解析** ⚠）| ★★ **所有同 sha 的项目共用** ✅ |
+    | ★ 定版标记 | ★ `Project.graph_built_at` | ★ `BaseGraph.built_at`（★ 项目那边在**绑定时**置）✅ |
 
     ⚠ **原子性**：整个过程在一个事务里 —— 要么全成功，要么全不留痕。
 
-    ★★★ **图一经写入即【定版】（`B103` / `B155`）**：
+    ★★ **基图一经写入即【定版】（`B103` / `B155` 的口径沿用到基图）**：
 
     | 情况 | 行为 |
     |---|---|
-    | ★ 这个项目**还没有图** | ✅ 正常写入，并**钉住 `graph_built_at`** |
-    | ★★ **已经有图** | ★★ **`raise GraphImmutable`**（❌ **不是**"先删后写"） |
+    | ★ 这份基图**还没建** | ✅ 正常写入，并**钉住 `built_at`** |
+    | ★★ **已经建好了** | ★★ **`raise GraphImmutable`**（❌ **不是**"先删后写"） |
 
-    ⚠★ **为什么默认是"拒绝"而不是"覆盖"**：★ 图一旦生成，**解释 / 提问 / 阅读路径
+    ⚠★ **为什么默认"拒绝"而不是"覆盖"**：★ 图一旦生成，**解释 / 提问 / 阅读路径
       全挂在「文件 + 行区间」上**（`B98` 的 L0）；⚠ 重新解析会让那些行号**全部错位**
-      —— ★★ 而**没有任何机制能自动发现**。⇒ ★ 所以这不是性能优化，
-      ★ 是**数据完整性的前提**。
+      —— ★★ 而**没有任何机制能自动发现**。
 
-    ⚠ `replace=True` **只留给调试**（如 `parse_project --force`）——
-      ★ 且**必须给 `replace_reason`**（★ 让"谁在什么时候覆盖过图"留得下痕迹）。
+    ⚠★★ **`replace=True` 的杀伤面变大了**（★ 如实说明）：★ 以前它只影响**一个项目**；
+      ★★ 现在它影响**所有绑在这份基图上的项目** ⚠ ⇒ ★★ **生产路径上绝不能用** ⚠
+      （★ 只留给调试，★ 且必须给 `replace_reason` —— ★ 让"谁覆盖过"留得下痕迹）
 
     Args:
-        project_ref: 项目标识（★ 由调用方注入，见 `ARCHITECTURE.md` A3 的权限注入纪律）
+        base_graph: ★ 要写哪一份基图（★ 由调用方按【仓库 + sha】取好 —— 见 `jobs/tasks.py`）
         result: 解析产物（可能来自多个文件，已汇总）
         replace: ⚠★ **仅供调试** —— 见上（★ 生产路径一律用默认值 `False`）
         replace_reason: ★ `replace=True` 时必填（⚠ 会写进审计日志）
@@ -132,33 +138,26 @@ def write_graph(
 
     with transaction.atomic():
         # ---------------------------------------------------------- ⓪ ★★★ 定版闸门
-        #   ⚠★ **已有图 ⇒ 拒绝**（❌ 不是"先删后写"）——
+        #   ⚠★ **已经建好 ⇒ 拒绝**（❌ 不是"先删后写"）——
         #     ★ 见函数文档：重新解析会让**解释里的行区间全部错位**，⚠ 而没人能发现。
-        #   ⚠ 用 `select_for_update` 锁住项目那一行 ⇒ ★ **两个并发的解析作业
+        #   ⚠ 用 `select_for_update` 锁住**基图**那一行 ⇒ ★ **两个并发的解析作业
         #     不会双双通过**（⚠ 典型的 check-then-use）——
         #     ★ 与 `B149` 的 `claim_job` 是同一类问题、同一类解法。
-        project = Project.objects.select_for_update().filter(project_ref=project_ref).first()
-        existing = Node.objects.filter(project_ref=project_ref).exists()
+        bg = BaseGraph.objects.select_for_update().filter(pk=base_graph.pk).first()
+        if bg is None:
+            raise GraphImmutable("这份基图已经不在了（可能被并发删掉了）。")
 
-        if existing:
+        if Node.objects.filter(base_graph=bg).exists():
             if not replace:
                 raise GraphImmutable(
-                    "这个项目已经解析过了，图不会重新生成。"
-                    "★ 需要另一个版本请【新建一个项目】；★ 想重来请【删掉本项目后重建】。"
+                    "这份基图已经建好了，不会重新生成。"
+                    "★ 要看别的版本，请换一个分支 / tag 再拉一次。"
                 )
             if not (replace_reason or "").strip():
                 # ★★ 强制留痕 —— ⚠ 否则"图被覆盖过"这件事**事后查不出来**
                 raise ValueError("replace=True 必须给出 replace_reason（⚠ 会写进审计日志）")
-            Edge.objects.filter(project_ref=project_ref).delete()
-            Node.objects.filter(project_ref=project_ref).delete()
-
-        if project is not None and project.graph_built_at is not None and not replace:
-            # ★ 图被单独清空过、但项目仍标着"已定版" ⇒ ★ **同样拒绝**
-            #   （⚠ 否则"删掉节点"就成了绕过定版的后门）
-            raise GraphImmutable(
-                "这个项目已经定版（图已生成过），不能重新解析。"
-                "★ 需要另一个版本请【新建一个项目】；★ 想重来请【删掉本项目后重建】。"
-            )
+            Edge.objects.filter(base_graph=bg).delete()
+            Node.objects.filter(base_graph=bg).delete()
 
         # ---------------------------------------------------------- ① 节点
         seen: dict[str, Node] = {}
@@ -169,7 +168,9 @@ def write_graph(
                 stats.nodes_deduped += 1
                 continue
             seen[pn.uid] = Node(
-                project_ref=project_ref,
+                # ★★ `B179`：挂【基图】—— ★ 不再挂项目、也不再有 `origin` 列 ⚠
+                #   （★ 基图行【必然】是"解析出来的"，★ 不需要一列去记它）
+                base_graph=bg,
                 uid=pn.uid,
                 kind=pn.kind,
                 name=pn.name[:512],
@@ -180,7 +181,6 @@ def write_graph(
                 lang=pn.lang,
                 signature=(pn.signature or "")[:512],
                 # ⚠★ `B176`：此处曾写 `doc=pn.doc or ""` —— ★ 随 `ParsedNode.doc` 一并删除 ✅
-                origin="parsed",
                 extra=pn.extra or {},
             )
 
@@ -191,59 +191,69 @@ def write_graph(
         index = _Index.build(seen)
 
         # ---------------------------------------------------------- ② 边
+        # ★★★ `B176` ④：**传染性许可（GPL 等）⇒ 只出节点、不自动生成调用关系** ⚠
+        #   ★ 所有者原话：「**GPL 项目不解析，但生成节点图，不生成调用关系**」⚠
+        #   ★★ 判据写在**基图**上（★ 作业在许可核验时置好 —— ★ 见 `jobs/tasks.py`）⚠
+        #   ★ 这样做是刻意的：★ 边是"对**代码结构**的提取"，★ 而那正是那条争议最大的一块 ⚠
         edges: list[Edge] = []
-        for pe in result.edges:
-            from_node = _resolve(pe.from_uid, index, stats)
-            to_node = _resolve(pe.to_uid, index, stats)
-            if from_node is None or to_node is None:
-                stats.edges_skipped += 1
-                continue
-            if from_node.pk == to_node.pk:
-                # 自环对"发散思维"没有价值，且多半是解析噪声
-                stats.edges_skipped += 1
-                continue
-            edges.append(
-                Edge(
-                    project_ref=project_ref,
-                    from_node=from_node,
-                    to_node=to_node,
-                    type=pe.type,
-                    origin="parsed",
-                    line=pe.line,
-                    confidence=(pe.confidence or "")[:16],
-                    extra=pe.extra or {},
+        if not bg.edges_generated:
+            # ⚠ 如实计数（★ 不静默丢掉）：★ 前端要能解释"为什么没有连线" ⚠
+            stats.edges_skipped += len(result.edges)
+        else:
+            for pe in result.edges:
+                from_node = _resolve(pe.from_uid, index, stats)
+                to_node = _resolve(pe.to_uid, index, stats)
+                if from_node is None or to_node is None:
+                    stats.edges_skipped += 1
+                    continue
+                if from_node.pk == to_node.pk:
+                    # 自环对"发散思维"没有价值，且多半是解析噪声
+                    stats.edges_skipped += 1
+                    continue
+                edges.append(
+                    Edge(
+                        base_graph=bg,
+                        from_node=from_node,
+                        to_node=to_node,
+                        type=pe.type,
+                        line=pe.line,
+                        confidence=(pe.confidence or "")[:16],
+                        extra=pe.extra or {},
+                    )
                 )
-            )
 
-        Edge.objects.bulk_create(edges, batch_size=1000)
+            Edge.objects.bulk_create(edges, batch_size=1000)
         stats.edges_written = len(edges)
 
         # ---------------------------------------------------------- ★★★ 定版
         #   ★★ **与写图同一个事务** —— ⚠ 分开做就会出现"图写了、标记没置"的窗口，
         #     ★ 那个窗口里再投一次作业 ⇒ **图被覆盖**（★ 正是这一条要防的事）。
-        if project is not None:
-            from django.utils import timezone
+        from django.utils import timezone
 
-            project.graph_built_at = timezone.now()
-            project.save(update_fields=["graph_built_at", "updated_at"])
+        bg.node_count = stats.nodes_written
+        bg.edge_count = stats.edges_written
+        bg.built_at = timezone.now()
+        bg.save(update_fields=["node_count", "edge_count", "built_at", "updated_at"])
 
         if replace:
             # ⚠ 覆盖是**例外** ⇒ ★ 必须留痕（★ 见函数文档）
             from core.models import AuditLog
 
             AuditLog.objects.create(
-                action="graph.replaced",
-                target_kind="Project",
-                target_id=project_ref,
-                detail={"reason": replace_reason[:500], "nodes": len(result.nodes)},
+                action="base_graph.replaced",
+                target_kind="BaseGraph",
+                target_id=str(bg.pk),
+                detail={
+                    "repo": f"{bg.provider}:{bg.repo_full_name}@{bg.sha[:12]}",
+                    "reason": replace_reason[:500],
+                    "nodes": len(result.nodes),
+                },
             )
 
-        # ★★ 图变了 ⇒ 邻域缓存必须失效（`GRAPH-STORAGE.md` G5）。
-        #    ★ 做法是「**版本号 +1**」（换命名空间），❌ 不是 `SCAN` 删 key
-        #      —— 后者会阻塞 Redis 主线程，键越多越慢。
-        #    ⚠ 必须在这个事务【内】做：否则会存在「图已经新了、rev 还是旧的」窗口，
-        #      那一刻进来的读请求会把【旧缓存】当成新结果返回。
-        stats.rev = revision.bump(project_ref)
+        # ⚠★★ 邻域缓存的失效**挪到了"项目绑定基图"那一步**（★ `B179`）——
+        #   ★ 缓存命名空间是【按项目】的（`GraphRevision.project_ref`）⚠
+        #   ★★ 而基图是**共享**的 ⇒ ★ 在这里 bump 会**不知道该 bump 谁** ⚠
+        #   ★ 绑定时 bump 一次即可（★ 见 `graph/binding.py`）✅
 
     return stats
 

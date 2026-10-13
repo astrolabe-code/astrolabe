@@ -21,11 +21,26 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from graph.models import Edge, Node
+from graph import scope
+from graph.models import PATCH_ADD_NODE, Edge, Node
 
 
-def node_json(node: Node, *, depth: int | None = None) -> dict[str, Any]:
-    """单个节点 —— ★ 字段取「画图 + 节点详情」需要的（`G4-3`：❌ 不 SELECT *）。"""
+def node_json(
+    node: Node, *, depth: int | None = None, base_graph=None
+) -> dict[str, Any]:
+    """单个节点 —— ★ 字段取「画图 + 节点详情」需要的（`G4-3`：❌ 不 SELECT *）。
+
+    ## ⚠★ `B179`（2026-10-13）改了这里两件事
+
+    | 字段 | 变化 |
+    |---|---|
+    | ★ `origin` | ★★ **不再是一列**（★ `B179` 把列删了）⇒ ★ **按归属算**：<br>★ 基图行 ⇒ `parsed` · ★ 叠加行（`project_ref`）⇒ `manual` ✅ |
+    | ★★ `blob_url` | ★★★ **新增** —— ★ 所有者要求的那条**永久链接** ⚠<br>「点击基图上的节点，**一定要能给出正确的函数位置链接**」⚠ |
+
+    ⚠★★ **列表端点必须把 `base_graph` 传进来** ——
+      ★ 否则每个节点都会去 `node.base_graph` 查一次库（**N+1**）⚠
+      ★ 而这里的兜底分支是**留给单节点场景**的（★ 节点详情只查一个 —— 可以接受）✅
+    """
     data: dict[str, Any] = {
         # ★★ 权威标识（B117）—— 锚点、邻域查询、详情路径都用它
         "vid": node.node_id,
@@ -39,10 +54,19 @@ def node_json(node: Node, *, depth: int | None = None) -> dict[str, Any]:
         "line_end": node.line_end,
         "lang": node.lang,
         "signature": node.signature,
-        "origin": node.origin,
+        # ★★ 算出来的（⚠ 不再是读列）—— ★ 归属决定它，见函数文档
+        "origin": "parsed" if node.base_graph_id else "manual",
     }
     if depth is not None:
         data["depth"] = depth
+
+    bg = base_graph
+    if bg is None and node.base_graph_id:
+        # ⚠ 兜底（★ 单节点场景可用；★ **列表端点别走这里** —— 那是 N+1）
+        bg = node.base_graph
+    blob = scope.blob_url_of(node, bg)
+    if blob:
+        data["blob_url"] = blob
     return data
 
 
@@ -60,7 +84,8 @@ def edge_json(edge: Edge) -> dict[str, Any]:
         "to": edge.to_node_id,
         "type": edge.type,
         "line": edge.line,
-        "origin": edge.origin,
+        # ⚠★ `B179`：`origin` 不再是一列 ⇒ ★ 按归属算（★ 同 `node_json`）⚠
+        "origin": "parsed" if edge.base_graph_id else "manual",
         "confidence": edge.confidence,
     }
 
@@ -95,6 +120,55 @@ def subgraph_json(sg, *, include_stats: bool = False) -> dict[str, Any]:
     if include_stats:
         data["stats"] = sg.stats
     return data
+
+
+def patch_json(patch) -> dict[str, Any]:
+    """★★ **一条「用户对基图的修改」**（★ `B179` —— 这是【第二份数据】）⚠
+
+    ★★★ 所有者原话（逐字）：
+
+    > 「**基图与用户修改存在不同模型里，请求时，直接请求这两份数据，
+    > 前端负责整合**」
+
+    ⇒ ★★ 所以这里**只把修改如实列出来** —— ★ **服务端不把它与基图合并** ⚠
+      ★ 前端拿每条的 `target_vid` 去基图那份里**一比**，
+      ★★ 就知道哪个节点被改过 / 删过 ✅
+
+    ★ 每种动作给什么（★ 够前端合并就行）：
+
+    | 动作 | 给什么 |
+    |---|---|
+    | ★ `add_node` | ★ `target_vid` + `node`（★ 那个新节点的完整内容）|
+    | ★ `update_node` / `remove_node` | ★ `target_vid` + `payload` |
+    | ★ `add_edge` | ★ `from` / `to` + `payload` |
+    | ★ `update_edge` / `remove_edge` | ★ `target_edge` + `payload` |
+    """
+    out: dict[str, Any] = {
+        "patch_id": patch.pk,
+        "action": patch.action,
+        "at": patch.created_at.isoformat() if patch.created_at else "",
+        "by": patch.created_by.username if patch.created_by_id else "",
+        "note": patch.note,
+    }
+
+    # ★ 它改的是谁（★ 前端就靠这几个 id 去基图那份里对上）⚠
+    if patch.target_node_id:
+        out["target_vid"] = patch.target_node_id
+    if patch.target_edge_id:
+        out["target_edge"] = patch.target_edge_id
+    if patch.from_node_id:
+        out["from"] = patch.from_node_id
+    if patch.to_node_id:
+        out["to"] = patch.to_node_id
+    if patch.payload:
+        out["payload"] = patch.payload
+
+    # ★★ `add_node` 的内容**不重复存**（★ 它就在那个节点行里）⇒ ★ 这里一并发出去 ✅
+    #   ⚠★ 那个节点是**叠加行**（`project_ref`）⇒ ★ `origin` = `manual`、
+    #     ★★ 而且**不会有 `blob_url`**（★ 它不在远端任何地方 —— ❌ 不给假链接）⚠
+    if patch.action == PATCH_ADD_NODE and patch.target_node_id:
+        out["node"] = node_json(patch.target_node)
+    return out
 
 
 def count_by(rows: Iterable[tuple[str, int]]) -> dict[str, int]:

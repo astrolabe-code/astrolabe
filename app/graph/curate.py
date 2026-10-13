@@ -35,6 +35,39 @@
 
 ---
 
+# ★★★ `B179` / `B180`：**本模块的规则 1、2 被【颠倒】了**（★ 2026-10-13）
+
+★★★ 所有者原话（逐字）：
+
+> 「**基图与用户修改存在不同模型里，请求时，直接请求这两份数据，前端负责整合**，
+> 这就要求节点索引一定要设计好，能迅速对比出修改的部分，
+> **不是在服务器上整合了，再发出去**哦。」
+
+## ⚠★ 规则 1 从「直接改图」变成「**绝不碰基图**」
+
+| | `B179` 之前 | `B179` 之后 |
+|---|---|---|
+| ★ 规则 1 | ★ 「**直接改图**，不做叠加层」| ★★ **修改一律落 `GraphPatch`，★ 基图行一个字都不动** ⚠ |
+| ★ 新增节点 | ★ 建一个 `project_ref` 的 `Node` | ★ 照旧建行（★ 它**本来就是叠加层**）✅ + **一条 `add_node` 补丁** |
+| ★ 改 / 删基图节点 | ★★ **直接改那行** ⚠ | ★★ **只写补丁**（★ `target_node` 指向它）⚠ |
+
+★★★ **为什么改 / 删绝不能落在基图行上**：★ 基图是**所有用户共享**的 ⚠
+  —— ★★ A 改一下，★ B 看到的就变了（★ 那是「**串号**」，⚠ 不是「修改」）⚠
+
+## ⚠★ 规则 2 从「写 `origin` 列」变成「**归属算出来**」
+
+★ `B179` 把 `origin` **列删了**（★ 基图行必然是 `parsed`、叠加行必然是 `manual`）⚠
+⇒ ★★ 所以这里**不再写 `origin=`**，★ 由序列化器**算**（★ 见 `web/serializers.py`）✅
+
+## ★★ 因此「怎么整合」的责任在前端
+
+★ 服务端**只发两份数据**（★ 基图一份 · ★ 补丁一份），⚠ **不做合并** ⚠
+  · 基图 ⇒ `…/graph/nodes/` · `…/graph/edges/`（★ 走 `graph/scope.py`）
+  · ★★ 补丁 ⇒ `…/graph/patches/`（★ 每条带**目标 vid**）✅
+⇒ ★ 前端**按 vid 一比**就知道哪个节点被改过 / 删过 ⚠
+
+---
+
 # ★★ 批量：一次操作 = **一个事务 + 一条审计 + bump 一次**
 
 ★ 契约（`frontend-contract.md` §2）定的是：
@@ -62,8 +95,8 @@ resp: {ok, data: {graph_rev, applied}}
 
 | # | 规则 | 本条如何落实 |
 |---|---|---|
-| **1** | ★ **直接改图**，不做「叠加层」 | ★ 直接 `Node` / `Edge` 的增删改 ✅ |
-| **2** | ★ 带 `origin = parsed ｜ manual`，**UI 上人工项有视觉标记** | ★ 每条写入都标 `manual` ✅（★ 数据已备好，前端直接看 `origin`） |
+| **1** | ★ **直接改图**，不做「叠加层」 | ⚠★ **`B179` 已把这条颠倒**：★ 见上一节 ——<br>★★ **改 / 删一律落 `GraphPatch`，★ 基图行绝不碰** ⚠<br>（★ 唯一例外是**新增**：★ 它建的就是叠加层自己的行 ✅） |
+| **2** | ★ 带 `origin = parsed ｜ manual`，**UI 上人工项有视觉标记** | ⚠★ **`B179` 已把这条颠倒**：★ `origin` **列已删**，<br>⇒ ★ **不再写列**，★ 由序列化器按**归属算** ✅<br>（★ 前端照旧拿到 `origin` —— ★ 接口没变，变的是存法 ⚠） |
 | **3** | ★ **零并发控制**：LWW，无 CAS、无租约、无合并 | ★ **不加锁**（⚠ 与 `write_graph` 的 `select_for_update` **刻意不同**） |
 | **4** | ★★★ **但必须有全量审计**：谁 / 何时 / 加了删了什么 / **为什么** | ★ 见下 |
 
@@ -91,14 +124,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# ⚠★ `Count` 在 `django.db.models` 里（★ 不在 `django.db`）——
+#   ★★ `manage.py check` 抓出来的：写错就是 **ImportError ⇒ 全站起不来** ⚠
 from django.db import transaction
+from django.db.models import Count
 from django.utils import timezone
 
-from graph import revision
-from graph.models import ORIGIN_MANUAL, Edge, Node
+from graph import revision, scope
+from graph.models import (
+    PATCH_ACTIONS,
+    PATCH_ADD_EDGE,
+    PATCH_ADD_NODE,
+    PATCH_REMOVE_EDGE,
+    PATCH_REMOVE_NODE,
+    PATCH_UPDATE_EDGE,
+    PATCH_UPDATE_NODE,
+    Edge,
+    GraphPatch,
+    Node,
+)
 
 #: ★ 允许修补的节点字段（★ **白名单**，❌ 不是"传什么改什么"）——
-#: ⚠ `node_id` / `project_ref` / `origin` / 时间戳**不在其中**（★ 它们不是"内容"）
+#: ⚠ `node_id` / `project_ref` / 归属 / 时间戳**不在其中**（★ 它们不是"内容"）
+#: ⚠★ `B179`：此表曾含 `"origin"` —— ★ **列已删**，★ 归属决定它，❌ 不许改 ⚠
 _NODE_FIELDS: tuple[str, ...] = (
     "kind", "name", "qname", "file_path", "line", "line_end",
     # ⚠★ `B176`：此表曾含 `"doc"` —— ★ 随节点字段一并移除（★ 修补不允许写入注释内容）✅
@@ -109,17 +157,16 @@ _NODE_FIELDS: tuple[str, ...] = (
 _EDGE_FIELDS: tuple[str, ...] = ("type", "line", "confidence", "extra")
 
 #: ★★ **六类动作**（★ 契约 `changes[].action` 的取值）
-ACTION_ADD_NODE = "add_node"
-ACTION_UPDATE_NODE = "update_node"
-ACTION_REMOVE_NODE = "remove_node"
-ACTION_ADD_EDGE = "add_edge"
-ACTION_UPDATE_EDGE = "update_edge"
-ACTION_REMOVE_EDGE = "remove_edge"
+#: ⚠★ `B179`：字面值与 `graph/models.py` 的 `PATCH_*` **同一套** ——
+#:   ★★ 所以这里【直接用它】，❌ 不再自己定义一份（★ 两套字面值早晚对不上）⚠
+ACTION_ADD_NODE = PATCH_ADD_NODE
+ACTION_UPDATE_NODE = PATCH_UPDATE_NODE
+ACTION_REMOVE_NODE = PATCH_REMOVE_NODE
+ACTION_ADD_EDGE = PATCH_ADD_EDGE
+ACTION_UPDATE_EDGE = PATCH_UPDATE_EDGE
+ACTION_REMOVE_EDGE = PATCH_REMOVE_EDGE
 
-ACTIONS: tuple[str, ...] = (
-    ACTION_ADD_NODE, ACTION_UPDATE_NODE, ACTION_REMOVE_NODE,
-    ACTION_ADD_EDGE, ACTION_UPDATE_EDGE, ACTION_REMOVE_EDGE,
-)
+ACTIONS: tuple[str, ...] = PATCH_ACTIONS
 
 #: ★ 一批最多多少条（⚠ 防止一次请求塞一万条把库拖住）—— ★ 可调
 MAX_CHANGES = 200
@@ -277,7 +324,10 @@ def _audit(*, action: str, project_ref: str, by, reason: str, detail: dict) -> N
 
 
 def _node_snapshot(node: Node) -> dict:
-    """★ 节点快照 —— ★★ **审计里的"改前"**（⚠ 只留关键字段，别把整个对象塞进去）。"""
+    """★ 节点快照 —— ★★ **审计里的"改前"**（⚠ 只留关键字段，别把整个对象塞进去）。
+
+    ⚠★ `B179`：此函数曾返回 `origin` —— ★ **列已删**，★ 归属算得出来 ⚠
+    """
     return {
         "vid": node.node_id,
         "uid": node.uid,
@@ -286,7 +336,8 @@ def _node_snapshot(node: Node) -> dict:
         "file_path": node.file_path,
         "line": node.line,
         "line_end": node.line_end,
-        "origin": node.origin,
+        # ★★ `B179`：**算出来**，❌ 不是读列（★ 见 `web/serializers.py` 同一条规则）
+        "origin": "parsed" if node.base_graph_id else "manual",
     }
 
 
@@ -297,8 +348,38 @@ def _edge_snapshot(edge: Edge) -> dict:
         "from_vid": edge.from_node_id,
         "to_vid": edge.to_node_id,
         "line": edge.line,
-        "origin": edge.origin,
+        "origin": "parsed" if edge.base_graph_id else "manual",
     }
+
+
+def _target_node(project_ref: str, vid):
+    """★★ **这个项目能改的节点**在哪找（★ `B179`）。
+
+    ## ★ 两个地方，按这个顺序找
+
+    | 顺序 | 哪来 | 为什么 |
+    |---|---|---|
+    | ① | ★★ **基图**里那个 vid | ★ 主要对象 —— ★ 解析产物有错就改它 ⚠ |
+    | ② | ★★ 本项目**自己新增**的行 | ★ 他自己加的东西，★ 也该能改 ✅ |
+
+    ⚠★ **绝不**去别的项目的叠加层里找 —— ★ 那是别人的数据 ⚠
+    """
+    if vid is None:
+        return None
+    node = scope.nodes_of(project_ref).filter(node_id=vid).first()
+    if node is not None:
+        return node
+    return Node.objects.filter(project_ref=project_ref, node_id=vid).first()
+
+
+def _target_edge(project_ref: str, edge_id):
+    """★★ **这个项目能改的边**在哪找（★ `B179`）—— ★ 与 `_target_node` 同一套顺序。"""
+    if edge_id is None:
+        return None
+    edge = scope.edges_of(project_ref).filter(pk=edge_id).first()
+    if edge is not None:
+        return edge
+    return Edge.objects.filter(project_ref=project_ref, pk=edge_id).first()
 
 
 def _from_or_to(vid: int):
@@ -338,6 +419,11 @@ def _require(by, reason: str) -> str:
 
 
 def _do_add_node(project_ref: str, c: dict) -> CurateResult:
+    """★★ **新增一个节点**（★ 六种动作里**唯一真的建行**的）✅
+
+    ★ 为什么它可以建行：★ 新增**本来就是叠加层自己的事** ——
+      ★★ 它不碰任何人的基图 ⚠（★ `B179` 的边界正在这里）
+    """
     uid, kind = c.get("uid") or "", c.get("kind") or "function"
     name, file_path = c.get("name") or "", c.get("file_path") or ""
     line = c.get("line")
@@ -361,20 +447,43 @@ def _do_add_node(project_ref: str, c: dict) -> CurateResult:
         lang=(c.get("lang") or "")[:32],
         signature=(c.get("signature") or "")[:512],
         # ⚠★ `B176`：此处曾写 `doc=c.get("doc") or ""` —— ★ 已随节点字段移除 ✅
+        # ⚠★ `B179`：此处曾写 `origin=ORIGIN_MANUAL` —— ★ **列已删**，★ 归属即 `manual` ⚠
         extra=c.get("extra") or {},
-        origin=ORIGIN_MANUAL,      # ★ 规则 2
     )
+
+    # ★★ `B179`：**同时记一条补丁** —— ★ 前端就是靠它看见"这里多了一个节点" ⚠
+    #   ★ 不记的话：★ 节点在库里，★ 但「两份数据」里**哪一份都不包含它** ⇒ ★ 前端画不出来 ⚠
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_ADD_NODE,
+        target_node=node,
+        payload={"vid": node.node_id},
+        note=(c.get("note") or "")[:400],
+    )
+
     return CurateResult(
         ok=True, action=ACTION_ADD_NODE, node=node,
         message=f"已补上节点 {node.name}（vid={node.node_id}）",
         # ★★ **每个动作都必须回带自己的 id** —— ⚠ 原先这里漏了 `vid`，
         #   而单条包装 `_one()` 要拿它取回 `Node` ⇒ **KeyError**
         #   （★ 冒烟抓出来的：它只在**单条路径**上暴露，`apply_changes` 不读这个字段）
-        detail={"before": None, "after": _node_snapshot(node), "vid": node.node_id},
+        detail={"before": None, "after": _node_snapshot(node),
+                "vid": node.node_id, "patch_id": patch.pk},
     )
 
 
 def _do_update_node(project_ref: str, c: dict) -> CurateResult:
+    """★★★ **改一个节点 ⇒ 只写补丁**（★ `B179`：★ 基图行**一个字都不动**）⚠
+
+    ⚠★★ 为什么不能像以前那样 `setattr` + `save()`：
+
+    | | 以前（直接改行）| 现在（写补丁）|
+    |---|---|---|
+    | ★ 改的是**基图**节点 | ⚠★ **所有用户看到的变化** —— ★ 那是"串号" | ✅ 只有本项目看得到 |
+    | ★ 别的项目 | ⚠★ **被莫名改了** | ✅ 毫无影响 |
+
+    ★★ 所以这里**刻意不 `save()`** —— ⚠ 那一行是**共享资产**，不是本项目的数据 ⚠
+    """
     fields = c.get("fields") or {}
     vid = c.get("vid")
     unknown = [k for k in fields if k not in _NODE_FIELDS]
@@ -384,74 +493,108 @@ def _do_update_node(project_ref: str, c: dict) -> CurateResult:
     if not fields:
         return CurateResult(ok=False, action=ACTION_UPDATE_NODE, message="没有要改的字段")
 
-    node = Node.objects.filter(project_ref=project_ref, node_id=vid).first()
+    node = _target_node(project_ref, vid)
     if node is None:
         return CurateResult(ok=False, action=ACTION_UPDATE_NODE, message=f"节点不存在（vid={vid}）")
 
     before = _node_snapshot(node)
-    for k, v in fields.items():
-        setattr(node, k, v)
-    node.origin = ORIGIN_MANUAL          # ★ 规则 2：改过就是"人写的"
-    node.save(update_fields=[*fields.keys(), "origin", "updated_at"])
+    # ★★ `after` = **基图原样 + 覆盖内容**（★ 那才是用户最终看到的样子）✅
+    after = {**before, **fields}
+
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_UPDATE_NODE,
+        target_node=node,
+        payload=fields,
+        note=(c.get("note") or "")[:400],
+    )
 
     return CurateResult(
         ok=True, action=ACTION_UPDATE_NODE, node=node,
-        message=f"已修改节点 {node.name}（{', '.join(sorted(fields))}）",
-        detail={"before": before, "after": _node_snapshot(node),
-                "changed": sorted(fields), "vid": node.node_id},
+        message=f"已记录对节点 {node.name} 的修改（{', '.join(sorted(fields))}）",
+        detail={"before": before, "after": after,
+                "changed": sorted(fields), "vid": node.node_id, "patch_id": patch.pk},
     )
 
 
 def _do_remove_node(project_ref: str, c: dict) -> CurateResult:
-    """★★ 删节点。
+    """★★★ **删一个节点 ⇒ 只写补丁**（★ `B179`）—— ⚠★ **真的不删那一行** ⚠
 
     > **用户原话**：「他**删除错了，是他的事**。」⇒ ★ **不阻拦**（只要求记理由）。
 
-    ⚠★ 两个连带影响：
-      **1** ★★ **会连带删掉它的所有边**（`Edge` 是 `CASCADE`）⇒ ★ **必须报告删了几条**；
-      **2** ★★★ **不删挂在它上面的解释**（`§2.3.12`）：★ 锚是 `uid` 字符串，
-        图里查不到该 `uid` ⇒ 渲染为「**该节点已被维护者移除**」
-        —— ★ **不需要 `orphaned` 状态机、不迁移、不删任何人的内容** ✅
+    ## ⚠★ `B179` 之后，这个函数的性质完全变了
+
+    | | 以前 | 现在 |
+    |---|---|---|
+    | ★ 基图节点 | ⚠★ **物理删掉** ⇒ 所有用户都少了它 | ✅ **只记一条补丁** ⇒ 别人毫无影响 |
+    | ★ 连带边 | ⚠★ 真删（`CASCADE`）| ✅ **不删** —— ★ 前端按 vid 比对时**自行隐藏** ⚠ |
+    | ★ 叠加层自己的节点 | ★ 真删 | ✅ 也**只记补丁**（⚠ 见下）|
+
+    ⚠★ **为什么叠加层自己的节点也不删**：★ 删行会 **`CASCADE` 掉指向它的补丁** ——
+      ★★ 那等于**抹掉审计史**（★ 而这本模块的立法前提恰恰是"可追溯"）⚠
+
+    ## ★ 前端要做什么（★ 这就是"两份数据、前端整合"的落地）
+
+    ```
+    ① 基图那份里**仍然有**这个节点（★ 我们没动它）⚠
+    ② 补丁那份里有一条 remove_node(target_vid=…) ⇒ ★ 前端**把它藏掉**
+    ③ 连带：★ 所有 from/to 指向它的边**也要藏掉**（★ 否则画出来是"悬挂边"）
+    ```
     """
     vid = c.get("vid")
-    node = Node.objects.filter(project_ref=project_ref, node_id=vid).first()
+    node = _target_node(project_ref, vid)
     if node is None:
         return CurateResult(ok=False, action=ACTION_REMOVE_NODE,
                             message=f"节点不存在（vid={vid}）")
 
     before = _node_snapshot(node)
-    # ★★ 先**数**再删（删完就数不出来了）—— ★ 影响面必须报告
+    # ★★ **先数再"删"** —— ★ 影响面必须报告（★ 删完就数不出来了）
+    #   ⚠ 注意：这里数的是**基图那边**会变隐藏的边，★ 不是真删 ⚠
     edges = list(
-        Edge.objects.filter(project_ref=project_ref)
+        scope.edges_of(project_ref)
         .filter(_from_or_to(vid))
         .values("id", "type", "from_node_id", "to_node_id")
     )
-    node.delete()
+
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_REMOVE_NODE,
+        target_node=node,
+        payload={"cascaded_edge_count": len(edges)},
+        note=(c.get("note") or "")[:400],
+    )
 
     return CurateResult(
         ok=True, action=ACTION_REMOVE_NODE,
-        message=(f"已删除节点 {before['name']}（vid={vid}）"
-                 + (f"，连带 {len(edges)} 条边" if edges else "")),
+        message=(f"已记录删除节点 {before['name']}（vid={vid}）"
+                 + (f"，它将隐藏 {len(edges)} 条边" if edges else "")),
         detail={
             # ★★ 删除的审计**就是它唯一的墓碑** —— 别处再也查不到这个节点了
             "before": before, "after": None,
-            "cascaded_edges": edges, "cascaded_edge_count": len(edges), "vid": vid,
+            "cascaded_edges": edges, "cascaded_edge_count": len(edges),
+            "vid": vid, "patch_id": patch.pk,
         },
     )
 
 
 def _do_add_edge(project_ref: str, c: dict) -> CurateResult:
+    """★★ **新增一条边**（★ 同 `add_node`：★ 它是叠加层自己的事）✅
+
+    ⚠★ 端点可以是**基图节点**（★ 那是主要用途：补一条解析漏掉的调用）——
+      ★★ 这正是"叠加层引用基图"的正当形态 ⚠
+    """
     from_vid, to_vid = c.get("from_vid"), c.get("to_vid")
 
     nodes = {
         n.node_id: n
-        for n in Node.objects.filter(
-            project_ref=project_ref, node_id__in=(from_vid, to_vid)
+        for n in (
+            list(scope.nodes_of(project_ref).filter(node_id__in=(from_vid, to_vid)))
+            + list(Node.objects.filter(project_ref=project_ref, node_id__in=(from_vid, to_vid)))
         )
     }
     missing = [v for v in (from_vid, to_vid) if v not in nodes]
     if missing:
-        # ⚠ 端点不存在**和**端点属于别的项目都会走到这里 —— ★ 文案要覆盖两种可能
+        # ⚠ 端点不存在**和**端点不属于这个项目都会走到这里 —— ★ 文案要覆盖两种可能
         return CurateResult(ok=False, action=ACTION_ADD_EDGE,
                             message=f"端点不存在，或不属于这个项目：vid={missing}")
 
@@ -463,16 +606,39 @@ def _do_add_edge(project_ref: str, c: dict) -> CurateResult:
         line=int(c["line"]) if c.get("line") else None,
         confidence=(c.get("confidence") or "")[:16],
         extra=c.get("extra") or {},
-        origin=ORIGIN_MANUAL,
+        # ⚠★ `B179`：此处曾写 `origin=ORIGIN_MANUAL` —— ★ **列已删** ⚠
     )
+
+    # ★★ `B179`：补丁里**自带内容**（`payload`）—— ★ 前端不必再去查那一行 ⚠
+    #   （★ `add_node` 的内容由 `patch_json` 从节点行读，★ 这里是同一目的、不同存法）
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_ADD_EDGE,
+        target_edge=edge,
+        from_node=nodes[from_vid],
+        to_node=nodes[to_vid],
+        payload={
+            "edge_id": edge.pk,
+            "from_vid": nodes[from_vid].node_id,
+            "to_vid": nodes[to_vid].node_id,
+            "type": edge.type,
+            "line": edge.line,
+            "confidence": edge.confidence,
+            "extra": edge.extra or {},
+        },
+        note=(c.get("note") or "")[:400],
+    )
+
     return CurateResult(
         ok=True, action=ACTION_ADD_EDGE, edge=edge,
         message=f"已补上边 {nodes[from_vid].name} -[{edge.type}]-> {nodes[to_vid].name}",
-        detail={"before": None, "after": _edge_snapshot(edge), "edge_id": edge.pk},
+        detail={"before": None, "after": _edge_snapshot(edge),
+                "edge_id": edge.pk, "patch_id": patch.pk},
     )
 
 
 def _do_update_edge(project_ref: str, c: dict) -> CurateResult:
+    """★★★ **改一条边 ⇒ 只写补丁**（★ 同 `update_node`：★ 基图行不动）⚠"""
     fields = c.get("fields") or {}
     edge_id = c.get("edge_id")
     unknown = [k for k in fields if k not in _EDGE_FIELDS]
@@ -482,35 +648,51 @@ def _do_update_edge(project_ref: str, c: dict) -> CurateResult:
     if not fields:
         return CurateResult(ok=False, action=ACTION_UPDATE_EDGE, message="没有要改的字段")
 
-    edge = Edge.objects.filter(project_ref=project_ref, id=edge_id).first()
+    edge = _target_edge(project_ref, edge_id)
     if edge is None:
         return CurateResult(ok=False, action=ACTION_UPDATE_EDGE, message=f"边不存在（edge_id={edge_id}）")
 
     before = _edge_snapshot(edge)
-    for k, v in fields.items():
-        setattr(edge, k, v)
-    edge.origin = ORIGIN_MANUAL
-    edge.save(update_fields=[*fields.keys(), "origin", "updated_at"])
+    after = {**before, **fields}
+
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_UPDATE_EDGE,
+        target_edge=edge,
+        payload=fields,
+        note=(c.get("note") or "")[:400],
+    )
 
     return CurateResult(
-        ok=True, action=ACTION_UPDATE_EDGE, edge=edge, message="已修改边",
-        detail={"before": before, "after": _edge_snapshot(edge),
-                "changed": sorted(fields), "edge_id": edge.pk},
+        ok=True, action=ACTION_UPDATE_EDGE, edge=edge, message="已记录对这条边的修改",
+        detail={"before": before, "after": after,
+                "changed": sorted(fields), "edge_id": edge.pk, "patch_id": patch.pk},
     )
 
 
 def _do_remove_edge(project_ref: str, c: dict) -> CurateResult:
-    """★ 删一条边（★ **不**连带删节点 —— ★ 边只是"关系"，节点还在）。"""
+    """★★★ **删一条边 ⇒ 只写补丁**（★ 同 `remove_node`：★ 真的不删那一行）⚠
+
+    ★ 前端按 `target_edge` 找到基图那条边，**藏掉**即可 ✅
+    """
     edge_id = c.get("edge_id")
-    edge = Edge.objects.filter(project_ref=project_ref, id=edge_id).first()
+    edge = _target_edge(project_ref, edge_id)
     if edge is None:
         return CurateResult(ok=False, action=ACTION_REMOVE_EDGE, message=f"边不存在（edge_id={edge_id}）")
 
     before = _edge_snapshot(edge)
-    edge.delete()
+
+    patch = GraphPatch.objects.create(
+        project_ref=project_ref,
+        action=ACTION_REMOVE_EDGE,
+        target_edge=edge,
+        payload={},
+        note=(c.get("note") or "")[:400],
+    )
+
     return CurateResult(
-        ok=True, action=ACTION_REMOVE_EDGE, message="已删除边",
-        detail={"before": before, "after": None, "edge_id": edge_id},
+        ok=True, action=ACTION_REMOVE_EDGE, message="已记录删除这条边",
+        detail={"before": before, "after": None, "edge_id": edge_id, "patch_id": patch.pk},
     )
 
 
@@ -697,23 +879,50 @@ def delete_edge(project_ref: str, edge_id: int, *, by, reason: str) -> CurateRes
 
 
 def manual_summary(project_ref: str) -> dict:
-    """★ **这个项目上有多少"人补的"东西**（`origin="manual"`）。
+    """★★ **这个项目上有多少"人补的"东西**（★ `B179`：★ 改数**补丁条数** ⚠）。
+
+    ## ⚠★ `B179` 改了什么
+
+    ★ 以前：★ `Node.objects.filter(project_ref=…, origin=ORIGIN_MANUAL)` ——
+      ★★ 那时"人补的"**真的是行**（★ 规则 1 还是"直接改图"）⚠
+    ★ 现在：★ **补丁就是修改本身** ⇒ ★ 数 `GraphPatch` ✅
+      · ⚠ 而 `project_ref` 的那些 `Node` / `Edge` 行**只是"新增"的载体** ——
+        ★★ 它们**不代表**全部修改（★ 改 / 删都在补丁里）⚠
 
     ★ 用途：★ 维护者改完能确认自己改到了；
       ★★ 也**直接支撑 `§2.3.12` 规则 2**（「UI 上人工项有**视觉标记**」）——
       ★ 前端拿这个比例就能显示"这张图里有 N 项是人补的" ✅
+      （★ 标记本身由序列化器按**归属**算，★ 见 `web/serializers.py`）
     """
-    nodes = Node.objects.filter(project_ref=project_ref, origin=ORIGIN_MANUAL)
-    edges = Edge.objects.filter(project_ref=project_ref, origin=ORIGIN_MANUAL)
+    patches = GraphPatch.objects.filter(project_ref=project_ref)
+    # ★ 基图那两份（★ 总数要从基图数 —— ⚠ 项目自己那几行**不是**图的全集）
+    base_nodes = scope.nodes_of(project_ref)
+    base_edges = scope.edges_of(project_ref)
+    # ★ 叠加层自己新增的行
+    own_nodes = Node.objects.filter(project_ref=project_ref)
+    own_edges = Edge.objects.filter(project_ref=project_ref)
+
+    by_action: dict[str, int] = {}
+    for action, n in patches.values_list("action").annotate(n=Count("pk")):
+        by_action[action] = n
+
     return {
         "project_ref": project_ref,
-        "manual_nodes": nodes.count(),
-        "manual_edges": edges.count(),
-        "total_nodes": Node.objects.filter(project_ref=project_ref).count(),
-        "total_edges": Edge.objects.filter(project_ref=project_ref).count(),
+        # ★★ "人补的"= 补丁条数（★ 这才是修改的全集）⚠
+        "manual_total": patches.count(),
+        "manual_by_action": by_action,
+        "manual_nodes_added": own_nodes.count(),
+        "manual_edges_added": own_edges.count(),
+        # ★ 全集 = 基图 + 本项目自己新增的
+        "total_nodes": base_nodes.count() + own_nodes.count(),
+        "total_edges": base_edges.count() + own_edges.count(),
+        "base_graph_nodes": base_nodes.count(),
+        "base_graph_edges": base_edges.count(),
         "graph_rev": revision.current(project_ref),
-        "nodes": [
-            {"vid": n.node_id, "name": n.name, "file_path": n.file_path, "line": n.line}
-            for n in nodes.order_by("node_id")[:200]
-        ],
+        "patched_vids": list(
+            patches.filter(target_node__isnull=False)
+            .order_by("pk")
+            .values_list("target_node_id", flat=True)
+            .distinct()[:200]
+        ),
     }

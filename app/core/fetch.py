@@ -54,9 +54,9 @@ import shutil
 import tarfile
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import BinaryIO
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from core import storage
 
@@ -73,7 +73,19 @@ READ_TIMEOUT = 30
 
 
 class FetchError(Exception):
-    """★ 拉取失败 —— ⚠ **消息是给用户看的**。"""
+    """★ 拉取失败 —— ⚠ **消息是给用户看的**。
+
+    ★★ `status` = 对方返回的 HTTP 状态码（★ `0` = 还没走到响应就挂了）——
+      ⚠★ **必须能区分 404 与 403**：
+        · ★ **404** ⇒ 仓库不存在 / 私有（★ 那是**用户的事**）
+        · ★ **403 / 429** ⇒ **我们被限流了**（★ 那是**我们的事** ⚠）
+      ★★ 混在一起就会把锅甩给用户 —— ★ 报"仓库可能是私有的"，
+        ★ 而其实是"我们查得太频繁了" ⚠（★ 同族错误：`不静默做错事`）⚠
+    """
+
+    def __init__(self, message: str, *, status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 # ===========================================================================
@@ -98,7 +110,10 @@ class ArchiveFetcher:
         try:
             with urllib.request.urlopen(req, timeout=CONNECT_TIMEOUT) as resp:
                 return json.loads(resp.read().decode("utf-8", "replace") or "{}")
-        except (urllib.error.HTTPError, OSError, ValueError) as exc:
+        except urllib.error.HTTPError as exc:
+            # ★ 带上状态码 —— ⚠ 上层靠它区分"仓库有问题"与"我们被限流了"（见 `FetchError`）
+            raise FetchError(f"查询仓库信息失败：HTTP {exc.code}", status=exc.code) from exc
+        except (OSError, ValueError) as exc:
             raise FetchError(f"查询仓库信息失败：{exc}") from exc
 
     def open_stream(self, url: str, *, headers: dict | None = None) -> StreamResponse:
@@ -108,7 +123,15 @@ class ArchiveFetcher:
         try:
             resp = urllib.request.urlopen(req, timeout=READ_TIMEOUT)
         except urllib.error.HTTPError as exc:
-            raise FetchError(f"下载源码失败（HTTP {exc.code}）—— 仓库可能是私有的，或地址不对。") from exc
+            # ⚠★★ `B179` 之后，下载是【按 sha】的 ⇒ ★★ 404 的含义变了：
+            #   ★ 不再是"可能是私有的"（★ 私有仓库在 `resolve_ref` 就已经被拒了 ⚠）
+            #   ★★ 而是「**作者把这个版本删掉了**」
+            #     （★ 所有者原话：「**除非，作者完全删除这份源码版本**」）⚠
+            if exc.code == 404:
+                raise FetchError(
+                    "这个源码版本已经下载不到了 —— ★ 可能是作者删除了它。", status=exc.code
+                ) from exc
+            raise FetchError(f"下载源码失败（HTTP {exc.code}）。", status=exc.code) from exc
         except OSError as exc:
             raise FetchError(f"下载源码失败：{exc}") from exc
 
@@ -143,6 +166,150 @@ def archive_url(provider: str, repo_full_name: str, ref: str = "") -> str:
     if provider == "gitee":
         return f"https://gitee.com/{full}/repository/archive/{target}.tar.gz"
     raise FetchError(f"不支持的托管平台：{provider}")
+
+
+# ===========================================================================
+# ①-2 ★★★ `B179`：把「分支 / tag」解析成【commit sha】—— ★ 基图的锚点
+# ===========================================================================
+
+
+@dataclass
+class RefVerdict:
+    """★ `ref → sha` 的结论（★ 顺带就是"这个仓库能不能拉"的检查）。"""
+
+    ok: bool = False
+    reason_code: str = ""
+    #: ★★ 给用户看的原因（★ 必须能读懂 —— `U3.9`）
+    message: str = ""
+    #: ★★ 解析出来的 commit（★ **基图身份**的一半）
+    sha: str = ""
+    #: ★ 仓库的默认分支（★ 用户没指定 `ref` 时用它）
+    default_branch: str = ""
+    #: ★ 仓库元数据（★ 供上层留痕）
+    repo: dict = field(default_factory=dict)
+
+
+def repo_api_url(provider: str, repo_full_name: str) -> str:
+    """★ 平台**仓库 API** 的地址（★ 各 provider 路径不同 —— ⚠ 必须显式写）。"""
+    full = (repo_full_name or "").strip().strip("/")
+    if provider == "github":
+        return f"https://api.github.com/repos/{full}"
+    if provider == "gitee":
+        # ⚠★ Gitee 的仓库 API 在 `/api/v5/` 下（★ `B148` 已经因为漏前缀吃过一次亏）
+        return f"https://gitee.com/api/v5/repos/{full}"
+    raise FetchError(f"不支持的托管平台：{provider}")
+
+
+def resolve_ref(
+    provider: str,
+    repo_full_name: str,
+    ref: str = "",
+    *,
+    fetcher: ArchiveFetcher | None = None,
+) -> RefVerdict:
+    """★★★ **把用户给的分支 / tag 解析成具体的 commit sha**（★ `B179`）。
+
+    ★★★ 所有者原话（逐字）：
+
+    > 「**基图的数据一定要锚定 github 上的版本，用 sha 之类的，也就是说点击基图上的
+    > 节点，一定要能给出正确的函数位置链接，即便仓库作者已经版本迭代，
+    > 重新提交好几次了。除非，作者完全删除这份源码版本。**」
+
+    ## ★★ 为什么必须在【拉取之前】做
+
+    | 理由 | 说明 |
+    |---|---|
+    | ★★★ **基图的身份** | ★ 基图是按【仓库 + sha】存的 ⇒ ★★ **不先拿到 sha，就没法查"有没有现成的"** ⚠ |
+    | ★★ **只收公开仓库** | ★★ 所有者原话：「**没有公开的仓库，去拉他干什么？增加被告版权侵权的风险？直接拒了他**」<br>⇒ ★ 这一次查询【顺带】就把**私有 / 不存在**的仓库拒掉了 ✅ |
+    | ★ **按 sha 下载** | ★ 下载地址直接用 sha ⇒ ★★ 一份基图对应的**永远是同一份代码** ✅<br>（⚠ 按分支名下载的话，作者一提交，同名基图的内容就变了）|
+
+    ⚠★★ **代价（必须知道）**：★ 这是**未认证**的 API 查询 ——
+      ★ GitHub 对未认证请求有**速率限制**（★ 每小时每 IP 约 60 次），
+      ★★ 而本函数一次要用 **2 次**（仓库信息 + commit）
+      ⇒ ★★ **每小时约 30 次拉取**就会被卡住 ⚠（★ 这是**真实的运营约束**，不是理论）
+
+    ★★ 所有者裁定（2026-10-13，原话）：
+
+    > 「**配一个服务端只读 token（5000 次/小时）这个以后人多了做，
+    > 你知道 github 在国内搞这些配置，很卡，还要分出精力去做，现在不值得**」
+
+    ⇒ ★★ **现在接受这个上限** —— ★ 等量上来了再配那个 token ⚠
+      ⚠★ 但**限流时必须说清是限流**（❌ 不能报"仓库可能是私有的"——
+        ★ 那是把锅甩给用户，★ 见下面的 `rate_limited` 分支）⚠
+    """
+    full = (repo_full_name or "").strip().strip("/")
+    if full.count("/") != 1 or any(seg in ("", ".", "..") for seg in full.split("/")):
+        return RefVerdict(
+            ok=False, reason_code="bad_repo", message="仓库格式应为 owner/repo，请检查后重试。"
+        )
+
+    f = fetcher or _default_fetcher
+    base = repo_api_url(provider, full)
+    headers = {"User-Agent": "astrolabe"}
+
+    # ---- ① 仓库信息：★ 不存在 / 私有 ⇒ 未认证一律 404 ⇒ ★ **直接拒** ----
+    try:
+        info = f.get_json(base, headers=headers)
+    except FetchError as exc:
+        # ⚠★★ 必须分清【这是谁的错】（★ 见 `FetchError` 的说明）——
+        #   ★ 404 ⇒ **用户的事**（仓库不存在 / 私有）
+        #   ★ 403 / 429 ⇒ **我们被限流了**（★ 未认证查询每小时约 60 次 ⚠）
+        if exc.status in (403, 429):
+            return RefVerdict(
+                ok=False, reason_code="rate_limited",
+                message="查询太频繁了，请过一会儿再试。★（本站用的是未认证查询，有每小时的上限）",
+            )
+        return RefVerdict(
+            ok=False,
+            reason_code="repo_unavailable",
+            message=(
+                "找不到这个仓库，或者它是私有仓库。"
+                "★ 本站只接受公开仓库 —— 私有仓库不会被拉取。"
+            ),
+        )
+
+    if not isinstance(info, dict) or not info.get("full_name"):
+        # ⚠★ 拿不到就不假装拿到（★ 别把"查不通"当成"通过"）
+        return RefVerdict(
+            ok=False, reason_code="repo_unavailable",
+            message="查不到这个仓库的信息，请确认地址是否正确。",
+        )
+
+    default_branch = str(info.get("default_branch") or "")
+
+    if info.get("private") is True:
+        return RefVerdict(
+            ok=False, reason_code="private_repo", repo=info,
+            message="这是私有仓库。★ 本站只接受公开仓库，私有仓库不会被拉取。",
+        )
+
+    # ---- ② 用户没指定 ⇒ 用默认分支（★ 原话：「没有指定，就选默认分支」）----
+    want = (ref or "").strip() or default_branch or "HEAD"
+
+    try:
+        commit = f.get_json(f"{base}/commits/{quote(want, safe='')}", headers=headers)
+    except FetchError as exc:
+        if exc.status in (403, 429):
+            return RefVerdict(
+                ok=False, reason_code="rate_limited",
+                message="查询太频繁了，请过一会儿再试。★（本站用的是未认证查询，有每小时的上限）",
+                default_branch=default_branch,
+            )
+        return RefVerdict(
+            ok=False, reason_code="bad_ref", repo=info, default_branch=default_branch,
+            message=f"找不到分支 / tag：{want}。请确认名字写对了。",
+        )
+
+    sha = str((commit or {}).get("sha") or "").strip()
+    if not sha:
+        return RefVerdict(
+            ok=False, reason_code="bad_ref", repo=info, default_branch=default_branch,
+            message=f"解析不出 {want} 对应的 commit，请换一个分支 / tag 再试。",
+        )
+
+    return RefVerdict(
+        ok=True, reason_code="ok", sha=sha, default_branch=default_branch, repo=info
+    )
 
 
 # ===========================================================================

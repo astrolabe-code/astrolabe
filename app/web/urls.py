@@ -130,6 +130,16 @@ urlpatterns = [
         graph.edges,
         name="graph-edges",
     ),
+    # ------------------------ ★★★ 修改（**第二份数据** —— `B179` / `B180`）
+    # ★★★ 所有者原话：「**基图与用户修改存在不同模型里，请求时，直接请求这两份数据，
+    #   前端负责整合**」⚠
+    # ⇒ ★★ 上面 `nodes` / `edges` 发的是【基图那一份】；
+    #   ★ 本路由发的是【修改那一份】—— ★★ **服务端【不做】合并** ⚠
+    path(
+        "projects/<project_ref:project_ref>/graph/patches/",
+        graph.patches,
+        name="graph-patches",
+    ),
     # ------------------------------------------------------ ★★ 图修补（写，§2.3.12 通道 ②）
     # ★★★ **维护者手工修补** —— 路径照 `frontend-contract.md` §2 的既定口径
     #   （`POST …/graph/edit/` + `{base_graph_rev?, reason, changes:[…]}`），❌ 不另起一套。

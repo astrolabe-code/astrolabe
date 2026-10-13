@@ -28,13 +28,14 @@ from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
-from graph.models import Edge, Node
+from graph import scope
+from graph.models import Edge, GraphPatch, Node
 from graph.revision import current as graph_rev_of
 from graph.traversal import DIRECTION_OUT, neighborhood
 from jobs.models import Job
 from web import permissions
 from web.http import fail, ok, ok_flat
-from web.serializers import count_by, edge_json, node_json, subgraph_json
+from web.serializers import count_by, edge_json, node_json, patch_json, subgraph_json
 
 NODES_PAGE_MAX = 500        # 契约 §2：`limit=≤500`
 EDGES_PAGE_DEFAULT = 500    # 契约 §6：默认 500
@@ -80,8 +81,11 @@ def summary(request: HttpRequest, project_ref: str) -> JsonResponse:
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    node_qs = Node.objects.filter(project_ref=project_ref)
-    edge_qs = Edge.objects.filter(project_ref=project_ref)
+    # ★★★ `B179`：读的是**这个项目绑定的那份【基图】** ⚠
+    #   （★ 不再是 `project_ref` 等于它的那些行 —— ★ 那现在只表示"用户自己新增的"）⚠
+    #   ★★ 见 `graph/scope.py`：这个判断**只在那里决定一次** ✅
+    node_qs = scope.nodes_of(project_ref)
+    edge_qs = scope.edges_of(project_ref)
     job = _latest_parse_job(project_ref)
 
     return ok_flat(
@@ -116,7 +120,9 @@ def nodes(request: HttpRequest, project_ref: str) -> JsonResponse:
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    qs = Node.objects.filter(project_ref=project_ref)
+    # ★★ `B179`：发的是**基图那一份** —— ⚠ 用户修改是**另一个端点**发的
+    #   ★（`B180` 定的：★ **服务端不做整合**，★ 由前端合并）⚠
+    qs = scope.nodes_of(project_ref)
 
     kind = (request.GET.get("kind") or "").strip()
     if kind:
@@ -135,16 +141,25 @@ def nodes(request: HttpRequest, project_ref: str) -> JsonResponse:
         # ★ 名字 / 人类可读标签 双路匹配（⚠ 尽量走索引前缀）
         qs = qs.filter(Q(name__icontains=query) | Q(uid__icontains=query))
 
+    # ⚠★ `B179`：`origin` **不再是一列**（★ 基图行必然是 `parsed`）⚠
+    #   ★★ 用户自己新增的节点在**另一个端点**（★ 那才带 `manual`）⚠
+    #   ⇒ ★ 要 `manual` ⇒ **如实返回空集**（❌ 不是忽略参数、❌ 也不是给全部）⚠
     origin = (request.GET.get("origin") or "").strip()
-    if origin in ("parsed", "manual"):
-        qs = qs.filter(origin=origin)
+    if origin == "manual":
+        qs = qs.none()
 
     limit = _clamp(request.GET.get("limit"), 1, NODES_PAGE_MAX, 200)
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     total = qs.count()
+    # ★★ `B179`：基图**只查一次**，再交给序列化器 ——
+    #   ⚠★★ 否则每个节点都会去查一次库（**N+1**）★ 一页几百个节点会慢一个量级 ⚠
+    bg = scope.base_graph_of(project_ref)
     # ★ 固定排序（保证分页稳定）—— ❌ 不要用未排序的切片
-    items = [node_json(n) for n in qs.order_by("node_id")[offset : offset + limit]]
+    items = [
+        node_json(n, base_graph=bg)
+        for n in qs.order_by("node_id")[offset : offset + limit]
+    ]
 
     return ok_flat(total=total, limit=limit, offset=offset, items=items)
 
@@ -167,18 +182,20 @@ def node_detail(request: HttpRequest, project_ref: str, vid: int) -> JsonRespons
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    node = Node.objects.filter(project_ref=project_ref, node_id=vid).first()
+    # ★★ `B179`：★ 在**这个项目绑定的那份基图**里找（★ 见 `graph/scope.py`）⚠
+    node = scope.nodes_of(project_ref).filter(node_id=vid).first()
     if node is None:
         return fail("节点不存在", 404)
 
-    out_qs = Edge.objects.filter(project_ref=project_ref, from_node_id=vid)
-    in_qs = Edge.objects.filter(project_ref=project_ref, to_node_id=vid)
+    base_edges = scope.edges_of(project_ref)
+    out_qs = base_edges.filter(from_node_id=vid)
+    in_qs = base_edges.filter(to_node_id=vid)
 
     callees = list(out_qs.select_related("to_node").order_by("type", "to_node_id")[:CALLEES_MAX])
     callers = list(in_qs.select_related("from_node").order_by("type", "from_node_id")[:CALLERS_MAX])
 
     return ok_flat(
-        node=node_json(node),
+        node=node_json(node, base_graph=scope.base_graph_of(project_ref)),
         callees=[_brief(e.to_node, e) for e in callees],
         callers=[_brief(e.from_node, e) for e in callers],
         callee_count=out_qs.count(),
@@ -217,15 +234,18 @@ def edges(request: HttpRequest, project_ref: str) -> JsonResponse:
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    qs = Edge.objects.filter(project_ref=project_ref)
+    qs = scope.edges_of(project_ref)
 
     types = [t.strip() for t in (request.GET.get("type") or "").split(",") if t.strip()][:10]
     if types:
         qs = qs.filter(type__in=types)
 
+    # ⚠★ `B179`：`origin` **不再是一列**（★ 基图行必然是 `parsed`）⚠
+    #   ★★ 用户自己加的边在**另一个端点**（★ 那才带 `manual`）⚠
+    #   ⇒ ★ 要 `manual` ⇒ **如实返回空集**（❌ 不是忽略参数、❌ 也不是给全部）⚠
     origin = (request.GET.get("origin") or "").strip()
-    if origin in ("parsed", "manual"):
-        qs = qs.filter(origin=origin)
+    if origin == "manual":
+        qs = qs.none()
 
     file_path = (request.GET.get("file") or "").strip()[:FILE_PREFIX_MAX]
     if file_path:
@@ -243,6 +263,65 @@ def edges(request: HttpRequest, project_ref: str) -> JsonResponse:
     items = [edge_json(e) for e in qs.order_by("type", "from_node_id", "to_node_id")[offset : offset + limit]]
 
     return ok({"total": total, "limit": limit, "offset": offset, "items": items})
+
+
+# ---------------------------------------------------------------------------
+# ★★★ 修改（**第二份数据** —— `B179` / `B180`）
+# ---------------------------------------------------------------------------
+
+PATCHES_PAGE_MAX = 10000
+
+
+@require_http_methods(["GET"])
+def patches(request: HttpRequest, project_ref: str) -> JsonResponse:
+    """★★ `GET …/graph/patches/` —— ★★ **【第二份数据】：用户对基图的修改** ⚠
+
+    ★★★ 所有者原话（逐字）：
+
+    > 「**基图与用户修改存在不同模型里，请求时，直接请求这两份数据，
+    > 前端负责整合**，这就要求节点索引一定要设计好，能迅速对比出修改的部分，
+    > **不是在服务器上整合了，再发出去**哦。」
+
+    ## ★★ 本端点**只发修改**（★ 这是刻意的）
+
+    ```
+    ❌ 它【不碰】基图那份数据（★ 那份由 …/graph/nodes/ 与 …/graph/edges/ 发）
+    ❌ 它【不做】任何合并 —— ★★ 合并是【前端】的事 ⚠
+    ✅ 它只把"改了什么"如实列出来，★ 每条带【目标 vid】⚠
+    ```
+
+    ⇒ ★★ 前端拿每条的 `target_vid` 去基图那份里**一比** ——
+      ★ 哪个节点被改过 / 删过，**一比就知道** ✅
+      （★ 比对靠 `(project_ref, target_node)` 那个索引 —— ★ 见 `GraphPatch.Meta.indexes`）
+
+    ## ⚠★ 一份数据要用同一个 `rev`
+
+    ★ 返回值里的 `graph_rev` 与基图那份**是同一个值** ——
+      ★★ 前端据此判断"我手上的两份是不是**同一代**" ⚠
+      （⚠ 否则会出现"修改来自新版、基图还是旧版"的错配 —— ★ 而那是**静默**的）
+    """
+    if _viewable(request, project_ref) is None:
+        return fail(permissions.NOT_FOUND, 404)
+
+    qs = GraphPatch.objects.filter(project_ref=project_ref).select_related(
+        "target_node", "created_by"
+    )
+
+    limit = _clamp(request.GET.get("limit"), 1, PATCHES_PAGE_MAX, 200)
+    offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
+
+    total = qs.count()
+    items = [patch_json(p) for p in qs.order_by("pk")[offset : offset + limit]]
+
+    return ok(
+        {
+            "graph_rev": graph_rev_of(project_ref),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": items,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

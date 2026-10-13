@@ -40,7 +40,7 @@ from django.db import connection, transaction
 from django.db.models import Q
 from django.utils.module_loading import import_string
 
-from graph.models import Edge, Node
+from graph import scope
 
 # ---------------------------------------------------------------------------
 # 方向（★ 图语义，❌ 不是 SQL 的 join 方向）
@@ -257,7 +257,8 @@ class PostgresAdjacencyReader:
                     reasons.append(f"边数达到上限 {max_edges}")
                     break
 
-                qs = Edge.objects.filter(project_ref=project_ref)
+                # ★★ `B179`：★ 在这个项目绑定的**基图**里走（★ 见 `graph/scope.py`）⚠
+                qs = scope.edges_of(project_ref)
                 if direction == DIRECTION_OUT:
                     qs = qs.filter(from_node_id__in=frontier)
                 elif direction == DIRECTION_IN:
@@ -313,7 +314,7 @@ class PostgresAdjacencyReader:
 
         # ★ 只取画图需要的字段（G4-3）
         node_rows = list(
-            Node.objects.filter(project_ref=project_ref, node_id__in=list(allowed)).values(
+            scope.nodes_of(project_ref).filter(node_id__in=list(allowed)).values(
                 "node_id", "uid", "kind", "name", "file_path", "line", "line_end", "lang"
             )
         )
@@ -393,7 +394,7 @@ def _resolve_node(project_ref: str, node: int | str) -> tuple[int | None, bool]:
         return node, False
 
     rows = list(
-        Node.objects.filter(project_ref=project_ref, uid=str(node)).values_list(
+        scope.nodes_of(project_ref).filter(uid=str(node)).values_list(
             "node_id", flat=True
         )[:2]
     )

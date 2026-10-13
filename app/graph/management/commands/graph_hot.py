@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from graph import cache, heat
+from graph import cache, heat, scope
 from graph.models import Node
 
 
@@ -57,7 +57,10 @@ class Command(BaseCommand):
         # ★ 一次查出所有 uid 对应的节点（❌ 不要 N 次查询）
         uids = [uid for uid, _, _ in rows]
         nodes: dict[str, Node] = {}
-        for n in Node.objects.filter(project_ref=pr, uid__in=uids).order_by("node_id"):
+        # ⚠★ `B179`：热度是【按项目】记的，★ 而图数据在【基图】上 ⚠
+        #   ★★ 所以必须经 `scope` 把项目**翻成它绑的那份基图** ——
+        #     ⚠ 直接 `Node.objects.filter(project_ref=pr)` 会**永远查不到**（★ 空）⚠
+        for n in scope.nodes_of(pr).filter(uid__in=uids).order_by("node_id"):
             nodes.setdefault(n.uid, n)  # ⚠ uid 可能重复 ⇒ 取最小 vid
 
         total = sum(db_val + pend for _, db_val, pend in rows)

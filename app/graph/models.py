@@ -96,16 +96,62 @@ class BaseGraph(TimeStampedModel):
     #: ★ 解析完成时刻（⚠ 空 ⇒ 只有行，还没解析完 —— 见 `built_at`）
     built_at = models.DateTimeField(null=True, blank=True)
 
+    #: ★★★ **这条基图的「请求地址」**（★ `B181` · 2026-10-13）⚠
+    #:
+    #: ★★ 所有者原话（逐字）：
+    #:
+    #: > 「**基图数据应该记录对应的请求地址**，比如 https://github.com/chk/repo/blob/{sha}/，
+    #: > 以后对比这个地址，就知道取的是不是同一份数据」
+    #:
+    #: ★ 它是**规范化之后**的地址（★ 见 `canonical_url()`）——
+    #:   ★★ 同一个仓库的 `Chk/Repo` 与 `chk/repo` 会得到**同一条** ✅
+    #:
+    #: ★★ 为什么要**存下来**而不是每次算：
+    #:   · ★ 所有者要求「**记录**」（★ 原话）✅
+    #:   · ★★ 取出后校验地址时**只是一次字段比较**（★ 见 `graph/binding.py::find()`）⚠
+    #:   · ★ ★★ 调试路径的地址（`file://…`）**依赖源码目录** —— ★ 那目录事后
+    #:     可能已经没了，★ 不存就再也算不出来 ⚠
+    #:
+    #: ⚠ 存量行的这个字段可能是空的 ⇒ ★ `canonical` 属性会**现算一个**兜底 ✅
+    request_url = models.CharField(max_length=1024, blank=True, default="")
+
+    #: ★★★ **基图的「身份证号」**（★ `B181`）⚠
+    #:
+    #: ★★ 所有者原话（逐字）：
+    #:
+    #: > 「**如果比较字符串比较麻烦，毕竟前面的https这些一模一样，
+    #: > 可以用这个地址生成唯一的ID来比较，这是基图的身份证号。**」
+    #:
+    #: ★ 它是 `canonical` 的 SHA-256 取前 32 位（128 bit）——
+    #:   ★★ **不是随机发的**，★ 而是**由地址算出来** ⇒ ★ 同一个地址永远得到同一个号 ✅
+    #:   ★★ 所以【不用查库】就能算出"该是哪一份" ⚠
+    #:
+    #: ★★ 它同时是 Redis 映射的键（★ 见 `graph/binding.py`）——
+    #:   ★ 所有者原话：「**用 redis 缓存最常用的哪些地址对应的图数据的位置，
+    #:     以后直接取，不要频繁搜索数据库比较**」⚠
+    graph_key = models.CharField(max_length=32, blank=True, default="", db_index=True)
+
     class Meta:
         constraints = [
             # ★★★ 一份源码版本**只有一份基图** —— ★ 这就是"不重复解析"的落脚点 ✅
-            models.UniqueConstraint(
-                fields=["provider", "repo_full_name", "sha"], name="uniq_base_graph"
-            )
+            #   ⚠★ `B181`：判据从「三个字段各自相等」换成「**身份证号相等**」——
+            #     ★★ 因为三个字段里只要有一个**大小写不同**就会漏判 ⚠
+            #     （★ 实测过：`chk/repo` / `Chk/Repo` / `chk/Repo` 曾造出 **3 份**基图）
+            #
+            # ⚠★ **无条件唯一**（★ 所有者 2026-10-13 裁定：「这些字段按设计就是要有值的」）——
+            #   ★★ 所以**每一行都必须有身份证号**，★ 没有例外 ⚠
+            #   · ★ 远端源码 ⇒ 由 `https://…/blob/{sha}` 算出
+            #   · ★ 调试源码 ⇒ 由 `file://{目录}` 算出
+            #   · ★★ 两者都推不出来（★ 存量老行）⇒ 用 `legacy://…` 明确标记 ✅
+            #     （★ 见 `graph/binding.py::get_or_create` 与数据迁移的回填）
+            #   ⚠ 我一度想加 `condition=~Q(graph_key="")" 让空号不参与 —— ★ **那是错的**：
+            #     ★★ 它把"字段没值"这个**异常状态**变成了**合法状态** ⚠
+            #     ★ 而空号的行**谁都查不到**（★ `find()` 算不出地址就返回 None）⇒
+            #       ★★ 等于在库里埋一个**永远孤立**的行 ⚠
+            models.UniqueConstraint(fields=["graph_key"], name="uniq_base_graph_key")
         ]
         indexes = [
-            # ★ 拉取前的复用查询：★ 按【仓库 + sha】找（⚠ 上面那个唯一约束已含索引，
-            #   这条是给"只想按仓库列全部版本"的用途）
+            # ★ 按【仓库】列它的全部版本（★ 拉取前的复用查询走 `graph_key`，❌ 不走这条）
             models.Index(fields=["provider", "repo_full_name"]),
         ]
         verbose_name = "基图"
@@ -113,24 +159,111 @@ class BaseGraph(TimeStampedModel):
     def __str__(self) -> str:
         return f"{self.provider}:{self.repo_full_name}@{self.sha[:12]}"
 
+    # ------------------------------------------------------------------ 规范化
+    #: ★ 各平台的【主机名】（★ 规范化地址用）—— ⚠ 必须显式写，❌ 不猜
+    _HOSTS = {"github": "github.com", "gitee": "gitee.com"}
+
+    @classmethod
+    def canonical_url(
+        cls, provider: str, repo_full_name: str, sha: str, *, source_path: str = ""
+    ) -> str:
+        """★★★ **这份基图的正规请求地址**（★ `B181` 的「身份证」之源）。
+
+        ★★ 所有者原话：「**基图数据应该记录对应的请求地址，
+          比如 https://github.com/chk/repo/blob/{sha}/**」
+
+        ## ⚠★★ 规范化是**这里的全部重点**
+
+        ★★ 为什么必须规范化：★ 平台认为**同一个仓库**的地址，★ 大小写却可以不同 ⚠
+
+        | 用户输入 | 平台认为 |
+        |---|---|
+        | ★ `github.com/Chk/Repo` | ✅ 与 `chk/repo` **是同一个** |
+        | ★ `github.com/chk/repo/`（末尾斜杠）| ✅ 同上 |
+        | ★ `github.com/chk/repo` | ✅ 同上 |
+
+        ⇒ ★★ 不规范化 ⇒ ★ 同一份代码会**被解析多次** ⚠
+          （★ 而那正是 `B179` 要消灭的事：「用户拉一个图就解析一次，太浪费算力」）⚠
+
+        ★ 规范化规则（★ 三条，★ 都是"平台怎么认"决定的，❌ 不是我们发明的）：
+
+        | # | 规则 | 依据 |
+        |---|---|---|
+        | 1 | ★ `provider` 转小写 | ★ 我们自己的枚举，★ 一律小写 |
+        | 2 | ★★ `owner/repo` 转**小写** | ★★ GitHub / Gitee 的仓库名**大小写不敏感** ⚠ |
+        | 3 | ★ `sha` 转小写 | ★ hex 一律小写（⚠ 大写 hex 是同一个 commit）|
+
+        ## ⚠★ 调试路径：**没有 commit sha**（★ 源码是容器里的一个目录）
+
+        ★★ 那时它的「请求地址」就是**那个目录本身**（`file://…`）✅
+
+        | | 远端源码 | ★ 调试源码 |
+        |---|---|---|
+        | ★ 地址 | ★ `https://host/owner/repo/blob/{sha}` | ★★ `file://{目录}` |
+        | ★ 身份证号 | ★ 由 (平台+仓库+sha) 算 | ★★ 由**目录**算 ✅ |
+
+        ⇒ ★★ **不同目录不会混成一份基图** ⚠
+          （★ 否则两个调试用的不同源码，★ 会因为同一个仓库名挤成一份 ⇒
+            第二个直接被「图已建好」挡掉，★ 而它明明是另一份代码）⚠
+        """
+        prov = (provider or "").strip().lower()
+        full = (repo_full_name or "").strip().strip("/").lower()
+        commit = (sha or "").strip().lower()
+        path = (source_path or "").strip().rstrip("/")
+
+        if len(commit) >= 7 and all(ch in "0123456789abcdef" for ch in commit):
+            # ---- ★ 真 sha ⇒ 远端仓库的永久地址 ✅
+            host = cls._HOSTS.get(prov)
+            if not host or not full:
+                return ""
+            return f"https://{host}/{full}/blob/{commit}"
+
+        # ⚠ 不是真 sha ⇒ 调试路径（★ `sha` 是占位的 `"local"`）
+        #   ★★ 绝不能拿它拼 `…/blob/local/…` —— ★ 那是个**点了就 404 的假地址** ⚠
+        return f"file://{path}" if path else ""
+
+    @staticmethod
+    def key_of(canonical_url: str) -> str:
+        """★★★ **由地址算出身份证号**（★ `B181`）。
+
+        ★★ 为什么用哈希而不是直接存地址比：
+
+        | | 直接比地址字符串 | ★ 比身份证号 |
+        |---|---|---|
+        | ★ 存哪 | 要存整条 URL | ★ **32 字符** |
+        | ★ 比什么 | 逐个字符 | ★ **一次定长比较** |
+        | ★★ 当 Redis 键 | ★ 键长、且 `{}` 之类要转义 | ★★ **干净利落** ✅ |
+
+        ★ 取 **SHA-256 前 32 位**（= 128 bit）——
+          ★ 碰撞概率约 1/3.4×10^38，★ 而基图量级是"几十万"⇒ ★ **可以认为不会撞** ✅
+        """
+        import hashlib
+
+        return hashlib.sha256((canonical_url or "").encode("utf-8")).hexdigest()[:32]
+
+    @property
+    def canonical(self) -> str:
+        """★ 这一行的正规地址。
+
+        ⚠★ **优先用存下来的 `request_url`**（★ 所有者要求「记录」）——
+          ★★ 只有存量行（★ 迁移还没回填）才现算兜底 ✅
+        """
+        return (self.request_url or "").strip() or self.canonical_url(
+            self.provider, self.repo_full_name, self.sha
+        )
+
     @property
     def blob_url(self) -> str:
         """★ 某个文件的**永久链接**前缀（★ 拼上路径与行号就能跳转）。
 
-        ⚠★★ `B179`：**调试路径没有 sha**（★ 源码是容器里的一个目录）——
-          ★ 那时 `sha` 是占位的 `"local"` ⚠
-          ★★ 绝不能拿它拼一个 `…/blob/local/…` 的链接 —— ★ 那是个**点了就 404 的假链接** ⚠
-        ⇒ ★★ 所以这里**先验一下 sha 像不像真的 commit**（★ 至少 7 位，⚠ GitHub 短sha 就是 7 位）✅
+        ★★ `B181` 之后它就是 `canonical`（★ 规范化后的地址）——
+        ★ 以前这里会**原样拼** `repo_full_name`，★ 于是 `Chk/Repo` 会给出
+          `…/blob/Chk/Repo/…` 这种地址 ⚠（★ GitHub 认，★ 但同一份基图会有好几种写法）⚠
         """
-        sha = (self.sha or "").strip()
-        # ⚠ 真 sha：十六进制、≥7 位。★ 占位的 "local" 一律不给链接 ✅
-        if len(sha) < 7 or any(ch not in "0123456789abcdefABCDEF" for ch in sha):
-            return ""
-        if self.provider == "github":
-            return f"https://github.com/{self.repo_full_name}/blob/{sha}"
-        if self.provider == "gitee":
-            return f"https://gitee.com/{self.repo_full_name}/blob/{sha}"
-        return ""
+        url = self.canonical
+        # ⚠★ 只有 https 的才是【能点的网页链接】✅
+        #   ★ `file://…`（调试路径）**不是** —— ★ 给了也点不开 ⚠
+        return url if url.startswith("https://") else ""
 
 
 class Node(UidMixin, TimeStampedModel):

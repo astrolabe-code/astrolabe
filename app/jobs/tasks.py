@@ -343,7 +343,12 @@ def _base_graph_for(job: Job, payload: dict, project):
         job.save(update_fields=["payload"])
 
     bg, created = binding.get_or_create(
-        provider, repo_full, sha, ref=ref, default_branch=default_branch
+        provider, repo_full, sha, ref=ref, default_branch=default_branch,
+        # ★★ `B181`：把**源码目录**也传下去 —— ★ 调试路径的"请求地址"就是它（`file://…`）⚠
+        #   ★★ 不传的话：★ 所有本地调试用的基图会**挤成一份**（★ 同一个仓库名）⚠
+        #     ⇒ ★ 换一份代码调试，★ 会被「图已建好」挡掉 ⚠
+        #   ★ 远端路径传空串即可（★ 那时地址由 sha 决定）✅
+        source_path=str(payload.get("path") or ""),
     )
     log.info(
         "基图：%s base=%s@%s（%s）",

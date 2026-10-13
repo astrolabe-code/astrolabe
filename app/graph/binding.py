@@ -29,22 +29,151 @@
 
 from __future__ import annotations
 
+import redis
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from graph import revision
 from graph.models import BaseGraph, ProjectBaseGraph
 
+# ===========================================================================
+# ★★★ `B181`：**基图位置的 Redis 映射**（★ 所有者 2026-10-13 裁定）
+# ===========================================================================
+#
+# ★★ 所有者原话（逐字）：
+#
+# > 「**还有要用 redis 缓存最常用的哪些地址对应的图数据的位置，
+# > 以后直接取，不要频繁搜索数据库比较。**」
+#
+# ★★ 而**取出之后必须校验**（★ 所有者第 4 点，逐字）：
+#
+# > 「**最后，拿出数据比较地址也是为这个设计的，过期就消掉原有错误数据映射，
+# > 用新的数据映射替代**」
+#
+# ⇒ ★★ 所以本模块的查询顺序是（★ 见 `find()`）：
+#
+# ```
+# ① 算身份证号（★ 由规范化地址算 —— ★★ 不查库）
+# ② 试 Redis 映射 ⇒ 直接拿到基图位置
+# ③ ★★ 拿到后【必须比地址】
+#       · 对得上 ⇒ ✅ 返回
+#       · 对不上 ⇒ ★★ 消掉这条错误映射，★ 继续往下
+# ④ 回落数据库（★ 按 graph_key 唯一索引）
+# ⑤ 数据库命中了 ⇒ 顺手把映射补回 Redis
+# ```
 
-def find(provider: str, repo_full_name: str, sha: str) -> BaseGraph | None:
-    """★★ **按【仓库 + sha】找现成的基图** —— ★ 这就是"有没有同样的"那句。"""
-    sha = (sha or "").strip()
-    full = (repo_full_name or "").strip().strip("/")
-    if not sha or not full:
+#: ★ 映射的键前缀（★ 与 `jobs/queue.py` 的 `astrolabe:jobs` 同一风格）
+CACHE_PREFIX = "astrolabe:basegraph"
+
+#: ★ 映射存活时间（秒）—— ★ 7 天
+#   ⚠ 有 TTL **不等于**靠它保正确：★ 真正的保障是第 ③ 步「比地址」⚠
+#   ★ 它只是兜底 —— ★ 万一第 ③ 步漏了，★ 映射最多错 7 天 ✅
+CACHE_TTL = 7 * 24 * 3600
+
+
+def _redis() -> "redis.Redis":
+    """★ Redis 客户端（★ 与 `jobs/queue.py` 同一口径）。
+
+    ⚠★★ **缓存故障绝不能让业务失败** —— ★ 所有调用点都包 try ⚠
+      ★ 缓存是**加速**，❌ **不是依赖**：★ Redis 挂了照样能查库 ✅
+      （★ 否则一个缓存的故障会变成整个网站不能建项目 —— ★ 那是因小失大）⚠
+    """
+    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _cache_key(graph_key: str) -> str:
+    return f"{CACHE_PREFIX}:{graph_key}"
+
+
+def _cache_get(graph_key: str) -> int | None:
+    """★ 从映射里取基图主键（★ 没有 / 故障 ⇒ `None`）。"""
+    if not graph_key:
         return None
-    return BaseGraph.objects.filter(
-        provider=(provider or "").strip().lower(), repo_full_name=full, sha=sha
-    ).first()
+    try:
+        raw = _redis().get(_cache_key(graph_key))
+    except Exception:  # noqa: BLE001 —— ★ 缓存故障不影响业务（见 `_redis` 文档）
+        return None
+    try:
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        # ⚠ 映射里存了看不懂的东西 ⇒ ★ 当它不存在（★ 下一步会查库并覆盖它）✅
+        return None
+
+
+def _cache_put(graph_key: str, pk: int) -> None:
+    """★ 写入 / 刷新映射（★ `setex` = 带 TTL 的 set）。"""
+    if not graph_key:
+        return
+    try:
+        _redis().setex(_cache_key(graph_key), CACHE_TTL, str(pk))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _cache_drop(graph_key: str) -> None:
+    """★★ **消掉一条映射**（★ 所有者第 4 点：「过期就消掉原有错误数据映射」）。"""
+    if not graph_key:
+        return
+    try:
+        _redis().delete(_cache_key(graph_key))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def find(
+    provider: str, repo_full_name: str, sha: str, *, source_path: str = ""
+) -> BaseGraph | None:
+    """★★ **按【请求地址】找现成的基图** —— ★ 这就是"有没有同样的"那句。
+
+    ## ★★ `B181` 之后这里变了（★ 所有者定的查询顺序）
+
+    | 步骤 | 做什么 | 为什么 |
+    |---|---|---|
+    | ① | ★ 算**身份证号**（★ 规范化地址 ⇒ SHA-256 前 32 位）| ★★ **不查库**就知道"该是哪一份" ✅ |
+    | ② | ★ 试 **Redis 映射** ⇒ 直接拿到位置 | ★★ 所有者：「不要频繁搜索数据库比较」⚠ |
+    | ③ | ★★ **比地址** | ★★ 所有者：「拿出数据比较地址也是为这个设计的」⚠ |
+    | ④ | ★ 回落**数据库**（★ `graph_key` 唯一索引）| ★ 映射没命中时的正路 ✅ |
+    | ⑤ | ★ 命中了 ⇒ **补回映射** | ★ 下次就快了 ✅ |
+
+    ⚠★★ 第 ③ 步为什么**不能省**：
+      ★★ 映射可能**过期 / 过期前就被改写**（★ 基图删了又建、★ 或者缓存被清过）⚠
+      ⇒ ★★ 不校验就会把一个**错的基图**当成对的返回 ⚠
+        ★★ 而那是**静默的错**（★ 用户看到的是另一份代码的图，却没有任何提示）⚠
+      ⇒ ★ 所有者为此专门定了：「**过期就消掉原有错误数据映射，用新的数据映射替代**」✅
+    """
+    canonical = BaseGraph.canonical_url(
+        provider, repo_full_name, sha, source_path=source_path
+    )
+    if not canonical:
+        # ⚠★ 与 `get_or_create()` **同一套兜底**（★ `legacy://…`）——
+        #   ★★ 否则会「**存得进、查不到**」：★ 建的时候用了老身份，★ 查的时候却返回 None ⚠
+        #   ★ 而那种不一致是**静默的**（★ 只会表现成"明明建过，却还是重新解析"）⚠
+        prov = (provider or "").strip().lower()
+        full = (repo_full_name or "").strip().strip("/").lower()
+        commit = (sha or "").strip().lower()
+        canonical = f"legacy://{prov}/{full}/{commit}"
+    key = BaseGraph.key_of(canonical)
+
+    # ---- ②③ Redis 快路 + ★ 取出后校验地址 ----
+    pk = _cache_get(key)
+    if pk is not None:
+        bg = (
+            BaseGraph.objects.filter(pk=pk)
+            .only("id", "provider", "repo_full_name", "sha", "request_url",
+                  "graph_key", "built_at")
+            .first()
+        )
+        if bg is not None and bg.canonical == canonical:
+            return bg                                    # ✅ 对得上
+        # ★★ 对不上 ⇒ 消掉这条错误映射（★ 所有者第 4 点），★ 然后照常查库
+        _cache_drop(key)
+
+    # ---- ④ 回落数据库（★ graph_key 上有唯一索引）----
+    bg = BaseGraph.objects.filter(graph_key=key).first()
+    if bg is not None:
+        _cache_put(key, bg.pk)                           # ⑤ 补回映射
+    return bg
 
 
 def is_ready(bg: BaseGraph | None) -> bool:
@@ -59,21 +188,52 @@ def get_or_create(
     *,
     ref: str = "",
     default_branch: str = "",
+    source_path: str = "",
 ) -> tuple[BaseGraph, bool]:
     """★★ **取或建**那一条基图记录（★ 只是记录 —— ★ 图数据由作业写 ⚠）。
 
     ⚠★ 为什么要"先建记录、后写图"：★ 因为**解析作业**要用它当落点 ⚠
       ★★ 而"建好了没有"由 `built_at` 说了算（★ 不是"有没有这一行"）✅
 
-    Returns: `(基图, 是否新建)`
+    ## ⚠★ `B181`：身份判据换成「身份证号」
+
+    ★★ 以前按 `(provider, repo_full_name, sha)` 三个字段各自相等 ——
+      ★★ 而那只在**大小写完全一致**时才对得上 ⚠
+      （★ 实测：`chk/repo` / `Chk/Repo` / `chk/Repo` 会造出 **3 份**基图）⚠
+    ⇒ ★★ 现在按 `graph_key`（★ 由**规范化地址**算出）—— ★ 大小写 / 末尾斜杠
+      都被抹平了 ⇒ ★ 同一个仓库**只会有一份** ✅
     """
-    full = (repo_full_name or "").strip().strip("/")
-    bg, created = BaseGraph.objects.get_or_create(
-        provider=(provider or "").strip().lower(),
-        repo_full_name=full,
-        sha=(sha or "").strip(),
-        defaults={"ref": (ref or "")[:128], "default_branch": (default_branch or "")[:128]},
+    prov = (provider or "").strip().lower()
+    full = (repo_full_name or "").strip().strip("/").lower()   # ★★ `B181`：转小写！
+    commit = (sha or "").strip().lower()                       # ★★ hex 一律小写
+    canonical = BaseGraph.canonical_url(
+        prov, full, commit, source_path=source_path
     )
+    if not canonical:
+        # ⚠★ 既不是真 sha、★ 也没给目录 ⇒ ★ **老身份兜底**（★ `B181` 之前就是按它判的）
+        #   ★★ 用 `legacy://` 明确标记 —— ★ 一眼看得出「这不是一个真地址」✅
+        #   · ★ 好处：★ 仍然保持 (平台+仓库+sha) 的**唯一性**（★ 不会撞）✅
+        #   · ★★ 而它**不会被误当成真地址**（★ `blob_url` 只回 https ⇒ 这种返回空）✅
+        #   ⚠ 谁会走到这：★ 只有极老的调试路径（★ 作业既没 sha 也没 path）⚠
+        canonical = f"legacy://{prov}/{full}/{commit}"
+    key = BaseGraph.key_of(canonical)
+
+    # ★★ `B181`：身份判据是**身份证号**（★ 不再是三个字段各自相等）——
+    #   ★★ 大小写 / 末尾斜杠都在算地址时抹平了 ⇒ ★ 同一个仓库只会有一份 ✅
+    bg, created = BaseGraph.objects.get_or_create(
+        graph_key=key,
+        defaults={
+            "provider": prov,
+            "repo_full_name": full,
+            "sha": commit,
+            # ★★ 所有者要求「**记录**请求地址」⇒ ★ 存下来 ✅
+            "request_url": canonical,
+            "ref": (ref or "")[:128],
+            "default_branch": (default_branch or "")[:128],
+        },
+    )
+
+    _cache_put(key, bg.pk)          # ★ 建好就写映射（★ 下次直接拿）
     return bg, created
 
 

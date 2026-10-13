@@ -80,3 +80,21 @@ docs/DEPLOYMENT.md
 #   ⚠ **将来会看到两份不一样的 decisions 文件** ⇒ ★ **反而削弱证据力**
 #   （★ 谁都会问："哪份才是权威的？"）
 .backup-decisions-*.md
+
+# ---------------------------------------------------------------- ⚠★ 宿主环境专属（不入库）
+# ★★ `app/deploy/systemd/` —— 防火墙规则（`astrolabe-firewall.{sh,service}`）
+#
+# ★ 决策者裁定（2026-10-13）：「**改防火墙的文件就不要push了**」⚠
+#
+# ★ 理由：★ 它**绑死在这一台宿主上** ——
+#   · ★ 内网网卡名 `ens32`
+#   · ★ 对外端口 `80`
+#   · ★ Docker 网段 `172.16.0.0/12`
+#   ★★ 换一台机器这些多半都不一样 ⇒ ★ 入库会让别人**照抄一份错的** ⚠
+#
+# ★★ 安装位置（★ 就在这台机器上）：
+#   · `/usr/local/bin/astrolabe-firewall.sh`
+#   · `/etc/systemd/system/astrolabe-firewall.service`
+# ★ 怎么装、为什么这么设，见 `docs/DEPLOYMENT.md` 的 **D11.2**
+#   （★ 那份文档本身也**不入库**，同为 `B158` 裁定）✅
+app/deploy/systemd/

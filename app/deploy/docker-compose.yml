@@ -159,10 +159,23 @@ services:
     image: nginx:alpine
     restart: unless-stopped
     ports:
-      - "${WEB_HTTP_PORT:-8080}:80"       # ★ 与旧站 80 错开
+      # ⚠★ 2026-10-13：旧站退役 ⇒ 直接占 80（★ 花生壳穿透本来就指 80）
+      - "${WEB_HTTP_PORT:-80}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /home/ma/astrolabe/app/frontend/dist:/app/frontend:ro
+      # ⚠★★ 前端产物在 **`/home/ma/astrolabe/frontend/dist`** ⚠ ——
+      #   ★ `vite.config.ts` 的 `build.outDir` 就是它（★ 相对前端项目根）✅
+      #   · ★ 以前这里写的是 `app/frontend/dist` —— ★ 那个目录**是空的** ⚠
+      #     ⇒ ★★ nginx 找不到 `index.html` ⇒ **整个站点 403** ⚠
+      #   · ★ 而 `docs/DEPLOYMENT.md` 里也写着那个旧路径 ⇒ ★ 已一并纠正 ✅
+      # ⚠★★ 挂到 **`/srv/www/app`**（★ 不是 `/app/frontend`）⚠
+      #   ★★ 为什么必须带那个 `app` 段：★ SPA 的 URL 前缀就是 `/app/`（`vite.config.ts` 的 `base`）⚠
+      #   · ★ nginx 的 `root` 是**前缀拼上去**的 ⇒ ★ `root /srv/www` + 请求 `/app/assets/x.js`
+      #     ⇒ ★ 正好落到 `/srv/www/app/assets/x.js` ✅
+      #   · ★★ 以前挂在 `/app/frontend` ⇒ nginx 会去找 `/app/frontend/app/assets/x.js`
+      #     ⇒ ★★ **不存在** ⇒ `try_files` 兜底成 index.html ⇒
+      #       ★ 把 HTML 当 JS 发出去 ⇒ **整页白板** ⚠（★ 见 `nginx.conf` 里那段说明）
+      - /home/ma/astrolabe/frontend/dist:/srv/www/app:ro
       - /home/ma/astrolabe/data/static:/app/staticfiles:ro
     depends_on:
       - web

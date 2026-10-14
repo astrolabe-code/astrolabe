@@ -243,10 +243,10 @@ def enabled_providers() -> list[dict[str, str]]:
 
 #: ★ `intent` 允许的键与长度上限 —— ⚠★ **必须白名单**：
 #:   ★ `intent` 来自请求体（用户可控）⇒ 若不限量，★ 一个 10MB 的 JSON 会被塞进数据库。
+# ⚠★ 2026-10-14（`B184`）：**`source_path` 已取消** —— ★ 这里不再限量 ⚠
 _INTENT_LIMITS: dict[str, int] = {
     "name": 200,
     "desc": 2000,
-    "source_path": 512,
 }
 
 

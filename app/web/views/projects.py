@@ -341,11 +341,7 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
             code="bad_repo",
         )
 
-    # ⚠★ `source_path` 只对 staff 生效（`B152`：⚠ 它能让服务端读容器里任何目录）
-    #   ★ 普通用户一律**不收**（★ 他的源码应当由作业层从 `repo_url` 拉取）
-    source_path = (
-        str(_body(request).get("source_path") or "") if request.user.is_staff else ""
-    )
+    # ⚠★★ 2026-10-14（`B184`）：**不再收 `source_path`** ⚠
 
     # ★★★ `B176` ①：**直接投递作业** —— ★★ 与 `publish_project()` /
     #   `approve_and_resume()` **共用同一处投递逻辑** ⚠
@@ -359,7 +355,7 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
     #     · ★★ **复用了** ⇒ **没有 `job_id`**，但这是**成功** ⇒ 另一种文案 ⚠
     #     · ★ 失败 ⇒ 如实报原因（私有 / 限流 / 分支不存在）
     out = publish_core.dispatch_parse(
-        project, source_path=source_path, commit="", priority=0,
+        project, commit="", priority=0,
         # ⚠★★ `B182`：**前端已经算好的 commit sha** ⚠
         #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
         #     只有拉源码，才是我服务器做的吧？**」

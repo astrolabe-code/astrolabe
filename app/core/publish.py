@@ -141,7 +141,6 @@ def publish_project(
     repo_full_name: str,
     name: str = "",
     desc: str = "",
-    source_path: str = "",
     # ⚠★ `B182`：**前端已经算好的 commit sha**（★ 空 ⇒ 由服务端自己解析）⚠
     #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的**」
     sha: str = "",
@@ -172,11 +171,18 @@ def publish_project(
         provider: `github` / `gitee`
         repo_full_name: `owner/repo`
         name: 项目显示名（⚠ 省略 ⇒ 用仓库名）
-        source_path: ⚠★ **只给内部 / 管理员用的调试口子**（`B152`）——
-            ★ **普通用户不要传**：★ 他的源码应当由作业层从 `repo_url` 拉取。
-            ⚠★ 之所以要这么分：★ `source_path` 能被用来**读容器里的任何目录**
-            （★ 这台机器上还跑着数据库）⇒ ★ **不能对普通用户开放**。
         priority: 队列优先级（⚠ `None` ⇒ 从配额里取 `queue_priority`，★ VIP 先出图）
+
+        ## ⚠★★ 2026-10-14（`B184`）：**`source_path` 参数【整个删除】** ⚠
+
+        ★★ 它曾经是「staff 指一个容器里的目录」的调试口子（`B152`）——
+        ★★ 而它让「**基图的身份**」变得**不可验证** ⚠
+        （★ 本地目录既没有 sha、★ 别人也无法复核）⚠
+        ★★ 而基图是**所有项目共享**的 ⇒ ★ 那就是**攻击缺口** ⚠
+
+        ★★ 所有者原话（`B184`）：
+        「**只能有远端形式也就是从github之类的上拉取，不能有上传文件，
+        这留下了一个攻击缺口…所以，基图里这个字段只有唯一合法的样式，且不能为空**」
 
     ⚠★ **本函数【不抛业务异常】** —— ★ 所有"不过"都通过返回值表达
       （★ 同 `submit_project`：这是**正常业务情况**，❌ 不是程序错误）。
@@ -272,9 +278,6 @@ def publish_project(
     #      （`B115` ①：❌ 绝不静默），★ 所以这里是**可观测**的，❌ 不是黑洞。
     out = dispatch_parse(
         project,
-        # ★★ 只放行**存储空间内**的路径（`B152`）——
-        #   ⚠★ 见 `_safe_source_path()`：这是"不把任意路径交给作业"的最后一道。
-        source_path=_safe_source_path(source_path, user),
         commit="",
         # ⚠★ `B182`：把前端算好的 sha 透传下去 —— ★ 有它，服务端【一次 API 都不发】✅
         sha=sha or "",
@@ -336,42 +339,6 @@ def publish_project(
     return r
 
 
-def _safe_source_path(source_path: str, user) -> str:
-    """★★ **只放行"存储空间内"的路径**（`B152`）—— ⚠★ 这是**安全边界**，不是便利功能。
-
-    ⚠★★ 背景：★ `source_path` 一旦可以任意传，**用户就能让服务端去读容器里的任何目录**
-      （`/etc`、**别的用户的项目**、…），★ 而这台机器上还跑着数据库。
-
-    ★ 规则（★ 三条）：
-
-    | 传了什么 | 结果 |
-    |---|---|
-    | ★ 空 | ★ 返回空 ⇒ 作业会**明确失败**「拉取尚未实现」（★ 诚实） |
-    | ★★ **在 `ASTROLABE_STORAGE_ROOT` 内** | ★ 放行（★ 这是正常形态） |
-    | ⚠ 在外面 | ★★ **只有 staff 才放行**（★ 内部调试用）；★ 普通用户 ⇒ ★ **降级为空** |
-
-    ⚠ 普通用户传了外部路径**不报错、只是不生效** —— ★ 因为"报错"会暴露
-      「路径检查存在」这件事给探测者（⚠ 免费反馈），★ 而**降级**让他的请求
-      **自然地在作业里失败**（★ 与"看不见区别"的原则一致）。
-    """
-    raw = (source_path or "").strip()
-    if not raw:
-        return ""
-
-    try:
-        root_abs = os.path.realpath(storage.root())
-        src_abs = os.path.realpath(raw)
-    except (OSError, ValueError):
-        return ""
-
-    inside = src_abs == root_abs or src_abs.startswith(root_abs + os.sep)
-    if inside:
-        return src_abs
-    if getattr(user, "is_staff", False):
-        return src_abs          # ★ 内部调试口子（★ 已留审计入口：调用方是 staff）
-    return ""
-
-
 def _repo_url(provider: str, repo_full_name: str) -> str:
     """★ `owner/repo` → 仓库地址（★ 用于**重复提交检测** —— ⚠ 必须归一化）。"""
     full = (repo_full_name or "").strip().strip("/")
@@ -428,7 +395,6 @@ class DispatchOutcome:
 def dispatch_parse(
     project: Project,
     *,
-    source_path: str,
     commit: str,
     priority: int,
     ref: str = "",
@@ -483,9 +449,9 @@ def dispatch_parse(
     sha = (sha or "").strip().lower()
 
     # ---- ⓪ ★★ `B179`：先定 sha（⚠ 只有"真要拉远端"时才需要）----
-    #   ★ 调试路径（`source_path` 非空 ⇒ staff 指了容器里的目录）**跳过** ——
+    #   ⚠★ 2026-10-14（`B184`）：**调试路径已取消** —— ★ 一律按远端仓库处理 ⚠
     #     ★ 那时源码不来自远端，★ 而 sha 由作业里兜底解析（见 `_base_graph_for`）。
-    if repo_full.count("/") == 1 and not source_path:
+    if repo_full.count("/") == 1:
         # ⚠★★ `B182`（2026-10-13）：**前端可能已经把 sha 算好了** ⚠
         #   ★★ 所有者原话（逐字）：
         #   > 「**不对呀，这个过程应该发生在前端，不是用我服务器的IP地址查询的，
@@ -549,9 +515,6 @@ def dispatch_parse(
     payload = {
         "project_id": project.pk,
         "project_ref": project.project_ref,
-        # ⚠★ 一期：**只有 staff 才会给非空 `path`**（内部调试，见 `_safe_source_path`）。
-        #   ★ 普通用户这里是空 ⇒ ★★ 作业会**从远端拉取**（`B153`，`core/fetch.py`）。
-        "path": source_path or "",
         # ★★ 作业靠这三样自己把源码拉下来（★ 不再需要调用方提供目录）
         "provider": project.provider,
         "repo_full_name": repo_full,
@@ -592,7 +555,6 @@ def approve_and_resume(
     *,
     by,
     note: str = "",
-    source_path: str = "",
     commit: str = "",
     # ⚠★ `B182`：同 `publish_project` —— ★ 前端算好的 sha（★ 空 ⇒ 服务端自己解析）
     sha: str = "",
@@ -627,7 +589,7 @@ def approve_and_resume(
     #   ⚠★ 三种都返回 `out.job` 就对了 —— ★ **不要写死 `None`**（★ 我犯过这个错：
     #     那会让"真的投了作业"也返回 `None` ⇒ 调用方以为没投 ⇒ 永远等不到图）⚠
     out = dispatch_parse(
-        project, source_path=source_path, commit=commit, priority=0,
+        project, commit=commit, priority=0,
         # ⚠★ `B182`：透传前端算好的 sha（★ 有它就不烧服务端的 API 配额）✅
         sha=sha or "",
     )

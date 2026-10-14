@@ -79,12 +79,9 @@ def start(request: HttpRequest) -> JsonResponse:
     if err:
         return fail(err, 400, code="bad_repo")
 
-    # ★★ **`source_path` 只对 staff 生效**（`B152`）——
-    #   ⚠★ 它能被用来**读容器里的任何目录**（★ 这台机器上还跑着数据库）⇒
-    #     ★ 普通用户一律**不收**（★ 他的源码应当由作业层从 `repo_url` 拉取）。
-    #   ⚠ 这里**不报错、只是忽略** —— ★ 报错会暴露"有路径检查"这件事给探测者
-    #     （★ 与 `_safe_source_path()` 同一口径）。
-    source_path = str(body.get("source_path") or "") if user.is_staff else ""
+    # ⚠★★ 2026-10-14（`B184`）：**不再收 `source_path`** ⚠
+    #   ★ 它曾是「staff 指一个容器里的目录」的调试口子（`B152`）——
+    #   ★★ 而它让「基图的身份」变得**不可验证** ⇒ ★ 那是**攻击缺口** ⚠
 
     # ⚠★ 到这一步**已经没有"授权跳转"了**（★ `B176` ①）——
     #   ★ 直接走编排：★ 建项目 → 建许可核验流水 → 投递作业 ✅
@@ -94,7 +91,6 @@ def start(request: HttpRequest) -> JsonResponse:
         repo_full_name=repo,
         name=str(body.get("name") or ""),
         desc=str(body.get("desc") or ""),
-        source_path=source_path,
         # ⚠★★ `B182`：**前端已经算好的 commit sha** ⚠
         #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
         #     只有拉源码，才是我服务器做的吧？**」

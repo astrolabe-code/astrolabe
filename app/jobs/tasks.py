@@ -44,6 +44,10 @@ def run_parse_job(job: Job) -> None:
     ⚠ 失败时**直接抛异常** —— 由 worker 捕获并置 `failed`（不在这里吞掉）。
     """
     payload = job.payload or {}
+    # ⚠★★ 2026-10-14（`B184`）：**`path` 字段已废弃** ⚠
+    #   ★ 它曾是「staff 指一个容器里的目录」的调试口子 —— ★ 现已取消 ⚠
+    #   ★★ 于是这里**恒为空**（★ `core/publish.py` 不再往 payload 里放它）⚠
+    #   ⇒ ★ 下面的本地目录分支**已不可达**（★ 留待清理批一并拆除）⚠
     root = payload.get("path")
     project_ref = job.project_ref
 
@@ -344,11 +348,6 @@ def _base_graph_for(job: Job, payload: dict, project):
 
     bg, created = binding.get_or_create(
         provider, repo_full, sha, ref=ref, default_branch=default_branch,
-        # ★★ `B181`：把**源码目录**也传下去 —— ★ 调试路径的"请求地址"就是它（`file://…`）⚠
-        #   ★★ 不传的话：★ 所有本地调试用的基图会**挤成一份**（★ 同一个仓库名）⚠
-        #     ⇒ ★ 换一份代码调试，★ 会被「图已建好」挡掉 ⚠
-        #   ★ 远端路径传空串即可（★ 那时地址由 sha 决定）✅
-        source_path=str(payload.get("path") or ""),
     )
     log.info(
         "基图：%s base=%s@%s（%s）",

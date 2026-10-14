@@ -121,9 +121,7 @@ def _cache_drop(graph_key: str) -> None:
         pass
 
 
-def find(
-    provider: str, repo_full_name: str, sha: str, *, source_path: str = ""
-) -> BaseGraph | None:
+def find(provider: str, repo_full_name: str, sha: str) -> BaseGraph | None:
     """★★ **按【请求地址】找现成的基图** —— ★ 这就是"有没有同样的"那句。
 
     ## ★★ `B181` 之后这里变了（★ 所有者定的查询顺序）
@@ -141,18 +139,14 @@ def find(
       ⇒ ★★ 不校验就会把一个**错的基图**当成对的返回 ⚠
         ★★ 而那是**静默的错**（★ 用户看到的是另一份代码的图，却没有任何提示）⚠
       ⇒ ★ 所有者为此专门定了：「**过期就消掉原有错误数据映射，用新的数据映射替代**」✅
+
+    ## ⚠★★ 2026-10-14（`B184`）：**不再有 `legacy://` 兜底** ⚠
+
+    ★★ 以前 `canonical_url()` 返回空串时，★ 这里会拼一个 `legacy://{prov}/{full}/{commit}` ⚠
+      ★ 而现在 `canonical_url()` 对非法身份**直接抛 `ValueError`** ⚠
+      ★★ 于是「存得进、查不到」那种静默不一致**从根上消失** ✅
     """
-    canonical = BaseGraph.canonical_url(
-        provider, repo_full_name, sha, source_path=source_path
-    )
-    if not canonical:
-        # ⚠★ 与 `get_or_create()` **同一套兜底**（★ `legacy://…`）——
-        #   ★★ 否则会「**存得进、查不到**」：★ 建的时候用了老身份，★ 查的时候却返回 None ⚠
-        #   ★ 而那种不一致是**静默的**（★ 只会表现成"明明建过，却还是重新解析"）⚠
-        prov = (provider or "").strip().lower()
-        full = (repo_full_name or "").strip().strip("/").lower()
-        commit = (sha or "").strip().lower()
-        canonical = f"legacy://{prov}/{full}/{commit}"
+    canonical = BaseGraph.canonical_url(provider, repo_full_name, sha)
     key = BaseGraph.key_of(canonical)
 
     # ---- ②③ Redis 快路 + ★ 取出后校验地址 ----
@@ -188,7 +182,6 @@ def get_or_create(
     *,
     ref: str = "",
     default_branch: str = "",
-    source_path: str = "",
 ) -> tuple[BaseGraph, bool]:
     """★★ **取或建**那一条基图记录（★ 只是记录 —— ★ 图数据由作业写 ⚠）。
 
@@ -206,16 +199,10 @@ def get_or_create(
     prov = (provider or "").strip().lower()
     full = (repo_full_name or "").strip().strip("/").lower()   # ★★ `B181`：转小写！
     commit = (sha or "").strip().lower()                       # ★★ hex 一律小写
-    canonical = BaseGraph.canonical_url(
-        prov, full, commit, source_path=source_path
-    )
-    if not canonical:
-        # ⚠★ 既不是真 sha、★ 也没给目录 ⇒ ★ **老身份兜底**（★ `B181` 之前就是按它判的）
-        #   ★★ 用 `legacy://` 明确标记 —— ★ 一眼看得出「这不是一个真地址」✅
-        #   · ★ 好处：★ 仍然保持 (平台+仓库+sha) 的**唯一性**（★ 不会撞）✅
-        #   · ★★ 而它**不会被误当成真地址**（★ `blob_url` 只回 https ⇒ 这种返回空）✅
-        #   ⚠ 谁会走到这：★ 只有极老的调试路径（★ 作业既没 sha 也没 path）⚠
-        canonical = f"legacy://{prov}/{full}/{commit}"
+    # ⚠★★ 2026-10-14（`B184`）：**没有 `legacy://` 兜底了** ⚠
+    #   ★★ 非法身份（★ 没有可锚定的 sha）会在这里**直接抛 `ValueError`** ⚠
+    #     ⇒ ★ 「存得进、查不到」那种静默不一致**从根上消失** ✅
+    canonical = BaseGraph.canonical_url(prov, full, commit)
     key = BaseGraph.key_of(canonical)
 
     # ★★ `B181`：身份判据是**身份证号**（★ 不再是三个字段各自相等）——

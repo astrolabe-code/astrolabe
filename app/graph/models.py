@@ -148,7 +148,35 @@ class BaseGraph(TimeStampedModel):
             #     ★★ 它把"字段没值"这个**异常状态**变成了**合法状态** ⚠
             #     ★ 而空号的行**谁都查不到**（★ `find()` 算不出地址就返回 None）⇒
             #       ★★ 等于在库里埋一个**永远孤立**的行 ⚠
-            models.UniqueConstraint(fields=["graph_key"], name="uniq_base_graph_key")
+            models.UniqueConstraint(fields=["graph_key"], name="uniq_base_graph_key"),
+
+            # ------------------------------------------------------------------
+            # ⚠★★ 2026-10-14（`B184`）：**`request_url` 只许远端形态** ⚠
+            #
+            # ★★ 所有者原话（逐字）：
+            #   「**只能有远端形式也就是从github之类的上拉取，不能有上传文件，
+            #     这留下了一个攻击缺口…所以，基图里这个字段只有唯一合法的样式，且不能为空**」
+            #
+            # ★★ 为什么必须由**数据库**挡（★ 而不是只靠应用层）：
+            #   · ★ 应用层校验**可以被绕过**（★ 漏一个入口、★ 或者将来新写一个入口）⚠
+            #   · ★★ 而这是**身份字段** —— ★ 它错了不会报错，
+            #     ★★ 只会**静默地**把不同代码挤成同一份基图 ⚠
+            #     （★ 库里已有实例：`someone_else/demo` 两份基图，★ 一份 legacy 一份 file）⚠
+            #
+            # ★ 正则口径（★ 与 `canonical_url()` 的实现逐字对齐）：
+            #   · ★★ `^https://`                ← ★★ **file:// / legacy:// / 空串全挡掉** ⚠
+            #   · ★ `(github\.com\|gitee\.com)`  ← ★ 只认这两个平台（★ 与 `_HOSTS` 一致）⚠
+            #   · ★ `[^/]+/[^/]+`               ← ★ `owner/repo`
+            #   · ★ `/blob/`                    ← ★ 必须是 blob 形态
+            #   · ★ `[0-9a-f]{7,64}`            ← ★★ **必须是 hex**（★ 小写）⚠
+            #     （★ 下界 7：★ GitHub 允许短 sha；★ 上界 64：★ sha-1 是 40、sha-256 是 64）⚠
+            # ------------------------------------------------------------------
+            models.CheckConstraint(
+                check=models.Q(
+                    request_url__regex=r"^https://(github\.com|gitee\.com)/[^/]+/[^/]+/blob/[0-9a-f]{7,64}$"
+                ),
+                name="chk_basegraph_request_url_remote",
+            ),
         ]
         indexes = [
             # ★ 按【仓库】列它的全部版本（★ 拉取前的复用查询走 `graph_key`，❌ 不走这条）
@@ -164,9 +192,7 @@ class BaseGraph(TimeStampedModel):
     _HOSTS = {"github": "github.com", "gitee": "gitee.com"}
 
     @classmethod
-    def canonical_url(
-        cls, provider: str, repo_full_name: str, sha: str, *, source_path: str = ""
-    ) -> str:
+    def canonical_url(cls, provider: str, repo_full_name: str, sha: str) -> str:
         """★★★ **这份基图的正规请求地址**（★ `B181` 的「身份证」之源）。
 
         ★★ 所有者原话：「**基图数据应该记录对应的请求地址，
@@ -193,34 +219,52 @@ class BaseGraph(TimeStampedModel):
         | 2 | ★★ `owner/repo` 转**小写** | ★★ GitHub / Gitee 的仓库名**大小写不敏感** ⚠ |
         | 3 | ★ `sha` 转小写 | ★ hex 一律小写（⚠ 大写 hex 是同一个 commit）|
 
-        ## ⚠★ 调试路径：**没有 commit sha**（★ 源码是容器里的一个目录）
+        ## ⚠★★ 2026-10-14（`B184`）：**调试路径整条取消** ⚠
 
-        ★★ 那时它的「请求地址」就是**那个目录本身**（`file://…`）✅
+        ★★ 以前没有 sha 时会退成 `file://{目录}` —— ★ 现已删除 ⚠
 
-        | | 远端源码 | ★ 调试源码 |
-        |---|---|---|
-        | ★ 地址 | ★ `https://host/owner/repo/blob/{sha}` | ★★ `file://{目录}` |
-        | ★ 身份证号 | ★ 由 (平台+仓库+sha) 算 | ★★ 由**目录**算 ✅ |
+        ★★ 所有者的理由：★ 那让「**基图的身份**」变得**不可验证** ⚠
+          （★ 本地目录既没有 sha、★ 别人也无法复核）⚠
+          ★★ 而基图是**所有项目共享**的 ⇒ ★ 那就是**攻击缺口** ⚠
 
-        ⇒ ★★ **不同目录不会混成一份基图** ⚠
-          （★ 否则两个调试用的不同源码，★ 会因为同一个仓库名挤成一份 ⇒
-            第二个直接被「图已建好」挡掉，★ 而它明明是另一份代码）⚠
+        ★★ 现在的行为：★ 没有可锚定的 sha ⇒ ★ **直接抛 `ValueError`** ⚠
+          （★ 见函数体末尾的注释 —— ★❌ 不返回空串，★ 因为那会撞成同一个身份证号）⚠
         """
         prov = (provider or "").strip().lower()
         full = (repo_full_name or "").strip().strip("/").lower()
         commit = (sha or "").strip().lower()
-        path = (source_path or "").strip().rstrip("/")
 
         if len(commit) >= 7 and all(ch in "0123456789abcdef" for ch in commit):
             # ---- ★ 真 sha ⇒ 远端仓库的永久地址 ✅
             host = cls._HOSTS.get(prov)
             if not host or not full:
-                return ""
+                raise ValueError(
+                    "基图身份不合法：provider 或仓库名为空"
+                    f"（provider={provider!r}, repo_full_name={repo_full_name!r}）"
+                )
             return f"https://{host}/{full}/blob/{commit}"
 
-        # ⚠ 不是真 sha ⇒ 调试路径（★ `sha` 是占位的 `"local"`）
-        #   ★★ 绝不能拿它拼 `…/blob/local/…` —— ★ 那是个**点了就 404 的假地址** ⚠
-        return f"file://{path}" if path else ""
+        # ⚠★★ 2026-10-14（B184）：**调试路径整条取消** ⚠
+        #
+        # ★★ 以前这里会退回 `file://{目录}`（★ 没有 sha 时）——
+        #   ★★ 而那让「基图的身份」变得**不可验证** ⚠
+        #     （★ 本地目录既没有 sha、★ 别人也无法复核）⚠
+        #   ★★ 而基图是**所有项目共享**的 ⇒ ★ 那就是**攻击缺口** ⚠
+        #
+        # ★★ 所有者原话（B184）：
+        #   「**只能有远端形式也就是从github之类的上拉取，不能有上传文件，
+        #     这留下了一个攻击缺口…所以，基图里这个字段只有唯一合法的样式，且不能为空**」
+        #
+        # ⚠★ 为什么是 **raise** 而不是 return ""：
+        #   ★★ `key_of("")` 是一个**常量**（★ sha256 空串）⚠
+        #   ⇒ ★ 返回空串会让**所有非法输入撞成同一个身份证号** ⚠
+        #     （★ 而那正是"两个不同目录挤成一份基图"那条静默错的根）⚠
+        #   ⇒ ★★ 所以必须**当场抛错**，★ 让调用方在处理前就失败 ✅
+        raise ValueError(
+            "基图身份不合法：没有可锚定的 commit sha"
+            f"（provider={provider!r}, repo_full_name={repo_full_name!r}, sha={sha!r}）"
+            "—— B184 起只接受远端仓库的 commit sha"
+        )
 
     @staticmethod
     def key_of(canonical_url: str) -> str:

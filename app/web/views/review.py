@@ -119,9 +119,9 @@ def approve(request: HttpRequest, review_id: int) -> JsonResponse:
     ⚠★ 一个必须显式处理的边界：**项目在待审核期间是没有图的**（`U3.1` 第 ④ 步
       "通过后才允许解析"）⇒ ★ 如果放行时**不重投**，项目页会**永远空着**。
 
-    ⚠ 一期还有个现实问题：**服务端拉源码尚未实现** ⇒ 重投时必须知道 `source_path`。
-      ★ 所以这里有条件地要求它 —— ★ **已经有图的项目不要求**（★ 那只是"重新放行"，
-      ⚠ 别让管理员为了放行一个已解析的项目去翻目录）。
+    ⚠★ 2026-10-14（`B184`）更正：★ `B153` 起**服务端拉源码早已实现**，
+      ★★ 而 `source_path` 这条调试口子**已整条取消** ⚠
+      ⇒ ★ 所以本函数**不再有任何路径条件** —— ★ 一律按远端仓库处理 ✅
     """
     from core import publish
     # ★★ `B179`：用 `scope` 问"有没有图" —— ★ 它才知道该去读哪一份（★ 见 `graph/scope.py`）
@@ -136,7 +136,7 @@ def approve(request: HttpRequest, review_id: int) -> JsonResponse:
 
     body = read_json(request)
     note = str(body.get("note") or "").strip()[:2000]
-    source_path = str(body.get("source_path") or "").strip()[:512]
+
 
     # ⚠★★ `B179`：这里要问的是「**这个项目绑定的那份基图里有没有节点**」⚠
     #   ★ 而**不是**"`project_ref` 有没有行" —— ★ 那些行现在只表示
@@ -148,13 +148,15 @@ def approve(request: HttpRequest, review_id: int) -> JsonResponse:
     )
 
     # ★★ `B153` 之后**不再要求 `source_path`** —— ★ 作业会**自己从远端拉**。
-    #   ⚠ 只有 staff 传了才用（★ 内部调试：跳过拉取，直接用容器里的目录）。
-    if has_graph and not source_path:
+    # ⚠★★ 2026-10-14（`B184`）：**`source_path` 整条取消** ⚠
+    #   ★★ 它让「基图的身份」变得**不可验证** ⇒ ★ 那是**攻击缺口** ⚠
+    #   ⇒ ★ 所以这里**不再有"已经有图就不要求路径"那种条件** —— ★ 一律按远端处理 ✅
+    if has_graph:
         review.approve(by=request.user, note=note)
         return ok({"review": _review_json(review), "dispatched": False})
 
     _, job = publish.approve_and_resume(
-        review, by=request.user, note=note, source_path=source_path
+        review, by=request.user, note=note
     )
     review.refresh_from_db()
     return ok(

@@ -158,17 +158,28 @@ export default function ProjectCard({
     },
     fetch: {
       title: '拉取代码',
-      // ★★★ `B169`：★ 文案要说清三件事 —— **去哪儿 · 为什么 · 我们不留你的 token**
+      // ⚠★★ 2026-10-13 重写：★ 旧文案还写着「**接下来会跳转到 GitHub / Gitee 授权**」⚠
+      //
+      // ★★ 那是 `B176` ① **就退役掉的流程** —— ★ 而文案一直没跟着改 ⚠
+      //   ⇒ ★★ 所有者实测后原话：★「**他走的是授权 oauth 那退役的路径，根本没反应**」⚠
+      //   ⇒ ★ 他以为点了要走授权，★ 其实**请求已经发出去了**（★ 日志里 200）⚠
+      //
+      // ★ 所以现在文案要说清的只有三件事（★ 都不再涉及第三方授权）：
+      //
+      // | 说什么 | 为什么 |
+      // |---|---|
+      // | ★ **就地开始，不跳转** | ★ 这正是那个误会的来源 ⚠ |
+      // | ★ 服务端拉取、解析完即删 | ★ `B176` ② 的承诺 |
+      // | ★ 定版之后不能再拉 | ★ `B169` 的闸门 |
       message:
         `将从「${project.repo_url || '项目仓库'}」拉取源码并解析。\n\n` +
-        '接下来会跳转到 GitHub / Gitee 授权：\n' +
-        '★ 这一步是为了确认【这个仓库确实属于你】——\n' +
-        '   ★ 只允许拉取你有控制权的代码，避免侵权。\n' +
-        '★ 本站【不会保存】你的授权 token，用完即丢。\n' +
+        '★ 就地开始，**不会跳转到 GitHub / Gitee**，也不需要你授权。\n' +
+        '★ 源码由本站服务端拉取，解析完成后立即删除。\n' +
+        '★ 同一个版本若已经有人解析过，会直接复用 —— 不重复拉取。\n' +
         '★ 拉取与解析一次完成，之后【不允许重新拉取】；\n' +
         '   需要另一个版本请新建项目，想重来请删了重建。\n\n' +
         '确定继续？',
-      confirmText: '去授权并拉取',
+      confirmText: '开始拉取',
       onConfirm: confirmFetch,
     },
     delete: {
@@ -220,12 +231,39 @@ export default function ProjectCard({
       </p>
 
       <div className="flex items-center justify-between gap-2 mt-4">
-        <ParseStatus status={project.status} size="sm" />
+        {/* ⚠★★ 2026-10-13 修：**有图 ⇒ 以【图】为准** ⚠
+             ★★ 为什么不能只看 `project.status`：
+               ★ 「**复用现成基图**」那条路**根本没有作业**（★ `B179` 的设计）⇒
+                 `status` 是 `'none'` ⇒ ★★ 徽章显示成「**待解析**」⚠
+               ★ 而项目**已经有图了**（★ `project.graph_built` 为真）⚠
+             ★ 实测：★ 所有者原话「**怎么创建项目直接就变成未解析状态了？**」
+               —— ★ 其实服务端 `is_graph_built=True`、★ 图里 **444 个节点** ⚠
+             ★ 判据：★ **"有没有图"是事实，★ 比"最后一次作业什么状态"更权威** ✅
+               （★ 反过来也成立：★ 图还没建但作业 `done` ⇒ ★ 仍然显示作业状态）⚠ */}
+        <ParseStatus status={project.graph_built ? 'done' : project.status} size="sm" />
         <span className="inline-flex items-center gap-1 text-text-faint" style={{ fontSize: 11 }}>
           <User size={11} />
           {project.mine ? '我的项目' : project.owner || '内置'}
         </span>
       </div>
+
+      {/* ⚠★★ 2026-10-13 新增：**规模数字** ⚠
+           ★★ 为什么要有：★ 卡片原来**一个规模数字都不显示** ——
+             ★ 于是"已就绪"是个**空口承诺**（★ 用户看不出它到底解析出了什么）⚠
+           ★ 实测背景：★ 所有者看到徽章写「待解析」时，
+             ★★ 而其实图里**已经有 444 个节点 / 1280 条边**了 ⚠
+           ★ 只在**有图**时显示（★ 没有图就没有数字可说）✅ */}
+      {project.graph_built && (
+        <div
+          className="flex items-center gap-2 mt-2 text-text-faint"
+          style={{ fontSize: 11 }}
+          title="这张图里的规模"
+        >
+          <span>{project.node_count ?? 0} 个节点</span>
+          <span>·</span>
+          <span>{project.edge_count ?? 0} 条边</span>
+        </div>
+      )}
 
       {(project.status === 'queued' ||
         project.status === 'running' ||

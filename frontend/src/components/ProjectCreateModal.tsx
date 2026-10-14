@@ -78,10 +78,18 @@ export default function ProjectCreateModal({ open, onClose, onCreated }: Project
     //     ⇒ ★★ 服务端做 ⇒ 每小时约 30 次创建就撞限，★ 所有用户一起被挡 ⚠
     //   · ★★ 前端做 ⇒ 每个用户花自己的配额 ✅
     //   ⚠★ **失败不阻断** —— ★ 那时不传 sha，★ 服务端自己解析（兜底）✅
+    // ★★ 先把用户填的 URL 转成 `owner/repo` —— ★ 后面【解析 sha】与【提交】都用它 ⚠
+    //   ★ 只算一次 ⇒ ★ 免得两处口径不一致（★ 那会变成"前端查得到、后端说地址不对"）⚠
+    const repoFromUrl = repoFullOf(repoUrl.trim())
+    if (!repoFromUrl) {
+      setError('仓库地址无法识别（应形如 https://github.com/owner/repo）')
+      return
+    }
+
     let sha = ''
     setResolving(true)
     try {
-      const v = await resolveRef(provider, repoFullOf(repoUrl.trim()), commit.trim())
+      const v = await resolveRef(provider, repoFromUrl, commit.trim())
       if (v.ok) {
         sha = v.sha
       } else {
@@ -99,10 +107,16 @@ export default function ProjectCreateModal({ open, onClose, onCreated }: Project
     const r = await create
       .mutateAsync({
         name: name.trim(),
-        repo_url: repoUrl.trim(),
+        // ⚠★ 2026-10-13：★ `publish/start/` 收的是 **`owner/repo`**（❌ 不是 URL）⚠
+        //   ★ 所以这里转一道 —— ★ 与 `resolveRef` 用**同一个函数**，
+        //   ★★ 免得"前端按 A 解析、后端按 B 存"两套口径 ⚠
+        repo: repoFromUrl,
         provider,
-        commit: commit.trim() || undefined,
+        // ★ 用户填的"commit（可选）"—— ★ 它是分支 / tag，★ 落到基图的 `ref` 列 ✅
+        ref: commit.trim() || undefined,
         // ⚠★ `B182`：把浏览器算好的 sha 带上 ⇒ ★ 服务端一次 API 都不发 ✅
+        //   ★★ 走 `publish/start/` 之后，★ 这个 sha **才真的被用上** ⚠
+        //     （★ 以前发给 `POST /api/projects/`，★ 而它**不读 sha**）⚠
         sha: sha || undefined,
         desc,
         is_public: isPublic,

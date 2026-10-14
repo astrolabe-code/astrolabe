@@ -173,23 +173,69 @@ def count_submissions(user, *, since: datetime) -> int:
 
 
 def _find_active_duplicate(user, repo_url: str):
-    """★ 同一用户是否**已经提交过同一个仓库**（且那条**没被驳回**）。
+    """★ 同一用户是否**已经提交过同一个仓库**（且那条**没被驳回**、且**项目还在**）。
 
     ★★ 防的是「**改个名字 / 反复提交同一个仓库**」这种刷法 ——
       ⚠ 单纯限制次数**挡不住它**（一天 3 次也能刷）。
 
     ★ 已驳回的**不算** —— ★ 用户改了东西想重传，应当允许。
+
+    ## ⚠★★ 2026-10-13 修：**还要看"那个项目还在不在"** ⚠
+
+    ★★ 修之前的现象（★ 所有者实测）：
+
+    ```
+    ★ 提交 vulture ⇒ 被拦：「你已经提交过了，请先删掉旧项目再提交」
+    ★★ 按它说的删了项目 ⇒ ★★ **照样被拦** ⇒ 再删也没有项目可删 ⚠
+    ```
+
+    ★★★ 根因是**两处设计自相矛盾**：
+
+    | 设计 | 内容 |
+    |---|---|
+    | ★ `B146` | ★ 审核流水 **append-only** —— ★ 删项目**不删**流水（★ 可审计）✅ |
+    | ★ 本函数 | ★★ 判重**只看流水**，★ **从不检查项目是否还在** ⚠ |
+
+    ⇒ ★★ 于是那条提示里「**请先删掉旧项目再提交**」**永远做不到** ⚠
+      （★ 提示让用户做的事，★ 代码里根本不存在那条路）⚠
+
+    ## ★ 修法：判重时**多问一句**
+
+    · ★ 项目**还在** ⇒ ★ 照旧拦（★ 防刷的本意不变）✅
+    · ★★ 项目**已删** ⇒ ★★ 那次提交等于**撤回了** ⇒ ★ 允许重提 ✅
+
+    ⚠★ **流水本身仍然只增不改** —— ★ `B146` **一个字没动** ✅
+      ★ 这里只是**判重时**多看一眼，★ 不是去删流水 ⚠
     """
-    from core.models import ProjectReview
+    from core.models import Project, ProjectReview
 
     if not (repo_url or "").strip() or not getattr(user, "pk", None):
         return None
-    return (
+
+    rows = list(
         ProjectReview.objects.filter(submitted_by=user, repo_url=repo_url.strip())
         .exclude(decision=ProjectReview.DECISION_REJECTED)
-        .order_by("-created_at")
-        .first()
+        .order_by("-created_at")[:50]
     )
+    if not rows:
+        return None
+
+    # ★★ 一次查出"这些流水里，哪些项目还活着"（❌ 不要逐条查 —— 那是 N+1）⚠
+    refs = [(r.project_ref or "").strip() for r in rows]
+    alive = set(
+        Project.objects.filter(project_ref__in=[x for x in refs if x]).values_list(
+            "project_ref", flat=True
+        )
+    )
+
+    for r in rows:
+        ref = (r.project_ref or "").strip()
+        if not ref or ref in alive:
+            # ★★ 没记项目号的（⚠ 理论上不该有）⇒ **保守起见照样算数** ——
+            #   ★ 宁可多拦一次，★ 也不要把"防刷"这条边界放宽 ⚠
+            return r
+    # ★ 走到这里 ⇒ ★ 那些流水对应的项目**全都已经删了** ⇒ ★ 没有"还在的提交"可拦 ✅
+    return None
 
 
 # ===========================================================================

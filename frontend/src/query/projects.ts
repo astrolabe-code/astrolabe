@@ -3,7 +3,6 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
 import { resolveRef } from '../lib/resolveRef'
 import type {
-  CreatedProject,
   ProgressData,
   ProjectListData,
   ProjectSummary,
@@ -77,7 +76,25 @@ export interface StartedFetch {
  * ★ 否则「工作区（只看我的）」会命中「首页（公开 + 我的）」的缓存 ⚠
  * （★ 这两份数据**本来就不同** —— ★ 见 `B172` 的 `?mine=1`）
  */
-export function useProjects(opts: { mine?: boolean; staleTime?: number } = {}) {
+/** ★★ 作业的【终态】—— ★ 到了这些就**不该再轮询** ⚠ */
+export const TERMINAL_JOB_STATES = ['done', 'failed', 'canceled', 'none'] as const
+
+/**
+ * ★ 作业**还在跑**吗（★ 只有这两种状态值得轮询）
+ *
+ * ⚠★★ 别再写 `'error'` —— ★ 作业状态里**根本没有那个值** ⚠
+ *   ★ 真实取值见 `jobs/models.py::Job.STATE_CHOICES`：
+ *   `queued` · `running` · `done` · ★★ **`failed`** · `canceled`
+ *   ⇒ ★ 判错的后果：★ **失败的项目会永远轮询下去**（★ 白耗电、白打接口）⚠
+ *   ★ 另有 `'none'` —— ★ 那是**列表端点**在"没有作业"时给的伪状态 ✅
+ */
+export function isJobActive(status?: string | null): boolean {
+  return status === 'queued' || status === 'running'
+}
+
+export function useProjects(
+  opts: { mine?: boolean; staleTime?: number; live?: boolean; pollMs?: number } = {},
+) {
   const mine = !!opts.mine
   return useQuery({
     // ⚠★ `mine` 必须进 key —— ★ 否则"工作区（只看我的）"会命中"首页（公开+我的）"的缓存 ⚠
@@ -92,6 +109,32 @@ export function useProjects(opts: { mine?: boolean; staleTime?: number } = {}) {
     //   ★ 它不是"取哪一份数据"（那是 `mine`），★ 而是"多久算过期"（缓存策略）✅
     //   ⇒ ★ 把它塞进 key 反而会让同一个查询出现两份缓存 ⚠
     staleTime: opts.staleTime ?? 0,
+    /**
+     * ★★★ 2026-10-13 新增：**在工作区里轮询**（★ 修"进度不走"）⚠
+     *
+     * ⚠★★ 修之前的现象（★ 所有者原话）：
+     * > 「**你这解析进度显示不准确呀，不是实时变化的，开始一直是3%，
+     * >  我还以为卡了，刷新了一下浏览器，就变成100%了**」
+     *
+     * ★★ 根因：★ 这个钩子**从不轮询** ——
+     *   · ★ 卡片上的进度是**一次性**抓的 ⇒ ★ 停在打开页面那一刻的值 ⚠
+     *   · ★ 而 `useProgress()` 那个轮询钩子**写了却没有任何地方用** ⚠
+     *   ⇒ ★★ 于是"刷新一下就对了" —— ★ 因为刷新会重新抓一次 ⚠
+     *
+     * ★ 为什么轮询**列表**而不是给每张卡片各挂一个 `useProgress`：
+     *   · ★ 列表**一次请求就够**（★ 卡片上要的进度它都有）✅
+     *   · ★ 每张卡片各轮询一个端点 ⇒ ★★ N 张卡片 = N 倍请求 ⚠
+     *
+     * ⚠★ 两个"会自己停"的条件（★ 都不靠人记得关）：
+     *   · ★ 列表里**没有** `queued` / `running` 的项目 ⇒ ★ 停 ✅
+     *   · ★ 标签页在后台（`document.hidden`）⇒ ★ 停（★ 不白耗电）✅
+     */
+    refetchInterval: (query) => {
+      if (!opts.live) return false
+      const list = query.state.data ?? []
+      if (!list.some((p) => isJobActive(p.status))) return false
+      return document.hidden ? false : (opts.pollMs ?? 2000)
+    },
   })
 }
 
@@ -112,26 +155,54 @@ export function useProject(projectRef?: string | null) {
 }
 
 export interface CreateProjectBody {
-  name: string
-  /** ★★ 必填 —— B109：源码只能服务端拉取 */
-  repo_url: string
-  /** ★★ 必填 —— `github` / `gitee` */
-  provider: string
-  /** ★ 可选，缺省 = HEAD */
-  commit?: string
+    name: string
+    /**
+     * ★★ 必填 —— **`owner/repo`**（⚠★ **不是 URL**）⚠
+     *
+     * ★ 为什么是这个名字：★ `publish/start/` 收的是 `repo`（★ 它自己拼 `repo_url`）⚠
+     * ★ 而 `createProjectModal` 那边收的是用户填的**完整 URL** ⇒
+     *   ★★ 用 `repoFullOf()` 先转一道（★ 与 `resolveRef` 同一套口径）✅
+     */
+    repo: string
+    /** ★★ 必填 —— `github` / `gitee` */
+    provider: string
+    /**
+     * ★ 可选 —— **分支 / tag**（★ 前端叫它 `commit`，⚠ 但它其实是"版本"）⚠
+     * ★ 缺省 = 默认分支；★ 它只作**留痕**（★ 真正定位版本的是 `sha`）✅
+     */
+    ref?: string
+    /**
+     * ★★ `B182`：**浏览器里已经算好的 commit sha** ⚠
+     *
+     * ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
+     *    只有拉源码，才是我服务器做的吧？**」
+     *
+     * · ★ 带上它 ⇒ ★★ 服务端【一次 GitHub API 都不发】✅
+     *   （★ 未认证配额每 IP 每小时 60 次，★ 服务端扛 ⇒ 所有人一起被挡）⚠
+     * · ★ 不带 ⇒ ★ 服务端自己解析（★ 兜底）✅
+     */
+    sha?: string
+    desc?: string
+    /** ★ 前端那个「创建后立即公开」勾选框（★ 缺省 = 不公开）*/
+    is_public?: boolean
+  }
+
   /**
-   * ★★ `B182`：**浏览器里已经算好的 commit sha** ⚠
+   * ★★ 「新建项目」的返回 —— ⚠★ 它**不只是建项目**了 ⚠
    *
-   * ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的，
-   *    只有拉源码，才是我服务器做的吧？**」
-   *
-   * · ★ 带上它 ⇒ ★★ 服务端【一次 GitHub API 都不发】✅
-   *   （★ 未认证配额每 IP 每小时 60 次，★ 服务端扛 ⇒ 所有人一起被挡）⚠
-   * · ★ 不带 ⇒ ★ 服务端自己解析（★ 兜底）✅
+   * ★★ 现在它同时**已经投出解析作业**（★ 或者**复用了现成基图**）⚠
    */
-  sha?: string
-  desc?: string
-  is_public?: boolean
+  export interface PublishedProject {
+    project_ref: string
+    /** ⚠★ `null` **不代表失败** —— ★ `reused` 时它是 `null`，★ 而那是**成功** ⚠ */
+    job_id: number | null
+    job_state: string
+    /** ★★ 复用了现成基图（★ 与 `useStartFetch` 同一个判据）*/
+    reused?: boolean
+    /** ★ 对应哪一版 */
+    sha?: string
+    message?: string
+    steps?: Record<string, unknown>
   }
 
 /**
@@ -143,8 +214,28 @@ export interface CreateProjectBody {
 export function useCreateProject() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (body: CreateProjectBody): Promise<CreatedProject> =>
-      unwrap(await apiPost<CreatedProject>('/api/projects/', body, 'data')),
+    /**
+     * ★★★ 2026-10-13 改：**打的是 `publish/start/`**（❌ 不再是 `POST /api/projects/`）⚠
+     *
+     * ⚠★★ 为什么必须换端点（★ 这是一个**完全堵死**的 bug）：
+     *
+     * ```
+     * ★ `POST /api/projects/` 只建项目 —— ★★ 它【跳过了整条提交流水】⚠
+     *   ⇒ ★ 没有 `ProjectReview` 记录
+     * ★★ 而解析作业里的【许可闸门】要求"有一条【已放行】的审核记录"才肯放行 ⚠
+     *   ⇒ ★★★ **它永远等不到** ⇒ ★ **图永远建不出来** ⚠
+     * ```
+     * ★ 实测：★ 库里 58 个项目没有审核记录 ⇒ ★★ 它们**一个都建不出图** ⚠
+     * ★（★ 而且**不分许可** —— ★ 连 MIT 也会卡住，★ 因为缺的是那条记录）⚠
+     *
+     * ★ `publish/start/` 才是后端**为此设计**的那一个：
+     *   · ★ 建项目 + 走提交流水（★ 于是**有审核记录** ⇒ 闸门能过）✅
+     *   · ★ 建项目 + **投递解析作业**（★ 不必再手点「拉取代码」）✅
+     *   · ★★ 顺带：★ `B182` 那条"浏览器算好的 sha"**这时才真的用上** ✅
+     *     （★ 以前它发给 `POST /api/projects/`，★ 而那个端点**根本不读 sha**）⚠
+     */
+    mutationFn: async (body: CreateProjectBody): Promise<PublishedProject> =>
+      unwrap(await apiPost<PublishedProject>('/api/projects/publish/start/', body, 'data')),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] })
     },
@@ -273,8 +364,12 @@ export function useProgress(
         'data',
       )),
     refetchInterval: (query) => {
-      const status = query.state.data?.status
-      if (status === 'done' || status === 'error' || status === 'none') return false
+      // ⚠★★ 用 `isJobActive()` 判 —— ❌ 别再手写状态名 ⚠
+      //   ★ 这里原本写的是 `status === 'error'` —— ★★ 而作业状态里**没有 `error`** ⚠
+      //     （★ 真实取值：queued / running / done / **failed** / canceled）⇒
+      //     ★★ 失败的项目**会永远轮询下去** ⚠
+      //   ★ 收敛成一个函数 ⇒ ★ 以后状态名只在**一处**出现 ✅
+      if (!isJobActive(query.state.data?.status)) return false
       return document.hidden ? false : pollMs
     },
   })

@@ -40,7 +40,11 @@ export default function Workspace() {
   // ⚠★ 游客也照样带 `mine=1` —— ★ 后端对未登录返回**空列表**（❌ 不是 401），
   //   ★★ 于是游客看到的是"登录后在这里看到你的项目"，❌ 而不是别人的项目 ⚠
   // ★ 而「别人的公开项目」的入口在 **`Home`（首页探索页）** —— ★ 它调的是不带 `mine` 的同一端点 ✅
-  const projects = useProjects({ mine: true })
+  // ⚠★★ `live: true` —— ★ 让卡片上的**解析进度会自己走** ⚠
+  //   ★★ 不加它的后果（★ 所有者实测）：
+  //     「**开始一直是3%，我还以为卡了，刷新了一下浏览器，就变成100%了**」⚠
+  //   ★ 轮询**自己会停**（★ 列表里没有排队/执行中的项目就停；★ 标签页在后台也停）✅
+  const projects = useProjects({ mine: true, live: true })
   const me = useMe()
   const authed = !!me.data?.authenticated
 
@@ -64,7 +68,22 @@ export default function Workspace() {
 
   const goProject = (projectRef: string) => {
     setCreateOpen(false)
-    navigate(`/p/${encodeURIComponent(projectRef)}`)
+    // ⚠★★ 2026-10-13：★ **刻意不去 `/p/:key`** ⚠
+    //
+    // ★★ 项目页 `/p/:key` **还没做**（★ `App.tsx` 的路由表里标着"后续批次"）⚠
+    //   ⇒ ★ 跳到那里会被通配路由 `<Route path="*">` **打回首页** ⚠
+    //   ⇒ ★★ 所有者实测原话：★「**点了创建项目，然后就直接跳到首页了**」⚠
+    //
+    // ★ 而现在「新建项目」会**顺手投出解析作业**（★ 见 `useCreateProject`）⇒
+    //   ★★ 正确的地方就是**留在工作区**，★ 看着这张卡片显示进度 ⚠
+    //
+    // ⚠★ 等 `/p/:key` 做出来之后，这里应改回 `navigate(\`/p/${projectRef}\`)` ⚠
+    void projectRef
+    navigate('/workspace')
+    setNotice({
+      kind: 'info',
+      text: '项目已创建，正在拉取代码并解析 —— 这张卡片上会显示进度，完成后就能打开。',
+    })
   }
 
   /**

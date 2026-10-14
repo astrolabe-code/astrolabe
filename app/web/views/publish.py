@@ -103,6 +103,13 @@ def start(request: HttpRequest) -> JsonResponse:
         #   · ★ 没有 ⇒ ★ 服务端自己解析（★ 兜底，★ 老客户端 / 前端失败时不坏）✅
         #   ⚠★ 形态校验在 `core/publish.py::dispatch_parse` 里做（★ 不像就当没给）⚠
         sha=str(body.get("sha") or ""),
+        # ⚠★ 2026-10-13：「新建项目」改走本端点之后，这两个字段也要能落下来 ⚠
+        #   · ★ `ref`      —— ★ 前端那个「commit（可选）」输入框（★ 分支 / tag）⚠
+        #   · ★ `is_public` —— ★ 前端那个「创建后立即公开」勾选框 ⚠
+        #   ★★ 不收它们 ⇒ ★ 那两个输入框就变成**摆设**了 ⚠
+        ref=str(body.get("ref") or ""),
+        # ★ 缺省 True = 保持原来的政策（★ 发布即公开页面，U2.1）✅
+        is_public=bool(body.get("is_public", True)),
     )
     if not pub.ok:
         # ★★ 失败一律**如实返回原因**（★ `U3.9`：说清为什么 + 该怎么办）

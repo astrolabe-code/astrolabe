@@ -145,6 +145,17 @@ def publish_project(
     # ⚠★ `B182`：**前端已经算好的 commit sha**（★ 空 ⇒ 由服务端自己解析）⚠
     #   ★★ 所有者原话：「**这个过程应该发生在前端，不是用我服务器的IP地址查询的**」
     sha: str = "",
+    # ⚠★ 2026-10-13：**用户选的分支 / tag**（★ 空 ⇒ 默认分支）⚠
+    #   ★★ 为什么要补它：★ 「新建项目」改走本函数之后，★ 前端那个
+    #     「commit（可选）」输入框**得有地方落** —— ⚠ 否则它变成了摆设 ⚠
+    #   ★ 它只作【留痕】（★ 真正定位版本的是 `sha`）⇒ ★ 记进基图的 `ref` 列 ✅
+    ref: str = "",
+    # ⚠★ 2026-10-13：**用户选的"创建后立即公开"** ⚠
+    #   ★ 本函数原先**写死 `True`**（★ 政策：发布即公开页面）——
+    #   ★★ 而前端那个勾选框的文案是「**创建后立即公开**」⇒
+    #     ★ 默认不勾 ⇒ ★ 写死 True 会让**用户的勾选形同虚设** ⚠
+    #   ★ 默认仍取 `True`（★ 保持原政策），★ 但**允许调用方覆盖** ✅
+    is_public: bool = True,
     priority: int | None = None,
     at: datetime | None = None,
     ) -> PublishResult:
@@ -216,7 +227,9 @@ def publish_project(
             # ★ 发布即公开「页面」（★ 读开放是策略，U2.1）——
             #   ⚠ 但**列表 / 搜索只列 `review_state=approved` 的**，
             #     见本模块的 `public_projects()`（★ 约定固化成一个函数，❌ 不靠口头）
-            is_public=True,
+            # ⚠★ 2026-10-13：改成**用调用方给的值**（★ 默认仍是 True）——
+            #   ★ 前端那个勾选框写的是「创建后立即公开」⇒ ★ 得让它真的说了算 ⚠
+            is_public=bool(is_public),
             review_state=Project.REVIEW_PENDING,
         )
 
@@ -265,6 +278,9 @@ def publish_project(
         commit="",
         # ⚠★ `B182`：把前端算好的 sha 透传下去 —— ★ 有它，服务端【一次 API 都不发】✅
         sha=sha or "",
+        # ⚠★ 2026-10-13：**用户选的分支 / tag** 也带下去 ——
+        #   ★ 它进基图的 `ref` 列（★ 只作留痕；★ 定位版本靠 `sha`）✅
+        ref=ref or "",
         priority=priority if priority is not None else _queue_priority(user),
     )
 

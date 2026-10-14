@@ -264,6 +264,27 @@ def bind(
             defaults={"base_graph": base_graph, "requested_ref": (requested_ref or "")[:128]},
         )
 
+        # ⚠★★ 2026-10-13：**必须重新读一次 `built_at`**（★ 别信传进来那个对象的属性）⚠
+        #
+        # ★★ 为什么：`writer.write_graph()` 是**另取一个实例**去更新它的 ⚠
+        #   ```
+        #   bg = BaseGraph.objects.select_for_update().filter(pk=base_graph.pk).first()  ← ★ 新实例
+        #   bg.built_at = timezone.now()   ← ★ 更新的是【它】
+        #   bg.save(...)
+        #   ```
+        #   ⇒ ★★ 调用方手上那个 `base_graph` 的 `built_at` **还是旧的 `None`** ⚠
+        #
+        # ★★★ 后果是**静默的**（★ 最难查的一类）：
+        #   ★ 图**明明建好了**（★ 节点 / 边都在库里），
+        #   ★★ 而 `is_ready()` 判成 False ⇒ **不肯置 `graph_built_at`** ⚠
+        #   ⇒ ★ 项目页显示「**未解析**」⇒ ★ 用户以为没跑成功 ⚠
+        #
+        # ★ 实测证据：`records` 那个项目 **90 节点 / 226 边**，
+        #   ★★ 而 `is_graph_built = False` ⚠
+        #
+        # ⇒ ★★ 所以在**这里**重读 —— ★ 这样无论谁调用 `bind()` 都不会再踩 ✅
+        base_graph.refresh_from_db(fields=["built_at", "node_count", "edge_count"])
+
         # ★★ 「这个项目已经有图了」—— ★ 复用时**立刻**为真（❌ 不靠一个不会来的作业）⚠
         if is_ready(base_graph):
             project = Project.objects.filter(project_ref=project_ref).first()

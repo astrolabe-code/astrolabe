@@ -25,7 +25,7 @@ from core import publish as publish_core
 from core.models import Project
 # ★★ `B179`：`GraphPatch` / `ProjectBaseGraph` 也要用到 ——
 #   ★ 删除项目时要清掉"它自己的修改"与"它的绑定"（⚠ 但**不碰共享基图**）⚠
-from graph.models import Edge, GraphPatch, Node, ProjectBaseGraph
+from graph.models import BaseGraph, Edge, GraphPatch, Node, ProjectBaseGraph
 from graph.revision import current as graph_rev_of
 from jobs import dispatch
 from jobs.models import Job
@@ -54,6 +54,37 @@ def _clamp(value, low: int, high: int, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(low, min(got, high))
+
+
+def _built_flags(project_refs: list[str]) -> dict[str, bool]:
+    """★★ 一次查询取回所有项目的「图建好了没」（❌ 不要每个项目查一次）。
+
+    ⚠★ 2026-10-14（`B197`）：★ `Project.graph_built_at` 那一列**已删** ⚠
+      ★★ 定版判据改为**派生**（★ 见 `core/models.py::is_graph_built`）⚠
+      · ★ 它经 `binding.of()` 读 `BaseGraph.built_at`
+      · ★★ 而那是**每个项目一次查询** ⇒ ★ 列表页会 N+1 ⚠
+
+    ⇒ ★★ 所以这里**同一趟**把绑定与 `built_at` 都查出来 ✅
+
+    ⚠★ 与 `_counts()` 是**两趟**查询（★ 不是一趟）——
+      · ★ `_counts` 要的是**聚合**（★ 按基图分组数节点/边）
+      · ★ 本函数要的是**每个项目一个布尔值**
+      ★★ 合成一趟会让两边都变难读，* 而查询次数从 2 次变成 1 次
+        ★ 在 200 个项目的量级上**不值得** ⚠
+    """
+    binds = dict(
+        ProjectBaseGraph.objects.filter(project_ref__in=project_refs).values_list(
+            "project_ref", "base_graph_id"
+        )
+    )
+    if not binds:
+        return {}
+    built_ids = set(
+        BaseGraph.objects.filter(
+            id__in=list(binds.values()), built_at__isnull=False
+        ).values_list("id", flat=True)
+    )
+    return {ref: (bg_id in built_ids) for ref, bg_id in binds.items()}
 
 
 def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
@@ -101,7 +132,18 @@ def _latest_parse_job(project_ref: str) -> Job | None:
     )
 
 
-def _project_json(project: Project, request: HttpRequest, node_n: int, edge_n: int) -> dict:
+def _project_json(
+    project: Project,
+    request: HttpRequest,
+    node_n: int,
+    edge_n: int,
+    *,
+    # ⚠★ 2026-10-14（`B197`）：**允许调用方预载「有没有图」** ⚠
+    #   ★★ 否则列表页会 **N+1**（★ 每个项目都要查一次绑定表）⚠
+    #   · ★ 调用方不传 ⇒ ★ 自己查（★ 单项目视图走这条）✅
+    #   · ★ 传了 ⇒ ★ 用预载值（★ 列表页走这条）✅
+    graph_built: bool | None = None,
+) -> dict:
     job = _latest_parse_job(project.project_ref)
     user = getattr(request, "user", None)
     return {
@@ -111,7 +153,7 @@ def _project_json(project: Project, request: HttpRequest, node_n: int, edge_n: i
         "is_public": project.is_public,
         "provider": project.provider,
         "repo_url": project.repo_url,
-        "commit": project.commit,
+        "commit": "",
         # ⚠ `mine` —— 前端靠它决定是否渲染「设置 / 重新解析」入口
         "mine": bool(user and user.is_authenticated and project.owner_id == user.pk),
         "owner": project.owner.get_username() if project.owner_id else "",
@@ -123,7 +165,10 @@ def _project_json(project: Project, request: HttpRequest, node_n: int, edge_n: i
         # ⚠★ 为什么不用 `status` 判断：★ `status` 是**作业状态**（`Job.state`），
         #   ⚠ 而"定版"是 **`Project.is_graph_built`** —— ★ 两者不是一回事
         #   （★ 作业可能 `done` 但图未定版，⚠ 反之亦然）⇒ ★★ **必须单独给一个字段**。
-        "graph_built": bool(project.is_graph_built),
+        "graph_built": (
+            # ⚠★ `B197`：定版判据已改为派生（★ 经绑定表读 `BaseGraph.built_at`）⚠
+            bool(project.is_graph_built) if graph_built is None else bool(graph_built)
+        ),
         "graph_rev": graph_rev_of(project.project_ref),
         "node_count": node_n,
         "edge_count": edge_n,
@@ -172,11 +217,20 @@ def collection(request: HttpRequest) -> JsonResponse:
     qs = qs.order_by("-created_at")[:200]
     projects = list(qs)
     nodes, edges = _counts([p.project_ref for p in projects])
+    # ⚠★ 2026-10-14（`B197`）：**同一趟把「有没有图」也查出来** ⚠
+    #   ★★ 否则 `is_graph_built` 会对每个项目各查一次绑定表 ⇒ **N+1** ⚠
+    built = _built_flags([p.project_ref for p in projects])
 
     # ② 型（契约 §2：项目列表 = `{projects:[...]}`）
     return ok_flat(
         projects=[
-            _project_json(p, request, nodes.get(p.project_ref, 0), edges.get(p.project_ref, 0))
+            _project_json(
+                p,
+                request,
+                nodes.get(p.project_ref, 0),
+                edges.get(p.project_ref, 0),
+                graph_built=built.get(p.project_ref, False),
+            )
             for p in projects
         ]
     )

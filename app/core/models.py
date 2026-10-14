@@ -74,16 +74,28 @@ class Project(TimeStampedModel):
     project_ref = models.CharField(
         max_length=64, unique=True, editable=False, default=new_project_ref
     )
-    name = models.CharField(max_length=200)
+    # ⚠★★ 2026-10-14（`B192`）：**从 200 缩到 120** ⚠
+    #   ★★ 因为它进了**联合唯一索引** `UNIQUE (owner, name)` ——
+    #     ★ 索引的体积**直接由这里决定** ⚠
+    #   ★ 实测：★ 现有的名字**最长 19 字**、★ 平均 **4 字** ⇒ ★ **缩了碰不到任何数据** ✅
+    name = models.CharField(max_length=120)
     desc = models.TextField(blank=True, default="")
 
     #: ⚠ **可为空**（有意）：公开项目在被**原作者认领**之前，owner 可以是平台代管。
     #: 认领是路线图里的「社区纠错 · 原作者认领」。
+    # ⚠★★ 2026-10-14（`B198`）：**`null=True` 去掉，★ 删除行为改为 `PROTECT`** ⚠
+    #
+    # ★★ 所有者原话（逐字）：「**没有平台代管项目**」
+    #
+    # · ★ 原先可空的理由是「公开项目在被**原作者认领**之前，owner 可以是平台代管」
+    #   ★★ 而那条路线**不存在了** ⇒ ★ 项目**一定属于某个用户** ✅
+    # · ★★ `SET_NULL` → **`PROTECT`**：★ 有项目就**不许删号** ⚠
+    #   （★ 否则会留下无主项目 —— ★ 而那正是"可空"想解决的问题）⚠
+    #   ⇒ ★ 要注销 ⇒ ★ 必须**先显式处置**它的项目（★ 删 / 转移）——
+    #     ★★ 那是**明面动作**，❌ 不是静默置空 ✅
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="projects",
     )
 
@@ -97,9 +109,6 @@ class Project(TimeStampedModel):
     ]
     provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES, blank=True, default="")
     repo_url = models.CharField(max_length=512, blank=True, default="")
-    #: ★ 钉住的版本 —— ⚠ 一期：项目绑定一个 commit，换 commit ⇒ 重新解析
-    #: （⚠ 图不可变 + 快照/epoch 是后续的事，见 GRAPH-STORAGE.md G1）
-    commit = models.CharField(max_length=64, blank=True, default="")
 
     # ------------------------------------------------------------------ 可见性
     #: ★ 公开 = 任何人可读（含游客）；私有 = 仅 owner
@@ -126,10 +135,6 @@ class Project(TimeStampedModel):
     # ------------------------------------------------------------------ 付费
     # ★★ `U9.4` 一期：**只做"付费可见性判定"，❌ 不做支付**
     #: ★ 标记这个项目里有需要付费才能看的**讲解**（★ 代码与图**永远免费**，`U9.2`）
-    is_paid = models.BooleanField(default=False)
-    #: ★ 定价说明（**展示用的一段文字**）—— ★★ **平台不参与定价**（`U9.1` 第 1 行）
-    #: ⚠ 它不是金额字段 —— 一期读者私下付给作者，平台只负责"谁能看"的开关（`U9.6`）
-    price_note = models.CharField(max_length=200, blank=True, default="")
 
     # ------------------------------------------------------------------ 许可核验
     # ★ 依据 `core/licensing.py`（`U3.4` / `B143`）
@@ -179,7 +184,6 @@ class Project(TimeStampedModel):
     #
     # ⚠★ 它也是 `Project.review_state == pending` 时"还没解析"的**权威判据** ——
     #   ★ 比"数一下有几个节点"可靠（★ 后者是**副作用**，⚠ 会被任何一次清空误导）。
-    graph_built_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     #: ★★ **定版时钉住的实际 ref**（★ 拉取时用的分支/tag/sha）——
     #: ★ 有了它，将来才回答得了"这张图是哪一版代码的"（★ 且它与 `graph_built_at` 同生共死）。
@@ -188,10 +192,50 @@ class Project(TimeStampedModel):
     # ------------------------------------------------------------------ 定版判据
     @property
     def is_graph_built(self) -> bool:
-        """★★ **图是否已定版** —— ★ 定版后**不可再解析**（`B103` / `B155`）。"""
-        return self.graph_built_at is not None
+        """★★ **图是否已定版** —— ★ 定版后**不可再解析**（`B103` / `B155`）。
+
+        ⚠★★ 2026-10-14（`B197`）：**改为派生** ⚠
+
+        ## ★★ 为什么改
+
+        ★ 原先它读 `Project.graph_built_at` —— ★ 而那一列与
+          `BaseGraph.built_at` 是**同一条事实的两份** ⚠
+        ★★ 而"两份"迟早不一致（★ 实测踩过：★ 图建好了，★ 项目那边还是 None）⚠
+
+        ## ⚠★ 过渡期口径（★ 直到第 2b 批）
+
+        ★★ `Project.base_graph_id` **还不存在** —— ★ 项目↔基图的绑定
+          仍在独立的 `graph_projectbasegraph` 表里 ⚠
+        ⇒ ★ 所以现在**经绑定表**问（★ `binding.of()` 是全项目唯一的绑定入口）✅
+
+        ⚠★ 代价：★ 每次调用**一次查询** ⚠
+          ★★ 而列表页会变成 **N+1**（★ 126 个项目 ⇒ 126 次）⚠
+          ⇒ ★ 已在 `web/views/projects.py` 的列表里**预载**（★ 与节点/边计数同一套路）✅
+          ★★ 而第 2b 批把 `base_graph_id` 并到项目表之后，
+            ★ 这里会改成**直读外键**（★ 一次 join 就够）✅
+        """
+        from graph import binding
+
+        bg = binding.of(self.project_ref)
+        return bg is not None and bg.built_at is not None
 
     class Meta:
+        constraints = [
+            # ⚠★★ 2026-10-14（`B192`）：**同一用户下不许建同名项目** ⚠
+            #
+            # ★★ 所有者原话（逐字）：「**同一个用户下建的项目是不允许同名的**」
+            #
+            # · ★ 为什么需要它：★ 现有唯一约束只有 `project_ref`（★ 那是随机 UUID）
+            #   ★★ 于是同一个用户可以建**无数个同名项目** ⚠
+            #   ⇒ ★ 列表里分不清、★ 且容易误建 ⚠
+            # · ★ 前提由 `B198` 保证：★ `owner` 已改为 **NOT NULL** ⇒
+            #   ★★ 这条约束对**所有项目**都生效（★ 不再有"平台代管"那类空属主）✅
+            # · ⚠★ **代价（★ 如实记）**：★ 它引入一棵 `(int, varchar(120))` 的索引
+            #   ★★ 而 `name` 正是为此从 200 缩到 **120** 的 ⚠
+            models.UniqueConstraint(
+                fields=["owner", "name"], name="uniq_owner_project_name"
+            ),
+        ]
         indexes = [
             models.Index(fields=["is_public", "-created_at"]),
             models.Index(fields=["owner", "-created_at"]),

@@ -273,11 +273,19 @@ def bind(
         base_graph.refresh_from_db(fields=["built_at", "node_count", "edge_count"])
 
         # ★★ 「这个项目已经有图了」—— ★ 复用时**立刻**为真（❌ 不靠一个不会来的作业）⚠
+        #
+        # ⚠★★ 2026-10-14（`B197`）：**这里不再写任何东西** ⚠
+        #
+        # ★★ 原先这里要置 `Project.graph_built_at` —— ★ 而那一列**已删** ⚠
+        #   · ★ 它与 `BaseGraph.built_at` 是**同一条事实的两份** ⇒ ★ 迟早不一致 ⚠
+        #   · ★★ 而 `is_graph_built` 现在**直接读基图**（★ 见 `core/models.py` 的属性）✅
+        #   ⇒ ★★ 于是本项目**从"写两处、担保一致"变成"只写一处"** ✅
+        #
+        # ★★ 上面那次 `refresh_from_db()` **仍然必须留** ⚠
+        #   （★ 它保证 `is_ready()` 读到的是**刚写进去的** `built_at`，
+        #     ★★ 而不是调用方手上那个过期的 `None` —— ★ 那个坑实测踩过）⚠
         if is_ready(base_graph):
-            project = Project.objects.filter(project_ref=project_ref).first()
-            if project is not None and project.graph_built_at is None:
-                project.graph_built_at = timezone.now()
-                project.save(update_fields=["graph_built_at", "updated_at"])
+            pass  # ★ 定版判据已改为派生 ⇒ ★ 无需落库 ✅
 
         # ★ 图"出现"了 ⇒ 这个项目的邻域缓存换代际（★ 见模块文档）
         revision.bump(project_ref)

@@ -14,10 +14,20 @@
 
 ---
 
-# ★★ 为什么绑定关系单独一张表
-
-★ 依赖方向是 **`graph` → `core`** ⚠ —— ★ 在 `core.Project` 上挂 `graph` 外键会**绕成圈** ⚠
-⇒ ★★ 所以绑定由 `graph` 这边记（`ProjectBaseGraph`）✅
+# ⚠★★ 2026-10-14（`B179` 第二步）：**这一节整个作废** ⚠
+#
+# ★★ 原文写的是"为什么绑定关系单独一张表"：
+#   「依赖方向是 graph → core —— ★ 在 core.Project 上挂 graph 外键会绕成圈」
+#
+# ★★ 而那个理由**站不住**（★ 实测）：
+#   · ★ 架构文档 `ARCHITECTURE.md` A3 管的是【**层**】（Web / 作业 / 计算 / 共享内核）
+#     ★★ 而 `core` 与 `graph` **同属共享内核** ✅
+#   · ★★ 而 `core/models.py` 与 `core/publish.py` **早就在 `from graph import binding`** ⚠
+#   · ★ 外键用**字符串引用** `"graph.BaseGraph"` ⇒ ★ 连 import 都不需要 ✅
+#
+# ⇒ ★★ 所以绑定**并入了 `core_project.base_graph`**（★ 一个项目只绑一份基图 ⇒ 一张外键就够）⚠
+#   · ★ 少一张表、* 少一个可能产生**孤儿行**的地方 ✅
+#   · ★★ `is_graph_built` 可以**直读外键**（★ 不再每个项目查一次）✅
 
 # ★ 一个刻意的选择：绑定时**顺手做两件事**
 
@@ -35,7 +45,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from graph import revision
-from graph.models import BaseGraph, ProjectBaseGraph
+from graph.models import BaseGraph
 
 # ===========================================================================
 # ★★★ `B181`：**基图位置的 Redis 映射**（★ 所有者 2026-10-13 裁定）
@@ -225,16 +235,29 @@ def get_or_create(
 
 
 def of(project_ref: str) -> BaseGraph | None:
-    """★ 这个项目绑的是哪份基图（★ 没绑 ⇒ `None`）。"""
-    row = ProjectBaseGraph.objects.select_related("base_graph").filter(
-        project_ref=project_ref
-    ).first()
-    return row.base_graph if row is not None else None
+    """★ 这个项目绑的是哪份基图（★ 没绑 ⇒ `None`）。
+
+    ⚠★★ 2026-10-14（`B179` 第二步）：**绑定已并入 `core_project.base_graph`** ⚠
+
+    ★★ 原先这里查独立的 `ProjectBaseGraph` 表 —— ★ 而那一张**已删** ⚠
+      · ★ 一个项目只绑一份基图 ⇒ ★ 一张外键就够了 ⚠
+      · ★★ 而"依赖会成圈"那个旧理由**站不住**（★ 实测 `core` 早已 import `graph`）⚠
+
+    ★ 口径：★ `select_related` 一次 join 取回基图 ✅
+    """
+    from core.models import Project
+
+    project = (
+        Project.objects.select_related("base_graph")
+        .filter(project_ref=project_ref)
+        .first()
+    )
+    return project.base_graph if project is not None else None
 
 
 def bind(
     project_ref: str, base_graph: BaseGraph, *, requested_ref: str = ""
-) -> ProjectBaseGraph:
+) -> None:
     """★★ **把这个项目绑到那份基图上**（★ 并顺手把"已经有图"这件事设为真）⚠
 
     ★★ 关键：★ 如果这份基图**已经建好了** ⇒ ★ 绑定之后**不需要再投任何作业** ✅
@@ -246,10 +269,18 @@ def bind(
     from core.models import Project
 
     with transaction.atomic():
-        row, _ = ProjectBaseGraph.objects.update_or_create(
-            project_ref=project_ref,
-            defaults={"base_graph": base_graph, "requested_ref": (requested_ref or "")[:128]},
+        # ⚠★★ 2026-10-14（`B179` 第二步）：**直写项目外键** —— ★ 不再建绑定行 ⚠
+        #   ★★ `update_or_create` 换成一个 `update`：* 项目**必然已存在**（* 绑定发生在建项目之后）⚠
+        #   · ★ `requested_ref`（* 用户当时指定的分支）* **不再存** ——
+        #     ★ 基图的 `ref` / `default_branch` 已经是权威（* `B197`：* 一个概念一处）⚠
+        row = Project.objects.filter(project_ref=project_ref).update(
+            base_graph=base_graph
         )
+        if not row:
+            raise ValueError(
+                f"绑定失败：项目不存在（project_ref={project_ref!r}）—— "
+                "绑定只能发生在项目建好之后"
+            )
 
         # ⚠★★ 2026-10-13：**必须重新读一次 `built_at`**（★ 别信传进来那个对象的属性）⚠
         #
@@ -284,10 +315,13 @@ def bind(
         # ★★ 上面那次 `refresh_from_db()` **仍然必须留** ⚠
         #   （★ 它保证 `is_ready()` 读到的是**刚写进去的** `built_at`，
         #     ★★ 而不是调用方手上那个过期的 `None` —— ★ 那个坑实测踩过）⚠
-        if is_ready(base_graph):
-            pass  # ★ 定版判据已改为派生 ⇒ ★ 无需落库 ✅
+        #
+        # ⚠★ 而"置 `graph_built_at`"那一段**已整段删除** ⚠
+        #   · ★ 那一列已删（`B197`：它与 `BaseGraph.built_at` 是同一条事实的两份）⚠
+        #   · ★★ 现在 `is_graph_built` **直读外键 + 基图的 `built_at`** ⇒ ★ 无需落库 ✅
+        #   · ⇒ ★★ 于是本项目从"写两处、担保一致"变成"**只写一处**" ✅
 
         # ★ 图"出现"了 ⇒ 这个项目的邻域缓存换代际（★ 见模块文档）
         revision.bump(project_ref)
 
-    return row
+        return None

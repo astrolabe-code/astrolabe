@@ -110,6 +110,39 @@ class Project(TimeStampedModel):
     provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES, blank=True, default="")
     repo_url = models.CharField(max_length=512, blank=True, default="")
 
+    # ------------------------------------------------------------------ 绑定的基图
+    # ⚠★★ 2026-10-14（`B179` 第二步）：**把 `graph_projectbasegraph` 那张表并进来** ⚠
+    #
+    # ★★ 为什么可以并（★ 这是对旧理由的一次核实）：
+    #   · ★ 旧 docstring 说「依赖方向 graph → core，★ 在 core 上挂 graph 的外键会绕成一个圈」⚠
+    #   · ★★ 而**实测**：★ `core/models.py:217` 与 `core/publish.py:500`
+    #     **已经在 `from graph import binding`** ⚠
+    #   · ★★ 而架构文档 `ARCHITECTURE.md` A3 管的是【层】（Web/作业/计算/共享内核）——
+    #     ★ `core` 与 `graph` **同属共享内核** ✅
+    #   ⇒ ★★ 所以那个"绕圈"的理由**不成立** ✅
+    #
+    # ★★ 而**一个项目只绑一份基图** ⇒ ★★ 一张外键就够了，* 白多一张表 ⚠
+    #   · ★ 少一个可能产生**孤儿行**的地方 ✅
+    #   · ★★ `is_graph_built` 可以**直读外键**（★ 不再每个项目查一次）✅
+    #
+    # ⚠★ 为什么用**字符串引用** `"graph.BaseGraph"`：
+    #   ★★ 这样 `core/models.py` **不需要 import graph** ⇒ ★ 连"可能成圈"的念头都没有 ✅
+    #   （★ Django 会延迟解析它 ✅）
+    #
+    # ⚠★ 为什么 `on_delete=PROTECT`：
+    #   · ★ 基图是**所有项目共享**的（`B179`）⚠
+    #   · ★★ 删一份**还有人绑着**的基图 ⇒ ★★ 那些项目的图会凭空消失 ⚠
+    #   · ★ 而所有者裁定基图「**一直留着，不要做定期清理**」✅
+    #   ⇒ ★★ 所以：★ 要删基图 ⇒ **先显式解绑**（★ 那是明面动作）✅
+    #   ★（★ 第 1 批删那 15 份冒烟基图时，* 正是**先摘绑定再删**才没出事的 ✅）
+    base_graph = models.ForeignKey(
+        "graph.BaseGraph",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+
     # ------------------------------------------------------------------ 可见性
     #: ★ 公开 = 任何人可读（含游客）；私有 = 仅 owner
     is_public = models.BooleanField(default=False)
@@ -194,7 +227,7 @@ class Project(TimeStampedModel):
     def is_graph_built(self) -> bool:
         """★★ **图是否已定版** —— ★ 定版后**不可再解析**（`B103` / `B155`）。
 
-        ⚠★★ 2026-10-14（`B197`）：**改为派生** ⚠
+        ⚠★★ 2026-10-14（`B179` 第二步 / `B197`）：**改为派生** ⚠
 
         ## ★★ 为什么改
 
@@ -202,22 +235,18 @@ class Project(TimeStampedModel):
           `BaseGraph.built_at` 是**同一条事实的两份** ⚠
         ★★ 而"两份"迟早不一致（★ 实测踩过：★ 图建好了，★ 项目那边还是 None）⚠
 
-        ## ⚠★ 过渡期口径（★ 直到第 2b 批）
+        ## ★ 现在的判据
 
-        ★★ `Project.base_graph_id` **还不存在** —— ★ 项目↔基图的绑定
-          仍在独立的 `graph_projectbasegraph` 表里 ⚠
-        ⇒ ★ 所以现在**经绑定表**问（★ `binding.of()` 是全项目唯一的绑定入口）✅
+        ★★ `base_graph_id` 有值 **且** 那份基图**已建好** ✅
 
-        ⚠★ 代价：★ 每次调用**一次查询** ⚠
-          ★★ 而列表页会变成 **N+1**（★ 126 个项目 ⇒ 126 次）⚠
-          ⇒ ★ 已在 `web/views/projects.py` 的列表里**预载**（★ 与节点/边计数同一套路）✅
-          ★★ 而第 2b 批把 `base_graph_id` 并到项目表之后，
-            ★ 这里会改成**直读外键**（★ 一次 join 就够）✅
+        ⚠★ 一次性会把 `base_graph` 取回来（★ Django 的关系访问）——
+          ★★ 列表页请传 `_built_flags()` 预载的那个值（★ 见 `web/views/projects.py`）⚠
         """
-        from graph import binding
-
-        bg = binding.of(self.project_ref)
-        return bg is not None and bg.built_at is not None
+        return (
+            self.base_graph_id is not None
+            and self.base_graph is not None
+            and self.base_graph.built_at is not None
+        )
 
     class Meta:
         constraints = [

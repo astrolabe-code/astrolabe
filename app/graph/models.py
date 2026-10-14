@@ -535,38 +535,6 @@ class GraphPatch(TimeStampedModel):
         return f"{self.project_ref}:{self.action}"
 
 
-class ProjectBaseGraph(TimeStampedModel):
-    """★★ **哪个项目用的是哪一份基图**（★ `B179` · 2026-10-13）。
-
-    ★★ 所有者原话（逐字）：
-
-    > 「**用户拉一个图就解析一次，太浪费算力，应该是，拉去之前，看看现有的图数据里
-    > 有没有同样的，有同样的，就直接返回，不拉取，不解析，还快。**」
-
-    ⇒ ★★ 这一行就是"**直接返回**"的落脚点：★ 项目建好之后**绑定**到一份基图 ⚠
-
-    ## ⚠★★ 为什么单独一张表（❌ 不在 `core.Project` 上加外键）
-
-    ★★ 依赖方向是 **`graph` → `core`** ——
-      ⚠ 在 `core` 上挂 `graph` 的外键，会把这根箭头**绕成一个圈** ⚠
-    ⇒ ★★ 所以"绑定关系"由 `graph` 这边记 ✅（★ 项目那边**一个字都不用改**）
-    """
-
-    project_ref = models.CharField(max_length=64, primary_key=True)
-    base_graph = models.ForeignKey(
-        BaseGraph, on_delete=models.CASCADE, related_name="projects"
-    )
-    #: ★ 用户当时指定的分支 / tag（★ 空 ⇒ 用的是默认分支）
-    requested_ref = models.CharField(max_length=128, blank=True, default="")
-
-    class Meta:
-        indexes = [models.Index(fields=["base_graph"])]
-        verbose_name = "项目↔基图"
-
-    def __str__(self) -> str:
-        return f"{self.project_ref} → {self.base_graph_id}"
-
-
 class GraphRevision(models.Model):
     """★ 图版本号 —— **邻域缓存的「命名空间代际」**（`GRAPH-STORAGE.md` G5）。
 

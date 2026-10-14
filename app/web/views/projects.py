@@ -23,9 +23,9 @@ from core import publish as publish_core
 # ⚠★ `B176` ①：`OAuthIdentity` / `OAuthState` **不再需要** ——
 #   ★ 「拉取代码」已不走 OAuth（★ 不再要求绑定身份、不再建 state）✅
 from core.models import Project
-# ★★ `B179`：`GraphPatch` / `ProjectBaseGraph` 也要用到 ——
+# ★★ `B179`：`GraphPatch` 也要用到 ——
 #   ★ 删除项目时要清掉"它自己的修改"与"它的绑定"（⚠ 但**不碰共享基图**）⚠
-from graph.models import BaseGraph, Edge, GraphPatch, Node, ProjectBaseGraph
+from graph.models import BaseGraph, Edge, GraphPatch, Node
 from graph.revision import current as graph_rev_of
 from jobs import dispatch
 from jobs.models import Job
@@ -72,19 +72,21 @@ def _built_flags(project_refs: list[str]) -> dict[str, bool]:
       ★★ 合成一趟会让两边都变难读，* 而查询次数从 2 次变成 1 次
         ★ 在 200 个项目的量级上**不值得** ⚠
     """
-    binds = dict(
-        ProjectBaseGraph.objects.filter(project_ref__in=project_refs).values_list(
-            "project_ref", "base_graph_id"
-        )
+    # ⚠★★ 2026-10-14（`B179` 第二步）：**绑定已并入项目表** ⚠
+    #   ★★ 所以一趟 `select_related` 就够 —— ★ 不再经 `ProjectBaseGraph` ✅
+    bound = dict(
+        Project.objects.filter(project_ref__in=project_refs)
+        .exclude(base_graph=None)
+        .values_list("project_ref", "base_graph_id")
     )
-    if not binds:
+    if not bound:
         return {}
     built_ids = set(
         BaseGraph.objects.filter(
-            id__in=list(binds.values()), built_at__isnull=False
+            id__in=list(bound.values()), built_at__isnull=False
         ).values_list("id", flat=True)
     )
-    return {ref: (bg_id in built_ids) for ref, bg_id in binds.items()}
+    return {ref: (bg_id in built_ids) for ref, bg_id in bound.items()}
 
 
 def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
@@ -97,10 +99,11 @@ def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
       ★ 多个项目可能绑**同一份**基图 ⇒ ★ 它们数量相同 ——
         ★★ 而这正是 `B179` 要的：★ **同一份源码版本只解析一次** ✅
     """
+    # ⚠★★ 2026-10-14（`B179` 第二步）：**绑定已并入项目表** ⚠
     binds = dict(
-        ProjectBaseGraph.objects.filter(project_ref__in=project_refs).values_list(
-            "project_ref", "base_graph_id"
-        )
+        Project.objects.filter(project_ref__in=project_refs)
+        .exclude(base_graph=None)
+        .values_list("project_ref", "base_graph_id")
     )
     bg_ids = list(binds.values())
     if not bg_ids:
@@ -300,14 +303,17 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         # ⚠★★ `B179`（2026-10-13）：这里删的**只是这个项目自己的东西** ⚠
         #   ★ `project_ref` 的那些节点 / 边 = **用户自己新增的**（★ 叠加层）⚠
         #   ★ 它的修改记录（`GraphPatch`）
-        #   ★ 它的绑定关系（`ProjectBaseGraph`）
         #   ★★★ **绝不删基图** —— ★ 基图是**共享**的，
         #     ⚠ 删掉它 = 别的项目**当场变空**（★ 而且它们并没有做错任何事）⚠
-        #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ⇒ 最后解绑 ✅
+        #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ✅
+        #
+        # ⚠★★ 2026-10-14（`B179` 第二步）：**"解绑"那一行【已删】** ⚠
+        #   ★★ 原先要单独删 `ProjectBaseGraph` 那一行 —— ★ 而那张表**已并入项目表** ⚠
+        #   ⇒ ★ 现在**删项目行本身就等于解绑** ✅（★ 外键随行消失）
+        #   ★（★ 而基图那行**不受影响** —— ★ 它是共享的 ✅）
         GraphPatch.objects.filter(project_ref=project_ref).delete()
         Node.objects.filter(project_ref=project_ref).delete()
         Edge.objects.filter(project_ref=project_ref).delete()
-        ProjectBaseGraph.objects.filter(project_ref=project_ref).delete()
         Job.objects.filter(project_ref=project_ref).delete()
         # ⚠ 审核流水**刻意保留**（`B146`：append-only —— 删项目**不得**抹掉限额流水）
         project.delete()

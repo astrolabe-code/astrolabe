@@ -150,23 +150,15 @@ def submit_project(
         else:
             lv = license_verdict or licensing.evaluate(root, require_file=require_file)
 
-        project.repo_url = (project.repo_url or "")[:512]
-        if defer_license:
-            # ⚠ 推迟时**不写许可字段** —— 否则会把 `Project.license_*` 清成空，
-            #   看起来像"核验过了、没有许可证"（★ 又是"说错原因"）
-            project.save(update_fields=["repo_url", "updated_at"])
-        else:
-            # ★ 把核验结果写到项目上（★ 这些字段用于"批量收回"，见 `license_exception`）
-            project.license_spdx = (lv.spdx or "")[:64]
-            project.license_category = (lv.category or "")[:16]
-            project.license_evidence = lv.evidence
-            project.license_exception = lv.decision != DECISION_ALLOW
-            project.save(
-                update_fields=[
-                    "license_spdx", "license_category", "license_evidence",
-                    "license_exception", "repo_url", "updated_at",
-                ]
-            )
+        # ⚠★★ 2026-10-14（`B197`）：**项目上那批许可字段已删** ⚠
+        #   ★★ 所有者裁定：「**把重复的删掉，只存在基图表里**」⚠
+        #   · ★ 许可的**唯一权威在 `BaseGraph`**（★ `jobs/tasks.py` 解析时写它）✅
+        #   · ★★ 所以本函数**什么都不写** —— ★ 原先那批赋值是"在两处各写一份" ⚠
+        #   · ★ 提交流水（★ `ProjectReview`）**照旧记**这次的核验结论 ✅
+        #     ⇒ ★ 「为什么进审核」答得出来 ✅
+        #   · ★ 至于原先的用途「**便于批量收回**」：
+        #     ★★ 改成一个**经绑定查基图**的查询即可
+        #       （★ `Project.license_exception` 现在是派生属性 ✅）
 
         # ---- ④ ★★ 建流水（★ 无论哪种结论都必须建 —— 它是限额的依据 + 审计）----
         review = _create_review(project, user, lv)
@@ -314,20 +306,15 @@ def resolve_license(
         setattr(review, k, v)
     review.save()
 
-    # ---- 同步项目上的许可字段（★ 供"批量收回"用，见 `license_exception`）----
-    if project is not None:
-        project.license_spdx = (license_verdict.spdx or "")[:64]
-        project.license_category = (license_verdict.category or "")[:16]
-        project.license_evidence = license_verdict.evidence
-        project.license_exception = license_verdict.decision != DECISION_ALLOW
-        if not manually_decided:
-            project.review_state = _review_state_for(license_verdict.decision)
-        project.save(
-            update_fields=[
-                "license_spdx", "license_category", "license_evidence",
-                "license_exception", "review_state", "updated_at",
-            ]
-        )
+    # ---- ⚠★★ 2026-10-14（`B197`）：**许可字段不再同步到项目** ⚠ ----
+    #   ★★ 那些列已删（★ 与基图重复）—— ★ 权威只在 `BaseGraph` ✅
+    #   · ★ 原先的用途「便于批量收回」⇒ ★ 改为经绑定查基图 ✅
+    #   · ★★ 但 `review_state` **照旧要同步**
+    #     （★ 那是项目自己的状态，★ 不重复 ✅）
+    if project is not None and not manually_decided:
+        project.review_state = _review_state_for(license_verdict.decision)
+        # ⚠★ `B197`：`update_fields` 里那四个许可列**已删** ⇒ ★ 只留 `review_state` ✅
+        project.save(update_fields=["review_state", "updated_at"])
 
     AuditLog.objects.create(
         action="review.license_resolved",

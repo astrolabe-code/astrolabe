@@ -99,16 +99,6 @@ class Project(TimeStampedModel):
         related_name="projects",
     )
 
-    # ------------------------------------------------------------------ 来源
-    # ★ B109：源码**只能由服务端从托管平台获取** ⇒ 这里存的是「来源」，❌ 不是源码
-    PROVIDER_GITHUB = "github"
-    PROVIDER_GITEE = "gitee"
-    PROVIDER_CHOICES = [
-        (PROVIDER_GITHUB, "GitHub"),
-        (PROVIDER_GITEE, "Gitee"),
-    ]
-    provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES, blank=True, default="")
-    repo_url = models.CharField(max_length=512, blank=True, default="")
 
     # ------------------------------------------------------------------ 绑定的基图
     # ⚠★★ 2026-10-14（`B179` 第二步）：**把 `graph_projectbasegraph` 那张表并进来** ⚠
@@ -171,16 +161,6 @@ class Project(TimeStampedModel):
 
     # ------------------------------------------------------------------ 许可核验
     # ★ 依据 `core/licensing.py`（`U3.4` / `B143`）
-    #: ★ 识别出的 SPDX 标识（空 = 未识别 / 无许可证文件）
-    license_spdx = models.CharField(max_length=64, blank=True, default="")
-    #: ★ 类别：permissive / copyleft / restrictive / unknown / missing
-    license_category = models.CharField(max_length=16, blank=True, default="")
-    #: ★★ **"无许可证放行"的显式标记**（`U3.7` 配套建议 1）
-    #: ⚠ 作用：★ **将来批量收回** —— 用户说"以后我是不会放行没许可证的"，
-    #:   那时要能**一键筛出来**（❌ 不能靠翻审计）
-    license_exception = models.BooleanField(default=False, db_index=True)
-    #: ★ 检测证据（文件名 / SPDX / 原文片段）—— ★ **"我们凭什么这么判"的留痕**
-    license_evidence = models.JSONField(default=dict, blank=True)
 
     # ------------------------------------------------------------------ 审核
     REVIEW_NONE = "none"
@@ -218,9 +198,6 @@ class Project(TimeStampedModel):
     # ⚠★ 它也是 `Project.review_state == pending` 时"还没解析"的**权威判据** ——
     #   ★ 比"数一下有几个节点"可靠（★ 后者是**副作用**，⚠ 会被任何一次清空误导）。
 
-    #: ★★ **定版时钉住的实际 ref**（★ 拉取时用的分支/tag/sha）——
-    #: ★ 有了它，将来才回答得了"这张图是哪一版代码的"（★ 且它与 `graph_built_at` 同生共死）。
-    resolved_ref = models.CharField(max_length=128, blank=True, default="")
 
     # ------------------------------------------------------------------ 定版判据
     @property
@@ -272,6 +249,83 @@ class Project(TimeStampedModel):
             models.Index(fields=["review_state", "-created_at"]),
         ]
         verbose_name = "项目"
+
+    # ------------------------------------------------------------------
+    # ⚠★★ 2026-10-14（`B197`）：**源码相关信息全部改为【从基图派生】** ⚠
+    #
+    # ★★ 所有者原话（逐字，见原话区 A15）：
+    #   「**项目表与基图表很多字段是重复的，你不觉得有问题吗？把重复的删掉，
+    #     只存在基图表里，前端需要这些信息的话访问基图表就行了。**」
+    #
+    # ⇒ ★★ 于是删掉了这 7 列：
+    #   `provider` · `repo_url` · `license_spdx` · `license_category` ·
+    #   `license_exception` · `license_evidence` · `resolved_ref`
+    #
+    # ★★ 而**接口契约不能变**（★ 前端照旧收这些字段）⇒
+    #   ★ 所以这里用**同名属性**把它们接回来，* 值全部来自 `base_graph` ✅
+    #
+    # ⚠★ 三个必须说清的点：
+    #
+    # ① ★★ **只读** ⚠ —— ★ 它们没有 setter，* 赋值会 `AttributeError`
+    #   · ★ 那是**故意的**：★ 写它们就等于"在两处各写一份" ⚠
+    #   · ★★ 要改 ⇒ ★ 改基图那一行（* 唯一权威）✅
+    #
+    # ② ★★ **没绑基图时全部为空** ⚠
+    #   · ★ 笔记型项目（★ `base_graph` 为 NULL）**本来就没有源码** ⚠
+    #   · ★ 而那**不是缺数据** —— ★ 是这类项目的**正常状态** ✅
+    #   · ★★ 判据只有一个：★ `base_graph_id` 是否为空 ✅
+    #
+    # ③ ★★ **一次属性访问 = 一次关系查询** ⚠
+    #   · ★ 列表页请走 `select_related("base_graph")`（* 一次 join）✅
+    #   · ★★ 否则 N 个项目 = N 次查询 ⚠
+    # ------------------------------------------------------------------
+    @property
+    def provider(self) -> str:
+        """★★ **这份源码从哪个平台拉的**（★ 派生）。空 = 没绑基图。"""
+        return (self.base_graph.provider or "") if self.base_graph_id else ""
+
+    @property
+    def repo_url(self) -> str:
+        """★★ **源码仓库地址**（★ 派生，如 `https://github.com/owner/repo`）。
+
+        ★ 由 `provider` + `repo_full_name` **拼出来** —— ★ 这正是"可推导的不该存" ✅
+        ★（★ 与 `core/publish.py::_repo_url()` 同一口径 ✅）
+        """
+        if not self.base_graph_id:
+            return ""
+        host = {"github": "github.com", "gitee": "gitee.com"}.get(
+            self.base_graph.provider or ""
+        )
+        full = (self.base_graph.repo_full_name or "").strip().strip("/")
+        return f"https://{host}/{full}" if host and full else ""
+
+    @property
+    def resolved_ref(self) -> str:
+        """★★ **真正解析到的那一版 ref**（★ 派生）。空 = 没绑 / 没记。"""
+        return (self.base_graph.ref or "") if self.base_graph_id else ""
+
+    # ---- 许可（★ 权威全在基图 ✅）----
+    @property
+    def license_spdx(self) -> str:
+        return (self.base_graph.license_spdx or "") if self.base_graph_id else ""
+
+    @property
+    def license_category(self) -> str:
+        """⚠★ 语义变了：★ 原先这一列是"分类"，* 现在派生自基图的**原因码** ✅"""
+        if not self.base_graph_id:
+            return ""
+        return (self.base_graph.license_reason_code or "")[:16]
+
+    @property
+    def license_exception(self) -> bool:
+        """★★ **许可是否有例外**（★ 派生）。★ 判据 = 基图的决定不是 `allow` ✅"""
+        if not self.base_graph_id:
+            return False
+        return (self.base_graph.license_decision or "") != "allow"
+
+    @property
+    def license_evidence(self) -> dict:
+        return (self.base_graph.license_evidence or {}) if self.base_graph_id else {}
 
     def __str__(self) -> str:
         return f"{self.name}（{self.project_ref}）"

@@ -117,9 +117,10 @@ def run_parse_job(job: Job) -> None:
             or (payload.get("commit") or "").strip()
             or ("local" if payload.get("path") else "")
         )[:128]
-        if pinned and (not project.resolved_ref or project.resolved_ref in ("HEAD", "local")):
-            project.resolved_ref = pinned
-            project.save(update_fields=["resolved_ref", "updated_at"])
+        # ⚠★★ 2026-10-14（`B197`）：**`resolved_ref` 那一列已删** ⚠
+        #   ★★ 它与 `BaseGraph.ref` 是同一信息的两份 ⇒ ★ 权威只在基图 ✅
+        #   · ★ `pinned` 已经由 `binding.get_or_create(..., ref=…)` 写进基图了 ✅
+        #   · ★★ 所以这里【什么都不做】—— ★ 原先那三行是"在两处各写一份" ⚠
 
     # ---------------------------------------------------------- ① ★★ 许可核验
     #   ★★ `U3.1` 第 ④ 步：**「通过后才允许解析」** —— 所以这一步在解析【之前】。

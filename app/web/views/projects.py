@@ -255,7 +255,10 @@ def _create(request: HttpRequest) -> JsonResponse:
     if not repo_url:
         return fail("缺少仓库地址", 400, code="missing_fields")
     # ★ B109：源码只能服务端拉取 ⇒ **必须**指明托管平台
-    if provider not in dict(Project.PROVIDER_CHOICES):
+    # ⚠★ 2026-10-14（`B197`）：**`Project.PROVIDER_CHOICES` 已随列删除** ⚠
+    #   ★★ 所以这里改用**模块级常量**（★ `BaseGraph._HOSTS` 就是同一组键）⚠
+    #   · ★ 而它俩必须**一致** —— ★ 否则这里放行、* 那边却拼不出地址 ⚠
+    if provider not in {"github", "gitee"}:
         return fail("provider 必须是 github 或 gitee", 400, code="invalid_provider")
 
     project = Project.objects.create(
@@ -321,11 +324,15 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
 
     # PATCH
     body = _body(request)
-    for field in ("name", "desc", "repo_url", "commit"):
+    # ⚠★★ 2026-10-14（`B197`）：**`repo_url` / `commit` / `provider` 三项【已删】** ⚠
+    #   ★★ 它们与基图重复 ⇒ ★ 只留基图那份（★ 所有者裁定）⚠
+    #   · ★ `repo_url` / `provider` ⇒ ★ 现在从 `base_graph` **派生**（★ 只读属性）⚠
+    #   · ★★ 所以这里**不再收这三个字段** —— ★ 收也写不进去
+    #     （★ 没有 setter ⇒ `AttributeError`）⚠
+    #   · ★ 要改源码地址 ⇒ ★ 重新拉一份（★ 那是建一条新绑定，★ 不是改这一行）✅
+    for field in ("name", "desc"):
         if field in body:
             setattr(project, field, str(body[field] or "")[:2000])
-    if "provider" in body and str(body["provider"]) in dict(Project.PROVIDER_CHOICES):
-        project.provider = str(body["provider"])
     if "is_public" in body:
         project.is_public = bool(body["is_public"])
     project.save()

@@ -84,8 +84,8 @@ def summary(request: HttpRequest, project_ref: str) -> JsonResponse:
     # ★★★ `B179`：读的是**这个项目绑定的那份【基图】** ⚠
     #   （★ 不再是 `project_ref` 等于它的那些行 —— ★ 那现在只表示"用户自己新增的"）⚠
     #   ★★ 见 `graph/scope.py`：这个判断**只在那里决定一次** ✅
-    node_qs = scope.nodes_of(project_ref)
-    edge_qs = scope.edges_of(project_ref)
+    node_qs = scope.readable_nodes_of(project_ref)
+    edge_qs = scope.readable_edges_of(project_ref)
     job = _latest_parse_job(project_ref)
 
     return ok_flat(
@@ -122,7 +122,7 @@ def nodes(request: HttpRequest, project_ref: str) -> JsonResponse:
 
     # ★★ `B179`：发的是**基图那一份** —— ⚠ 用户修改是**另一个端点**发的
     #   ★（`B180` 定的：★ **服务端不做整合**，★ 由前端合并）⚠
-    qs = scope.nodes_of(project_ref)
+    qs = scope.readable_nodes_of(project_ref)
 
     kind = (request.GET.get("kind") or "").strip()
     if kind:
@@ -144,9 +144,21 @@ def nodes(request: HttpRequest, project_ref: str) -> JsonResponse:
     # ⚠★ `B179`：`origin` **不再是一列**（★ 基图行必然是 `parsed`）⚠
     #   ★★ 用户自己新增的节点在**另一个端点**（★ 那才带 `manual`）⚠
     #   ⇒ ★ 要 `manual` ⇒ **如实返回空集**（❌ 不是忽略参数、❌ 也不是给全部）⚠
+        #
+    # ⚠★★ 2026-10-15（`B186`）：但那句只对【绑了基图】的项目成立 ⚠
+    #   · ★ 绑了基图 ⇒ ★ 修改层在另一个端点 ⇒ ★ `manual` 给**空集** ✅
+    #   · ★★ 没绑基图（笔记型）⇒ ★★ **这个项目的全部节点都是 `manual`** ⚠
+    #     · ★ `origin=manual` ⇒ ★ 如实返回它们 ✅
+    #     · ★ `origin=parsed` ⇒ ★★ 如实返回空集 ✅
+    #     （★ 两种都不猜、都不忽略参数 ✅）
     origin = (request.GET.get("origin") or "").strip()
+    manual_only = scope.is_manual_only(project_ref)
     if origin == "manual":
-        qs = qs.none()
+        if not manual_only:
+                qs = qs.none()
+    elif origin == "parsed":
+        if manual_only:
+                qs = qs.none()
 
     limit = _clamp(request.GET.get("limit"), 1, NODES_PAGE_MAX, 200)
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
@@ -183,11 +195,11 @@ def node_detail(request: HttpRequest, project_ref: str, vid: int) -> JsonRespons
         return fail(permissions.NOT_FOUND, 404)
 
     # ★★ `B179`：★ 在**这个项目绑定的那份基图**里找（★ 见 `graph/scope.py`）⚠
-    node = scope.nodes_of(project_ref).filter(node_id=vid).first()
+    node = scope.readable_nodes_of(project_ref).filter(node_id=vid).first()
     if node is None:
         return fail("节点不存在", 404)
 
-    base_edges = scope.edges_of(project_ref)
+    base_edges = scope.readable_edges_of(project_ref)
     out_qs = base_edges.filter(from_node_id=vid)
     in_qs = base_edges.filter(to_node_id=vid)
 
@@ -234,7 +246,7 @@ def edges(request: HttpRequest, project_ref: str) -> JsonResponse:
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    qs = scope.edges_of(project_ref)
+    qs = scope.readable_edges_of(project_ref)
 
     types = [t.strip() for t in (request.GET.get("type") or "").split(",") if t.strip()][:10]
     if types:
@@ -243,9 +255,21 @@ def edges(request: HttpRequest, project_ref: str) -> JsonResponse:
     # ⚠★ `B179`：`origin` **不再是一列**（★ 基图行必然是 `parsed`）⚠
     #   ★★ 用户自己加的边在**另一个端点**（★ 那才带 `manual`）⚠
     #   ⇒ ★ 要 `manual` ⇒ **如实返回空集**（❌ 不是忽略参数、❌ 也不是给全部）⚠
+        #
+    # ⚠★★ 2026-10-15（`B186`）：但那句只对【绑了基图】的项目成立 ⚠
+    #   · ★ 绑了基图 ⇒ ★ 修改层在另一个端点 ⇒ ★ `manual` 给**空集** ✅
+    #   · ★★ 没绑基图（笔记型）⇒ ★★ **这个项目的全部节点都是 `manual`** ⚠
+    #     · ★ `origin=manual` ⇒ ★ 如实返回它们 ✅
+    #     · ★ `origin=parsed` ⇒ ★★ 如实返回空集 ✅
+    #     （★ 两种都不猜、都不忽略参数 ✅）
     origin = (request.GET.get("origin") or "").strip()
+    manual_only = scope.is_manual_only(project_ref)
     if origin == "manual":
-        qs = qs.none()
+        if not manual_only:
+                qs = qs.none()
+    elif origin == "parsed":
+        if manual_only:
+                qs = qs.none()
 
     file_path = (request.GET.get("file") or "").strip()[:FILE_PREFIX_MAX]
     if file_path:

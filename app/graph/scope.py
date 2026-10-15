@@ -82,6 +82,73 @@ def edges_of(project_ref: str) -> "QuerySet[Edge]":
     return Edge.objects.filter(base_graph=bg)
 
 
+# ===========================================================================
+# ⚠★★ 2026-10-15（`B186`）：**读端点专用入口** —— 「基图层 ∪ 修改层」
+# ===========================================================================
+#
+# ## ★★ 为什么必须加（★ 这是一个**静默的坏 bug**）
+#
+# ```
+# ★ `B186` 定了「**笔记型项目没有基图，只需要修改层的数据就行**」⚠
+#   · ★ 而 `nodes_of()` / `edges_of()` 在**没绑基图时返回空集** ⚠
+#   · ★★ 于是：* 笔记型项目的图**永远是空的** ⚠
+#     —— * 而它**不报错**、* 前端只看到一张空白画布 ⚠
+#   ⇒ ★★ **静默**（* 最难查的一类）⚠
+# ```
+#
+# ## ★★ 为什么不直接改 `nodes_of()`
+#
+# ```
+# ★ `nodes_of()` / `edges_of()` 还被**写路径与 diff** 用着 ⚠
+#   · ★ `graph/curate.py:899` 拿它们当【基图层】去和修改层比对 ⚠
+#   · ★ `graph/traversal.py` 的邻域遍历也按基图层算 ⚠
+#   ⇒ ★★ 若让它们在无基图时改回修改层 ⇒ ★ **同一批节点会被算两遍** ⚠
+#     （* 而那是另一个静默的错）⚠
+# ```
+#
+# ## ★★ 口径
+#
+# ```
+# readable_nodes_of(project_ref) =
+#     ★ 绑了基图   ⇒ ★★ 基图层（* 与 nodes_of 相同）
+#     ★ 没绑基图   ⇒ ★★ 修改层（* project_ref 那些行）✅
+# ```
+#
+# ⚠★ `B180` 的口径**没有被破坏**：
+#   · ★ 本函数返回的仍是**一份**数据（* 基图 **或** 修改层，* ❌ 不是两份合并）⚠
+#   · ★★ 服务端依然【不做整合】—— * 前端照旧把"这一份"与"修改层那一份"合并 ⚠
+#   · ★（* 绑了基图的项目 ⇒ * 修改层仍由 `patches` / `curate` 端点单独发 ✅）
+
+
+def readable_nodes_of(project_ref: str) -> "QuerySet[Node]":
+    """★★★ **读端点该发的节点**（★ `B186`：没绑基图 ⇒ 发修改层）⚠"""
+    bg = base_graph_of(project_ref)
+    if bg is None:
+        return Node.objects.filter(project_ref=project_ref)
+    return Node.objects.filter(base_graph=bg)
+
+
+def readable_edges_of(project_ref: str) -> "QuerySet[Edge]":
+    """★★★ **读端点该发的边**（★ 同上）⚠"""
+    bg = base_graph_of(project_ref)
+    if bg is None:
+        return Edge.objects.filter(project_ref=project_ref)
+    return Edge.objects.filter(base_graph=bg)
+
+
+def is_manual_only(project_ref: str) -> bool:
+    """★★★ **这个项目只有修改层吗**（★ 即：没绑基图 ⇒ 笔记型项目）⚠
+
+    ★ 用途：★ 读端点据此决定 `origin` 参数怎么答 ✅
+      · ★ `True`  ⇒ ★★ **所有节点都是 `manual`** ⇒
+        · ★ `origin=manual` ⇒ ★ 如实返回它们 ✅
+        · ★ `origin=parsed` ⇒ ★★ 如实返回空集 ✅
+      · ★ `False` ⇒ ★ 修改层在**另一个端点** ⇒
+        · ★ `origin=manual` ⇒ ★ 空集（* 原口径不变）✅
+    """
+    return base_graph_of(project_ref) is None
+
+
 def blob_url_of(node: Node, base_graph) -> str:
     """★★★ **点这个节点该跳到哪**（★ 所有者要求的那条永久链接）。
 

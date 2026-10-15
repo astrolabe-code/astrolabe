@@ -413,12 +413,12 @@ class Node(UidMixin, TimeStampedModel):
             #
             # ★★ 修法：★ 判据从「`base_graph_id` 与 `project_ref` 二选一」
             #   ★★ 升级成「`base_graph_id` 与（`project_id` 或 `project_ref`）二选一」⚠
-            #   · ★ 三种合法形态都放行：
+            #   · ★ 两种合法形态：
             #     ```
             #     ① 基图层   base_graph_id 有值 · project_id / project_ref 全空
-            #     ② 修改层   project_id    有值 · base_graph_id 空   ← ★ 新外键 ✅
-            #     ③ 过渡态   project_ref   有值 · base_graph_id 空   ← ★ 老口径（读路径还没切）⚠
+            #     ② 修改层   project_id 或 project_ref 有值 · base_graph_id 空
             #     ```
+            #   · ★★ 到切完读路径、* 删掉 project_ref 之后，* ②会窄化成"只有 project_id" ⚠
             #   · ★★ 而"两处都空"或"两处都有"仍然挡住 ✅
             models.CheckConstraint(
                 condition=(
@@ -430,12 +430,6 @@ class Node(UidMixin, TimeStampedModel):
                         & (
                             models.Q(project__isnull=False, project_ref="")
                             | models.Q(project__isnull=True, project_ref__gt="")
-                            # ★★ ③ 过渡态：* 两者都有值 ⚠
-                            #   · ★ 这是【回填】造成的 —— * 老行本来有 project_ref，
-                            #     * 回填又给它补上了 project_id ✅
-                            #   · ★★ 而两者**由构造保证一致**（* project_id 就是从 project_ref 查出来的）✅
-                            #   · ★ 到第 ③ 步删掉 project_ref 之后，* 这一支**自然消失** ⚠
-                            | models.Q(project__isnull=False, project_ref__gt="")
                         )
                     )
                 ),
@@ -520,12 +514,6 @@ class Edge(TimeStampedModel):
                         & (
                             models.Q(project__isnull=False, project_ref="")
                             | models.Q(project__isnull=True, project_ref__gt="")
-                            # ★★ ③ 过渡态：* 两者都有值 ⚠
-                            #   · ★ 这是【回填】造成的 —— * 老行本来有 project_ref，
-                            #     * 回填又给它补上了 project_id ✅
-                            #   · ★★ 而两者**由构造保证一致**（* project_id 就是从 project_ref 查出来的）✅
-                            #   · ★ 到第 ③ 步删掉 project_ref 之后，* 这一支**自然消失** ⚠
-                            | models.Q(project__isnull=False, project_ref__gt="")
                         )
                     )
                 ),

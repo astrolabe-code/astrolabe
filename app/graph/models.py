@@ -400,10 +400,44 @@ class Node(UidMixin, TimeStampedModel):
         ]
         constraints = [
             # ★★★ 恰好属于一个地方（★ 见类文档）⚠
+            #
+            # ⚠★★ 2026-10-15（`B197` 第四步）：**这条 CHECK 必须把新外键 `project_id` 算进来** ⚠
+            #
+            # ★★ 为什么才发现（★ 如实记）：
+            #   · ★ 我加了 `project` 外键，* 却【没改这条 CHECK】⚠
+            #   · ★★ 后果：* 只设 `project_id` 而不设 `project_ref` 的行
+            #     ⇒ **当场被挡住** ⚠
+            #   · ★ 也就是说：* 新外键**还不能用于写入** ⚠
+            #   · ★ 实测踩到：* 建一个只挂外键的节点 ⇒
+            #     `violates check constraint "node_belongs_to_exactly_one"` ⚠
+            #
+            # ★★ 修法：★ 判据从「`base_graph_id` 与 `project_ref` 二选一」
+            #   ★★ 升级成「`base_graph_id` 与（`project_id` 或 `project_ref`）二选一」⚠
+            #   · ★ 三种合法形态都放行：
+            #     ```
+            #     ① 基图层   base_graph_id 有值 · project_id / project_ref 全空
+            #     ② 修改层   project_id    有值 · base_graph_id 空   ← ★ 新外键 ✅
+            #     ③ 过渡态   project_ref   有值 · base_graph_id 空   ← ★ 老口径（读路径还没切）⚠
+            #     ```
+            #   · ★★ 而"两处都空"或"两处都有"仍然挡住 ✅
             models.CheckConstraint(
                 condition=(
-                    models.Q(base_graph__isnull=False, project_ref="")
-                    | (models.Q(base_graph__isnull=True) & ~models.Q(project_ref=""))
+                    # ① 基图层：有基图、且项目侧（外键 + 老口径）全空
+                    models.Q(base_graph__isnull=False, project__isnull=True, project_ref="")
+                    # ② 修改层：没基图、且项目侧（外键 或 老口径）恰有一个
+                    | (
+                        models.Q(base_graph__isnull=True)
+                        & (
+                            models.Q(project__isnull=False, project_ref="")
+                            | models.Q(project__isnull=True, project_ref__gt="")
+                            # ★★ ③ 过渡态：* 两者都有值 ⚠
+                            #   · ★ 这是【回填】造成的 —— * 老行本来有 project_ref，
+                            #     * 回填又给它补上了 project_id ✅
+                            #   · ★★ 而两者**由构造保证一致**（* project_id 就是从 project_ref 查出来的）✅
+                            #   · ★ 到第 ③ 步删掉 project_ref 之后，* 这一支**自然消失** ⚠
+                            | models.Q(project__isnull=False, project_ref__gt="")
+                        )
+                    )
                 ),
                 name="node_belongs_to_exactly_one",
             )
@@ -474,10 +508,26 @@ class Edge(TimeStampedModel):
             models.Index(fields=["project_ref", "to_node", "type"]),
         ]
         constraints = [
+            # ⚠★★ 2026-10-15（`B197` 第四步）：**与 `node_belongs_to_exactly_one` 同修** ⚠
+            #   ★ 判据升级成「`base_graph_id` 与（`project_id` 或 `project_ref`）二选一」⚠
+            #   · ★ 三种合法形态：* ① 基图层 · ② 修改层（* 新外键 ✅）· ③ 过渡态（* 老口径）⚠
+            #   · ★★ "两处都空"或"两处都有"仍然挡住 ✅
             models.CheckConstraint(
                 condition=(
-                    models.Q(base_graph__isnull=False, project_ref="")
-                    | (models.Q(base_graph__isnull=True) & ~models.Q(project_ref=""))
+                    models.Q(base_graph__isnull=False, project__isnull=True, project_ref="")
+                    | (
+                        models.Q(base_graph__isnull=True)
+                        & (
+                            models.Q(project__isnull=False, project_ref="")
+                            | models.Q(project__isnull=True, project_ref__gt="")
+                            # ★★ ③ 过渡态：* 两者都有值 ⚠
+                            #   · ★ 这是【回填】造成的 —— * 老行本来有 project_ref，
+                            #     * 回填又给它补上了 project_id ✅
+                            #   · ★★ 而两者**由构造保证一致**（* project_id 就是从 project_ref 查出来的）✅
+                            #   · ★ 到第 ③ 步删掉 project_ref 之后，* 这一支**自然消失** ⚠
+                            | models.Q(project__isnull=False, project_ref__gt="")
+                        )
+                    )
                 ),
                 name="edge_belongs_to_exactly_one",
             )

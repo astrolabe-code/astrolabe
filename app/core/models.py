@@ -1200,3 +1200,470 @@ class ProjectSetting(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.key}"
+
+
+# ===========================================================================
+# 笔记与互动（★ `B190` · 2026-10-15）—— ★★ 六张新表
+# ===========================================================================
+#
+# ★★★ 所有者原话（逐字）：
+#
+#   「**我设计一个项目表，一个用户表，一个节点表，一个边关系表，一个基图表，
+#     一个markdown笔记表。你觉得怎么样？还有对markdown解释的点赞与评论数据
+#     装在哪里好？注意，我要的评论是类似番茄小说的段评和章评**」
+#
+# ★★ 由此定下的骨架：
+#
+# ```
+# core_note          笔记本体（★ 挂在【代码节点】上，1:N）
+# core_note_link     笔记之间的联系（★ 所有者拍的那张关联表）
+# core_note_block    笔记段落（★★ 段评的锚点）
+# core_note_comment  评论（★ 章评 + 段评【同表】）
+# core_note_like     点赞（★ 章赞 + 段赞【同表】）
+# core_note_revision 历史版本（★ 环形缓冲）
+# ```
+#
+# ⚠★★ **笔记【不占】图节点** —— ★★ 所有者原话（2026-10-14，逐字）：
+#   「**笔记占图节点干什么？你想想笔记图节点是干什么的？那是我为了显示笔记之间
+#     联系而设计的，图节点可以天然的显示联系。**」
+#   ⇒ 而所有者随后又否掉"塞进 graph_node"那条路：
+#     「**我的天呀，笔记节点，你填假值进去干什么？不是人为放宽了图节点能填进去的值？
+#       你要不就重新建一张表。**」
+#   ⇒ ★★ 所以：★ 笔记**有自己的表**，★ 之间的联系由 `core_note_link` 表达 ✅
+#     （* `graph_node` 一个字段都不动 ✅）
+
+
+class Note(TimeStampedModel):
+    """★★ **一篇笔记** —— ★ 用户记下的一段 markdown 想法。
+
+    ## ★★ 归属（★ 所有者 2026-10-14 定）
+
+    > 「**笔记挂在节点上 —— 一个节点可以有多篇笔记（1:N）**」
+
+    ⚠★ `node_id` 是 **FK → `graph_node`**（* ❌ 不是裸 uid）——
+      ★★ `B117` 立的规矩：「**能重复的只用来看；不能重复的才用来挂**」⚠
+      · ★ `uid` 允许重复 ⇒ ★ 只配看 ⚠
+      · ★★ `node_id` 是主键 ⇒ ★ 才配挂 ⚠
+
+    ## ⚠★ 三个"不要"
+
+    ```
+    ① ★★ 不要【标题列与正文打架】⚠
+       · ★ `title` 允许用户改，* 但**每次保存都拿正文前几字覆盖**会冲掉他的手改 ⚠
+       · ★ 折中：* 建时取正文前几字；* 保存时若开头有 `#` 标题则用它 ✅
+       · ★★ 其余时候不动 ✅
+
+    ② ★★ 不要【四张盒子表】⚠
+       · ★ "盒子"是【展示】，❌ 不是容器 ⚠
+       · ★★ 一列 `kind` + 前端分组渲染 ⇒ ★ 加第五种盒子只需加一个枚举值 ✅
+
+    ③ ★★ 不要【坐标列】⚠
+       · ★ 所有者 2026-10-14：*「**笔记不要整坐标，太麻烦…每次打开都是标准排布，
+         可以拖拽就行了呗**」⇒ ★ 拖拽**纯前端**，* 不落库 ✅
+    ```
+    """
+
+    #: ★★ **它挂在哪个代码节点下**（★ 1:N 的"1"）⚠
+    node = models.ForeignKey(
+        "graph.Node",
+        on_delete=models.CASCADE,
+        related_name="notes",
+    )
+    #: ★★ **盒子**（* `flash` 灵光一闪 / `question` 提问质疑 / …）——
+    #: ★ 所有者：「**笔记以后我会划分为几个类型…分别放入一个节点下的四个不同盒子**」
+    #: ⚠★ **固定枚举**（* 所有者 2026-10-14：*「**可增删最多四五个，你整个表干什么？**」）✅
+    kind = models.CharField(max_length=16, default="flash")
+    #: ★ 标题（★ 允许用户手改；* 规则见类文档 ①）⚠
+    title = models.CharField(max_length=120, blank=True, default="")
+    #: ★ 正文（★ markdown 原文）——
+    #: ★★ **一个 blob**，* ❌ 不拆结构化块数组（* 所有者 2026-10-14 定的口径）⚠
+    body = models.TextField(blank=True, default="")
+    #: ★ 卡片外观（★ 指向皮肤存储位置的地址）——
+    #: ★★ 所有者 2026-10-14：*「**卡片外观就加一个指向皮肤存储地方的地址，不难吧？**」
+    card_skin = models.CharField(max_length=200, blank=True, default="")
+    #: ★★ **每篇笔记单独设可见性，* 默认可见**（* 所有者 2026-10-14 定）⚠
+    is_public = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notes",
+    )
+
+    # ---- 冗余计数（★ 列表免 count；* 真相在明细表，* 必须可重算）----
+    like_count = models.IntegerField(default=0)
+    comment_count = models.IntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            # ★★ **只留一棵**（★ `B199`：能少加一个字段进索引就少加一个）⚠
+            #   · ★ 盒子视图总是"按 kind 分组 + 按时间排" ⇒ ★ 一棵就够 ✅
+            #   · ★★ 原先还想加 `(node_id, created_at)` —— ★ 那是多余的前缀 ⚠
+            models.Index(fields=["node", "kind", "-created_at"]),
+            # ★ "我的笔记"
+            models.Index(fields=["created_by", "-created_at"]),
+        ]
+        verbose_name = "笔记"
+
+    def __str__(self) -> str:
+        return (self.title or self.body[:20] or f"note#{self.pk}")[:40]
+
+
+class NoteLink(TimeStampedModel):
+    """★★ **笔记与笔记之间的联系**（★ 所有者拍的那张关联表）。
+
+    ## ★★★ 所有者原话（2026-10-14，逐字）
+
+    > 「**我的天呀，笔记节点，你填假值进去干什么？不是人为放宽了图节点能填进去的值？
+    > 你要不就重新建一张表。存储笔记节点之间的联系，要不就在笔记表里建一个一对多的
+    > 映射字段，可以修改映射关系名称**」
+
+    ## ★★ 为什么是关联表（* 而不是"笔记表上一个映射字段"）
+
+    | | ★ 关联表 | ★★ 笔记表上一个字段 |
+    |---|---|---|
+    | 支持 N:M | ✅ | ⚠ 只能"一条指向多条" |
+    | ★★ **反向能查吗** | ✅ 一个索引就够 | ❌ 要全表扫 / JSON 包含查询 ⚠ |
+    | 关系名放哪 | ★ 每条连线自带 ✅ | ⚠ 得塞进那个字段里 |
+    | 将来"笔记↔函数" | ★ 加一列即可 ✅ | ❌ 更别扭 |
+
+    ★★ 关键在第二行：* 联系**天然是双向的** ⇒ ★「**谁引用了我**」必须能查 ⚠
+    """
+
+    from_note = models.ForeignKey(
+        Note, on_delete=models.CASCADE, related_name="links_out"
+    )
+    to_note = models.ForeignKey(
+        Note, on_delete=models.CASCADE, related_name="links_in"
+    )
+    #: ★★ 「**映射关系名称**」—— ★ 每条连线自带一个，* **可改** ✅
+    relation = models.CharField(max_length=32, blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="note_links",
+    )
+
+    class Meta:
+        constraints = [
+            # ★★ 同一条关系不重复建 ✅
+            models.UniqueConstraint(
+                fields=["from_note", "to_note", "relation"],
+                name="uniq_note_link",
+            ),
+        ]
+        indexes = [
+            # ⚠★ 2026-10-15（`B199`）：**`(from_note, relation)` 那一棵已删** ⚠
+            #   · ★ 它被上面那条唯一索引的【前缀】完全覆盖 ⚠
+            #   · ★★ 而 `relation` 也从 `(to_note, relation)` 里去掉：
+            #     ★ 一条笔记被引用的次数**不多** ⇒ ★ 找到 to_note 后再筛 relation 几乎免费 ⚠
+            #     （* `relation` 是 varchar(32) ⇒ ★ 去掉它 **省 32 字节/条**）⚠
+            models.Index(fields=["to_note"]),
+        ]
+        verbose_name = "笔记关联"
+
+    def __str__(self) -> str:
+        return f"{self.from_note_id} -{self.relation}-> {self.to_note_id}"
+
+
+class NoteBlock(TimeStampedModel):
+    """★★★ **笔记的一个段落** —— ★★ **段评的锚点**（★ 全案最关键的一张）。
+
+    ## ★★ 为什么必须有稳定 id（* 而不是"第几段"）
+
+    ```
+    ❌ 用"第几段"当锚点 ⇒ ★ 上面插一段 ⇒ ★★ 所有段评【整体错位】⚠
+       · ★ 而那是静默的**（★ 没人会发现，* 评论就这么挂到了别的段落上）⚠
+    ❌ 用"引用文本"当锚点 ⇒ ★ 那段话一被改，* 锚点就断了 ⚠
+    ✅ 给每段一个**稳定 id** ⇒ ★ 编辑不影响锚点 ✅
+    ```
+
+    ## ★★ 保存时怎么续用旧 id（* `B188` 定的判据：**完全相同**）
+
+    ```
+    1. 解析新正文 ⇒ 新段落列表（★ 按【空行】分隔 —— ★ 与渲染无关）
+    2. 每段算 fingerprint
+    3. ★★ 指纹【完全相同】的旧行 ⇒ **续用原 id** ✅
+    4. 匹配不上的新段 ⇒ 建新行；* 没被续上的旧行 ⇒ 删
+       ⇒ ★ 它上面的评论 `block_id` 变 NULL（★ 即"失锚"）⚠
+    ```
+
+    ## ★★★ 所有者原话（2026-10-14，逐字）
+
+    > 「**还有评论有问题，我想的是如果作者没有删除这段话，那评论就一直挂在这段话上，
+    > 不知道这个实现容易吗？有没有引出更大的问题？**」
+
+    > 「**嗯，看来是不容易的。那如果这个段不改，其他端改了，不影响这个段的评论，
+    > 更容易实现吗？**」
+
+    > 「**不用，我查了番茄小说的机制，他也是哪怕改一个字，段评就没了的。**」
+
+    ⚠★ 代价（* 如实记）：* 改一个字 ⇒ 该段评论**掉锚** ⇒ 降级到章评区 + 标注 ⚠
+      · ★ 而"降级怎么办"由 `note.orphan_comment_policy`（* 项目级策略）决定 ✅
+    """
+
+    note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="blocks")
+    #: ★★ **只用于排序显示 —— ★❌ 绝不当锚点** ⚠
+    ordinal = models.IntegerField(default=0)
+    #: ★ 该段当前文本
+    text = models.TextField(blank=True, default="")
+    #: ★★ **规范化文本的哈希**（★ 保存时据此续用原 id）——
+    #: ⚠★ 2026-10-15（`B199`）：**从 `varchar(64)` 缩到 16** ⚠
+    #   · ★ 64 bit 哈希 ⇒ ★ 一篇笔记的段落只有几十个 ⇒ ★ 碰撞概率可忽略 ✅
+    #   · ★★ 而它进索引 ⇒ ★ 缩一次 **省 48 字节/条** ⚠
+    fingerprint = models.CharField(max_length=16, blank=True, default="")
+    #: ★ 冗余计数（* 可重算）
+    comment_count = models.IntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            # ★★ 一篇笔记内 ordinal 不重复 ✅
+            models.UniqueConstraint(fields=["note", "ordinal"], name="uniq_note_block"),
+        ]
+        indexes = [
+            # ★★ 对齐就查它（* `note_id + fingerprint`）✅
+            models.Index(fields=["note", "fingerprint"]),
+            # ⚠★ 2026-10-15（`B199`）：**`(note_id, ordinal)` 那一棵已删** ⚠
+            #   · ★ 它被上面那条唯一索引【完全覆盖】⚠
+        ]
+        verbose_name = "笔记段落"
+
+    def __str__(self) -> str:
+        return f"{self.note_id}#{self.ordinal}"
+
+
+class NoteComment(TimeStampedModel):
+    """★★ **一条评论** —— ★★ **章评与段评【同表】**。
+
+    ## ★★ 核心机制：一个"锚点"概念，两种评论
+
+    ```
+    anchor_kind = 'chapter'    ⇒ ★ 章评（* 锚在整篇）· block_id 恒 NULL
+    anchor_kind = 'paragraph'  ⇒ ★ 段评（* 锚在某一段）· block_id 有值
+    ```
+
+    ## ⚠★★ `anchor_kind` 为什么必须有（* 光靠 block_id 分不出来）
+
+    ```
+    ★★ 光靠 `block_id IS NULL` **分不出**两种情况：
+      · ★ 「章评」（★ 本来就锚在整篇）
+      · ★★ 「失锚的段评」（★ 段落被改了）
+    ⇒ ★★ 所以必须单独一列，* 且它【创建时就定死，不随锚点失效而变】✅
+    ```
+
+    ## ★★ 失锚之后的三个选项（* 所有者 2026-10-14 定）
+
+    > 「**修改段落了，评论默认不再显示，但要给作者三个选项，挂在新写的段落上，
+    > 放底部评论区里，默认的不显示。嗯，这个不要每次修改都跳，记录到项目设置里**」
+
+    | 选项 | 落法 |
+    |---|---|
+    | ★ 挂到新写的段落上 | ★ 保存时把 `block_id` **重钉**到同位置的新块 ✅ |
+    | ★ 放到章评区 | ★ `block_id` 置 NULL，* 但 `anchor_kind` 仍是 `paragraph` ⇒ 显示为"原段落已变更" ✅ |
+    | ★★ 默认不显示 | ★ 同上，* 只是不出现在列表里（* 仍可在该分组找到）✅ |
+
+    ⚠★ **数据不因策略分裂** —— ★ 失锚评论**仍是评论**（* 一张表）⚠
+      · ★ 三个选项只是**展示位置**的三种选择 ⚠
+      · ★★ 所以：* 策略改了，* **一条数据都不用搬** ✅
+    """
+
+    note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="comments")
+    #: ★★ **是不是段评**（* `False` = 章评 · `True` = 段评）——
+    #: ★★ **创建时定死，* 不随锚点失效而变** ⚠
+    #:
+    #: ⚠★★ 2026-10-15（`B199`）：**从 `anchor_kind` varchar(16) 改成 bool** ⚠
+    #:   · ★ 它只有 2 种取值 ⇒ ★ bool **省 15 字节/条** ⚠
+    #:   · ★★ 而偏索引的条件要一个【真列】⇒ ★ 属性做不了 ⚠
+    #:     （* 实测踩到：* `FieldError: Cannot resolve keyword 'is_paragraph' into field`）⚠
+    #:   · ★ 于是**反过来**：* 列存 bool，* `anchor_kind` 变成属性 ✅
+    #:     （* 存两份必然打架 —— * 那是被批过的毛病）⚠
+    is_paragraph = models.BooleanField(default=False)
+    #: ★★ 段评的锚点。★ `SET_NULL`（* ❌ 不是 CASCADE）——
+    #: ★★ **引用历史的东西，绝不能被被引用行的删除静默带走** ⚠
+    #:   （* `GraphPatch` 的 CASCADE 已经实测闯过一次祸；* 同一类错误不许第二次）⚠
+    block = models.ForeignKey(
+        NoteBlock,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="comments",
+    )
+    #: ★ 楼中楼（* 回复某条评论）
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="replies"
+    )
+    body = models.TextField(blank=True, default="")
+    #: ★★ **引用时的原文快照** —— ★ 即便那段后来改了，* 也能显示"当时是这句" ✅
+    #:   （* 番茄小说就是这么做的）⚠
+    quote = models.CharField(max_length=500, blank=True, default="")
+    #: ★ 正常 / 隐藏 / 待审
+    state = models.CharField(max_length=16, default="normal")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="note_comments",
+    )
+    #: ★★ **软删** —— ★ 硬删会让楼中楼断链（* 子评论的父没了）⚠
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            # ⚠★★ 2026-10-15（`B199`）：`anchor_kind`(varchar16) → `is_paragraph`(bool) ⚠
+            #   · ★ 它只有 2 种取值 ⇒ ★ varchar(16) **省 15 字节/条** ⚠
+            #   · ★★ 而且能拿来做【偏索引】—— * 每棵树只装自己那类行 ⇒ **体积约减半** ✅
+            # ⓪ 章评（* 不锚段落）—— ★★ 这棵树【只装章评】⚠
+            models.Index(
+                fields=["note", "-created_at"],
+                condition=models.Q(is_paragraph=False),
+                name="ix_comment_chapter",
+            ),
+            # ① 段评（* 锚在某一段）—— ★★ 这棵树【只装段评】⚠
+            models.Index(
+                fields=["block", "-created_at"],
+                condition=models.Q(is_paragraph=True),
+                name="ix_comment_paragraph",
+            ),
+            # ② 楼中楼
+            models.Index(fields=["parent", "created_at"]),
+            # ③ "我的评论"
+            models.Index(fields=["created_by", "-created_at"]),
+        ]
+        verbose_name = "评论"
+
+    @property
+    def anchor_kind(self) -> str:
+        """★★ `'chapter'` / `'paragraph'`（★ 由 `is_paragraph` 派生）。
+
+        ⚠★ **接口契约不变** —— ★ 前端照旧收 `anchor_kind` ✅
+          · ★ 而库里只存那个 1 字节的 bool ⚠
+          · ★★ 派生 ⇒ ★ 不可能不一致 ✅
+        """
+        return "paragraph" if self.is_paragraph else "chapter"
+
+    def __str__(self) -> str:
+        return f"{self.note_id}:{self.anchor_kind}:{self.pk}"
+
+
+class NoteLike(TimeStampedModel):
+    """★★ **一个赞** —— ★★ **章赞与段赞【同表】**。
+
+    ## ⚠★★ 幂等约束：**普通 UNIQUE 挡不住重复的"章赞"** ⚠
+
+    ```sql
+    -- ❌ 这样写挡不住：
+    UNIQUE (note_id, user_id, block_id)
+    -- ★★ PostgreSQL 认为【两个 NULL 不相等】⇒
+    --    ★ block_id 为 NULL 的行可以插【任意多份】⚠
+    --    ★★ 于是"同一个人对同一篇笔记点了 100 次章赞" ✅ 通过 ⚠
+
+    -- ✅ 正解一（* 本机 PG 17.11 支持）：
+    UNIQUE NULLS NOT DISTINCT (note_id, user_id, block_id)
+
+    -- ✅ 正解二（* 2026-10-15 采用）：**拆成两条偏唯一索引** ⚠
+    --   · ★ 各 12 字节（* 比三列合一的 20 字节省）✅
+    --   · ★★ 语义还更清楚 ✅
+    ```
+
+    ⚠★ 为什么最终选"正解二"而不是 `NULLS NOT DISTINCT`：
+      ★★ 两条偏索引**每棵只装自己那类行** ⇒ ★ 体积更小、* 语义更清 ⚠
+      · ★ 而 `NULLS NOT DISTINCT` 是一棵**装全部**的索引 ⚠
+    """
+
+    note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="likes")
+    #: ★★ `is_paragraph`（* 取代原先的 `anchor_kind` varchar(16)）——
+    #: ★ 只有 2 种取值 ⇒ ★ bool **省 15 字节/条** ⚠
+    is_paragraph = models.BooleanField(default=False)
+    block = models.ForeignKey(
+        NoteBlock,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="likes",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="note_likes",
+    )
+
+    class Meta:
+        constraints = [
+            # ★★ 章赞：一人一次（* 偏唯一索引）✅
+            models.UniqueConstraint(
+                fields=["note", "user"],
+                condition=models.Q(is_paragraph=False),
+                name="uniq_like_chapter",
+            ),
+            # ★★ 段赞：一人一次（* 偏唯一索引）✅
+            models.UniqueConstraint(
+                fields=["block", "user"],
+                condition=models.Q(is_paragraph=True),
+                name="uniq_like_paragraph",
+            ),
+        ]
+        verbose_name = "点赞"
+
+    def __str__(self) -> str:
+        return f"{self.note_id}:{self.user_id}"
+
+
+class NoteRevision(TimeStampedModel):
+    """★★ **一篇笔记的一个历史版本**（★ 环形缓冲）。
+
+    ## ★★★ 所有者原话（2026-10-14，逐字）
+
+    > 「**笔记要有历史版本，不过不用太多，最多追溯10个版本就行**」
+
+    > 「**嗯，这才对嘛，保存十个是保持最近十个，你别到了十个就不保存了**」
+
+    ## ★★ 环形缓冲语义（* 四条，* 缺一条就会实现错）
+
+    ```
+    ① ★★ **一直存，永不停止** ⚠
+       · ★ 每存一份新的 ⇒ **删掉最老的那一份** ✅
+       · ★★ ❌ 不是"满 10 个就停"（* 那是最容易实现错的一处）⚠
+    ② ★★ 上限是【每篇笔记】最近 N 份 ⚠
+       · ★ 不是全局、* 也不是每个用户总共 N 份 ✅
+    ③ ★★ 「当前正文」【不占】那 N 个位置 ⚠
+       · ★ `Note.body` = 现在这一版；* 本表装**历史** ⚠
+       · ★ 回档 = 把某一份历史**恢复成当前** ✅
+    ④ ★ 超出上限即【永久】删 ⚠
+       · ★ 这是**有意的**（* 否则无上限）⚠
+       · ★ 界面须说明「更早的已不可恢复」⚠
+    ```
+
+    ## ★★ 触发方式（* `B191` 定：**定时自动**）
+
+    ★ 业界先例：* 口袋写作「**每三分钟自动存一次档**」⚠
+    ★★ 而实现上**不需要后台定时器**：
+      · ★ 用户保存正文时，* 顺手判断"距上次快照是否超过间隔" ⇒ 超了就存一份 ✅
+      · ★★ 没人写的时候本来就没有新内容可存 ⇒ ★ 定时器纯属浪费 ⚠
+
+    ⚠★ 间隔与上限都在**用户档设置**里（* `note.revision_interval` / `note.revision_limit`）：
+      · ★★ 且都是 `gated=True` ⇒ ★ **只有管理员能改** ⚠
+      · ★（* 所有者 2026-10-14：*「**历史版本数是网站管理员可以给每个用户单独指定**」）⚠
+    """
+
+    note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="revisions")
+    #: ★ 那一版的正文
+    body = models.TextField(blank=True, default="")
+    #: ★ 那一版的标题
+    title = models.CharField(max_length=120, blank=True, default="")
+    #: ★★ **那一版的字数** —— ★ 口袋写作的历史版本列表就显示"时间和字数"⚠
+    word_count = models.IntegerField(default=0)
+    #: ★ `auto`（定时）/ `manual`（点了存稿）
+    source = models.CharField(max_length=16, default="auto")
+
+    class Meta:
+        constraints = [
+            # ★★ 一篇笔记一个时刻只有一版 ✅
+            models.UniqueConstraint(
+                fields=["note", "created_at"], name="uniq_note_revision"
+            ),
+        ]
+        # ⚠★ 2026-10-15（`B199`）：**`(note_id, -created_at)` 那一棵已删** ⚠
+        #   · ★ 它被上面那条唯一索引【完全覆盖】⚠
+        verbose_name = "笔记版本"
+
+    def __str__(self) -> str:
+        return f"{self.note_id}@{self.created_at:%Y-%m-%d %H:%M}"

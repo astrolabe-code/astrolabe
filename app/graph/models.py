@@ -334,6 +334,31 @@ class Node(UidMixin, TimeStampedModel):
     base_graph = models.ForeignKey(
         BaseGraph, null=True, blank=True, on_delete=models.CASCADE, related_name="nodes"
     )
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：
+    #   「**core_project里provider和repo_url要可为空…**」⇒ 进而：「**12 处裸 project_ref
+    #     必须有引用完整性**」—— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业 / 流水）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 要求的"审核流水 append-only"由
+    #     ★★ `core_projectreview` **自己那张表**保证（* 它不级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
     kind = models.CharField(max_length=32)
@@ -403,6 +428,31 @@ class Edge(TimeStampedModel):
     # ---- ★ 归属（★ 恰好一个有值 —— 与 `Node` 同口径）----
     base_graph = models.ForeignKey(
         BaseGraph, null=True, blank=True, on_delete=models.CASCADE, related_name="edges"
+    )
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：
+    #   「**core_project里provider和repo_url要可为空…**」⇒ 进而：「**12 处裸 project_ref
+    #     必须有引用完整性**」—— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业 / 流水）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 要求的"审核流水 append-only"由
+    #     ★★ `core_projectreview` **自己那张表**保证（* 它不级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
     )
     project_ref = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
@@ -491,6 +541,30 @@ class GraphPatch(TimeStampedModel):
     | ★ `add_edge` / `update_edge` / `remove_edge` | ★ `target_edge`（改/删）或 `from_node`/`to_node`（增） | ★ `payload` |
     """
 
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：「**12 处裸 project_ref 必须有引用完整性**」
+    #   —— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 的"流水 append-only"由 `core_projectreview` 自己保证
+    #     （* 它**不**级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64, db_index=True)
 
     action = models.CharField(max_length=16, choices=[(a, a) for a in PATCH_ACTIONS])
@@ -556,6 +630,30 @@ class GraphRevision(models.Model):
       ⇒ rev 自增**极其罕见**。
     """
 
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：「**12 处裸 project_ref 必须有引用完整性**」
+    #   —— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 的"流水 append-only"由 `core_projectreview` 自己保证
+    #     （* 它**不**级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64, primary_key=True)
     rev = models.BigIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
@@ -585,6 +683,30 @@ class NodeHeat(models.Model):
     ⚠ 节点被删除后**本表不删**（历史热度仍有价值）；展示时与当前图 join 即可。
     """
 
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：「**12 处裸 project_ref 必须有引用完整性**」
+    #   —— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 的"流水 append-only"由 `core_projectreview` 自己保证
+    #     （* 它**不**级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64)
     #: ★ 指标（visit / notes / comments …）—— 多指标分列，最终热度由上层加权合成
     metric = models.CharField(max_length=32)
@@ -623,6 +745,30 @@ class HeatFlush(models.Model):
 
     #: ★ 批次标识 = Redis 里那个临时 key 的名字（天然唯一）
     flush_key = models.CharField(max_length=512, primary_key=True)
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：「**12 处裸 project_ref 必须有引用完整性**」
+    #   —— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 的"流水 append-only"由 `core_projectreview` 自己保证
+    #     （* 它**不**级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64)
     metric = models.CharField(max_length=32)
     rows = models.IntegerField(default=0)

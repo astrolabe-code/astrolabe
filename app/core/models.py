@@ -794,6 +794,16 @@ class OAuthState(TimeStampedModel):
     next_url = models.CharField(max_length=512, blank=True, default="")
     #: ★ 发布场景：要校验归属的仓库 + 目标项目
     repo = models.CharField(max_length=512, blank=True, default="")
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 之外再补一个真外键** ⚠
+    #   ★★ 所有者裁定：「**12 处裸 project_ref 必须有引用完整性**」（"缠绕"的总根源）⚠
+    #   · ★ 裸字符串没有任何保证 —— ★ 项目删了这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 实测已因此出过事：「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】挡住不可能的状态 ✅
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project", null=True, blank=True,
+        on_delete=models.CASCADE, related_name="+",
+    )
     project_ref = models.CharField(max_length=64, blank=True, default="")
 
     #: ★★ **发布意图的其余字段**（`name` / `desc` / `source_path` …）
@@ -927,6 +937,16 @@ class ProjectStorage(models.Model):
     """
 
     #: ★ 一个项目一条（★ 主键就是 `project_ref`）
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 之外再补一个真外键** ⚠
+    #   ★★ 所有者裁定：「**12 处裸 project_ref 必须有引用完整性**」（"缠绕"的总根源）⚠
+    #   · ★ 裸字符串没有任何保证 —— ★ 项目删了这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 实测已因此出过事：「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】挡住不可能的状态 ✅
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project", null=True, blank=True,
+        on_delete=models.CASCADE, related_name="+",
+    )
     project_ref = models.CharField(max_length=64, primary_key=True)
     #: ★ 归属者（⚠ 项目被删后仍留一行也不碍事；`SET_NULL` 便于排查历史）
     owner = models.ForeignKey(

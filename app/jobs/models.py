@@ -44,6 +44,30 @@ class Job(models.Model):
     ]
 
     # ⚠ 与 core.ProjectRefMixin 保持一致（长度 64，见那里的说明）
+    # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
+    #
+    # ★★ 所有者裁定（逐字）：「**12 处裸 project_ref 必须有引用完整性**」
+    #   —— ★ 那是"信息缠绕"的总根源 ⚠
+    #
+    # ★★ 为什么必须补：
+    #   · ★ 裸字符串**没有任何保证** —— ★ 项目删了，* 这些行还在，* 永远指着不存在的东西 ⚠
+    #   · ★★ 而实测已经因此出过事：★「判重只看流水 ⇒ 删了项目照样拦死人」⚠
+    #   · ★ 有外键 ⇒ ★★ 数据库【当场】就挡住不可能的状态 ✅
+    #
+    # ⚠★ `on_delete=CASCADE` 的口径：
+    #   · ★ 这些行**全是项目自己的东西**（★ 它的节点 / 边 / 补丁 / 作业）⚠
+    #   · ★★ 项目删了 ⇒ ★ 它们**本就该跟着消失** ✅
+    #   · ★ 而 `B146` 的"流水 append-only"由 `core_projectreview` 自己保证
+    #     （* 它**不**级联删流水）⚠
+    #
+    # ⚠★ 字符串引用 "core.Project" ⇒ ★ 不需要 import，* 不可能成环 ✅
+    project = models.ForeignKey(
+        "core.Project",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
     project_ref = models.CharField(max_length=64, db_index=True)
     kind = models.CharField(max_length=32, choices=KIND_CHOICES)
     state = models.CharField(max_length=16, choices=STATE_CHOICES, default=STATE_QUEUED)

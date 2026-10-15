@@ -21,9 +21,11 @@ from web.views import (
     invites,
     jobs_api,
     me,
+    notes,
     projects,
     publish,
     review,
+    settings,
 )
 
 # ⚠ 必须在 URL 解析之前注册
@@ -167,7 +169,27 @@ urlpatterns = [
         graph.rev,
         name="graph-rev",
     ),
+    # ---------------------------------------------------------- 笔记（B187）
+    # ⚠★ 列表 / 新建挂在【项目】下（* 一篇笔记属于一个项目 ✅）
+    path(
+        "projects/<project_ref:project_ref>/notes/",
+        notes.collection,
+        name="note-list",
+    ),
+    # ⚠★ 单篇【不挂项目】—— ★ 笔记自己有 id，* 且权限在视图里判 ✅
+    #   · · ★ 挂在项目下会逼着 URL 里带 ref ⇒ ★ 而 ref 与笔记是**多对一** ⚠
+    #     （* 一篇笔记只属于一个项目，* 但 URL 不必 redundant 地再写一遍）⚠
+    path("notes/<int:note_id>/", notes.detail, name="note-detail"),
+    # ------------------------------------------------------------ 设置（B190）
+    # ★★ 用户档 / 项目档（* 三级继承，* 见 core/settings_table.py）⚠
+    path("me/settings/", settings.user_settings, name="user-settings"),
+    path(
+        "projects/<project_ref:project_ref>/settings/",
+        settings.project_settings,
+        name="project-settings",
+    ),
+
     # ------------------------------------------------------------ 作业（全局）
     path("jobs/<int:job_id>/", jobs_api.job_detail, name="job-detail"),
     path("jobs/<int:job_id>/cancel/", jobs_api.job_cancel, name="job-cancel"),
-]
+    ]

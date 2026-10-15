@@ -1092,3 +1092,111 @@ class AuditLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} by {self.actor_id}"
+
+
+class UserSetting(TimeStampedModel):
+    """★★ **用户档设置**（★ `B190` · 2026-10-15）。
+
+    ## ★★ 所有者原话（逐字）
+
+    > 「**我差点忘了，你要有张属性或设置表，用来设置一下用户或项目的
+    > 可能我还没想到的设置，就像IDE的设置一样。**」
+
+    > 「**三级继承很好**」
+
+    ## ⚠★ 三条设计口径
+
+    ```
+    ① ★★ 未设置 = 不存行 ⚠
+       · ★ 存一行 ⇒ ★ 覆盖默认 ✅
+       · ★★ 删一行 ⇒ ★ 自动回到代码里的默认值 ⚠
+       · ★（★ 若一设置就存一个默认值 ⇒ ★ 以后改默认值【对老行不生效】⚠）
+       · ★ 而且表不会因为"每个用户 × 每个键"而膨胀 ✅
+
+    ② ★★ 键必须已在 core/settings_table.py::SCOPED_KEYS 注册 ⚠
+       · ★ 未注册的键 ⇒ ★ 写不进来（* set_value 直接 KeyError）✅
+       · ★★ 这就是「属性种类由所有者指定」的硬执行点 ⚠
+
+    ③ ★★ 值存 jsonb（* 与 AppSetting 一致）⚠
+       · ★ jsonb 不保类型 ⇒ ★ 读出来按注册表转一次（* _coerce）✅
+    ```
+
+    ⚠★ 为什么**不**把三档合成一张表（* `scope` + `owner_id`）：
+      ★★ 那要两个可空外键 + "恰有其一"的 CHECK —— ★ 正是被批过的形状 ⚠
+      · ★ 而三档的差别是"**属主不同**"（* 那是本质差异，* ❌ 不是冗余）✅
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="settings",
+    )
+    #: ★ 键名（★ 必须已在 `SCOPED_KEYS` 注册）
+    key = models.CharField(max_length=64)
+    #: ★ 值（★ jsonb：* 与 `AppSetting` 同一口径 ✅）
+    value = models.JSONField(default=dict, blank=True)
+    #: ★ 最后改它的人（★ 管理员给某个用户单独改时，* 记的是管理员）⚠
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            # ★★ 一个用户一个键只有一行 ✅
+            models.UniqueConstraint(fields=["user", "key"], name="uniq_user_setting"),
+        ]
+        verbose_name = "用户设置"
+
+    def __str__(self) -> str:
+        return f"{self.user_id}:{self.key}"
+
+
+class ProjectSetting(TimeStampedModel):
+    """★★ **项目档设置**（★ `B190` · 2026-10-15）。
+
+    ## ★★ 它装什么（★ 第一个键就是所有者定的那个）
+
+    ```
+    note.orphan_comment_policy  ⇒ ★ 段落被修改后，原段评怎么办
+    ```
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「**修改段落了，评论默认不再显示，但要给作者三个选项，
+    > 挂在新写的段落上，放底部评论区里，默认的不显示。
+    > 嗯，这个不要每次修改都跳，记录到项目设置里**」
+
+    ⇒ ★★ **它是【项目级策略】，★ 不是每次编辑时问一遍** ✅
+      · ★ 三个选项其实是**一种政策**：* 遇到失锚评论时怎么办 ⚠
+      · ★★ 好处：* 作者不用在每次敲键盘后做决定（* 那会烦死人）⚠
+
+    ⚠★ 与 `UserSetting` 同构，* 但属主不同（* 那是本质差异）✅
+    """
+
+    project = models.ForeignKey(
+        "core.Project",
+        on_delete=models.CASCADE,
+        related_name="settings",
+    )
+    key = models.CharField(max_length=64)
+    value = models.JSONField(default=dict, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "key"], name="uniq_project_setting"),
+        ]
+        verbose_name = "项目设置"
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.key}"

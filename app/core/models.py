@@ -178,6 +178,38 @@ class Project(TimeStampedModel):
         max_length=16, choices=REVIEW_STATE_CHOICES, default=REVIEW_NONE, db_index=True
     )
 
+    # ------------------------------------------------------------------ 处置留痕
+    # ⚠★★ 2026-10-15（`B196`）：**三列** ⚠
+    #
+    # ★★ 所有者原话（逐字）：
+    #   「**还有把这个项目下架，隐藏之类的功能，这对于网上展示内容的平台很重要。**」
+    #
+    # ★★ 为什么必须有（* 缺它的后果）：
+    #   · ★ `state` 只有"现在是什么状态"，* **没有原因** ⚠
+    #   · ★★ 作者来问"**为什么下架我**"⇒ ★ **答不出来** ⚠
+    #
+    # ★★ 为什么放在项目行上（* 而不是另建一张处置流水表）：
+    #   · ★ `state`（* `hidden` / `taken_down`）**本来就在这张表上** ⚠
+    #   · ★★ 理由与它是**同一条事实的组成部分** ⚠
+    #   · ★ 作者要看它 ⇒ ★ 一次查询就够（* ❌ 不用再 join 一张表）✅
+    #   · ⚠★ 代价：* 只能存**最近一次** ⇒ ★ 多次处置的历史靠 `AuditLog` ⚠
+    #     （* 它的注释里早就预留了 `project.takedown` 这个 action ✅）
+
+    #: ★★ **最近一次处置的理由**（★ 管理员处置时写）· ★ 空串 = 没处置过
+    moderation_reason = models.CharField(max_length=400, blank=True, default="")
+
+    #: ★ **谁做的这次处置**（★ FK → `auth_user`）· ★ NULL = 没处置过
+    moderated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="moderated_projects",
+    )
+
+    #: ★ **什么时候处置的** · ★ NULL = 没处置过
+    moderated_at = models.DateTimeField(null=True, blank=True)
+
     # ------------------------------------------------------------------ 图定版
     # ★★★ **图一旦生成就【定版】—— 此后不可再解析**（`B103` / `B155`）。
     #
@@ -383,6 +415,37 @@ class ProjectReview(TimeStampedModel):
     #: ★ 冗余：项目被删后**流水仍然可读**（后台 / 用户都能看懂这条记录是什么）
     project_ref = models.CharField(max_length=64, blank=True, default="", db_index=True)
     project_name = models.CharField(max_length=200, blank=True, default="")
+
+    # ------------------------------------------------------------------
+    # ⚠★★ 2026-10-15（`B196`）：**申诉两列** ⚠
+    #
+    # ★★ 所有者原话（逐字）：
+    #   「**review_state是审核状态，审核是很重要的，而且，你的表里缺少了审核不通过的
+    #     理由和作者的申诉理由等**」
+    #
+    # ★★ 为什么加在【本条流水】上，* 而不是项目表：
+    #   · ★ 申诉**天然是"对某一次决定"的回应** ⇒ ★ 它属于**那条记录** ⚠
+    #   · ★★ 若放项目表 ⇒ ★ 只能存**最后一次** ⇒ ★ 历史丢失 ⚠
+    #   · ★ 而 `B146` 已裁定本表 **append-only** ⇒ ★ 每一轮都是新的一条 ✅
+    #     ⇒ ★ 于是"申诉链"天然记下来（* 一环指一环）✅
+    #
+    # ⚠★ 为什么不加 `appealed_at`：★ 那条新记录自己的 `created_at` 就是申诉时刻 ⚠
+    #   （* 避免"同一条事实两列"—— * 正是被批过的毛病）⚠
+    # ------------------------------------------------------------------
+
+    #: ★★ **作者对"被拒"的申辩**（★ 他为什么觉得该放行）· ★ 空串 = 这次不是申诉
+    appeal_note = models.TextField(blank=True, default="")
+
+    #: ★★ **这次提交是在申诉【哪一次】决定**
+    #: ★ FK → 本表自身（* 自引用）。★ NULL = 不是申诉
+    #: ⚠★ `SET_NULL` 而不是 CASCADE：* 被申诉那条若被删，* 本条**不该跟着消失** ⚠
+    appeal_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="appeals",
+    )
 
     # ---------------------------------------------------------------- 提交人
     #: ★ **谁提交的** —— ★★ 限额按它计数（`U3.9`）

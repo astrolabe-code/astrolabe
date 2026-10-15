@@ -393,9 +393,7 @@ class Node(UidMixin, TimeStampedModel):
             # ★ 基图侧（★ 按 sha 命中的那份基图，★ 读它的节点）
             models.Index(fields=["base_graph", "file_path"]),
             models.Index(fields=["base_graph", "kind"]),
-            models.Index(fields=["base_graph", "lang"]),
             # ★ 叠加层侧（★ 某个项目自己加的节点）
-            models.Index(fields=["project_ref", "file_path"]),
             models.Index(fields=["project_ref", "kind"]),
         ]
         constraints = [
@@ -496,10 +494,17 @@ class Edge(TimeStampedModel):
     class Meta:
         indexes = [
             # ★★ 两个索引，一个都不能少（G3）
-            models.Index(fields=["base_graph", "from_node", "type"]),  # 正向：我调用了谁
-            models.Index(fields=["base_graph", "to_node", "type"]),    # ★ 反向：谁调用了我
-            models.Index(fields=["project_ref", "from_node", "type"]),
-            models.Index(fields=["project_ref", "to_node", "type"]),
+            # ⚠★★ 2026-10-15（`B199`）：**四棵都去掉 `type` 末列** ⚠
+            #
+            # ★★ 为什么能去掉（* 这就是"能少加一个字段就少加一个"）：
+            #   · ★ 一个 `from_node` 的出边**通常个位数** ⇒
+            #     ★★ 找到 `from` 之后**再筛 type 几乎免费** ⚠
+            #   · ★ 而 `type` 只有 **3 种**取值 ⇒ ★ 放索引里**帮不上忙** ⚠
+            #   ⇒ ★★ 索引项从 **24 字节降到 16 字节** ⚠
+            models.Index(fields=["base_graph", "from_node"]),   # 正向：我调用了谁
+            models.Index(fields=["base_graph", "to_node"]),     # ★ 反向：谁调用了我
+            models.Index(fields=["project_ref", "from_node"]),
+            models.Index(fields=["project_ref", "to_node"]),
         ]
         constraints = [
             # ⚠★★ 2026-10-15（`B197` 第四步）：**与 `node_belongs_to_exactly_one` 同修** ⚠
@@ -617,10 +622,10 @@ class GraphPatch(TimeStampedModel):
     )
     #: ★ 新增 / 改边时的两端（★ 可以是基图节点，也可以是本项目新增的节点）
     from_node = models.ForeignKey(
-        Node, null=True, blank=True, on_delete=models.CASCADE, related_name="patch_out"
+        Node, null=True, blank=True, on_delete=models.SET_NULL, related_name="patch_out"
     )
     to_node = models.ForeignKey(
-        Node, null=True, blank=True, on_delete=models.CASCADE, related_name="patch_in"
+        Node, null=True, blank=True, on_delete=models.SET_NULL, related_name="patch_in"
     )
 
     #: ★ 内容（★ 字段与 `graph/curate.py::_NODE_FIELDS` / `_EDGE_FIELDS` **同一口径**）
@@ -748,7 +753,10 @@ class NodeHeat(models.Model):
     project_ref = models.CharField(max_length=64)
     #: ★ 指标（visit / notes / comments …）—— 多指标分列，最终热度由上层加权合成
     metric = models.CharField(max_length=32)
-    uid = models.CharField(max_length=1024)
+    # ⚠★ 2026-10-15（`B199`）：**`db_index` 去掉** ⚠
+    #   · ★ `uid` **不是身份**（* `B117`：能重复的只用来看）⚠
+    #   · ★★ 而实测它那棵索引**扫过 0 次** ⇒ ★ 没有任何查询按它筛 ⚠
+    uid = models.CharField(max_length=1024, db_index=False)
     value = models.BigIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 

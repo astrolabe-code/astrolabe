@@ -42,7 +42,14 @@ from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径�
 from graph import notes as note_alg
 from graph import scope
 from web.http import fail, ok_flat, read_json
-from web.permissions import can_edit, can_view, current_user, get_project, note_readable
+from web.permissions import (
+    can_edit,
+    can_view,
+    current_user,
+    get_project,
+    note_readable,
+    note_writable,
+)
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
@@ -180,17 +187,17 @@ def detail(request: HttpRequest, note_id: int):
     if note is None:
         return fail("笔记不存在", 404, code="not_found")
 
-    if not _readable(request, note):
+    if not note_readable(request, note):
         return fail("笔记不存在", 404, code="not_found")
 
     if request.method == "DELETE":
-        if not _writable(request, note):
+        if not note_writable(request, note):
             return fail("没有权限删除这篇笔记", 403, code="forbidden")
         note.delete()
         return ok_flat(deleted=True)
 
     if request.method == "PATCH":
-        if not _writable(request, note):
+        if not note_writable(request, note):
             return fail("没有权限修改这篇笔记", 403, code="forbidden")
         return _patch(request, note)
 
@@ -250,50 +257,6 @@ def _patch(request: HttpRequest, note: Note):
 # ---------------------------------------------------------------------------
 # 内部
 # ---------------------------------------------------------------------------
-
-def _readable(request: HttpRequest, note: Note) -> bool:
-    """★★ **这篇笔记能读吗** ⚠
-
-    ⚠★ 2026-10-16：* 本体已收拢到 `web/permissions.py::note_readable`——
-      · ★ 评论 / 点赞接口**共用**它，* ❌ 不再各写一份 ⚠
-      · · ★（* 留这个壳是为了本文件内调用不变）✅
-
-    ```
-    ① ★ 公开 ⇒ ★ 谁都能读 ✅
-    ② ★ 私有 ⇒ ★ 只有作者 ✅
-    ```
-
-    ⚠★ 协作者可见私有笔记 ⇒ ★ **第 8 批**（* `can_edit` 已经留了口）⚠
-    """
-    return note_readable(request, note)
-
-
-def _writable(request: HttpRequest, note: Note) -> bool:
-    """★★ **这篇笔记能改吗**（★ `B207`③：* 协作者可改 / 删项目内**任何人**的笔记）⚠
-
-    ```
-    ★★ staff ✅
-    ★★ 作者本人 ✅
-    ★★ 项目 owner ∨ 协作者（* `can_edit`）✅
-    ```
-
-    ⚠★ 普通登录用户**不能**改别人项目里的笔记 ——* 所有者原话整句：
-      「普通登陆用户不能修改别人项目的图与笔记，这是别人辛辛苦苦写的，
-       怎么能允许别人轻易修改？这些就像B站up主发的视频一样。」⚠
-
-    ⚠★ 用 `note_alg.project_of()` 而**不是** `note.node.project`：
-      · ★ 基图节点上的笔记也要能按**绑它的项目**判（* 与 `note_readable`
-        同一个项目判据 ⇒* **能读就能改**，* 这正是 `B207`① 的齐平不变量）⚠
-    """
-    user = current_user(request)
-    if user is None:
-        return False
-    if getattr(user, "is_staff", False):
-        return True
-    if note.created_by_id == user.pk:
-        return True
-    project = note_alg.project_of(note)
-    return project is not None and can_edit(request, project)
 
 
 def _auto_title(body: str) -> str:

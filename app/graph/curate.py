@@ -237,44 +237,48 @@ def can_curate(project_ref: str, user) -> CanCurate:
     ③ ★★ 站点管理员（* 代改，* 审计里必须区分开）✅
     ```
 
+    ⚠★★ 2026-10-16（`B209`）：**梯子收拢到内核** ⚠
+      · ★ 本函数**只负责把角色映射成 `CanCurate`**（* 每个角色的 message /
+        标记不同 ⇒* 映射必须留在这一处）✅
+      · · ★★ 而"谁是哪个角色"**只此一处**：* `core/access.py::role_of` ⚠
+      · · ★（* 收束前这里自己写了一遍 owner→协作者→staff，* 是第 5 条复制线）⚠
+
     ⚠ 越权**统一按"找不到"处理**（同 `web/permissions.NOT_FOUND`）——
       ★ 否则 `403` 会告诉攻击者"这个项目存在"。
     """
-    from core.models import Collaborator, Project
+    from core import access
+    from core.models import Project
 
     project = Project.objects.filter(project_ref=project_ref).first()
     if project is None:
         return CanCurate(allowed=False, code="not_found", message="项目不存在或无权访问")
 
-    if user is None or not getattr(user, "pk", None):
-        return CanCurate(allowed=False, code="forbidden", message="请先登录")
+    # ★★ 梯子只此一处（* `core/access.py`）✅
+    role = access.role_of(user, project)
 
-    if project.owner_id == user.pk:
+    if role == access.ROLE_OWNER:
         # ★★ **主路径**：项目创建者自己修补（★ 用户原话）
         return CanCurate(
             allowed=True, code="ok", is_owner=True, project=project,
             message="你是这个项目的创建者",
         )
 
-    # ★★ `B207`④：**协作者与 owner 同权修图** ⚠
-    #   · ★ 所有者原话整句：「协作者可以改/删项目内任何人的笔记和图节点
-    #     只能修改自己的评论，作者也一样，不能修改其他人的评论。」✅
-    #   · ★ 更早的原话整句：「要有项目协作者的概念，项目作者可以邀请别的用户
-    #     一起修改笔记和图谱」（* A24③）✅
-    #   · ★⚠ 而 `B157`「修补是项目创建者自己」的语境是**排除管理员代劳**，
-    #     ❌ 不是排除协作者 ⚠
-    if Collaborator.objects.filter(project=project, user=user).exists():
+    if role == access.ROLE_COLLABORATOR:
+        # ★★ `B207`④：**协作者与 owner 同权修图** ⚠
         return CanCurate(
             allowed=True, code="ok", is_collaborator=True, project=project,
             message="你是这个项目的协作者",
         )
 
-    if getattr(user, "is_staff", False):
+    if role == access.ROLE_STAFF:
         # ⚠ **平台介入** —— 允许，但审计里必须区分开
         return CanCurate(
             allowed=True, code="ok", via_admin=True, project=project,
             message="站点管理员（代项目方修补）",
         )
+
+    if user is None or not getattr(user, "pk", None):
+        return CanCurate(allowed=False, code="forbidden", message="请先登录")
 
     # ⚠★ **不区分"不存在"与"无权"**（`frontend-contract.md` §5 / §19.3）
     return CanCurate(

@@ -43,6 +43,11 @@ import hashlib
 import re
 from typing import TYPE_CHECKING
 
+# ⚠★ 2026-10-16（`B209`③）：**`project_of` 已移入 `core/access.py`** ⚠
+#   · ★ 它回答"这篇笔记是谁的"，* 本质是**访问判定** ⇒* 该住访问内核 ⚠
+#   · ★★ 而从内核 import（* graph → core 是允许方向，* `ARCHITECTURE.md` A3）✅
+from core.access import project_of
+
 if TYPE_CHECKING:  # pragma: no cover
     from django.db.models import QuerySet
 
@@ -288,40 +293,6 @@ def _handle_orphans(
             # ★ 新段比旧段少（* 用户删了段）⇒ ★ 无处可钉 ⇒ ★ 保持失锚 ✅
             continue
         NoteComment.objects.filter(pk__in=cids).update(block=target)
-
-
-def project_of(note: "Note"):
-    """★★ **这个笔记属于哪个项目**（★ 用于取项目级设置 / 判 owner）⚠
-
-    ⚠★ 为什么公开（* 2026-10-16 从 `_project_of` 改名）：
-      · ★ `web/views/comments.py` 也要用它（* 判"谁能删评论"）⚠
-      · ★★ 而 web → graph 的依赖是允许的（* `ARCHITECTURE.md` A3）✅
-      · · ★ 收成**一份实现**，* ❌ 不让两边各写一遍（* 那样早晚不一致）⚠
-
-    ⚠★ 笔记挂在 `graph_node` 上，* 而节点可能属【基图】或【项目】⚠
-      · · ★ 属项目（* 外键）⇒ ★ 直接取 `node.project` ✅
-      · · ★ 属基图 ⇒ ★ 顺基图找到**绑它的项目** ⚠
-      · · ★ 属修改层（* 老口径 `project_ref`）⇒ ★ ref 唯一 ⇒ **精确命中** ✅
-      · · ★（* 而一个基图可能被多个项目绑 ⇒ ★ 这种情形下策略**不明确**）⚠
-      · · ★★ 取不到唯一项目时返回 None ⇒ ★ 用**代码默认值** ✅
-
-    ⚠★★ 2026-10-16 修掉一个**静默取错项目**的洞（* 本函数改名时发现）：
-      · ★ 老实现无条件 `Project.objects.filter(base_graph_id=node.base_graph_id).first()`——
-      · · ★ 而 `base_graph_id` 为 None 时 ⇒ ★ 它会匹配到**任意一个没绑基图的项目** ⚠
-      · · ★★ 后果：* 失锚策略可能读到【别的项目】的设置（* 不报错，* 只是错）⚠
-    """
-    node = note.node
-    if node is None:
-        return None
-    if node.project_id is not None:
-        return node.project
-    from core.models import Project
-
-    if node.base_graph_id is not None:
-        return Project.objects.filter(base_graph_id=node.base_graph_id).first()
-    if node.project_ref:
-        return Project.objects.filter(project_ref=node.project_ref).first()
-    return None
 
 
 def orphan_blocks(note: "Note") -> "QuerySet[NoteBlock]":

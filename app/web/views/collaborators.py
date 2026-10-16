@@ -43,7 +43,7 @@ from django.views.decorators.http import require_http_methods
 
 from core.models import AuditLog, Collaborator, Project
 from web.http import fail, ok, read_json
-from web.permissions import can_edit, can_view, current_user, is_owner_or_staff
+from web.permissions import can_edit, can_manage_members, can_view, current_user
 
 User = get_user_model()
 
@@ -77,7 +77,7 @@ def collection(request: HttpRequest, project_ref: str):
         return fail("项目不存在或无权访问", 404)
 
     if request.method == "POST":
-        if not is_owner_or_staff(request, project):
+        if not can_manage_members(request, project):
             return fail("只有项目所有者能管理协作者", 403, code="forbidden")
         return _add(request, project)
 
@@ -135,7 +135,7 @@ def remove(request: HttpRequest, project_ref: str, username: str):
     if project is None or not can_view(request, project):
         return fail("项目不存在或无权访问", 404)
 
-    if not is_owner_or_staff(request, project):
+    if not can_manage_members(request, project):
         return fail("只有项目所有者能管理协作者", 403, code="forbidden")
 
     name = (username or "").strip()[:USERNAME_MAX]

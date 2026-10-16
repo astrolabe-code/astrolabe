@@ -206,8 +206,9 @@ def _tier_of(user: Any) -> str:
 def can(user: Any, capability: str) -> bool:
     """★★ **唯一的权限判定入口**（`U5` 纪律 1）。
 
-    ⚠ **项目级 / 条目级的附加约束不在这里** —— ★ 它由 `web/permissions.py` 组合：
-    例如 `CAP_PROJECT_HIDE` 说明"你能管项目"，而"**能不能管这个项目**"要再看归属。
+    ⚠ **项目级 / 条目级的附加约束不在这里** —— ★ 它由 `core/access.py`（**行级访问内核**，
+      `B209`）组合：例如 `CAP_PROJECT_HIDE` 说明"你能管项目"，而"**能不能管这个项目**"
+      要再看归属（* `core/access.py` 顶部的判据总表）✅。
 
     ★ 判据：**能互相 import 的东西，迟早会长成一坨** ⇒ ★ 权限判定只留**一个**入口。
     """

@@ -37,7 +37,7 @@ from django.views.decorators.http import require_http_methods
 
 from core.models import Note, NoteBlock, NoteLike
 from web.http import fail, ok, read_json
-from web.permissions import current_user, note_readable
+from web.permissions import can_like, current_user, note_readable
 
 
 @require_http_methods(["POST", "DELETE"])
@@ -58,9 +58,11 @@ def collection(request: HttpRequest, note_id: int):
     if note is None or not note_readable(request, note):
         return fail("笔记不存在", 404, code="not_found")
 
-    user = current_user(request)
-    if user is None:
+    # ★★ `B207`⑥：* 任何登录用户可赞 ——* 判据收拢到门面（* `B209`）✅
+    #   ⚠ 可读性上面刚判过 ⇒* 到这里还不过 = **没登录** ⇒* 401 ✅
+    if not can_like(request, note):
         return fail("请先登录", 401, code="unauthenticated")
+    user = current_user(request)
 
     if request.method == "POST":
         return _like(request, note, user)

@@ -1,14 +1,22 @@
 """Astrolabe · ① Web 层：权限判定
 
-★ 一期口径（**最小可用**）：
+★ 口径（**协作者批次后**，`B202` / `B206` / `B207`）：
 
 | 谁能看 | 范围 |
 |---|---|
 | **公开项目** | ★ **任何人**（含未登录游客）—— 这是「读懂别人的代码」的前提 |
-| **私有项目** | ★ **仅 owner** |
+| **私有项目** | ★ **owner ∨ 协作者 ∨ staff**（`B207`②：邀请了就能查看） |
 
-⚠ 一期**没有**：协作者 / 分享链接（`?share=`）/ 组织 / 团队 ——
-  见 `PRODUCT-VERSIONS.md`；⚠ 契约 §5 的 `view_err` / `edit_err` 是**旧站**的口径，
+| 谁能改 | 范围 |
+|---|---|
+| **项目内容**（设置 / 触发拉取 / 取消作业 / 建笔记 / 修图） | ★ **owner ∨ 协作者 ∨ staff** |
+| ★★ **删项目** | ★★ **仅 owner ∨ staff**（`B207`②：协作者不能删项目） |
+
+⚠ 协作者 = **一对多表** `core_collaborator(project, user)`（`B202`）——
+  ★ 管理页**按用户名直接加**，❌ 不发链接、❌ 不要 token（`B206`）。
+
+⚠ 仍**没有**：分享链接（`?share=`）/ 组织 / 团队 —— 见 `PRODUCT-VERSIONS.md`；
+  ⚠ 契约 §5 的 `view_err` / `edit_err` 是**旧站**的口径，
   本模块按**新设计**重写（旧站那套含已删除机制）。
 
 ★★ 两条硬纪律（`frontend-contract.md` §5 / §19.3）：
@@ -26,6 +34,7 @@ from __future__ import annotations
 from django.http import HttpRequest
 
 from core.models import Project
+from graph.notes import project_of
 
 #: ★ 统一文案 —— ⚠ **不要**在文案里区分"不存在"与"无权"（那正是要避免的泄露）
 NOT_FOUND = "项目不存在或无权访问"
@@ -91,42 +100,120 @@ def get_project(request: HttpRequest, project_ref: str) -> Project | None:
     return Project.objects.filter(project_ref=project_ref).first()
 
 
+def _is_collaborator(request: HttpRequest, project: Project) -> bool:
+    """★★ **这个用户是这个项目的协作者吗**（★ `B202` / `B207`）⚠
+
+    ★★ 本函数是 `can_view` / `can_edit` 的**唯一**协作者判据 ——
+      ❌ 不许在视图里各自查一遍 `Collaborator`（* 那会漏判，* 且纪律只剩一处）⚠
+    """
+    user = current_user(request)
+    if user is None:
+        return False
+    from core.models import Collaborator
+
+    return Collaborator.objects.filter(project=project, user=user).exists()
+
+
 def can_view(request: HttpRequest, project: Project) -> bool:
     """能否**读**。
 
     ★ 公开项目：**游客也能读**（`request.user` 可能是 `AnonymousUser`）。
-    ⚠ 私有项目：仅 owner；⚠ owner 为空（平台代管）⇒ **只有管理员能读**。
+    ⚠ 私有项目：owner ∨ 协作者 ∨ staff —— ★★ 协作者批次后（`B207`②）：
+      「一个项目甭管是私有的还是公开的，只要邀请了，对方都可以查看修改」
+      ⇒ 私有项目的大门也给协作者开（* 否则邀请是空操作）⚠
     """
     if project.is_public:
         return True
-    return _is_owner(request, project) or _is_staff(request)
+    return (
+        _is_owner(request, project)
+        or _is_collaborator(request, project)
+        or _is_staff(request)
+    )
 
 
 def can_edit(request: HttpRequest, project: Project) -> bool:
-    """能否**改**（项目设置 / 触发解析 / 删除）。
+    """能否**改项目内容**（项目设置 / 触发拉取 / 取消作业 / 建笔记 / 修图）。
 
-    ⚠ 一期：**仅 owner**（或管理员）。
-    ⚠ 与 UGC **无关**：解释 / 提问 / 笔记的写权**不依赖** `can_edit`
-      （契约 §20.2「UGC 写权不依赖 can_edit」）—— 那是另一条通道。
+    ⚠ 一期：owner ∨ 协作者 ∨ staff。
+    ⚠ 与 UGC **部分**无关：**评论 / 点赞**的写权**不依赖** `can_edit`
+      （契约 §20.2「UGC 写权不依赖 can_edit」）—— 那是另一条通道；
+      ★★ 而**建笔记依赖** `can_edit`（`B207`③：只能在自己/协项目建）⚠。
+
+    ⚠★ **删项目不在这里** —— 见 `can_delete()`（`B207`②：协作者不能删项目）⚠
+    """
+    return (
+        _is_owner(request, project)
+        or _is_collaborator(request, project)
+        or _is_staff(request)
+    )
+
+
+def is_owner_or_staff(request: HttpRequest, project: Project) -> bool:
+    """★★ **owner 或 staff**（* 全系统**最严**的一档）⚠
+
+    ★★ `can_delete`（* 删项目）与**协作者管理**（* 加人 / 移除）都用它 ✅
+      · · ★ 两者都是"只有项目主本人能干"的事（* `B207`②）⚠
+      · · ★（* 协作者**不能**删项目，* 也**不能**加 / 移协作者）⚠
     """
     return _is_owner(request, project) or _is_staff(request)
 
 
-def note_readable(request: HttpRequest, note) -> bool:
-    """★★ **这篇笔记能读吗**（★ `views/notes.py` 的口径收拢到此处，* **只此一份**）⚠
+def can_delete(request: HttpRequest, project: Project) -> bool:
+    """★★★ **能否删掉整个项目**（★ `B207`② 新增，* 2026-10-16）⚠
 
-    ```
-    ① ★ 公开 ⇒ ★ 谁都能读 ✅
-    ② ★ 私有 ⇒ ★ 只有作者 ✅
-    ```
+    ★★ **仅 owner ∨ staff** ——* 协作者**不能**删项目 ⚠
+      （* 所有者原话整句：「协作者不能删项目。」）✅
 
-    ⚠★ 协作者可见私有笔记 ⇒ ★ **第 8 批**（* `can_edit` 已经留的口）⚠
-    ⚠★ 评论 / 点赞接口**共用**本函数 —— * 三处各写一份，* 早晚不一致 ⚠
+    ⚠★ 为什么单开一道判据、* ❌ 不并进 `can_edit`：
+      · ★ `can_edit` 管的是"**改内容**"，* 删项目是"**毁掉全部**"——
+      · · ★ 两者破坏性差一个量级，* 混在一个函数里迟早有人给错 ⚠
+      · ★ 而 `projects.detail` 的 DELETE 分支**只认本函数** ✅
     """
+    return is_owner_or_staff(request, project)
+
+
+def note_readable(request: HttpRequest, note) -> bool:
+    """★★★ **这篇笔记能读吗**（★ 两层判据，* `B207`⑦；* **只此一份**）⚠
+
+    ## ★★ 两层（* 顺序不能反）
+
+    ```
+    ⓪ ★★ **项目大门**（* `can_view` 不过 ⇒ * 一律 False）⚠
+       · · ★ 所有者原话整句：「私有项目上没有"公开笔记"，项目私有，
+         其中的一切都私有，不可见，除非把项目改公开。」
+       · · ★★ 所以：* 私有项目里 `is_public` **失去意义** ⚠
+       · · ★（* 这条同时补掉了"凭 note_id 直达"的洞 ——* note_id 是自增整数，
+         可枚举，* 而详情 / 评论 / 点赞三个端点都走本函数）⚠
+    ① ★ **笔记层**：* `is_public` ∨ 作者 ∨ owner ∨ 协作者 ∨ staff ✅
+       · · ★ 协作者能看别人的私有笔记（* 原话整句：「不能看，怎么修改？」）✅
+    ```
+
+    ⚠★ 笔记详情 / 评论 / 点赞**共用**本函数 —— * ❌ 不三处各写一份 ⚠
+    ⚠★ 已知近似（* 2026-10-16 如实记）：* 笔记挂在**基图节点**上时，
+      `project_of()` 取的是**第一个绑它的项目** ⇒ * 该项目私有则 **fail-closed**
+      （* 宁可多挡几个人，* ❌ 不放过一个）⚠
+    """
+    project = project_of(note)
+
+    # ⓪ 项目大门（* `B207`⑦④）✅
+    if project is not None and not can_view(request, project):
+        return False
+
+    # ① 笔记层 ✅
     if note.is_public:
         return True
     user = current_user(request)
-    return user is not None and note.created_by_id == user.pk
+    if user is None:
+        return False
+    if note.created_by_id == user.pk:
+        return True
+    if getattr(user, "is_staff", False):
+        return True
+    if project is not None and (
+        project.owner_id == user.pk or _is_collaborator(request, project)
+    ):
+        return True
+    return False
 
 
 def can_curate(project_ref: str, user):

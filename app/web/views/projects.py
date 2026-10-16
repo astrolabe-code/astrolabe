@@ -291,10 +291,12 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         nodes, edges = _counts([project_ref])
         return ok(_project_json(project, request, nodes.get(project_ref, 0), edges.get(project_ref, 0)))
 
-    if not permissions.can_edit(request, project):
-        return fail("需要项目所有者权限", 403, code="forbidden")
-
     if request.method == "DELETE":
+        # ★★ `B207`②：**删项目单开一道判据** ——* 协作者**不能**删项目 ⚠
+        #   （* 所有者原话整句：「协作者不能删项目。」）✅
+        #   · ★ 而 PATCH（* 改名 / 改描述 / 改公开性）仍走 `can_edit` ✅
+        if not permissions.can_delete(request, project):
+            return fail("只有项目所有者能删除项目", 403, code="forbidden")
         # ⚠ 一期：**物理删除**（图 / 作业随 project_ref 一起清）
         #   ⚠ 契约 §19.6 要求「删除中 = deleting 状态 + 拒绝写」，那是后续的事
         #
@@ -322,7 +324,10 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         project.delete()
         return ok({"deleted": True, "storage_freed_bytes": freed})
 
-    # PATCH
+    # PATCH —— ★ 改内容 ⇒ `can_edit`（owner ∨ 协作者 ∨ staff，`B207`②）✅
+    if not permissions.can_edit(request, project):
+        return fail("需要项目所有者权限", 403, code="forbidden")
+
     body = _body(request)
     # ⚠★★ 2026-10-14（`B197`）：**`repo_url` / `commit` / `provider` 三项【已删】** ⚠
     #   ★★ 它们与基图重复 ⇒ ★ 只留基图那份（★ 所有者裁定）⚠

@@ -55,7 +55,7 @@ from core import settings_table as st
 from core.models import Note, NoteBlock, NoteComment
 from graph.notes import project_of
 from web.http import fail, ok, read_json
-from web.permissions import current_user, note_readable
+from web.permissions import can_edit, current_user, note_readable
 
 #: ★ 一页最多多少条
 PAGE_MAX = 100
@@ -282,10 +282,12 @@ def detail(request: HttpRequest, comment_id: int):
 # ---------------------------------------------------------------------------
 
 def _deletable(request: HttpRequest, comment: NoteComment) -> bool:
-    """★★ **谁能删这条评论**（* D74：* 作者本人 / 项目 owner / staff）⚠
+    """★★ **谁能删这条评论**（* `B207`⑤：* 评论作者 ∨ owner ∨ 协作者 ∨ staff）⚠
 
-    ⚠★ **没有**"笔记作者可删他人评论"这一条 —— * 契约没给，* ❌ 不自行加 ⚠
-      （* 若所有者要"楼主删评"，* 那是新决策，* 先登记再改）⚠
+    ⚠★ **评论只删不改**（* `B201③` 重申）——* 所以这里**没有**"能改"一说 ⚠
+    ⚠★ 协作者与 owner / 管理员一样能删**别人**的评论（* 所有者原话整句：
+      「协作者跟作者与管理员一样，可以删别人评论。」）✅
+    ⚠★ 而"不能修改其他人的评论"也在同一段原话里 ⇒* **改不存在，* 删可以** ⚠
     """
     user = current_user(request)
     if user is None:
@@ -295,13 +297,14 @@ def _deletable(request: HttpRequest, comment: NoteComment) -> bool:
     if comment.created_by_id == user.pk:
         return True
     project = project_of(comment.note)
-    return project is not None and project.owner_id == user.pk
+    return project is not None and can_edit(request, project)
 
 
 def _can_see_hidden(request: HttpRequest, note: Note) -> bool:
     """★★ **谁能看被隐藏的失锚段评**（* `include_hidden=1` 的权限侧）⚠
 
-    ★★ 作者 / 项目 owner / staff ✅
+    ★★ 作者 / 项目 owner / **协作者** / staff ✅
+      （* `B207`① 齐平：* 项目内访问齐平，* 协作者与 owner 同权）⚠
     """
     user = current_user(request)
     if user is None:
@@ -311,7 +314,7 @@ def _can_see_hidden(request: HttpRequest, note: Note) -> bool:
     if note.created_by_id == user.pk:
         return True
     project = project_of(note)
-    return project is not None and project.owner_id == user.pk
+    return project is not None and can_edit(request, project)
 
 
 def _attach_reply_counts(items: list[NoteComment]) -> None:

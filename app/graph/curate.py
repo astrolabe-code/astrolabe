@@ -215,6 +215,8 @@ class CanCurate:
     code: str = "forbidden"
     message: str = ""
     is_owner: bool = False
+    #: ★★ **协作者**（`B202` / `B207`）—— ★ 与 owner 同权修图，* 但审计里要分得开 ⚠
+    is_collaborator: bool = False
     #: ★★ **`is_staff` 代改** —— ⚠ 与"owner 自己改"**性质不同**
     via_admin: bool = False
     project: Any = None
@@ -227,10 +229,18 @@ def can_curate(project_ref: str, user) -> CanCurate:
       （★ 方向是 `web → graph`，符合 `ARCHITECTURE.md` A3 的分层 ✅）
       —— ⚠ 反过来的话 `graph/` 就要 import `web/`，**越层**了。
 
+    ## ★★ 三种放行（* `B207`④：* 协作者与 owner 同权修图）⚠
+
+    ```
+    ① ★★ 项目创建者（* 主路径）✅
+    ② ★★ 协作者（* B207④：* 「协作者可以改/删项目内任何人的笔记和图节点」）✅
+    ③ ★★ 站点管理员（* 代改，* 审计里必须区分开）✅
+    ```
+
     ⚠ 越权**统一按"找不到"处理**（同 `web/permissions.NOT_FOUND`）——
       ★ 否则 `403` 会告诉攻击者"这个项目存在"。
     """
-    from core.models import Project
+    from core.models import Collaborator, Project
 
     project = Project.objects.filter(project_ref=project_ref).first()
     if project is None:
@@ -244,6 +254,19 @@ def can_curate(project_ref: str, user) -> CanCurate:
         return CanCurate(
             allowed=True, code="ok", is_owner=True, project=project,
             message="你是这个项目的创建者",
+        )
+
+    # ★★ `B207`④：**协作者与 owner 同权修图** ⚠
+    #   · ★ 所有者原话整句：「协作者可以改/删项目内任何人的笔记和图节点
+    #     只能修改自己的评论，作者也一样，不能修改其他人的评论。」✅
+    #   · ★ 更早的原话整句：「要有项目协作者的概念，项目作者可以邀请别的用户
+    #     一起修改笔记和图谱」（* A24③）✅
+    #   · ★⚠ 而 `B157`「修补是项目创建者自己」的语境是**排除管理员代劳**，
+    #     ❌ 不是排除协作者 ⚠
+    if Collaborator.objects.filter(project=project, user=user).exists():
+        return CanCurate(
+            allowed=True, code="ok", is_collaborator=True, project=project,
+            message="你是这个项目的协作者",
         )
 
     if getattr(user, "is_staff", False):

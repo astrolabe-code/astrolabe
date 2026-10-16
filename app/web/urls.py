@@ -16,6 +16,7 @@ from core.refs import ProjectRefConverter
 from web.views import (
     admin,
     auth,
+    collaborators,
     comments,
     curate,
     graph,
@@ -199,6 +200,20 @@ urlpatterns = [
         "notes/<int:note_id>/likes/",
         likes.collection,
         name="note-likes",
+    ),
+    # ---------------------------------------------------------- 协作者（B202/B206/B207）
+    # ★★ 管理页「按用户名直接加」——* ❌ 不发链接、* ❌ 不要 token（* `B206`）⚠
+    path(
+        "projects/<project_ref:project_ref>/collaborators/",
+        collaborators.collection,
+        name="project-collaborators",
+    ),
+    # ⚠★ 用户名走 `<str:...>` ——* Django 用户名允许 `@ . + - _`，* ❌ 不含 `/` ✅
+    # ★★ 移除是**幂等**的：* 移一个不是成员的用户 ⇒ * 200 `removed:false` ⚠
+    path(
+        "projects/<project_ref:project_ref>/collaborators/<str:username>/",
+        collaborators.remove,
+        name="project-collaborator-remove",
     ),
     # ------------------------------------------------------------ 设置（B190）
     # ★★ 用户档 / 项目档（* 三级继承，* 见 core/settings_table.py）⚠

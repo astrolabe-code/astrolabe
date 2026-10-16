@@ -1042,6 +1042,70 @@ class ProjectStorage(models.Model):
         return f"{self.project_ref}:{self.bytes_used}B/{self.files_used}files"
 
 
+class Collaborator(models.Model):
+    """★★★ **项目协作者**（★ `B202` / `B206` / `B207`）—— ★ 一张**一对多**表。
+
+    ## ★★★ 所有者原话（2026-10-16，逐字）
+
+    > 「**协作者是以项目为基准邀请的，也就是说，一个项目甭管是私有的还是公开的，
+    > 只要邀请了，对方都可以查看修改**」
+
+    > 「**除了删除项目，协作者权限与作者一样大。**」
+
+    ## ★★ 为什么每行只有 `(project, user)` 两列
+
+    ```
+    ★★ 没有 role ——* 「协作者不需要读或者写这些权利划分」（* B202）⚠
+    ★★ 没有 invited_by / created_at ——* 想知道"谁邀的、何时进的"查 `AuditLog`
+       （* 存一份必然打架，* 同 `B197` 的纪律）⚠
+    ```
+
+    ## ★★ 为什么**不继承** `TimeStampedModel`（* 2026-10-16 自我纠正）
+
+    ```
+    ★★ 我第一版继承了它 ⇒ * 带出 `created_at` / `updated_at` 两列 ⚠
+       · · ★ 而 `B202`③ 明说**没有 created_at** ——* "何时进的"查 `AuditLog`，
+         * 表里再存一份**必然打架**（* 同 `B197` 的纪律）⚠
+       · · ★★ 所以改回纯 `models.Model`：* 只有 (project, user) 两列 ✅
+    ```
+
+    ## ★★ 三条硬纪律
+
+    | # | 纪律 |
+    |---|---|
+    | ① | ★★ **本表不参与任何"读内容"判断之外的事** —— 它只让 `can_edit` 多放一行人（`B207`②）⚠ |
+    | ② | ★★ **删项目不在协作者权限内**（`can_delete` 单判 owner/staff，`B207`②）⚠ |
+    | ③ | ★★ **成员被移除后，他建的笔记/评论全留着** —— 没有"冻结"这个动作（`B202`③）⚠ |
+
+    ⚠★ **项目内访问齐平**（`B207`① 的状态不变量）：
+      * 不存在"能看不能改"，也不存在"能改不能看"——
+      * ★★ 协作者与 owner 在**内容**上同权，* 只有"删项目"这一件事例外 ⚠
+    """
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="collaborators"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="collaborations",
+    )
+
+    class Meta:
+        constraints = [
+            # ★★ 同一人在同一项目只有一行（* 添加端点靠它做幂等）✅
+            models.UniqueConstraint(fields=["project", "user"], name="uniq_collaborator"),
+        ]
+        # ⚠★ 2026-10-16（`B199` 纪律）：**不另加索引** ⚠
+        #   · ★ 唯一约束自带的索引前缀就是 `project` ⇒ "列成员"已覆盖 ✅
+        #   · ★ 按 `user` 反查（* "我参与了哪些项目"）**本批没有用例** ⇒ 不加 ⚠
+        #   · ★★ 能少加一个字段进索引就少加一个 ⚠
+        verbose_name = "项目协作者"
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.user_id}"
+
+
 class UserProfile(TimeStampedModel):
     """用户档案 —— ★ 与 Django `User` **一对一**。
 

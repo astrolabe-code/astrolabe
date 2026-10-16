@@ -14,7 +14,10 @@
        段评就没了的」✅
 
 ③ ★★ 私有笔记 ⇒ ★ 只有作者能读 ⚠
-     · · ★ （* 协作者那层等第 8 批；* 现在 `can_edit` 已经留了口 ✅）
+     · · ★ 项目级：* 私有项目 ⇒ owner ∨ 协作者 ∨ staff（* `can_view`，* B207②）✅
+     · · ★ 笔记级：* `is_public=false` ⇒ * 作者 ∨ owner ∨ 协作者 ∨ staff
+       （* `note_readable` 两层判据，* B207⑦）✅
+     · · ★★ 协作者能看别人的私有笔记（* 所有者原话整句：「不能看，怎么修改？」）✅
 
 ④ ★★ 删除笔记 ⇒ ★ 它的段落 / 评论 / 点赞 CASCADE 消失 ✅
      · · ★ 而**修改记录（revision）也删** —— ★ 那是这个笔记自己的历史 ⚠
@@ -266,13 +269,21 @@ def _readable(request: HttpRequest, note: Note) -> bool:
 
 
 def _writable(request: HttpRequest, note: Note) -> bool:
-    """★★ **这篇笔记能改吗** ⚠
+    """★★ **这篇笔记能改吗**（★ `B207`③：* 协作者可改 / 删项目内**任何人**的笔记）⚠
 
     ```
-    ★★ 作者本人 · 或 ★★ 项目 owner · 或 staff ✅
+    ★★ staff ✅
+    ★★ 作者本人 ✅
+    ★★ 项目 owner ∨ 协作者（* `can_edit`）✅
     ```
 
-    ⚠★ 协作者能改 ⇒ ★ **第 8 批**（* 只改 `can_edit` 一处）⚠
+    ⚠★ 普通登录用户**不能**改别人项目里的笔记 ——* 所有者原话整句：
+      「普通登陆用户不能修改别人项目的图与笔记，这是别人辛辛苦苦写的，
+       怎么能允许别人轻易修改？这些就像B站up主发的视频一样。」⚠
+
+    ⚠★ 用 `note_alg.project_of()` 而**不是** `note.node.project`：
+      · ★ 基图节点上的笔记也要能按**绑它的项目**判（* 与 `note_readable`
+        同一个项目判据 ⇒* **能读就能改**，* 这正是 `B207`① 的齐平不变量）⚠
     """
     user = current_user(request)
     if user is None:
@@ -281,8 +292,8 @@ def _writable(request: HttpRequest, note: Note) -> bool:
         return True
     if note.created_by_id == user.pk:
         return True
-    project = note.node.project if note.node_id else None
-    return project is not None and project.owner_id == user.pk
+    project = note_alg.project_of(note)
+    return project is not None and can_edit(request, project)
 
 
 def _auto_title(body: str) -> str:

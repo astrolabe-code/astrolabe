@@ -25,17 +25,28 @@
 | 判据 | 规则 | 谁在用 |
 |---|---|---|
 | `role_of` | owner → collaborator → staff → user → guest | 本模块全部判据的地基 |
-| `can_view_project` | 公开 ⇒ 任何人；私有 ⇒ owner ∨ collaborator ∨ staff | 项目详情/列表、笔记、评论、点赞、协作者端点 |
-| `can_edit_project` | owner ∨ collaborator ∨ staff | 项目设置、触发拉取、取消作业、**建笔记**、协作者名单 |
-| `can_delete_project` | owner ∨ staff | **删项目**（`B207`②：协作者不能删） |
-| `can_manage_members` | owner ∨ staff | 加 / 移协作者（邀请是项目主的权力） |
-| `can_read_note` | 项目大门 +（公开 ∨ 作者 ∨ owner ∨ collaborator ∨ staff） | 笔记详情、评论、点赞 |
+| `can_view_project` | **隐藏 ⇒ 仅 owner**；否则 公开 ⇒ 任何人，私有 ⇒ owner ∨ collaborator | 项目详情/列表、笔记、评论、点赞、协作者端点 |
+| `can_edit_project` | owner ∨ collaborator | 项目设置、触发拉取、取消作业、**建笔记**、协作者名单 |
+| `can_delete_project` | **仅 owner** | **删项目**（`B207`②：协作者不能删） |
+| `can_manage_members` | **仅 owner** | 加 / 移协作者（邀请是项目主的权力） |
+| `can_read_note` | 项目大门 +（**隐藏 ⇒ 仅作者**；否则 公开 ∨ 作者 ∨ owner ∨ collaborator） | 笔记详情、评论、点赞 |
 | `can_write_note` | 作者 ∨ `can_edit_project` | 改 / 删笔记 |
 | `can_create_comment` | 登录 + 可读 | 发评论 |
-| `can_delete_comment` | 评论作者 ∨ staff ∨ `can_edit_project` | 删评论 |
+| `can_delete_comment` | 评论作者 ∨ **staff** ∨ `can_edit_project` | 删评论 |
 | `can_like` | 登录 + 可读 | 点赞 / 取消赞 |
-| `can_see_hidden_orphans` | 作者 ∨ `can_edit_project` ∨ staff | `include_hidden=1` |
-| `can_curate` | owner ∨ collaborator ∨ staff | 修图（`graph/curate.py` 委托本模块拿梯子） |
+| `can_see_hidden_orphans` | 作者 ∨ `can_edit_project` ∨ **staff** | `include_hidden=1` |
+| `can_curate` | owner ∨ collaborator | 修图（`graph/curate.py` 委托本模块拿梯子） |
+
+⚠★★ **2026-10-16（`B208`）：管理员的【内容写权限已全部切除】** ⚠
+
+```
+★★ 切掉 staff 的判据（* 7 处）：* can_view_project（* 私有分支）
+  · can_edit_project · can_delete_project · can_manage_members
+  · can_read_note（* 去 staff 直通）· can_write_note · can_curate ⚠
+★★ 保留 staff 的判据（* 2 处，* 所有者裁定「管理员可以删评论」）：
+  · can_delete_comment ✅ · can_see_hidden_orphans（* 要看得见才删得掉）✅
+★★ 管理员只剩：* **隐藏 / 下架 / 恢复** 项目和笔记（* `web/views/moderate.py`）✅
+```
 
 ⚠★ **加一种权限的走法**：* 在**本文件**加一个判据函数（* 查 `role_of` 或组合已有判据）+
   上面这张表补一行；* 门面加一个一行包装。* ★★ **判定逻辑永远只有一份** ⚠
@@ -47,6 +58,8 @@
 from __future__ import annotations
 
 from typing import Any
+
+from core.models import Note, Project
 
 # ===========================================================================
 # ① 角色梯（★ 全系统只此一处）
@@ -113,13 +126,24 @@ def can_view_project(user: Any, project: Any) -> bool:
     """能否**读这个项目**。
 
     ★ 公开项目：**游客也能读**（`U2.1`：读开放是策略）。
-    ⚠ 私有项目：owner ∨ 协作者 ∨ staff。
+    ⚠ 私有项目：owner ∨ 协作者。
+
+    ⚠★★ 2026-10-16（`B208`）两条变更：
+
+    | # | 变更 | 依据 |
+    |---|---|---|
+    | ① | ★★ **隐藏 = 只有 owner 能看到** ——* 别人（* 含协作者、* 含 staff）**直接链接也不可访问** | 所有者裁定（`A34`，覆盖 `U3.5` 旧口径） |
+    | ② | ★★ **私有分支去掉 staff** ——* 管理员没有额外读权限 | `B208`① |
     """
     if project is None:
         return False
+    # ① 隐藏 ⇒* 仅 owner（* 比私有更严：* 连协作者也不能看）✅
+    if project.state == Project.STATE_HIDDEN:
+        return role_of(user, project) == ROLE_OWNER
     if project.is_public:
         return True
-    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR, ROLE_STAFF)
+    # ② 私有 ⇒* owner ∨ 协作者（* ⚠ staff 已切）✅
+    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR)
 
 
 def can_edit_project(user: Any, project: Any) -> bool:
@@ -128,16 +152,21 @@ def can_edit_project(user: Any, project: Any) -> bool:
     ⚠ 与 UGC 的**评论 / 点赞**无关（那两条任何登录用户都可，见 `can_create_comment`）；
       ★★ 而**建笔记依赖**本判据（`B207`③：只能在自己 / 协项目建）⚠。
     ⚠★ **删项目不在这里** —— 见 `can_delete_project`（`B207`②）⚠。
+
+    ⚠★★ 2026-10-16（`B208`①）：**去掉 staff** ⚠
+      · ★ 管理员**不能**改项目内容（* 原话：「网站管理员有权限修改图和笔记，不行。」）⚠
     """
     if project is None:
         return False
-    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR, ROLE_STAFF)
+    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR)
 
 
 def can_delete_project(user: Any, project: Any) -> bool:
     """★★★ **能否删掉整个项目**（`B207`②：协作者**不能**删项目）⚠
 
-    ★★ 仅 owner ∨ staff。
+    ★★ **仅 owner**（* ⚠ 2026-10-16 `B208`①：* staff 也切了）⚠
+      · ★ 管理员**不能**删项目 ——* 他的删除手段是**下架**（* 物理删除 + 留痕，
+        * 见 `web/views/moderate.py`）✅
 
     ⚠★ 为什么单开一道判据、* ❌ 不并进 `can_edit_project`：
       · ★ `can_edit_project` 管的是"**改内容**"，* 删项目是"**毁掉全部**"——
@@ -145,20 +174,21 @@ def can_delete_project(user: Any, project: Any) -> bool:
     """
     if project is None:
         return False
-    return role_of(user, project) in (ROLE_OWNER, ROLE_STAFF)
+    return role_of(user, project) == ROLE_OWNER
 
 
 def can_manage_members(user: Any, project: Any) -> bool:
     """★★ **能否加 / 移协作者**（* 邀请是项目主的权力，* `A24③`）⚠
 
-    ★★ 仅 owner ∨ staff ——* 协作者**不能**加 / 移协作者 ⚠
+    ★★ **仅 owner**（* ⚠ 2026-10-16 `B208`①：* staff 也切了）⚠
+      · ★ 协作者**不能**加 / 移协作者 ✅
 
     ⚠ 当前规则与 `can_delete_project` **相同**，* 但**刻意分成两个名字**：
-      * 它们服务不同意图（* 一个毁全部、* 一个加同伴），* 将来若要分开收费不会互相绊住 ⚠
+      * 它们服务不同意图（* 一个毁全部、* 一个加同伴），* 将来若要分开不会互相绊住 ⚠
     """
     if project is None:
         return False
-    return role_of(user, project) in (ROLE_OWNER, ROLE_STAFF)
+    return role_of(user, project) == ROLE_OWNER
 
 
 def project_of(note: Any) -> Any:
@@ -208,9 +238,13 @@ def can_read_note(user: Any, note: Any) -> bool:
        · · ★★ 所以：* 私有项目里 `is_public` **失去意义** ⚠
        · · ★（* 这条同时补掉了"凭 note_id 直达"的洞 ——* note_id 是自增整数，
          可枚举，* 而详情 / 评论 / 点赞三个端点都走本函数）⚠
-    ① ★ **笔记层**：* `is_public` ∨ 作者 ∨ owner ∨ 协作者 ∨ staff ✅
+    ① ★★ **笔记状态**：* `hidden` ⇒* **只有作者**（* `B208`⑤，* 覆盖 `is_public`）⚠
+    ② ★ **笔记层**：* `is_public` ∨ 作者 ∨ owner ∨ 协作者 ✅
        · · ★ 协作者能看别人的私有笔记（* 原话整句：「不能看，怎么修改？」）✅
     ```
+
+    ⚠★★ 2026-10-16（`B208`①）：**去掉 staff 直通** ——* 管理员**没有**额外读权限
+      （* 原话的语义：* 私有项目 / 私有笔记 / 被隐藏的笔记，* 对管理员同样不可见）⚠
 
     ⚠★ 已知近似（* 2026-10-16 如实记）：* 笔记挂在**基图节点**上时，
       `project_of()` 取的是**第一个绑它的项目** ⇒ * 该项目私有则 **fail-closed**
@@ -222,14 +256,20 @@ def can_read_note(user: Any, note: Any) -> bool:
     if project is not None and not can_view_project(user, project):
         return False
 
-    # ① 笔记层 ✅
+    # ① 笔记状态：* 被隐藏 ⇒* **只有作者**（* 比私有更严，* 协作者也不可）✅
+    if note.state == Note.STATE_HIDDEN:
+        return (
+            user is not None
+            and getattr(user, "pk", None)
+            and note.created_by_id == user.pk
+        )
+
+    # ② 笔记层 ✅
     if note.is_public:
         return True
     if user is None or not getattr(user, "pk", None):
         return False
     if note.created_by_id == user.pk:
-        return True
-    if is_admin(user):
         return True
     if project is not None and (
         project.owner_id == user.pk or _is_collaborator(user, project)
@@ -242,7 +282,6 @@ def can_write_note(user: Any, note: Any) -> bool:
     """★★ **这篇笔记能改 / 删吗**（* `B207`③：* 协作者可改 / 删项目内**任何人**的笔记）⚠
 
     ```
-    ★★ staff ✅
     ★★ 作者本人 ✅
     ★★ 项目 owner ∨ 协作者（* `can_edit_project`）✅
     ```
@@ -250,11 +289,11 @@ def can_write_note(user: Any, note: Any) -> bool:
     ⚠★ 普通登录用户**不能**改别人项目里的笔记 ——* 所有者原话整句：
       「普通登陆用户不能修改别人项目的图与笔记，这是别人辛辛苦苦写的，
        怎么能允许别人轻易修改？这些就像B站up主发的视频一样。」⚠
+
+    ⚠★★ 2026-10-16（`B208`①）：**去掉 staff 直通** ——* 管理员不能改笔记 ⚠
     """
     if user is None or not getattr(user, "pk", None):
         return False
-    if is_admin(user):
-        return True
     if note.created_by_id == user.pk:
         return True
     return can_edit_project(user, project_of(note))
@@ -319,12 +358,16 @@ def can_see_hidden_orphans(user: Any, note: Any) -> bool:
 def can_curate(user: Any, project: Any) -> bool:
     """★★★ **谁能修补这个项目的图**（* `B207`④：* 协作者与 owner 同权修图）⚠
 
-    ★★ owner ∨ 协作者 ∨ staff ✅
+    ★★ owner ∨ 协作者 ✅
+
+    ⚠★★ 2026-10-16（`B208`①）：**去掉 staff** ——* 管理员**不能**修图 ⚠
+      · ★ 原话整句：「网站管理员有权限修改图和笔记，不行。」✅
+      · ★ `graph/curate.py` 的 `via_admin` 分支与 `CanCurate.via_admin` 字段
+        **一并删除**（* 那条路没有了，* 留着就是死代码）⚠
 
     ⚠★ `graph/curate.py::can_curate()` **委托本函数拿梯子**，* 自己只负责
-      把结果包装成 `CanCurate`（* 带 message / is_owner / is_collaborator /
-      via_admin）——* ★★ 梯子只此一处，* ❌ 不再来一遍 ⚠
+      把结果包装成 `CanCurate`（* 带 message / is_owner / is_collaborator）⚠
     """
     if project is None:
         return False
-    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR, ROLE_STAFF)
+    return role_of(user, project) in (ROLE_OWNER, ROLE_COLLABORATOR)

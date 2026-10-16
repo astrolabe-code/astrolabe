@@ -37,6 +37,45 @@ from web.http import fail, ok, ok_flat
 # ---------------------------------------------------------------------------
 
 
+def purge_project(project_ref: str) -> int:
+    """★★ **物理删除一个项目自己的全部数据**（★ `B208`③：* 下架 = 彻底删除）⚠
+
+    ★★ 所有者原话整句：「**下架是彻底从服务器上删除数据。**」✅
+
+    ## ★★ 删什么（* `B179` 的口径，* 一字未改）
+
+    ```
+    · ★ 这个项目**自己的**修改层（* GraphPatch）· 节点 · 边 · 作业 ✅
+    · ★★★ **绝不删基图** ——* 基图是**共享**的，* 删掉它 = 别的项目当场变空 ⚠
+    · ★ 审核流水**刻意保留**（* `B146`：* append-only，* 删项目不得抹掉限额流水）✅
+    ```
+
+    ⚠★ **先释放存储空间**（`B152`）——* 否则磁盘上那份源码会**永远留着**
+      （* 而用户以为他删掉了 ⇒* "我明明删了，为什么还是满的"）⚠
+
+    Returns:
+        ★ 释放的存储字节数 ✅
+
+    ⚠★ 两个调用方（* 2026-10-16 抽出，* `B208`）：
+      · ★ `projects.detail` 的 DELETE（* **owner 删自己的项目**）✅
+      · · ★ `moderate.moderate_project` 的 `take_down`（* **管理员下架**）✅
+      · · ★★ 同一套级联、* 同一句"绝不删基图"，* ❌ 不写两遍 ⚠
+    """
+    # ★★ 先释放存储空间（* `B152`）✅
+    freed = storage.release(project_ref)
+
+    # ⚠★★ `B179`：这里删的**只是这个项目自己的东西** ⚠
+    #   ★ `project_ref` 的那些节点 / 边 = **用户自己新增的**（★ 叠加层）⚠
+    #   ★★★ **绝不删基图** —— ★ 基图是**共享**的 ⚠
+    #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ✅
+    GraphPatch.objects.filter(project_ref=project_ref).delete()
+    Node.objects.filter(project_ref=project_ref).delete()
+    Edge.objects.filter(project_ref=project_ref).delete()
+    Job.objects.filter(project_ref=project_ref).delete()
+    Project.objects.filter(project_ref=project_ref).delete()
+    return freed
+
+
 def _body(request: HttpRequest) -> dict:
     """⚠ 解析失败一律返回**错误响应**而不是抛异常（契约 §12：`400 bad_json`）。"""
     if not request.body:
@@ -154,6 +193,11 @@ def _project_json(
         "name": project.name,
         "desc": project.desc,
         "is_public": project.is_public,
+        # ★★ `B208`⑧：* 状态 + 最近一次处置 ⇒* owner 要知道"为什么被隐藏" ✅
+        #   （* `B196`：* 作者来问"为什么"必须答得出 ⇒* 详情里直接给）⚠
+        "state": project.state,
+        "moderation_reason": project.moderation_reason,
+        "moderated_at": project.moderated_at.isoformat() if project.moderated_at else "",
         "provider": project.provider,
         "repo_url": project.repo_url,
         "commit": "",
@@ -210,12 +254,18 @@ def collection(request: HttpRequest) -> JsonResponse:
         qs = qs.filter(owner=user)
     elif not authed:
         # ★ 游客只看公开项目（否则登录与否就没区别了）
-        qs = qs.filter(is_public=True)
-    elif not user.is_staff:
-        # ⚠ 登录用户看：公开项目 + 自己的
+        # ★★ `B208`⑧：* 且只要 `active` ——* **被隐藏的**项目不列 ✅
+        qs = qs.filter(is_public=True, state=Project.STATE_ACTIVE)
+    else:
+        # ★★ `B208`①：* **去掉 staff 的"完全不过滤"分支** ⚠
+        #   （* 原口径：* staff 在列表里能看到**所有**项目，* 含别人的私有项目；
+        #     * 管理员没有额外读权限 ⇒* 他与普通登录用户看到的一样）⚠
+        # ★★ `B208`⑧：* 隐藏项目只有 **owner** 能在列表里看到 ✅
         from django.db.models import Q
 
-        qs = qs.filter(Q(is_public=True) | Q(owner=user))
+        qs = qs.filter(
+            Q(is_public=True, state=Project.STATE_ACTIVE) | Q(owner=user)
+        )
 
     qs = qs.order_by("-created_at")[:200]
     projects = list(qs)
@@ -297,34 +347,10 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         #   · ★ 而 PATCH（* 改名 / 改描述 / 改公开性）仍走 `can_edit` ✅
         if not permissions.can_delete(request, project):
             return fail("只有项目所有者能删除项目", 403, code="forbidden")
-        # ⚠ 一期：**物理删除**（图 / 作业随 project_ref 一起清）
-        #   ⚠ 契约 §19.6 要求「删除中 = deleting 状态 + 拒绝写」，那是后续的事
-        #
-        # ★★ **必须先释放存储空间**（`B152`）——
-        #   ⚠★ 否则磁盘上那份源码会**永远留着**（★ 而用户以为他删掉了 ⇒
-        #     他会觉得"我明明删了，为什么还是满的"，⚠ 这是最难解释的一类 bug）。
-        freed = storage.release(project_ref)
-
-        # ⚠★★ `B179`（2026-10-13）：这里删的**只是这个项目自己的东西** ⚠
-        #   ★ `project_ref` 的那些节点 / 边 = **用户自己新增的**（★ 叠加层）⚠
-        #   ★ 它的修改记录（`GraphPatch`）
-        #   ★★★ **绝不删基图** —— ★ 基图是**共享**的，
-        #     ⚠ 删掉它 = 别的项目**当场变空**（★ 而且它们并没有做错任何事）⚠
-        #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ✅
-        #
-        # ⚠★★ 2026-10-14（`B179` 第二步）：**"解绑"那一行【已删】** ⚠
-        #   ★★ 原先要单独删 `ProjectBaseGraph` 那一行 —— ★ 而那张表**已并入项目表** ⚠
-        #   ⇒ ★ 现在**删项目行本身就等于解绑** ✅（★ 外键随行消失）
-        #   ★（★ 而基图那行**不受影响** —— ★ 它是共享的 ✅）
-        GraphPatch.objects.filter(project_ref=project_ref).delete()
-        Node.objects.filter(project_ref=project_ref).delete()
-        Edge.objects.filter(project_ref=project_ref).delete()
-        Job.objects.filter(project_ref=project_ref).delete()
-        # ⚠ 审核流水**刻意保留**（`B146`：append-only —— 删项目**不得**抹掉限额流水）
-        project.delete()
+        freed = purge_project(project_ref)
         return ok({"deleted": True, "storage_freed_bytes": freed})
 
-    # PATCH —— ★ 改内容 ⇒ `can_edit`（owner ∨ 协作者 ∨ staff，`B207`②）✅
+    # PATCH —— ★ 改内容 ⇒ `can_edit`（owner ∨ 协作者，`B207`②；⚠ staff 已切，`B208`①）✅
     if not permissions.can_edit(request, project):
         return fail("需要项目所有者权限", 403, code="forbidden")
 

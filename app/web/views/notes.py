@@ -108,10 +108,16 @@ def _list(request: HttpRequest, project):
     node_ids = scope.readable_nodes_of(project.project_ref).values_list("pk", flat=True)
     qs = Note.objects.filter(node_id__in=node_ids)
     # ⚠★ 私有笔记只有作者能看 ✅
+    # ★★ `B208`⑧：* **被隐藏的笔记**（* state=hidden）对**非作者**一律不列 ✅
+    #   （* 隐藏 = 只有作者能看到，* 比私有更严：* 协作者也不可）⚠
     if user is None:
-        qs = qs.filter(is_public=True)
+        qs = qs.filter(is_public=True, state=Note.STATE_ACTIVE)
     else:
-        qs = qs.filter(is_public=True) | qs.filter(created_by=user)
+        from django.db.models import Q
+
+        qs = qs.filter(
+            Q(is_public=True, state=Note.STATE_ACTIVE) | Q(created_by=user)
+        )
 
     kind = (request.GET.get("kind") or "").strip()
     if kind:
@@ -284,6 +290,10 @@ def _note_json(n: Note) -> dict:
         "body": n.body,
         "card_skin": n.card_skin,
         "is_public": n.is_public,
+        # ★★ `B208`⑦：* 状态 + 最近一次处置 ⇒* 作者要知道"为什么被隐藏" ✅
+        "state": n.state,
+        "moderation_reason": n.moderation_reason,
+        "moderated_at": n.moderated_at.isoformat() if n.moderated_at else "",
         "like_count": n.like_count,
         "comment_count": n.comment_count,
         "created_by": n.created_by.get_username() if n.created_by_id else "",

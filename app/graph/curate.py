@@ -207,7 +207,10 @@ class _BatchFailed(Exception):
 class CanCurate:
     """★ 修补权限的判定结果。
 
-    ⚠★ 注意 `via_admin` —— ★ 它**必须**被写进审计（见模块文档）。
+    ⚠★ 2026-10-16（`B208`①）：**`via_admin` 字段已删** ⚠
+      · ★ 管理员**不能**修图（* 所有者原话整句：「网站管理员有权限修改图和笔记，
+        不行。」）⇒* `is_staff` 代改这条路**没有了**，* 字段留着就是死代码 ⚠
+      · · ★ 审计要区分"谁改的" ⇒* 看 `is_owner` / `is_collaborator` 两个标记 ✅
     """
 
     allowed: bool = False
@@ -217,8 +220,6 @@ class CanCurate:
     is_owner: bool = False
     #: ★★ **协作者**（`B202` / `B207`）—— ★ 与 owner 同权修图，* 但审计里要分得开 ⚠
     is_collaborator: bool = False
-    #: ★★ **`is_staff` 代改** —— ⚠ 与"owner 自己改"**性质不同**
-    via_admin: bool = False
     project: Any = None
 
 
@@ -229,13 +230,15 @@ def can_curate(project_ref: str, user) -> CanCurate:
       （★ 方向是 `web → graph`，符合 `ARCHITECTURE.md` A3 的分层 ✅）
       —— ⚠ 反过来的话 `graph/` 就要 import `web/`，**越层**了。
 
-    ## ★★ 三种放行（* `B207`④：* 协作者与 owner 同权修图）⚠
+    ## ★★ 两种放行（* `B207`④：* 协作者与 owner 同权修图）⚠
 
     ```
     ① ★★ 项目创建者（* 主路径）✅
     ② ★★ 协作者（* B207④：* 「协作者可以改/删项目内任何人的笔记和图节点」）✅
-    ③ ★★ 站点管理员（* 代改，* 审计里必须区分开）✅
     ```
+
+    ⚠★★ 2026-10-16（`B208`①）：**管理员（staff）不再能修图** ⚠
+      · ★ `CanCurate.via_admin` 字段与 staff 分支**一并删除** ✅
 
     ⚠★★ 2026-10-16（`B209`）：**梯子收拢到内核** ⚠
       · ★ 本函数**只负责把角色映射成 `CanCurate`**（* 每个角色的 message /
@@ -268,13 +271,6 @@ def can_curate(project_ref: str, user) -> CanCurate:
         return CanCurate(
             allowed=True, code="ok", is_collaborator=True, project=project,
             message="你是这个项目的协作者",
-        )
-
-    if role == access.ROLE_STAFF:
-        # ⚠ **平台介入** —— 允许，但审计里必须区分开
-        return CanCurate(
-            allowed=True, code="ok", via_admin=True, project=project,
-            message="站点管理员（代项目方修补）",
         )
 
     if user is None or not getattr(user, "pk", None):

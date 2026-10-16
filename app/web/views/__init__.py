@@ -18,6 +18,7 @@
 | `publish` | 发布 / 请求建立快照 | 登录用户 |
 | `review` | 审核队列（放行 / 驳回，★ **驳回必填理由**） | `is_staff` |
 | `invites` | 邀请码（生成 / 核销 / 列表） | 登录用户 / `is_staff` |
+| `moderate` | 管理处置（**隐藏 / 下架 / 恢复** 项目和笔记） | `is_staff`（★ 管理员唯一的权力，`B208`） |
 | `notes` | 笔记 CRUD + 段落重算（★ `blocks` 后端算） | 登录用户（私有仅作者） |
 | `comments` | 评论（章评 / 段评 / 楼中楼，★ **只删不改**） | 登录用户 |
 | `likes` | 点赞（章赞 / 段赞，★ **幂等**） | 登录用户 |
@@ -30,6 +31,7 @@
 """
 
 from web.views import (  # noqa: F401
+    admin,
     auth,
     collaborators,
     comments,
@@ -39,6 +41,7 @@ from web.views import (  # noqa: F401
     jobs_api,
     likes,
     me,
+    moderate,
     notes,
     projects,
     publish,
@@ -47,6 +50,7 @@ from web.views import (  # noqa: F401
 )
 
 __all__ = [
+    "admin",
     "auth",
     "collaborators",
     "comments",
@@ -56,6 +60,7 @@ __all__ = [
     "jobs_api",
     "likes",
     "me",
+    "moderate",
     "notes",
     "projects",
     "publish",

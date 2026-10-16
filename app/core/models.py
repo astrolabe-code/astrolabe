@@ -1416,6 +1416,48 @@ class Note(TimeStampedModel):
         related_name="notes",
     )
 
+    # ------------------------------------------------------------------ 状态
+    # ★★ `B208`⑦（* 2026-10-16）：* 笔记也要能被管理员**隐藏 / 下架** ⚠
+    #
+    # ★★ 所有者原话整句（* A34）：「管理员只有隐藏下架项目和笔记的权限」✅
+    #
+    # ⚠★ **只有两态** ——* 刻意**不设** `taken_down` ⚠
+    #   · ★ 所有者裁定（* 逐字）：「**下架是彻底从服务器上删除数据。**」✅
+    #   · · ★ 下架 = **物理删除** ⇒* 行都没了，* 要那个态干什么？⚠
+    #   · ★ 所以本列只需表达"**被隐藏**"这一种中间态 ✅
+    #
+    # ⚠★ **隐藏的语义**（* 所有者裁定，* 覆盖 `U3.5` 旧口径）：
+    #   · ★★ **只有作者能看到**，* 别人**直接链接也不可访问** ⚠
+    #   · ★★ 比私有项目更严：* **连协作者也不能看** ✅
+    #     （* 私有项目 = owner ∨ 协作者；* 隐藏 = **仅作者**）⚠
+    STATE_ACTIVE = "active"
+    STATE_HIDDEN = "hidden"
+    STATE_CHOICES = [
+        (STATE_ACTIVE, "正常"),
+        (STATE_HIDDEN, "已隐藏"),
+    ]
+    state = models.CharField(
+        max_length=16, choices=STATE_CHOICES, default=STATE_ACTIVE, db_index=True
+    )
+
+    # ---------------------------------------------------------------- 处置留痕
+    # ★★ 同 `Project` 侧那三列（* `B196` 的形状）——* 「最近一次处置」⚠
+    #   · ★ `state` 只有"现在是什么状态"，* **没有原因** ⚠
+    #   · ★★ 作者来问"**为什么隐藏我**"⇒ ★ **答不出来** ⚠
+    #   · ⚠★ 代价：* 只能存**最近一次** ⇒ ★ 多次处置的历史靠 `AuditLog` ⚠
+    #: ★★ **最近一次处置的理由**（★ 管理员处置时写）· ★ 空串 = 没处置过
+    moderation_reason = models.CharField(max_length=400, blank=True, default="")
+    #: ★ **谁做的这次处置**（★ FK → `auth_user`）· ★ NULL = 没处置过
+    moderated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="moderated_notes",
+    )
+    #: ★ **什么时候处置的** · ★ NULL = 没处置过
+    moderated_at = models.DateTimeField(null=True, blank=True)
+
     # ---- 冗余计数（★ 列表免 count；* 真相在明细表，* 必须可重算）----
     like_count = models.IntegerField(default=0)
     comment_count = models.IntegerField(default=0)

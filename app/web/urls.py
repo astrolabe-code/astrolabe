@@ -24,6 +24,7 @@ from web.views import (
     jobs_api,
     likes,
     me,
+    moderate,
     notes,
     projects,
     publish,
@@ -81,6 +82,21 @@ urlpatterns = [
     # ⚠★ 权限分两层（★ `U2.4`）：★ 本端点只要 `staff`，★ 而【门禁类参数】的写入
     #   **由 `appsettings.set_value()` 自己拦 superuser**（★ 见 `views/admin.py` 文件头）。
     path("admin/settings/", admin.settings_view, name="admin-settings"),
+    # ------------------------------------------------ 管理处置（B208：管理员唯一的权力）
+    # ★★ 隐藏 = 仅作者/owner 可见（别人直链也不可访问）；
+    #   ★★ 下架 = 物理删除数据（删前留痕）；
+    #   ★★ 恢复 = 仅 hidden→active 且仅管理员（非管理员不可恢复）⚠
+    # ⚠★ 整条 @staff_only ⇒* 协作者 / 普通用户一律 403 ✅
+    path(
+        "admin/projects/<project_ref:project_ref>/moderate/",
+        moderate.moderate_project,
+        name="admin-moderate-project",
+    ),
+    path(
+        "admin/notes/<int:note_id>/moderate/",
+        moderate.moderate_note,
+        name="admin-moderate-note",
+    ),
 
     # ------------------------------------------------------------ 项目
     path("projects/", projects.collection, name="project-collection"),

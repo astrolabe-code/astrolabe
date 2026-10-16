@@ -16,10 +16,12 @@ from core.refs import ProjectRefConverter
 from web.views import (
     admin,
     auth,
+    comments,
     curate,
     graph,
     invites,
     jobs_api,
+    likes,
     me,
     notes,
     projects,
@@ -180,6 +182,24 @@ urlpatterns = [
     #   · · ★ 挂在项目下会逼着 URL 里带 ref ⇒ ★ 而 ref 与笔记是**多对一** ⚠
     #     （* 一篇笔记只属于一个项目，* 但 URL 不必 redundant 地再写一遍）⚠
     path("notes/<int:note_id>/", notes.detail, name="note-detail"),
+    # ------------------------------------------------------------ 评论（B201/B203）
+    # ★★ 章评 + 段评【同表】；* `anchor_kind` **创建时定死**（* B203④）⚠
+    # ★★ 楼中楼：* 默认只给顶层，* `?parent=<id>` 拉某条的回复（* B201②）⚠
+    path(
+        "notes/<int:note_id>/comments/",
+        comments.collection,
+        name="note-comments",
+    ),
+    # ⚠★ 单条【不挂笔记】—— ★ 与 `notes/<id>/` 同构：* id 自己唯一 ✅
+    # ★★ **只有 DELETE**（* 评论只删不改，* B201③）—— * 且是**软删** ⚠
+    path("comments/<int:comment_id>/", comments.detail, name="comment-detail"),
+    # ------------------------------------------------------------ 点赞（B203⑤）
+    # ★★ 幂等：* 重复点赞返回 200 且计数不变（* ❌ 不是 409）⚠
+    path(
+        "notes/<int:note_id>/likes/",
+        likes.collection,
+        name="note-likes",
+    ),
     # ------------------------------------------------------------ 设置（B190）
     # ★★ 用户档 / 项目档（* 三级继承，* 见 core/settings_table.py）⚠
     path("me/settings/", settings.user_settings, name="user-settings"),

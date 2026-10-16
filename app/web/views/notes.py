@@ -39,7 +39,7 @@ from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径�
 from graph import notes as note_alg
 from graph import scope
 from web.http import fail, ok_flat, read_json
-from web.permissions import can_edit, can_view, current_user, get_project
+from web.permissions import can_edit, can_view, current_user, get_project, note_readable
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
@@ -251,6 +251,10 @@ def _patch(request: HttpRequest, note: Note):
 def _readable(request: HttpRequest, note: Note) -> bool:
     """★★ **这篇笔记能读吗** ⚠
 
+    ⚠★ 2026-10-16：* 本体已收拢到 `web/permissions.py::note_readable`——
+      · ★ 评论 / 点赞接口**共用**它，* ❌ 不再各写一份 ⚠
+      · · ★（* 留这个壳是为了本文件内调用不变）✅
+
     ```
     ① ★ 公开 ⇒ ★ 谁都能读 ✅
     ② ★ 私有 ⇒ ★ 只有作者 ✅
@@ -258,10 +262,7 @@ def _readable(request: HttpRequest, note: Note) -> bool:
 
     ⚠★ 协作者可见私有笔记 ⇒ ★ **第 8 批**（* `can_edit` 已经留了口）⚠
     """
-    if note.is_public:
-        return True
-    user = current_user(request)
-    return user is not None and note.created_by_id == user.pk
+    return note_readable(request, note)
 
 
 def _writable(request: HttpRequest, note: Note) -> bool:

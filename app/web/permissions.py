@@ -112,6 +112,23 @@ def can_edit(request: HttpRequest, project: Project) -> bool:
     return _is_owner(request, project) or _is_staff(request)
 
 
+def note_readable(request: HttpRequest, note) -> bool:
+    """★★ **这篇笔记能读吗**（★ `views/notes.py` 的口径收拢到此处，* **只此一份**）⚠
+
+    ```
+    ① ★ 公开 ⇒ ★ 谁都能读 ✅
+    ② ★ 私有 ⇒ ★ 只有作者 ✅
+    ```
+
+    ⚠★ 协作者可见私有笔记 ⇒ ★ **第 8 批**（* `can_edit` 已经留的口）⚠
+    ⚠★ 评论 / 点赞接口**共用**本函数 —— * 三处各写一份，* 早晚不一致 ⚠
+    """
+    if note.is_public:
+        return True
+    user = current_user(request)
+    return user is not None and note.created_by_id == user.pk
+
+
 def can_curate(project_ref: str, user):
     """★★★ **能否修补这个项目的图**（`§2.3.12` 通道 ②）—— ★ **项目创建者自己**。
 

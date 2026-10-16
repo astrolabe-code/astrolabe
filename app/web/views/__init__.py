@@ -18,6 +18,10 @@
 | `publish` | 发布 / 请求建立快照 | 登录用户 |
 | `review` | 审核队列（放行 / 驳回，★ **驳回必填理由**） | `is_staff` |
 | `invites` | 邀请码（生成 / 核销 / 列表） | 登录用户 / `is_staff` |
+| `notes` | 笔记 CRUD + 段落重算（★ `blocks` 后端算） | 登录用户（私有仅作者） |
+| `comments` | 评论（章评 / 段评 / 楼中楼，★ **只删不改**） | 登录用户 |
+| `likes` | 点赞（章赞 / 段赞，★ **幂等**） | 登录用户 |
+| `settings` | 用户档 / 项目档设置（三级继承） | 本人 / 项目 owner |
 
 ⚠ **读 / 写分开是有意的**：★ `graph.py` 只管**读**（任何人可读），
   ★★ `curate.py` 只管**写**（★ 只有维护者）—— ⚠ 混在一个文件里，
@@ -26,24 +30,32 @@
 
 from web.views import (  # noqa: F401
     auth,
+    comments,
     curate,
     graph,
     invites,
     jobs_api,
+    likes,
     me,
+    notes,
     projects,
     publish,
     review,
+    settings,
 )
 
 __all__ = [
     "auth",
+    "comments",
     "curate",
     "graph",
     "invites",
     "jobs_api",
+    "likes",
     "me",
+    "notes",
     "projects",
     "publish",
     "review",
+    "settings",
 ]

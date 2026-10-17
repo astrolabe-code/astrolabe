@@ -112,7 +112,7 @@ def _list(request: HttpRequest, note: Note):
     if anchor not in ("chapter", "paragraph"):
         return fail("anchor_kind 必须是 chapter 或 paragraph", 400, code="bad_anchor")
 
-    # ---- 楼中楼：parent 空 = 顶层；有值 = 某条的回复 ----
+    # ---- 楼中楼：parent 空 = 顶层；有值 = 某条的**整棵子树**（`B213`）----
     parent = None
     parent_raw = (request.GET.get("parent") or "").strip()
     if parent_raw:
@@ -125,7 +125,6 @@ def _list(request: HttpRequest, note: Note):
             return fail("要查看回复的评论不存在", 404, code="parent_not_found")
 
     q = Q(note=note, deleted_at__isnull=True)
-    q &= Q(parent=parent) if parent is not None else Q(parent__isnull=True)
 
     block = None
     if anchor == "paragraph":
@@ -157,14 +156,43 @@ def _list(request: HttpRequest, note: Note):
             ):
                 q |= orphans
 
+    # ⚠★ 楼中楼（子树视图）的 limit 上限放到 **THREAD_MAX_ITEMS**（* 200）——
+    #   · · ★ 顶层列表仍是 PAGE_MAX（* 100）✅
+    #   · · ★ 平铺一次拿全 ⇒* 默认就给 200（* ⛔ 不让调用方为拿全线程专门传参）⚠
+    limit = _clamp(
+        request.GET.get("limit"),
+        1,
+        THREAD_MAX_ITEMS if parent is not None else PAGE_MAX,
+        THREAD_MAX_ITEMS if parent is not None else 50,
+    )
+    offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
+
+    if parent is not None:
+        # ★★ `B213`：**整棵子树**（* B站式平铺的原料）⚠
+        #   · · ★ 从根逐层 BFS ⇒* 前端一次拿全，* ⛔ 不递归发请求 ✅
+        #   · · ★ 排序**旧的在前**（* 阅读顺序，* 与直接子级时一致）✅
+        items = _subtree_of(parent, q)
+        total = len(items)
+        page = items[offset:offset + limit]
+        _attach_reply_counts(page)
+        return ok(
+            {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "items": [_comment_json(c) for c in page],
+            }
+        )
+
     qs = NoteComment.objects.filter(q)
+    # ★★ 顶层列表 ⇒* **只要没有父的**（* 楼中楼的回复不在这里单独成条）⚠
+    #   ⚠★ 2026-10-17 修：* `B213` 重构 parent 分支时把这行弄丢过 ⇒*
+    #     回复漏进顶层列表（* 新冒烟第 ④ 条当场抓住）⚠
+    qs = qs.filter(parent__isnull=True)
     # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：
     #   · ★ 顶层列表**新的在前**（* `ix_comment_chapter` / `ix_comment_paragraph`）✅
     #   · ★★ 楼中楼**旧的在前**（* `ix_comment_parent`；* 阅读顺序）✅
-    qs = qs.order_by("created_at" if parent is not None else "-created_at")
-
-    limit = _clamp(request.GET.get("limit"), 1, PAGE_MAX, 50)
-    offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
+    qs = qs.order_by("-created_at")
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
@@ -177,6 +205,50 @@ def _list(request: HttpRequest, note: Note):
             "items": [_comment_json(c) for c in items],
         }
     )
+
+
+#: ★★ 楼中楼子树安全帽（* `B213`）⚠
+#:   · · ★ **条数帽**：* 一次最多带这么多条（* 超出即截断，* ⛔ 不写无界递归）✅
+THREAD_MAX_ITEMS = 200
+#:   · · ★ **层数帽**：* BFS 最多逐这么多层（* 防退化成细长链时请求过多）✅
+THREAD_MAX_DEPTH = 10
+
+
+def _subtree_of(root: NoteComment, base_q: Q) -> list[NoteComment]:
+    """★★ **一条评论的整棵子树**（* `B213`：* B站式平铺的数据来源）⚠
+
+    ## ★★ 为什么逐层 BFS 而不是递归 CTE
+
+    ```
+    ★★ 递归 CTE 在 ORM 里写起来要 `with_recursive()` + 手写 union，
+      还要和 base_q（* 删没删 / 章还是段）重新组合 ⇒* 可读性差 ⚠
+    ★★ 而楼中楼**通常只有 2–3 层** ⇒* BFS 实际就是 2–3 发查询 ✅
+    ★★ 两道安全帽（* THREAD_MAX_ITEMS / THREAD_MAX_DEPTH）保证最坏情况也有界 ⚠
+    ```
+
+    ⚠ 同一层内按 `created_at` **旧的在前**（* 阅读顺序）✅
+    ⚠ 层与层之间**不严格按时间**（* 先整层再下一层）——
+      · · ★ 平铺显示时前端按 `created_at` 再排一次即可（* 见 `D94`①）⚠
+      · · ★（* 若将来要严格时间序，* 在这里末尾排一次也行）✅
+    """
+    out: list[NoteComment] = []
+    level = [root.pk]
+    seen = {root.pk}
+    depth = 0
+    while level and len(out) < THREAD_MAX_ITEMS and depth < THREAD_MAX_DEPTH:
+        kids = list(
+            NoteComment.objects.filter(base_q, parent_id__in=level).order_by("created_at")
+        )
+        if not kids:
+            break
+        out.extend(kids)
+        level = [k.pk for k in kids if k.pk not in seen]
+        seen.update(level)
+        depth += 1
+    # ★★ 末了按时间排一次（* 跨层也保证阅读顺序）✅
+    #   · · ★ BFS 是「先整层再下一层」，* 不排的话深浅会混在时间序里 ⚠
+    out.sort(key=lambda c: (c.created_at, c.pk))
+    return out
 
 
 def _create(request: HttpRequest, note: Note, user):

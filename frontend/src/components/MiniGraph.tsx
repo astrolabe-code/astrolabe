@@ -1,8 +1,20 @@
 import { useEffect, useRef } from 'react'
-import { DataSet, Network } from 'vis-network/standalone'
-import type { Edge, Node } from 'vis-network'
+import { Graph } from '@antv/g6'
 import { startMeteor } from '../lib/meteorFx'
 
+/**
+ * ★ 首页 / 演示窗的小图（`D98` · AntV G6 版）
+ *
+ * ## ★★ 与旧版的差别（* 不是重写需求，是引擎换了）
+ *
+ * | | 旧版（vis-network） | 现在（G6） |
+ * |---|---|---|
+ * | 引擎 | `vis-network`（* 已从依赖删除） | ★ AntV G6 ✅ |
+ * | 位置 | 写死 x/y（physics:false） | ★ 同样写死 x/y（不跑布局）✅ |
+ * | 流星 | 运行时包装 vis-network 私有钩子 | ★ **独立 canvas 叠加层**（`lib/meteorFx`）✅ |
+ *
+ * ⚠★ 位置从数据来（`style.x/y`）+ **不配 layout** —— 静态装饰图不需要力导向 ⚠
+ */
 export interface MiniNode {
   id: string
   label: string
@@ -15,13 +27,13 @@ export interface MiniNode {
 interface Props {
   nodes: MiniNode[]
   className?: string
-  /** 是否启用流星(流光)效果(演示窗口/卡片预览都启用,相位与速度错开) */
+  /** 流星（流光）效果（* 演示窗 / 卡片预览启用，* 相位与速度错开） */
   meteor?: { phase?: number; speed?: number }
-  /** 容器可见性变化时重新适配画布(懒加载后尺寸从 0 → 实际) */
+  /** 容器可见性变化时重算尺寸（* 懒加载后尺寸从 0 → 实际） */
   active?: boolean
 }
 
-// 目录配色(与图谱页 DIR_COLORS 一致)
+// 目录配色（与图谱页 DIR_COLORS 一致）
 const DIR: Record<string, string> = {
   kernel: '#ef4444',
   'kernel/blk_drv': '#f87171',
@@ -39,71 +51,85 @@ const colorOf = (id: string) => DIR[id.split('/')[0]] || '#f59e0b'
 
 export default function MiniGraph({ nodes, className, meteor, active = true }: Props) {
   const boxRef = useRef<HTMLDivElement>(null)
-  const netRef = useRef<Network | null>(null)
+  const graphRef = useRef<Graph | null>(null)
   const stopRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const box = boxRef.current
     if (!box) return
 
-    const visNodes = new DataSet<Node>(
-      nodes.map((n) => ({
-        id: n.id,
-        label: n.label,
-        x: n.x,
-        y: n.y,
-        color: { background: colorOf(n.id), border: colorOf(n.id) },
-        font: { color: '#ffffff', size: 13, strokeWidth: 3, strokeColor: '#1e293b', face: 'PingFang SC, Microsoft YaHei' },
-        shape: 'dot',
-        size: n.size || 22,
-      })),
-    )
-    const visEdges = new DataSet<Edge>(
-      nodes
-        .filter((n) => n.linkTo)
-        .map((n, i) => ({
-          id: `e${i}`,
-          from: n.id,
-          to: n.linkTo as string,
-          color: { color: '#d97706', opacity: 0.9 },
-          arrows: { to: { enabled: true, scaleFactor: 0.7 } },
-          smooth: { enabled: true, type: 'dynamic' as const, roundness: 0.5 },
+    const edges = nodes
+      .filter((n) => n.linkTo)
+      .map((n, i) => ({
+        id: `e${i}`,
+        source: n.id,
+        target: n.linkTo as string,
+        style: { stroke: '#d97706', opacity: 0.9, lineWidth: 1, endArrow: true },
+      }))
+
+    const g = new Graph({
+      container: box,
+      autoResize: true,
+      autoFit: { type: 'view' },
+      animation: false,
+      data: {
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          style: {
+            // ★ 静态位置：来自数据（* 不跑布局）
+            x: n.x,
+            y: n.y,
+            size: n.size || 22,
+            fill: colorOf(n.id),
+            stroke: colorOf(n.id),
+            labelText: n.label,
+            labelPlacement: 'bottom',
+            labelFill: '#e2e8f0',
+            labelFontSize: 9,
+          },
         })),
-    )
-
-    const network = new Network(
-      box,
-      { nodes: visNodes, edges: visEdges },
-      {
-        physics: false,
-        interaction: { hover: true, tooltipDelay: 100, navigationButtons: false, keyboard: false },
-        edges: { smooth: { enabled: true, type: 'dynamic', roundness: 0.5 } },
+        edges,
       },
-    )
-    netRef.current = network
+      node: { style: { labelPlacement: 'bottom', labelFill: '#e2e8f0', labelFontSize: 9 } },
+      edge: { style: { endArrow: true, lineWidth: 1 } },
+      // ★ 纯装饰：* 不给交互（避免用户拖动卡片里的图）
+      behaviors: [],
+    })
+    void g.render()
+    graphRef.current = g
 
-    if (meteor) {
-      stopRef.current = startMeteor(network, visEdges.getIds(), meteor)
+    const list = nodes.filter((n) => n.linkTo).map((n) => ({ from: n.id, to: n.linkTo as string }))
+    let timer: number | null = null
+    if (meteor && list.length > 0) {
+      // ★ 等渲染完成（位置才有效）再启动流星
+      timer = window.setTimeout(() => {
+        stopRef.current = startMeteor(g, box, list, meteor)
+      }, 120)
     }
 
-    const onResize = () => network.redraw()
-    window.addEventListener('resize', onResize)
     return () => {
-      window.removeEventListener('resize', onResize)
+      if (timer != null) window.clearTimeout(timer)
       stopRef.current?.()
-      network.destroy()
-      netRef.current = null
+      stopRef.current = null
+      graphRef.current = null
+      g.destroy()
     }
     // nodes 为静态演示数据,只在挂载时构建一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 从隐藏切到可见时,容器尺寸才有效 → 重新适配
+  // 从隐藏切到可见时,容器尺寸才有效 → 重算画布
   useEffect(() => {
     if (!active) return
-    const id = window.setTimeout(() => netRef.current?.fit({ animation: false }), 60)
+    const id = window.setTimeout(() => graphRef.current?.resize(), 60)
     return () => window.clearTimeout(id)
   }, [active])
 
-  return <div ref={boxRef} className={className} style={{ width: '100%', height: '100%' }} />
+  return (
+    <div
+      ref={boxRef}
+      className={className}
+      style={{ width: '100%', height: '100%', position: 'relative' }}
+    />
+  )
 }

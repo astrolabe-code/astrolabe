@@ -1,42 +1,38 @@
 /**
- * vis-network 流星(流光)效果 —— 旧站 vis_flow_fx.js 的等价重写
+ * ★★ **流星（流光）效果 —— G6 版**（`D98` · 2026-10-17 重写）
  *
- * 层序(关键):旧站用的是**打过补丁的** vis-network(vendored 版内含 `window.__visFlowLayer`
- *   钩子,绘制顺序为 drawEdges → 流星 → drawNodes)。npm 版 vis-network v10 没有该钩子,
- *   但其 CanvasRenderer._draw 的调用序列是:
- *     beforeDrawing → _drawEdges → _drawNodes → afterDrawing   (见 v10 源码 2989/3000/3008/3034)
- *   因此这里在**运行时包装** `renderer._drawNodes`:先画流星,再调用原方法 ——
- *   既得到"边 → 流星 → 节点"的正确层序(节点不会被流星盖住),又不修改 node_modules,
- *   且 stop() 时原样还原。若未来内部结构变化导致包装失败,自动退回 afterDrawing(画在最上层)。
+ * ## ★ 从哪来的
  *
- * 行为保持:尾迹 0.2 长度 / 6 段采样 / 头部光晕 + 白色亮核;
- *           拖拽暂停、缩放暂停 120ms、每 2 帧推进一次、边数 >150 抽样。
+ * 旧版是 **vis-network** 的（* 还依赖旧站 vendored 补丁的 `__visFlowLayer` 钩子，
+ * 靠运行时包装 `_drawNodes` 得到"边 → 流星 → 节点"的层序）⚠
+ *
+ * ## ★★ G6 版怎么画（* 不复刻内部钩子）
+ *
+ * ```
+ * ★★ 在画布容器上叠一层**独立 canvas**（`pointer-events:none`）——
+ *   · · ★ 每帧自己画流星 ⇒* 天然在节点**上方**同层混排，* 不碰 G6 内部渲染 ⚠
+ * ★★ 取节点屏幕坐标：* `graph.getElementPosition(id)` ⇒ `graph.getViewportByCanvas()`
+ *   （* 后者把世界坐标换算成视口坐标 —— 缩放/平移后也是对的）✅
+ * ★★ 尾迹 = 沿直线取 6 段（* 旧版按边曲线取点；* 本图是直线边，* 线性足够）⚠
+ * ```
+ *
+ * ⚠ 位置还没算出来（布局未完成）时**跳过该帧**，* 不报错。
  */
-import type { Network } from 'vis-network'
+
+import type { Graph } from '@antv/g6'
 
 export interface MeteorOptions {
-  /** 初始相位 0~1(多图谱错开) */
+  /** 初始相位 0~1（* 多张小图错开） */
   phase?: number
-  /** 每步推进量,默认 0.008 */
+  /** 每步推进量，默认 0.008 */
   speed?: number
-}
-
-interface Layer {
-  network: Network
-  edgeIds: string[]
-  t: number
-  speed: number
-  paused: boolean
-  raf: number | null
-  frame: number
-  color: { r: number; g: number; b: number } | null
 }
 
 const TRAIL = 0.2
 const SEGS = 6
 const MAX_EDGES = 150
 
-/** 读取主题色 --fx-dot(旧站未定义该变量,回退 #38bdf8,保持 1:1) */
+/** ★ 读主题色 `--fx-dot`（* 旧站没有该变量，回退 #38bdf8） */
 function readFxColor() {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue('--fx-dot').trim()
@@ -47,158 +43,125 @@ function readFxColor() {
   } catch (e) {
     console.error('read --fx-dot failed', e)
   }
-  return { r: 56, g: 189, b: 248 } // #38bdf8
-}
-
-function draw(layer: Layer, ctx: CanvasRenderingContext2D) {
-  if (layer.paused || !layer.edgeIds.length) return
-  if (!layer.color) layer.color = readFxColor()
-  const fc = layer.color
-  const body = (layer.network as any).body
-  if (!body) return
-
-  const n = layer.edgeIds.length
-  for (let i = 0; i < n; i++) {
-    const ev = body.edges[layer.edgeIds[i]]
-    if (!ev || !ev.edgeType) continue
-
-    const t = (layer.t + i / n) % 1
-    const pts: { x: number; y: number }[] = []
-    try {
-      for (let k = 0; k <= SEGS; k++) {
-        const tk = t - TRAIL + (TRAIL * k) / SEGS
-        if (tk < 0) continue // 尾迹不越过源节点
-        const p = ev.edgeType.getPoint(tk)
-        if (!p) break
-        pts.push(p)
-      }
-    } catch (e) {
-      continue
-    }
-    if (pts.length < 2) continue
-
-    // 尾迹:逐段描线,透明度/线宽向尾部渐减
-    for (let k = 1; k < pts.length; k++) {
-      const f = k / (pts.length - 1)
-      ctx.strokeStyle = `rgba(${fc.r},${fc.g},${fc.b},${(0.25 + 0.6 * f).toFixed(2)})`
-      ctx.lineWidth = 2 + 2.2 * f
-      ctx.beginPath()
-      ctx.moveTo(pts[k - 1].x, pts[k - 1].y)
-      ctx.lineTo(pts[k].x, pts[k].y)
-      ctx.stroke()
-    }
-
-    // 流星头部:光晕 + 白色亮核
-    const head = pts[pts.length - 1]
-    ctx.fillStyle = `rgba(${fc.r},${fc.g},${fc.b},0.7)`
-    ctx.beginPath()
-    ctx.arc(head.x, head.y, 6, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = 'rgba(255,255,255,0.95)'
-    ctx.beginPath()
-    ctx.arc(head.x, head.y, 2.8, 0, Math.PI * 2)
-    ctx.fill()
-  }
+  return { r: 56, g: 189, b: 248 }
 }
 
 /**
- * 启动流星效果;返回停止函数。
- * @param network vis-network 实例
- * @param edgeIds 参与流星的边 id
+ * ★ 启动流星效果
+ *
+ * @param graph      G6 图实例（* 已 render 过）
+ * @param container  画布容器（* 叠加层挂在它上面，* 需要 `position:relative`）
+ * @param edges      要画流星的边（* `{from, to}` 节点 id）
+ * @returns ★ **停止函数**（* 组件卸载时必须调，* 否则 rAF 泄漏）⚠
  */
 export function startMeteor(
-  network: Network,
-  edgeIds: (string | number)[],
+  graph: Graph,
+  container: HTMLElement,
+  edges: { from: string; to: string }[],
   opts: MeteorOptions = {},
 ): () => void {
-  const ids = edgeIds.slice(0, MAX_EDGES).map(String)
-  if (!ids.length) return () => {}
-
-  const layer: Layer = {
-    network,
-    edgeIds: ids,
-    t: (opts.phase ?? 0) % 1,
-    speed: opts.speed ?? 0.008,
-    paused: false,
-    raf: null,
-    frame: 0,
-    color: null,
+  const overlay = document.createElement('canvas')
+  overlay.style.cssText =
+    'position:absolute;inset:0;pointer-events:none;z-index:2;'
+  container.appendChild(overlay)
+  const ctx = overlay.getContext('2d')
+  if (!ctx) {
+    overlay.remove()
+    return () => {}
   }
 
-  const onAfterDrawing = (ctx: CanvasRenderingContext2D) => draw(layer, ctx)
-  const onDragStart = () => {
-    layer.paused = true
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  let w = 0
+  let h = 0
+  const resize = () => {
+    w = container.clientWidth
+    h = container.clientHeight
+    overlay.width = Math.max(1, Math.round(w * dpr))
+    overlay.height = Math.max(1, Math.round(h * dpr))
+    overlay.style.width = `${w}px`
+    overlay.style.height = `${h}px`
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
-  const onDragEnd = () => {
-    layer.paused = false
-  }
-  const onZoom = () => {
-    layer.paused = true
-    window.setTimeout(() => {
-      layer.paused = false
-    }, 120)
-  }
+  resize()
 
-  // 首选:包装 renderer._drawNodes,把流星插在「边之后、节点之前」(与旧站层序一致)
-  const renderer: any = (network as any).renderer
-  const origDrawNodes: ((ctx: CanvasRenderingContext2D, alwaysShow?: boolean) => unknown) | undefined =
-    renderer && typeof renderer._drawNodes === 'function' ? renderer._drawNodes : undefined
-  const usingPatch = !!origDrawNodes
-  if (usingPatch) {
-    renderer._drawNodes = function (this: unknown, ctx: CanvasRenderingContext2D, alwaysShow?: boolean) {
-      draw(layer, ctx)
-      return origDrawNodes!.call(this, ctx, alwaysShow)
+  // ★ 边太多只画前 MAX_EDGES 条（* 旧版同口径）
+  const list = edges.slice(0, MAX_EDGES)
+  const color = readFxColor()
+  const speed = opts.speed ?? 0.008
+  let t = opts.phase ?? 0
+  let raf: number | null = null
+  let frame = 0
+
+  /** ★ G6 的 `Point` 是 `[x, y]` 元组 / `Float32Array`（* 不是 `{x,y}`）⚠ */
+  const toViewport = (p: Float32Array | number[]): number[] => {
+    try {
+      return Array.from(graph.getViewportByCanvas(p as never) as ArrayLike<number>)
+    } catch {
+      return Array.from(p)
     }
-  } else {
-    // 兜底:内部结构变化时至少保证流星可见(代价:画在节点上层)
-    network.on('afterDrawing', onAfterDrawing)
   }
 
-  network.on('dragStart', onDragStart)
-  network.on('dragEnd', onDragEnd)
-  network.on('zoom', onZoom)
+  const draw = () => {
+    if (!w || !h) return
+    ctx.clearRect(0, 0, w, h)
+    const n = list.length
+    for (let i = 0; i < n; i++) {
+      const e = list[i]
+      let p1: number[]
+      let p2: number[]
+      try {
+        p1 = toViewport(graph.getElementPosition(e.from) as Float32Array | number[])
+        p2 = toViewport(graph.getElementPosition(e.to) as Float32Array | number[])
+      } catch {
+        continue
+      }
+      if (!p1 || !p2 || !isFinite(p1[0]) || !isFinite(p2[0])) continue
+      // ★ 布局还没位置（全 0）⇒ 跳过本帧
+      if (p1[0] === 0 && p1[1] === 0 && p2[0] === 0 && p2[1] === 0) continue
+
+      const tt = (t + i / n) % 1
+      // 尾迹：逐段描线，透明度 / 线宽向头部渐增
+      for (let k = 1; k <= SEGS; k++) {
+        const ta = tt - TRAIL + (TRAIL * (k - 1)) / SEGS
+        const tb = tt - TRAIL + (TRAIL * k) / SEGS
+        if (ta < 0) continue // 尾迹不越过源节点
+        const f = k / SEGS
+        ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(0.15 + 0.65 * f).toFixed(2)})`
+        ctx.lineWidth = 1.5 + 2 * f
+        ctx.beginPath()
+        ctx.moveTo(p1[0] + (p2[0] - p1[0]) * ta, p1[1] + (p2[1] - p1[1]) * ta)
+        ctx.lineTo(p1[0] + (p2[0] - p1[0]) * tb, p1[1] + (p2[1] - p1[1]) * tb)
+        ctx.stroke()
+      }
+      // 头部光晕 + 白色亮核
+      const hx = p1[0] + (p2[0] - p1[0]) * tt
+      const hy = p1[1] + (p2[1] - p1[1]) * tt
+      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},0.7)`
+      ctx.beginPath()
+      ctx.arc(hx, hy, 6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.arc(hx, hy, 2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
 
   const loop = () => {
-    // 每 2 帧推进一次,降频保帧率;页面切后台时暂停
-    if (layer.frame++ % 2 === 0) {
-      if (!layer.paused && !document.body.classList.contains('page-hidden')) {
-        layer.t = (layer.t + layer.speed) % 1
-        const body = (network as any).body
-        // 优先走 vis 内部请求重绘(便宜);每 10 帧兜底一次强制重绘
-        if (body?.emitter) {
-          try {
-            body.emitter.emit('_allowRedraw')
-          } catch (e) {
-            /* 内部 API 不可用则忽略 */
-          }
-          try {
-            body.emitter.emit('_requestRedraw')
-          } catch (e) {
-            /* 同上 */
-          }
-        }
-        if (layer.frame % 20 === 0) {
-          try {
-            network.redraw()
-          } catch (e) {
-            console.error('network.redraw failed', e)
-          }
-        }
-      }
-    }
-    layer.raf = window.requestAnimationFrame(loop)
+    frame++
+    // ★ 每 2 帧推进一次（* 与旧版一致，* 省 CPU）
+    if (frame % 2 === 0) t = (t + speed) % 1
+    draw()
+    raf = requestAnimationFrame(loop)
   }
-  layer.raf = window.requestAnimationFrame(loop)
+  raf = requestAnimationFrame(loop)
+
+  const onResize = () => resize()
+  window.addEventListener('resize', onResize)
 
   return () => {
-    if (layer.raf !== null) window.cancelAnimationFrame(layer.raf)
-    if (usingPatch) {
-      renderer._drawNodes = origDrawNodes // 原样还原,避免影响其它实例
-    } else {
-      network.off('afterDrawing', onAfterDrawing)
-    }
-    network.off('dragStart', onDragStart)
-    network.off('dragEnd', onDragEnd)
-    network.off('zoom', onZoom)
+    if (raf != null) cancelAnimationFrame(raf)
+    window.removeEventListener('resize', onResize)
+    overlay.remove()
   }
 }

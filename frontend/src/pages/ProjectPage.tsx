@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { EyeOff, Lock, Settings, ShieldAlert } from 'lucide-react'
+import { EyeOff, Lock, Settings, ShieldAlert, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -88,6 +88,10 @@ export default function ProjectPage() {
       }
       actions={
         <div className="flex items-center gap-2">
+          {/* ★★ `D98`：图谱入口 ——* 谁都能看（读权限由后端判）✅ */}
+          <Link to={`/p/${encodeURIComponent(projectRef)}/graph`}>
+            <Button icon={<Workflow size={14} />}>图谱</Button>
+          </Link>
           {canWrite && (
             <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
               <Button icon={<Settings size={14} />}>设置</Button>

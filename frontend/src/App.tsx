@@ -17,6 +17,9 @@ import InviteLanding from './pages/InviteLanding'
 import { setUnauthorizedHandler } from './api/client'
 import { useAuthStore } from './store/authStore'
 
+/** ★★ `D98`：**图谱页懒加载** —— G6 是大件，* 只在打开图谱时才下载 ⚠ */
+const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
+
 /**
  * ★ 路由骨架（`B163` 建立 · `B164` 挂上工作区 · `B170` 挂上登录 / 注册）
  *
@@ -77,6 +80,22 @@ export default function App() {
             一个「能停下来读」的地方（* 可分享 URL + 纵向空间），* ⛔ 不是抽屉 ✅ */}
         <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
         <Route path="/p/:projectRef/settings" element={<ProjectSettingsPage />} />
+        {/* ★★ `D98`（2026-10-17）：**图谱页** —— 代码结构可视化（AntV G6）✅
+            · · ⚠ 懒加载：* G6 只在打开本页时下载 ⚠ */}
+        <Route
+          path="/p/:projectRef/graph"
+          element={
+            <Suspense
+              fallback={
+                <div className="faint" style={{ padding: 48, textAlign: 'center', fontSize: 13 }}>
+                  正在加载图谱引擎…
+                </div>
+              }
+            >
+              <ProjectGraphPage />
+            </Suspense>
+          }
+        />
         <Route path="/me/settings" element={<UserSettingsPage />} />
         {/* ★★ `F4`（`D96`）：**回收站** ——* 被删的笔记（软删）+ 恢复 ✅ */}
         <Route path="/me/deleted" element={<RecycleBinPage />} />

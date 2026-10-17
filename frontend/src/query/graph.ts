@@ -29,7 +29,8 @@ import { useQuery } from '@tanstack/react-query'
 
 import { apiGet } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { GraphEdge, GraphNode, GraphPatch } from '../lib/mergeGraph'
+import { mergeGraph } from '../lib/mergeGraph'
+import type { EffectiveGraph, GraphEdge, GraphNode, GraphPatch } from '../lib/mergeGraph'
 
 /** ★ 一页最多取多少（★ 与后端 `NODES_PAGE_MAX` / `EDGES_PAGE_MAX` 对齐）*/
 export const NODES_PAGE_MAX = 500
@@ -102,5 +103,71 @@ export function useGraphPatches(
           'data',
         ),
       ),
+  })
+}
+
+
+/**
+ * ★★★ **整张图**（* 图谱页用，`D98`）——★ 循环分页拉全 + 前端合并补丁 ⚠
+ *
+ * ## ★★ 为什么要一个查询而不是三个 hook 拼
+ *
+ * ```
+ * ★★ 节点 / 边 / 补丁必须来自**同一代**（`graph_rev` 相同）——
+ *   · · ★ 三个独立 hook 各自取，* 中间可能隔了一次重解析 ⇒* 拼出**错代**的图 ⚠
+ * ★★ 合并用 `mergeGraph()`（`B180`）：* 基图 + 补丁 ⇒* EffectiveGraph ✅
+ * ```
+ *
+ * ⚠ 分页循环：* 每次 500 条（* 契约上限），* 顺序请求（* 不并发）✅
+ */
+const FULL_PAGE = 500
+
+export function useFullGraph(projectRef?: string | null) {
+  return useQuery({
+    queryKey: ['graph', 'full', projectRef],
+    enabled: !!projectRef,
+    // ★ 图谱是重查询 ⇒ 30 秒内不重取（* `graph_rev` 变了会自然失效）
+    staleTime: 30_000,
+    queryFn: async (): Promise<EffectiveGraph & { graph_rev: number }> => {
+      const ref = encodeURIComponent(projectRef!)
+
+      // ① 节点（② 型扁平：`ok_flat`，没有 data 包一层）
+      const nodes: GraphNode[] = []
+      for (let offset = 0; ; ) {
+        const page = unwrap(
+          await apiGet<{ total: number; items: GraphNode[] }>(
+            `/api/projects/${ref}/graph/nodes/?limit=${FULL_PAGE}&offset=${offset}`,
+            'spread',
+          ),
+        )
+        nodes.push(...(page.items || []))
+        offset += page.items?.length || 0
+        if (offset >= page.total || !page.items?.length) break
+      }
+
+      // ② 边（① 型：data 包装）
+      const edges: GraphEdge[] = []
+      for (let offset = 0; ; ) {
+        const page = unwrap(
+          await apiGet<{ total: number; items: GraphEdge[] }>(
+            `/api/projects/${ref}/graph/edges/?limit=${FULL_PAGE}&offset=${offset}`,
+            'data',
+          ),
+        )
+        edges.push(...(page.items || []))
+        offset += page.items?.length || 0
+        if (offset >= page.total || !page.items?.length) break
+      }
+
+      // ③ 补丁（① 型；* 一次性全量）
+      const patches = unwrap(
+        await apiGet<{ graph_rev: number; total: number; items: GraphPatch[] }>(
+          `/api/projects/${ref}/graph/patches/`,
+          'data',
+        ),
+      )
+
+      return { ...mergeGraph(nodes, edges, patches.items || []), graph_rev: patches.graph_rev }
+    },
   })
 }

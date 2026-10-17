@@ -197,8 +197,9 @@ def run_parse_job(job: Job) -> None:
         #   ★★ 同一个 sha 的项目**共用这一份** ⚠
         stats = write_graph(base_graph, result)
     except EmptyGraph:
-        # ★ 兜底（* 实际到不了：上面已保证有节点）—— 不留空壳 ⚠
-        base_graph.delete()
+        # ★ 最后防线（* 实际到不了：上面已保证有节点）——
+        #   ⚠ 2026-10-17：**不做“建了再删”**（所有者裁定：源头杜绝，别善后删除）⚠
+        #   · 这里让异常冒出去 ⇒ 作业 failed；* 那份未建成的行不会被任何项目绑定 ✅
         raise
     except GraphImmutable as exc:
         # ⚠ 走到这里说明**前两道都没拦住**（例如图是被并发写进去的）——

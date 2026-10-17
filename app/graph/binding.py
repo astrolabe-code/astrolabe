@@ -320,6 +320,20 @@ def bind(
         # ⇒ ★★ 所以在**这里**重读 —— ★ 这样无论谁调用 `bind()` 都不会再踩 ✅
         base_graph.refresh_from_db(fields=["built_at", "node_count", "edge_count"])
 
+        # ★★★ 2026-10-17（所有者裁定）：**0 节点的基图【不许绑到项目】** ⚠
+        #   · ★ 原话：「**项目不允许绑定基图为零的，从源头上杜绝，不要事后再删除，
+        #     这样牵扯范围太广。**」
+        #   · ★★ 绑定是项目拿到图的**唯一入口** ⇒ 在这里挡，* 波及面最小 ✅
+        #   · ★ 判据 = `is_ready()`（* `built_at` 有值 ∧ 真有节点）——
+        #     * 放在 `refresh_from_db` **之后**：* 刚写完图的 `built_at` 才是新的 ⚠
+        if not is_ready(base_graph):
+            from graph.writer import EmptyGraph
+
+            raise EmptyGraph(
+                f"拒绝绑定：基图 #{base_graph.pk} 没有任何节点 —— "
+                "空的不能当基图用（请重新拉取解析）"
+            )
+
         # ★★ 「这个项目已经有图了」—— ★ 复用时**立刻**为真（❌ 不靠一个不会来的作业）⚠
         #
         # ⚠★★ 2026-10-14（`B197`）：**这里不再写任何东西** ⚠

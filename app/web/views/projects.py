@@ -322,13 +322,13 @@ def _create(request: HttpRequest) -> JsonResponse:
     if provider not in {"github", "gitee"}:
         return fail("provider 必须是 github 或 gitee", 400, code="invalid_provider")
 
+    # ⚠★★ 2026-10-17 修：`provider` / `repo_url` / `commit` 已随 `B197` 删列
+    #   （现在是**派生于基图**的只读属性）⇒ 再传就 `AttributeError` ⇒ 500 ⚠
+    #   · ★ 图与仓库的绑定走 `publish/start/`（会投解析作业）；本端点只建空项目壳 ✅
     project = Project.objects.create(
         name=name[:200],
         desc=str(body.get("desc") or "")[:2000],
         owner=user,
-        provider=provider,
-        repo_url=repo_url[:512],
-        commit=commit[:64],
         is_public=bool(body.get("is_public", False)),
     )
     return ok(

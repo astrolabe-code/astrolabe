@@ -223,12 +223,14 @@ def publish_project(
     # ② 建 Project + 上传闸门（★ 两者必须同一事务 —— 否则会留孤儿项目）
     # ==================================================================
     with transaction.atomic():
+        # ⚠★★ 2026-10-17 修：**`provider` / `repo_url` 已是派生属性**
+        #   · `B197` 删了这两列（唯一权威在 `BaseGraph`）⇒ 再传就是
+        #     `AttributeError: property has no setter` ⇒ **500 建不了项目** ⚠
+        #   · 建项目时还没有基图 ⇒ 派生属性此刻都是空串（* 属正常）✅
         project = Project.objects.create(
             name=project_name,
             desc=(desc or "")[:2000],
             owner=user,
-            provider=provider,
-            repo_url=repo_url,
             state=Project.STATE_ACTIVE,
             # ★ 发布即公开「页面」（★ 读开放是策略，U2.1）——
             #   ⚠ 但**列表 / 搜索只列 `review_state=approved` 的**，
@@ -245,6 +247,8 @@ def publish_project(
             #   ⚠ 它**不等于** `missing`（"看了、没有"）—— 见 `licensing.deferred()`
             defer_license=True,
             at=at,
+            # ⚠ 项目上已没有 `repo_url` 列（`B197`）⇒ 流水要记的仓库地址**显式传** ✅
+            repo_url=repo_url,
         )
 
         if not sub.accepted:
@@ -279,6 +283,9 @@ def publish_project(
     out = dispatch_parse(
         project,
         commit="",
+        # ⚠ 建项目那一刻派生属性为空 ⇒ 显式告诉作业要拉哪个库 ✅
+        provider=provider,
+        repo_full_name=repo_full_name,
         # ⚠★ `B182`：把前端算好的 sha 透传下去 —— ★ 有它，服务端【一次 API 都不发】✅
         sha=sha or "",
         # ⚠★ 2026-10-13：**用户选的分支 / tag** 也带下去 ——
@@ -399,6 +406,11 @@ def dispatch_parse(
     priority: int,
     ref: str = "",
     sha: str = "",
+    # ⚠★★ 2026-10-17 修：**建项目那一刻还没有基图** ⇒ `project.provider` /
+    #   `project.repo_url` 都是空的派生属性（`B197`）⇒ 调用方**必须**把
+    #   “要拉哪个库”显式传进来；不传才回落到派生属性（重拉等已有基图的场景）
+    provider: str = "",
+    repo_full_name: str = "",
 ) -> DispatchOutcome:
     """★★ **投递一个解析作业** —— ★★ **这是对外入口**（`B176` ① 之后由三处共用）⚠
 
@@ -439,8 +451,10 @@ def dispatch_parse(
     from jobs import dispatch
     from jobs.models import Job
 
-    provider = (project.provider or "").strip().lower()
-    repo_full = (fetch.repo_full_from_url(project.repo_url) or "").strip()
+    provider = (provider or project.provider or "").strip().lower()
+    repo_full = (
+        repo_full_name or (fetch.repo_full_from_url(project.repo_url) or "")
+    ).strip()
     # ⚠★★ `B182`：这里【不能写 `sha = ""`】⚠ ——
     #   ★★ 它会把调用方（前端）传进来的 sha **在判断之前就清掉** ⚠
     #   · ★ 后果：★ 明明是"前端给了 sha"，★ 服务端却照样去解析（★ 白烧 2 次 API）⚠
@@ -516,9 +530,10 @@ def dispatch_parse(
         "project_id": project.pk,
         "project_ref": project.project_ref,
         # ★★ 作业靠这三样自己把源码拉下来（★ 不再需要调用方提供目录）
-        "provider": project.provider,
+        #   ⚠ 用**显式值**（建项目时派生属性还是空的，见 `B197`）✅
+        "provider": provider,
         "repo_full_name": repo_full,
-        "repo_url": project.repo_url,
+        "repo_url": _repo_url(provider, repo_full) or project.repo_url,
         "commit": commit,
         # ★★ `B179`：**sha 一并带进 payload** ——
         #   ⚠ 这样作业**不必再解析一次**（★ 省两次 API 调用），
@@ -588,10 +603,16 @@ def approve_and_resume(
     #   · ★ 失败 ⇒ `out.job` 也是 `None`（★ 失败原因在 `out.fail_message` 里）
     #   ⚠★ 三种都返回 `out.job` 就对了 —— ★ **不要写死 `None`**（★ 我犯过这个错：
     #     那会让"真的投了作业"也返回 `None` ⇒ 调用方以为没投 ⇒ 永远等不到图）⚠
+    # ⚠★★ 2026-10-17 修：待审核的项目**没有基图** ⇒ 派生属性 `provider` /
+    #   `repo_url` 为空（`B197`）⇒ 从**流水行**上取仓库地址，显式传给作业 ⚠
+    _rev_url = (review.repo_url or "").strip()
+    _prov = "gitee" if "gitee.com" in _rev_url else ("github" if "github.com" in _rev_url else "")
     out = dispatch_parse(
         project, commit=commit, priority=0,
         # ⚠★ `B182`：透传前端算好的 sha（★ 有它就不烧服务端的 API 配额）✅
         sha=sha or "",
+        provider=_prov,
+        repo_full_name=fetch.repo_full_from_url(_rev_url) if _rev_url else "",
     )
     return review, out.job
 

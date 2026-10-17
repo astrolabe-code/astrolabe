@@ -107,6 +107,9 @@ def submit_project(
     require_file: bool | None = None,
     defer_license: bool = False,
     at: datetime | None = None,
+    # ⚠★★ 2026-10-17 修：项目上已没有 `repo_url` 列（`B197`，派生属性在
+    #   建项目那一刻为空）⇒ 流水要记的仓库地址**由调用方显式传** ✅
+    repo_url: str | None = None,
 ) -> SubmissionResult:
     """★ **上传闸门** —— 限额 + 许可核验 + 建流水，**一次事务做完**。
 
@@ -133,10 +136,12 @@ def submit_project(
         User.objects.select_for_update().filter(pk=getattr(user, "pk", None)).first()
 
         profile = ensure_profile(user)
+        # ★ 显式优先（建项目时派生属性为空）；显式没给才回落到派生属性
+        repo_url_value = repo_url if repo_url is not None else (project.repo_url or "")
 
         # ---- ② 额度（★ 不够就返回，❌ 不建流水 —— 不浪费一次计数）----
         verdict = quota.check_upload_quota(
-            user, at=at, repo_url=project.repo_url or "", profile=profile
+            user, at=at, repo_url=repo_url_value, profile=profile
         )
         if not verdict.allowed:
             return SubmissionResult(
@@ -161,7 +166,7 @@ def submit_project(
         #       （★ `Project.license_exception` 现在是派生属性 ✅）
 
         # ---- ④ ★★ 建流水（★ 无论哪种结论都必须建 —— 它是限额的依据 + 审计）----
-        review = _create_review(project, user, lv)
+        review = _create_review(project, user, lv, repo_url=repo_url_value)
 
         project.review_state = _review_state_for(lv.decision)
         project.save(update_fields=["review_state", "updated_at"])
@@ -226,7 +231,15 @@ def _auto_fields(lv: licensing.LicenseVerdict) -> dict:
     return out
 
 
-def _create_review(project: Project, user, lv: licensing.LicenseVerdict) -> ProjectReview:
+def _create_review(
+    project: Project,
+    user,
+    lv: licensing.LicenseVerdict,
+    *,
+    # ⚠★★ 2026-10-17 修：`project.repo_url` 是派生属性（`B197`），建项目时为空
+    #   ⇒ 仓库地址由调用方显式传 ✅
+    repo_url: str | None = None,
+) -> ProjectReview:
     """★ 建一条流水（★ **三种结论都必须建** —— 见模块文档）。
 
     ⚠★ 本函数**不需要** `timezone` —— 时间戳由 `_auto_fields()` 写（★ 见下）。
@@ -237,7 +250,7 @@ def _create_review(project: Project, user, lv: licensing.LicenseVerdict) -> Proj
         "project_name": project.name[:200],
         "submitted_by": user if getattr(user, "pk", None) else None,
         "submitted_by_name": (getattr(user, "username", "") or "")[:150],
-        "repo_url": (project.repo_url or "")[:512],
+        "repo_url": ((repo_url if repo_url is not None else project.repo_url) or "")[:512],
         **_verdict_fields(lv),
     }
 

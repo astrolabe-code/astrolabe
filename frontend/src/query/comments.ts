@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { AnchorKind, Comment, CommentCreateResult, CommentListData } from '../api/types'
+import type {
+  AnchorKind,
+  Comment,
+  CommentCreateResult,
+  CommentKind,
+  CommentListData,
+} from '../api/types'
 
 /**
  * ★ 评论数据层（`B201` / `B203`④ · 契约 §22.3）
@@ -65,8 +71,12 @@ export interface CreateCommentBody {
   anchor_kind: AnchorKind
   /** 段评必填（且必须属于这篇笔记）；章评带了 ⇒ 400 */
   block_id?: number
-  /** 楼中楼：回复哪条（必须同类型） */
-  parent_id?: number
+  /**
+   * ★★ `B214`：评论类型 —— `comment`（默认）/ `reply` / `mention` / `both` ⚠
+   *   · · ★ 非 `comment` 时正文**必须带 @**（后端 400 `missing_mention`）✅
+   *   · · ★★ 「回复谁」就在正文的 @ 里（* ⛔ 不再有 `parent_id`）⚠
+   */
+  kind?: CommentKind
 }
 
 /** POST /api/notes/<id>/comments/（① 型）⇒ {comment, note_comment_count, block_comment_count} */

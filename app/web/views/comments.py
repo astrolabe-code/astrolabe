@@ -14,15 +14,16 @@
        * 也能显示"当时是这句"）⚠
 
 ③ ★★★ 评论【只删不改】（* B201③ · 所有者原话：「评论全都是可以删，不能改的」）——
-     · · ★ 所以**没有 PATCH**（* 契约里那条已删）⚠
-     · · ★★ 删除必须【软删】（* `deleted_at`）—— * 硬删会让楼中楼断链
-       （* 子评论的父没了，* 而 `parent` 是 SET_NULL 也救不了"已删除"的显示）⚠
+     · · ★ 所以**没有 PATCH**（* 契约里那条已删）✅
+     · · ★ 删除是【软删】（* `deleted_at`）——* 数据留着，* 只是不显示 ✅
 
-④ ★★ 楼中楼 = B站口径（* B201②）——
-     · · ★ 数据上 `parent_id` 成链、* **深度不限** ✅
-     · · ★★ 显示上压两级（* 上级 + 可折叠回复列表）—— * 那是前端的事 ⚠
-     · · ★ 本接口：* 默认只给**顶层**；* `?parent=<id>` 拉某条的回复 ✅
-     · · ★★ 回复只能回**同类型**的评论（* 章评 thread / 段评 thread 不分家）⚠
+④ ★★★ **平铺无链**（* `B214` · 2026-10-17 · ⚠ 推翻 `B201②` 的 `parent_id` 成链）⚠
+     · · ★★ 所有者原话：「后端存储的评论不要做成链状了，没必要，记录回复谁就行了」
+     · · ★★ 「你只要在原来的评论表里加一个类型，是回复还是@或者两个一起，就完了呗」
+     · · ★ 所以：* **没有 parent**、* 没有 `?parent=`、* 没有楼中楼的「层」✅
+     · · ★★ 「回复谁」记在**正文的 @** 里（* 文本即记录）⚠
+     · · ★ `kind` 一列只决定**视觉**：* reply ⇒ 头部「回复 @X」·* mention ⇒ 正文 @ 高亮
+       ·* both ⇒ 两者·* comment ⇒ 普通 ✅
 
 ⑤ ★★ 失锚评论按项目策略展示（* B189 · `note.orphan_comment_policy`）——
      · · ★ `move_to_chapter` ⇒ ★ 并入章评区、* 标 `orphaned:true` ✅
@@ -70,6 +71,13 @@ PAGE_MAX = 100
 #: ★ `quote` 快照最长（★ 与模型 `varchar(500)` 一致）
 QUOTE_MAX = 500
 
+#: ★★ **@ 提及的识别规则**（* `B214`④）⚠
+#:   · · ★ `@` + Django 用户名允许的字符（* 字母数字 `. _ - +`）✅
+#:   · · ★★ 只用来**校验"有没有 @"**（* 用户是否存在不查 ——* 文本即记录）⚠
+import re as _re
+
+MENTION_RE = _re.compile(r"@[A-Za-z0-9._+-]+")
+
 
 # ---------------------------------------------------------------------------
 # 列表 / 新建
@@ -81,17 +89,19 @@ def collection(request: HttpRequest, note_id: int):
 
     ## GET
 
-    `?anchor_kind=chapter|paragraph&block_id=&parent=&include_hidden=&limit=&offset=`
+    `?anchor_kind=chapter|paragraph&block_id=&include_hidden=&limit=&offset=`
 
     - `anchor_kind` 缺省 `chapter`；`paragraph` **必须**带 `block_id`
-    - `parent` 缺省空 ⇒ 只要顶层；有值 ⇒ 只要那条的回复（楼中楼）
+    - ★★ 平铺（* `B214`）：* 一个 anchor 一个列表，* **没有 `?parent=`** ✅
     - `include_hidden=1` ⇒ 失锚且被策略隐藏的段评也列出来（⚠ 仅有权者有效）
 
     ## POST
 
-    `{body, anchor_kind, block_id?, parent_id?}` ⇒ `{comment, note_comment_count, block_comment_count}`
+    `{body, anchor_kind, block_id?, kind?}` ⇒ `{comment, note_comment_count, block_comment_count}`
 
-    ⚠★ `anchor_kind` **创建时定死**；`quote` 后端自动填（前端传了也不算）。
+    - ★★ `kind` = `comment`（默认）/ `reply` / `mention` / `both`（`B214`）⚠
+    - ★ `kind ∈ {reply, mention, both}` ⇒ 正文**必须**带 `@某人`（否则 400 `missing_mention`）
+    - ⚠★ `anchor_kind` **创建时定死**；`quote` 后端自动填（前端传了也不算）。
     """
     note = Note.objects.filter(pk=note_id).select_related("node").first()
     if note is None or not note_readable(request, note):
@@ -112,18 +122,8 @@ def _list(request: HttpRequest, note: Note):
     if anchor not in ("chapter", "paragraph"):
         return fail("anchor_kind 必须是 chapter 或 paragraph", 400, code="bad_anchor")
 
-    # ---- 楼中楼：parent 空 = 顶层；有值 = 某条的**整棵子树**（`B213`）----
-    parent = None
-    parent_raw = (request.GET.get("parent") or "").strip()
-    if parent_raw:
-        try:
-            parent_pk = int(parent_raw)
-        except ValueError:
-            return fail("parent 必须是数字", 400, code="bad_parent")
-        parent = NoteComment.objects.filter(pk=parent_pk, note=note).first()
-        if parent is None:
-            return fail("要查看回复的评论不存在", 404, code="parent_not_found")
-
+    # ★★ `B214`：**平铺** —— 没有楼中楼的层，* 也就没有 `?parent=` ✅
+    #   · · ★ 「回复谁」在正文的 @ 里，* `kind` 只决定视觉 ⚠
     q = Q(note=note, deleted_at__isnull=True)
 
     block = None
@@ -142,61 +142,27 @@ def _list(request: HttpRequest, note: Note):
     else:
         q &= Q(is_paragraph=False)
         # ---- 失锚段评：按项目策略决定是否并入章评区（B189）----
-        # ⚠★ 只有**顶层**失锚评论才进章评区 —— 楼中楼里的失锚回复
-        #   仍留在自己的 thread 里（它有父，* 不对外单独成条）⚠
-        if parent is None:
-            orphans = Q(is_paragraph=True, block__isnull=True, parent__isnull=True)
-            policy = st.get("note.orphan_comment_policy", project=project_of(note))
-            if policy == "move_to_chapter":
-                q |= orphans
-            elif (
-                policy == "hide"
-                and _truthy(request.GET.get("include_hidden"))
-                and can_see_hidden_orphans(request, note)
-            ):
-                q |= orphans
+        # ⚠★ `B214`：* 评论已**平铺无链** ⇒* 不再有「顶层 / 楼中楼」之分，
+        #   失锚段评（* 段评但 block 空了）直接按策略并入章评区 ✅
+        orphans = Q(is_paragraph=True, block__isnull=True)
+        policy = st.get("note.orphan_comment_policy", project=project_of(note))
+        if policy == "move_to_chapter":
+            q |= orphans
+        elif (
+            policy == "hide"
+            and _truthy(request.GET.get("include_hidden"))
+            and can_see_hidden_orphans(request, note)
+        ):
+            q |= orphans
 
-    # ⚠★ 楼中楼（子树视图）的 limit 上限放到 **THREAD_MAX_ITEMS**（* 200）——
-    #   · · ★ 顶层列表仍是 PAGE_MAX（* 100）✅
-    #   · · ★ 平铺一次拿全 ⇒* 默认就给 200（* ⛔ 不让调用方为拿全线程专门传参）⚠
-    limit = _clamp(
-        request.GET.get("limit"),
-        1,
-        THREAD_MAX_ITEMS if parent is not None else PAGE_MAX,
-        THREAD_MAX_ITEMS if parent is not None else 50,
-    )
+    limit = _clamp(request.GET.get("limit"), 1, PAGE_MAX, 50)
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
-    if parent is not None:
-        # ★★ `B213`：**整棵子树**（* B站式平铺的原料）⚠
-        #   · · ★ 从根逐层 BFS ⇒* 前端一次拿全，* ⛔ 不递归发请求 ✅
-        #   · · ★ 排序**旧的在前**（* 阅读顺序，* 与直接子级时一致）✅
-        items = _subtree_of(parent, q)
-        total = len(items)
-        page = items[offset:offset + limit]
-        _attach_reply_counts(page)
-        return ok(
-            {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "items": [_comment_json(c) for c in page],
-            }
-        )
-
-    qs = NoteComment.objects.filter(q)
-    # ★★ 顶层列表 ⇒* **只要没有父的**（* 楼中楼的回复不在这里单独成条）⚠
-    #   ⚠★ 2026-10-17 修：* `B213` 重构 parent 分支时把这行弄丢过 ⇒*
-    #     回复漏进顶层列表（* 新冒烟第 ④ 条当场抓住）⚠
-    qs = qs.filter(parent__isnull=True)
-    # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：
-    #   · ★ 顶层列表**新的在前**（* `ix_comment_chapter` / `ix_comment_paragraph`）✅
-    #   · ★★ 楼中楼**旧的在前**（* `ix_comment_parent`；* 阅读顺序）✅
-    qs = qs.order_by("-created_at")
+    # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：**新的在前** ✅
+    qs = NoteComment.objects.filter(q).order_by("-created_at")
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
-    _attach_reply_counts(items)
     return ok(
         {
             "total": total,
@@ -205,50 +171,6 @@ def _list(request: HttpRequest, note: Note):
             "items": [_comment_json(c) for c in items],
         }
     )
-
-
-#: ★★ 楼中楼子树安全帽（* `B213`）⚠
-#:   · · ★ **条数帽**：* 一次最多带这么多条（* 超出即截断，* ⛔ 不写无界递归）✅
-THREAD_MAX_ITEMS = 200
-#:   · · ★ **层数帽**：* BFS 最多逐这么多层（* 防退化成细长链时请求过多）✅
-THREAD_MAX_DEPTH = 10
-
-
-def _subtree_of(root: NoteComment, base_q: Q) -> list[NoteComment]:
-    """★★ **一条评论的整棵子树**（* `B213`：* B站式平铺的数据来源）⚠
-
-    ## ★★ 为什么逐层 BFS 而不是递归 CTE
-
-    ```
-    ★★ 递归 CTE 在 ORM 里写起来要 `with_recursive()` + 手写 union，
-      还要和 base_q（* 删没删 / 章还是段）重新组合 ⇒* 可读性差 ⚠
-    ★★ 而楼中楼**通常只有 2–3 层** ⇒* BFS 实际就是 2–3 发查询 ✅
-    ★★ 两道安全帽（* THREAD_MAX_ITEMS / THREAD_MAX_DEPTH）保证最坏情况也有界 ⚠
-    ```
-
-    ⚠ 同一层内按 `created_at` **旧的在前**（* 阅读顺序）✅
-    ⚠ 层与层之间**不严格按时间**（* 先整层再下一层）——
-      · · ★ 平铺显示时前端按 `created_at` 再排一次即可（* 见 `D94`①）⚠
-      · · ★（* 若将来要严格时间序，* 在这里末尾排一次也行）✅
-    """
-    out: list[NoteComment] = []
-    level = [root.pk]
-    seen = {root.pk}
-    depth = 0
-    while level and len(out) < THREAD_MAX_ITEMS and depth < THREAD_MAX_DEPTH:
-        kids = list(
-            NoteComment.objects.filter(base_q, parent_id__in=level).order_by("created_at")
-        )
-        if not kids:
-            break
-        out.extend(kids)
-        level = [k.pk for k in kids if k.pk not in seen]
-        seen.update(level)
-        depth += 1
-    # ★★ 末了按时间排一次（* 跨层也保证阅读顺序）✅
-    #   · · ★ BFS 是「先整层再下一层」，* 不排的话深浅会混在时间序里 ⚠
-    out.sort(key=lambda c: (c.created_at, c.pk))
-    return out
 
 
 def _create(request: HttpRequest, note: Note, user):
@@ -275,25 +197,23 @@ def _create(request: HttpRequest, note: Note, user):
         # ★ 章评带 block_id ⇒ ★ 前端口径乱了 ⇒ 明说，* ❌ 不静默忽略 ⚠
         return fail("章评不能指定段落", 400, code="block_not_allowed")
 
-    parent = None
-    if body.get("parent_id") is not None:
-        try:
-            parent_pk = int(body.get("parent_id"))
-        except (TypeError, ValueError):
-            return fail("parent_id 必须是数字", 400, code="bad_parent")
-        parent = NoteComment.objects.filter(
-            pk=parent_pk, note=note, deleted_at__isnull=True
-        ).first()
-        if parent is None:
-            return fail("要回复的评论不存在", 404, code="parent_not_found")
-        if parent.is_paragraph != (anchor == "paragraph"):
-            return fail("不能回复另一种类型的评论", 400, code="parent_kind_mismatch")
+    # ★★ `B214`：**类型一列**替代 `parent_id`（* 回复谁在正文的 @ 里）⚠
+    kind = str(body.get("kind") or NoteComment.KIND_COMMENT).strip()
+    if kind not in dict(NoteComment.KIND_CHOICES):
+        return fail(
+            f"kind 必须是 {list(dict(NoteComment.KIND_CHOICES))} 之一",
+            400,
+            code="bad_kind",
+        )
+    # ★★ 非普通类型必须带 @（* 否则「回复 @?」渲染不出来）⚠
+    if kind in NoteComment.KIND_NEEDS_AT and not MENTION_RE.search(text):
+        return fail("回复 / @ 的评论正文里必须带上 @某个用户", 400, code="missing_mention")
 
     comment = NoteComment.objects.create(
         note=note,
         is_paragraph=(anchor == "paragraph"),
         block=block,
-        parent=parent,
+        kind=kind,
         body=text,
         # ★★ quote 由后端填（* B203④）—— * 前端传了也不算 ⚠
         quote=(block.text[:QUOTE_MAX] if block is not None else ""),
@@ -312,7 +232,6 @@ def _create(request: HttpRequest, note: Note, user):
         "comment_count", flat=True
     ).first()
 
-    comment._reply_count = 0
     return ok(
         {
             "comment": _comment_json(comment),
@@ -361,35 +280,19 @@ def detail(request: HttpRequest, comment_id: int):
 # 内部
 # ---------------------------------------------------------------------------
 
-def _attach_reply_counts(items: list[NoteComment]) -> None:
-    """★★ **一次 GROUP BY 给整页挂上 `reply_count`**（* ❌ 不要 N+1）⚠"""
-    ids = [c.pk for c in items]
-    if not ids:
-        return
-    rows = (
-        NoteComment.objects.filter(parent_id__in=ids, deleted_at__isnull=True)
-        .values("parent_id")
-        .annotate(n=Count("pk"))
-    )
-    counts = {r["parent_id"]: r["n"] for r in rows}
-    for c in items:
-        # ⚠ 只挂内存属性（* ❌ 不 save）—— * 前端要知道"这条有几条回复" ✅
-        c._reply_count = counts.get(c.pk, 0)
-
-
 def _comment_json(c: NoteComment) -> dict:
     return {
         "id": c.pk,
         "note_id": c.note_id,
         "anchor_kind": c.anchor_kind,
         "block_id": c.block_id,
-        "parent_id": c.parent_id,
+        # ★★ `B214`：* 类型（决定视觉）——* `parent_id` / `reply_count` 已下线 ⚠
+        "kind": c.kind,
         "body": c.body,
         "quote": c.quote,
         # ★★ 失锚标记（* `is_paragraph=True` 且 `block_id=None`）——
         #   · ★ 前端显示"原段落已变更或已删除" ✅
         "orphaned": bool(c.is_paragraph and c.block_id is None),
-        "reply_count": getattr(c, "_reply_count", 0),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
     }

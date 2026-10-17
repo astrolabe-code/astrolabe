@@ -1686,10 +1686,40 @@ class NoteComment(TimeStampedModel):
         on_delete=models.SET_NULL,
         related_name="comments",
     )
-    #: ★ 楼中楼（* 回复某条评论）
-    parent = models.ForeignKey(
-        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="replies"
-    )
+    #: ★★ **这条评论的类型**（* `B214` · 2026-10-17）⚠
+    #:
+    #: ★★★ 所有者原话（* 逐字）：「**回复和@是两种不同的东西，嗯，视觉效果不一样，
+    #:   底层记录这两种不同类型就行**」+「**只要在原来的评论表里加一个类型，
+    #:   是回复还是@或者两个一起，就完了呗**」
+    #:
+    #: ## ★★ 四种取值（* 决定**视觉**，* ⛔ 不决定数据）
+    #:
+    #: ```
+    #: comment 普通     ⇒ 没头没高亮，* 就是一条评论 ✅
+    #: reply   回复     ⇒ 头部「回复 @X」（* X = 正文里第一个 @ 的人）✅
+    #: mention @提及    ⇒ 正文里的 @ 的人**高亮** ✅
+    #: both    两者一起 ⇒ 头部 + 高亮**都渲染** ✅
+    #: ```
+    #:
+    #: ⚠★ **「回复谁」记在正文里**（* `@用户名` 那段文本）——
+    #:   · · ★ 所有者裁定：* ⛔ 不建自引用链（* parent 已删）、* ⛔ 不建提及表、
+    #:     ⛔ 不加 reply_to 列 ——* 「加一个类型……就完了呗」✅
+    #:   · · ★★ 所以类型只回答「**渲染成哪种视觉**」，* 人是谁看正文 ⚠
+    KIND_COMMENT = "comment"
+    KIND_REPLY = "reply"
+    KIND_MENTION = "mention"
+    KIND_BOTH = "both"
+    KIND_CHOICES = [
+        (KIND_COMMENT, "普通评论"),
+        (KIND_REPLY, "回复"),
+        (KIND_MENTION, "@提及"),
+        (KIND_BOTH, "回复+@提及"),
+    ]
+    #: ★★ `reply` / `mention` / `both` 都要求正文里**至少一个 @ **
+    #:   （* 否则「回复 @?」渲染不出来 ——* 后端 400 挡掉，* ⛳ 不让坏数据入库）⚠
+    KIND_NEEDS_AT = (KIND_REPLY, KIND_MENTION, KIND_BOTH)
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=KIND_COMMENT)
+    #: ★ 评论正文（* markdown 原文；* 「回复谁」就在这里的 `@用户名`）⚠
     body = models.TextField(blank=True, default="")
     #: ★★ **引用时的原文快照** —— ★ 即便那段后来改了，* 也能显示"当时是这句" ✅
     #:   （* 番茄小说就是这么做的）⚠
@@ -1702,7 +1732,8 @@ class NoteComment(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="note_comments",
     )
-    #: ★★ **软删** —— ★ 硬删会让楼中楼断链（* 子评论的父没了）⚠
+    #: ★★ **软删** —— ★ `B214` 去链之后楼中楼不断链了，
+    #: ⚠ 但**保留软删**（* 删了就真没了；* 数据留一份，* 只是不显示）✅
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -1722,8 +1753,10 @@ class NoteComment(TimeStampedModel):
                 condition=models.Q(is_paragraph=True),
                 name="ix_comment_paragraph",
             ),
-            # ② 楼中楼
-            models.Index(fields=["parent", "created_at"]),
+            # ⚠★ 2026-10-17（`B214`）：**楼中楼那棵 `(parent, created_at)` 索引【已删】** ⚠
+            #   · ★ 所有者裁定：* 评论**不做链状**（* `parent` 一列都没了）⇒
+            #     楼中楼不再有「层」，* 也就没有按父查的需求 ✅
+            #   · ★ 「回复谁」记在**正文的 @** 里（* 只有 `kind` 一列决定视觉）✅
             # ③ "我的评论"
             models.Index(fields=["created_by", "-created_at"]),
         ]

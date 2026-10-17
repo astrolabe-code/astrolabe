@@ -656,18 +656,21 @@ export interface NoteDetailData {
 
 export type AnchorKind = 'chapter' | 'paragraph'
 
+/** ★★ 评论类型（`B214`：一列决定视觉；「回复谁」在正文的 @ 里） */
+export type CommentKind = 'comment' | 'reply' | 'mention' | 'both'
+
 export interface Comment {
   id: number
   note_id: number
   anchor_kind: AnchorKind
   block_id: number | null
-  parent_id: number | null
+  /** ★ 类型：comment 普通 / reply 回复头 / mention @高亮 / both 两者 */
+  kind: CommentKind
   body: string
   /** 后端快照：段评 = 那一刻的原文 */
   quote: string
   /** 失锚标记（原段落已变更或已删除） */
   orphaned: boolean
-  reply_count: number
   created_by: string
   created_at: string
 }

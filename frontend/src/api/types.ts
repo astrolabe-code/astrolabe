@@ -57,6 +57,26 @@ export interface ProjectSummary {
   node_count?: number
   edge_count?: number
   /**
+   * ★★★ `B208`⑦ 新增：项目状态 —— `active` / `hidden`（`taken_down` = 已物理删除，
+   * 行都没了 ⇒ 前端看不到也不需要处理）。
+   *
+   * ⚠★ `hidden` ⇒ **只有 owner 打得开**（协作者也不可）；前端拿到它时只可能是
+   *   owner 本人 ⇒ **必须**渲染处置横幅（"已被管理员隐藏：理由"）⚠
+   */
+  state?: string
+  /** ★ 最近一次处置的理由（`B196`：作者来问"为什么"必须答得出） */
+  moderation_reason?: string
+  /** ★★ `F2`（联调摸底）新增：**当前用户对这个项目能不能改** ⚠
+   *
+   * ⚠★ 为什么必须有它：没有这个字段，前端分不清"协作者"与"外人" ⇒
+   *   · 给所有人渲染写入口 ⇒ 外人点击得 403（差体验）
+   *   · 只给 owner 渲染 ⇒ 协作者被藏掉入口（更错——他们有权）
+   * ★★ 后端 `projects.detail::_project_json` 现算现返（`can_edit` 判据）✅
+   */
+  can_edit?: boolean
+  /** ★★ `F4` 预留：能不能管理协作者（owner/staff）—— 协作者管理页的入口显隐 ⚠ */
+  can_manage?: boolean
+  /**
    * ★★★ `B169` 新增：**是否已定版**（★ 代码已拉下**且**解析完成）。
    *
    * ★ 前端靠它决定「**拉取代码**」按钮的显隐：
@@ -142,6 +162,9 @@ export interface GraphRev {
 
 /** GET …/graph/nodes/ → ② 列表项 */
 export interface CodeNodeBrief {
+  /** ★★ 节点主键（= 后端 `vid`）—— ★ 建笔记的 `node_id` 就是它 ⚠
+   * ⚠★ `uid` 是**人类可读标识**（可能重复，只配看/搜）；挂东西一律用 `vid`（`B117`）✅ */
+  vid: number
   uid: string
   kind: string
   name: string

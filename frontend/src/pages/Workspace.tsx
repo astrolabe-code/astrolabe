@@ -68,22 +68,11 @@ export default function Workspace() {
 
   const goProject = (projectRef: string) => {
     setCreateOpen(false)
-    // ⚠★★ 2026-10-13：★ **刻意不去 `/p/:key`** ⚠
-    //
-    // ★★ 项目页 `/p/:key` **还没做**（★ `App.tsx` 的路由表里标着"后续批次"）⚠
-    //   ⇒ ★ 跳到那里会被通配路由 `<Route path="*">` **打回首页** ⚠
-    //   ⇒ ★★ 所有者实测原话：★「**点了创建项目，然后就直接跳到首页了**」⚠
-    //
-    // ★ 而现在「新建项目」会**顺手投出解析作业**（★ 见 `useCreateProject`）⇒
-    //   ★★ 正确的地方就是**留在工作区**，★ 看着这张卡片显示进度 ⚠
-    //
-    // ⚠★ 等 `/p/:key` 做出来之后，这里应改回 `navigate(\`/p/${projectRef}\`)` ⚠
-    void projectRef
-    navigate('/workspace')
-    setNotice({
-      kind: 'info',
-      text: '项目已创建，正在拉取代码并解析 —— 这张卡片上会显示进度，完成后就能打开。',
-    })
+    // ★★ `F2`（D92）：**项目页做出来了** ⇒ 新建成功直接进去 ✅
+    //   · ★ 而那句「等 /p/:key 做出来之后改回 navigate」的 TODO（2026-10-13 留）
+    //     就是为这天写的 ——* 已兑现 ⚠
+    //   · ★ 解析进度在项目页也能看到（节点列表 + 状态徽标）✅
+    navigate(`/p/${encodeURIComponent(projectRef)}`)
   }
 
   /**

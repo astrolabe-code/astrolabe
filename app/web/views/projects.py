@@ -20,6 +20,9 @@ from django.views.decorators.http import require_http_methods
 
 from core import fetch, oauth, storage
 from core import publish as publish_core
+# ★★ `F2`：* `_project_json` 要现算 `can_edit` / `can_manage` ⇒* 直接调内核 ⚠
+#   · ★ 而**不走门面**（* 门面收 request；* 这里手上已经有 user 对象了）✅
+from core import access
 # ⚠★ `B176` ①：`OAuthIdentity` / `OAuthState` **不再需要** ——
 #   ★ 「拉取代码」已不走 OAuth（★ 不再要求绑定身份、不再建 state）✅
 from core.models import Project
@@ -203,6 +206,14 @@ def _project_json(
         "commit": "",
         # ⚠ `mine` —— 前端靠它决定是否渲染「设置 / 重新解析」入口
         "mine": bool(user and user.is_authenticated and project.owner_id == user.pk),
+        # ★★ `F2`（联调摸底，2026-10-17）：**当前用户对这个项目的写权限** ⚠
+        #   · ★★ 为什么必须有：* 没有它，* 前端分不清「协作者」与「外人」——
+        #     · · ★ 给所有人渲染写入口 ⇒* 外人点击得 403（* 差体验）⚠
+        #     · · ★ 只给 owner 渲染 ⇒* 协作者被藏掉入口（* 更错 ——* 他们有权）⚠
+        #   · ★★ 判据走内核（* `core/access.can_edit_project`，* `B209` 收束）✅
+        "can_edit": access.can_edit_project(user, project),
+        # ★★ `F4` 预留：* 能不能管理协作者（* owner/staff）——* 协作者管理页入口显隐 ⚠
+        "can_manage": access.can_manage_members(user, project),
         "owner": project.owner.get_username() if project.owner_id else "",
         "status": job.state if job else "none",
         "progress": job.progress if job else 0,

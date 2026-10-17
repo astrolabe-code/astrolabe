@@ -4,6 +4,9 @@ import SkyFx from './components/SkyFx'
 import TopNav from './components/TopNav'
 import Home from './pages/Home'
 import Workspace from './pages/Workspace'
+import ProjectPage from './pages/ProjectPage'
+import ProjectSettingsPage from './pages/ProjectSettingsPage'
+import UserSettingsPage from './pages/UserSettingsPage'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import AdminInvites from './pages/AdminInvites'
@@ -60,6 +63,15 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/workspace" element={<Workspace />} />
+        {/* ★★ `F2`（D92）：**项目页 + 设置两页** ✅
+            · `/p/:projectRef`     双栏：左节点列表 + 右笔记面板（图谱画布是 2b，未做）
+            · `/p/:projectRef/settings`  项目设置（owner ∨ 协作者，后端判）
+            · `/me/settings`             用户设置（登录即可）
+            · ⚠★ 私有/隐藏项目**页面自己不做拦截** —— 后端 404 即「不存在或无权」，
+              前端照实显示错误文案（⛔ 不泄露"项目存在但你不配"）⚠ */}
+        <Route path="/p/:projectRef" element={<ProjectPage />} />
+        <Route path="/p/:projectRef/settings" element={<ProjectSettingsPage />} />
+        <Route path="/me/settings" element={<UserSettingsPage />} />
         {/* ★★ `B170`：用户名 + 密码 —— ★ 两个页面都是【公开】的
             （★ 注册页在"入口隐藏"时也**必须能直接打开** —— ★ 那是被邀请的人唯一的入口）✅ */}
         <Route path="/login" element={<Login />} />

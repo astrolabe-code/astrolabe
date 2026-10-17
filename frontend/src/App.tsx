@@ -8,6 +8,7 @@ import ProjectPage from './pages/ProjectPage'
 import NotePage from './pages/NotePage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
+import RecycleBinPage from './pages/RecycleBinPage'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import AdminInvites from './pages/AdminInvites'
@@ -76,6 +77,8 @@ export default function App() {
         <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
         <Route path="/p/:projectRef/settings" element={<ProjectSettingsPage />} />
         <Route path="/me/settings" element={<UserSettingsPage />} />
+        {/* ★★ `F4`（`D96`）：**回收站** ——* 被删的笔记（软删）+ 恢复 ✅ */}
+        <Route path="/me/deleted" element={<RecycleBinPage />} />
         {/* ★★ `B170`：用户名 + 密码 —— ★ 两个页面都是【公开】的
             （★ 注册页在"入口隐藏"时也**必须能直接打开** —— ★ 那是被邀请的人唯一的入口）✅ */}
         <Route path="/login" element={<Login />} />

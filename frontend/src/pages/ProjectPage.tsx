@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { EyeOff, Lock, Settings } from 'lucide-react'
+import { EyeOff, Lock, Settings, ShieldAlert } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -9,6 +9,7 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import NodePanel from '../components/node/NodePanel'
+import ModeratePanel from '../components/admin/ModeratePanel'
 
 /**
  * ★ 项目页（`F2` · D92）——* 双栏：左节点列表 + 右笔记面板
@@ -35,6 +36,7 @@ export default function ProjectPage() {
   const project = useProject(projectRef)
   const me = useMe()
   const [selected, setSelected] = useState<GraphNode | null>(null)
+  const [moderating, setModerating] = useState(false)
 
   const p = project.data
   const canWrite = !!p?.can_edit
@@ -85,11 +87,20 @@ export default function ProjectPage() {
         </span>
       }
       actions={
-        canWrite ? (
-          <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
-            <Button icon={<Settings size={14} />}>设置</Button>
-          </Link>
-        ) : undefined
+        <div className="flex items-center gap-2">
+          {canWrite && (
+            <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
+              <Button icon={<Settings size={14} />}>设置</Button>
+            </Link>
+          )}
+          {/* ★★ `F4`：**管理处置入口** ——* 只有 staff 才渲染（`B208`）⚠
+              · · ⚠ 这里只决定"显不显示"；* 真正的拦截在后端 `@staff_only` ✅ */}
+          {me.data?.is_staff && (
+            <Button icon={<ShieldAlert size={14} />} onClick={() => setModerating(true)}>
+              管理
+            </Button>
+          )}
+        </div>
       }
     >
       {/* ① 隐藏横幅：只有 owner 看得到（后端把其余人挡在 404） */}
@@ -143,6 +154,15 @@ export default function ProjectPage() {
 
         <NodePanel projectRef={projectRef} node={selected} canWrite={canWrite} meUsername={meUsername} />
       </div>
+
+      {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
+      <ModeratePanel
+        open={moderating}
+        kind="project"
+        target={projectRef}
+        currentState={p.state}
+        onClose={() => setModerating(false)}
+      />
     </AppLayout>
   )
 }

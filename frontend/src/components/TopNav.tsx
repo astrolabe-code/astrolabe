@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Home, LogOut, Moon, Shield, Sun, User } from 'lucide-react'
+import { ArrowLeft, Home, LogOut, Moon, Shield, Sun, Trash2, User } from 'lucide-react'
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { useTheme } from '../hooks/useTheme'
@@ -133,6 +133,13 @@ export default function TopNav() {
             <Link className="nav-btn ghost-btn" to="/admin">
               <Shield size={15} />
               管理
+            </Link>
+          )}
+          {/* ★★ `F4`（`D96`）：回收站入口 ——* 登录用户可见（* 游客点了也是空）✅ */}
+          {me.authenticated && (
+            <Link className="nav-btn ghost-btn" to="/me/deleted" title="回收站">
+              <Trash2 size={15} />
+              回收站
             </Link>
           )}
           {me.authenticated ? (

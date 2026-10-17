@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { EyeOff, Lock, Pencil } from 'lucide-react'
+import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
 import { errorMessage } from '../api/errors'
 import { useNote } from '../query/notes'
 import { useProject } from '../query/projects'
@@ -11,6 +11,7 @@ import LikeButton from '../components/likes/LikeButton'
 import CommentSection from '../components/comments/CommentSection'
 import ParagraphComments from '../components/comments/ParagraphComments'
 import NoteEditor from '../components/notes/NoteEditor'
+import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
 
 /**
@@ -45,6 +46,7 @@ export default function NotePage() {
   const project = useProject(projectRef)
   const me = useMe()
   const [editing, setEditing] = useState(false)
+  const [moderating, setModerating] = useState(false)
 
   const n = note.data?.note
   const blocks = note.data?.blocks || []
@@ -101,6 +103,12 @@ export default function NotePage() {
           {canWrite && (
             <Button icon={<Pencil size={13} />} onClick={() => setEditing(true)}>
               编辑
+            </Button>
+          )}
+          {/* ★★ `F4`：管理处置入口（仅 staff；`B208`） */}
+          {isStaff && (
+            <Button icon={<ShieldAlert size={13} />} onClick={() => setModerating(true)}>
+              管理
             </Button>
           )}
         </div>
@@ -166,6 +174,15 @@ export default function NotePage() {
         projectRef={projectRef}
         nodeId={n.node_id}
         onClose={() => setEditing(false)}
+      />
+
+      {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
+      <ModeratePanel
+        open={moderating}
+        kind="note"
+        target={n.id}
+        currentState={n.state}
+        onClose={() => setModerating(false)}
       />
     </AppLayout>
   )

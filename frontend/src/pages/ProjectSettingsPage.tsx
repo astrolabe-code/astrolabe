@@ -4,6 +4,8 @@ import { errorMessage } from '../api/errors'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import SettingsForm from '../components/settings/SettingsForm'
+import CollaboratorSection from '../components/settings/CollaboratorSection'
+import { useProject } from '../query/projects'
 import {
   usePatchProjectSettings,
   useProjectSettings,
@@ -22,6 +24,7 @@ import {
 export default function ProjectSettingsPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
   const settings = useProjectSettings(projectRef)
+  const project = useProject(projectRef)
   const patch = usePatchProjectSettings(projectRef)
   const [err, setErr] = useState('')
 
@@ -65,6 +68,9 @@ export default function ProjectSettingsPage() {
             这些是这个项目的运行参数。每项右上角标着它**为什么是这个值**（默认值 / 全局 / 项目）。
           </div>
           <SettingsForm data={settings.data} saving={patch.isPending} error={err} onSave={save} />
+          {/* ★★ `F4`：协作者区块 ——* 只在 owner/staff（`can_manage`）时渲染 ⚠
+              · · ⚠ 协作者**不能**加 / 移协作者（`B207`②）✅ */}
+          {project.data?.can_manage && <CollaboratorSection projectRef={projectRef} />}
         </>
       )}
 

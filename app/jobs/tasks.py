@@ -111,7 +111,7 @@ def run_parse_job(job: Job) -> None:
     #     ★★ 所有者原话：「**基图的数据一定要锚定 github 上的版本，用 sha 之类的**」
     #     ★ 以前钉的是 `commit` 字面值，★ 而实测库里 258 个作业的 `commit` **全是空字符串** ⇒
     #       ★★ 那一字段等于没钉（★ 而"HEAD"更是**会跑的名字**，⚠ 不是锚）⚠
-    #     ⇒ ★★ 现在钉 `_base_graph_for` 定下来的那个 sha ✅
+    #     ⇒ ★★ 现在钉 `_resolve_identity` 定下来的那个 sha ✅
     #       （★ 作者再怎么提交，★ 这个 sha 指向的代码**不会变** ⚠）
     #   ★ 用 `local` 标明"这是容器里的目录，不是从远端拉的"（⚠ 别假装是某个 commit）。
     if project is not None:

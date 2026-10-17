@@ -14,7 +14,7 @@ import logging
 import os
 
 from codeparser.scanner import scan_and_parse
-from graph.writer import GraphImmutable, write_graph
+from graph.writer import EmptyGraph, GraphImmutable, write_graph
 from jobs.models import Job
 
 log = logging.getLogger("astrolabe.jobs")
@@ -71,22 +71,25 @@ def run_parse_job(job: Job) -> None:
     #   ★★ 解析产物写进【基图】，★ 而基图的身份是【仓库 + sha】⚠
     #   ★★★ 所有者原话：「**拉去之前，看看现有的图数据里有没有同样的，
     #     有同样的，就直接返回，不拉取，不解析，还快**」
-    #   ⚠★ 失败会 **`raise`**（★ 与 `_fetch_source` 同一口径 —— ★ 见 `_base_graph_for`）⚠
-    base_graph = _base_graph_for(job, payload, project)
+    #   ⚠★ 失败会 **`raise`**（★ 与 `_fetch_source` 同一口径 —— ★ 见 `_resolve_identity`）⚠
+    # ★★★ 只解析身份 —— **不建基图行**（见 `_resolve_identity` 的说明）⚠
+    provider, repo_full, sha, ref, default_branch = _resolve_identity(job, payload, project)
 
-    if base_graph.built_at is not None:
+    from graph import binding
+
+    # ★★ 复用检查：* 用 `find` 查现成的（* ⛔ 不是先建行再判）✅
+    existing = binding.find(provider, repo_full, sha)
+    if binding.is_ready(existing):
         # ★★★ **已经有现成的了** —— ★ 别的项目解析过**同一个 sha** ⚠
         #   ⇒ ★★ **不拉取、不解析**：★ 绑上就完事 ✅（★ 这就是那条省算力的收益）
-        from graph import binding
-
-        binding.bind(project_ref, base_graph, requested_ref=(payload.get("ref") or ""))
+        binding.bind(project_ref, existing, requested_ref=ref)
         _finish(
             job, payload, outcome=OUTCOME_ALREADY_BUILT,
-            extra={"reused_base_graph": base_graph.sha[:12]},
+            extra={"reused_base_graph": existing.sha[:12]},
         )
         log.info(
             "复用现成基图 project_ref=%s base=%s@%s（★ 不拉取不解析）",
-            project_ref, base_graph.repo_full_name, base_graph.sha[:12],
+            project_ref, existing.repo_full_name, existing.sha[:12],
         )
         return
 
@@ -129,7 +132,9 @@ def run_parse_job(job: Job) -> None:
     _progress(job, 2, "核验许可证")
     # ★★ `B179`：许可结论**存在基图上** ⚠ —— ★ 它是"**源码版本的性质**"（★ 同一个 sha，
     #   ★ 复用它的人不必重新核验）✅ ★ 而且 `B176` ④ 的"GPL ⇒ 只出节点"也落在那里 ⚠
-    outcome = _license_gate(job, project, root, base_graph=base_graph)
+    # ⚠★ 2026-10-17：**基图行此刻还不存在**（* 解析出节点才建）⇒
+    #   * 许可结论先留在内存，* 建行后再写上去（* `_remember_license`）⚠
+    outcome, license_verdict = _license_gate(job, project, root)
     if outcome != "pass":
         _finish(job, payload, outcome=outcome, extra={"license": outcome})
         # ★★★ `B176` ②：许可没过 ⇒ **不会解析** ⇒ ★ 源码**立刻删** ——
@@ -165,14 +170,36 @@ def run_parse_job(job: Job) -> None:
             f"跳过原因：{scan.skip_reasons}）"
         )
 
+    # ★★★ 2026-10-17（所有者裁定）：「**解析出节点为零的，不能做基图**」⚠
+    #   · · ★★ 此刻**基图行还没建** ⇒ 直接失败即可，* ⛔ 没有“建了再删”那一步 ✅
+    if not result.nodes:
+        raise EmptyGraph(
+            "没有解析出任何代码节点 —— 这个仓库可能没有支持的源文件"
+            "（或解析器不支持这种语言）。"
+        )
+
     # ---------------------------------------------------------- ② 写图
     #   ★★★ 默认 `replace=False` ⇒ **图已存在就拒绝**（`B103` / `B155`）——
     #     ★ 见 `write_graph()` 的文档（那是**纵深防御的第二层**）。
+    # ★★★ 2026-10-17（所有者裁定）：**解析出节点之后才建基图行** ⚠
+    #   · ★ 原话：「**不应该是先解析，看看有没有节点，有节点再去建基图吗？**」
+    #   · ★★ 所以：* 0 节点在上面已经失败 ⇒* 到这里**必然有节点** ⇒ 建行 ✅
+    base_graph, _created = binding.get_or_create(
+        provider, repo_full, sha, ref=ref, default_branch=default_branch,
+    )
+    # ★ 许可结论此时才落到基图上（* 那份「复用者不必重验 + GPL 只出节点」的依据）✅
+    _remember_license(base_graph, license_verdict)
+    base_graph.refresh_from_db()
+
     _progress(job, 82, f"写入图（{len(result.nodes)} 节点）")
     try:
         # ★★★ `B179`：写进【基图】（★ 不再挂项目）——
         #   ★★ 同一个 sha 的项目**共用这一份** ⚠
         stats = write_graph(base_graph, result)
+    except EmptyGraph:
+        # ★ 兜底（* 实际到不了：上面已保证有节点）—— 不留空壳 ⚠
+        base_graph.delete()
+        raise
     except GraphImmutable as exc:
         # ⚠ 走到这里说明**前两道都没拦住**（例如图是被并发写进去的）——
         #   ★ 不当作系统故障：★ 图已经是定版状态，**这正是我们要的结果**。
@@ -289,8 +316,12 @@ def _drop_source(project, payload: dict, root: str) -> None:
     )
 
 
-def _base_graph_for(job: Job, payload: dict, project):
-    """★★★ **定下这一次解析属于哪一份基图**（★ `B179`）—— ★ 顺带兜底解析 sha。
+def _resolve_identity(job: Job, payload: dict, project):
+    """★★★ **定下「要解析的是哪个仓库的哪一版」**（★ `B179`）—— ★ 不建基图行。
+
+    ⚠★ 2026-10-17：原名 `_base_graph_for`（* 会 `get_or_create` 建行）——
+      * 按所有者裁定改成**只解析身份**：* 基图行**只在解析出节点之后**才建 ✅
+    
 
     ★★ 所有者原话（逐字）：「**基图的数据一定要锚定 github 上的版本，用 sha 之类的**」
 
@@ -347,16 +378,12 @@ def _base_graph_for(job: Job, payload: dict, project):
         job.payload = {**payload}
         job.save(update_fields=["payload"])
 
-    bg, created = binding.get_or_create(
-        provider, repo_full, sha, ref=ref, default_branch=default_branch,
-    )
-    log.info(
-        "基图：%s base=%s@%s（%s）",
-        "新建" if created else "已存在",
-        repo_full, sha[:12],
-        "已建好" if bg.built_at else "待建",
-    )
-    return bg
+    # ⚠★★ 2026-10-17（所有者裁定）：**这里【不建基图行】** ⚠
+    #   · ★★ 原话：「**不应该是先解析，看看有没有节点，有节点再去建基图吗？
+    #     你这建立基图行，发现没有节点，再去删除基图行的逻辑很抽象。**」
+    #   · ★ 所以本函数只**解析身份**（* provider / repo / sha / ref）并返回；
+    #     * 建行挪到**解析出节点之后**（* 见 `run_parse_job`）✅
+    return provider, repo_full, sha, ref, default_branch
 
 
 def _fetch_source(job: Job, payload: dict, project) -> str:
@@ -456,7 +483,7 @@ def _remember_license(base_graph, verdict) -> None:
     )
 
 
-def _license_gate(job: Job, project, root: str, *, base_graph=None) -> str:
+def _license_gate(job: Job, project, root: str) -> tuple[str, object]:
     """★★ **许可核验闸门**（`U3.1` 第 ④ 步）—— ★ 返回三种归宿之一。
 
     ★★ 关键动作是 `submission.resolve_license()`：★ 把那条「**待核验**」的流水
@@ -476,13 +503,16 @@ def _license_gate(job: Job, project, root: str, *, base_graph=None) -> str:
 
     verdict = licensing.evaluate(root)
 
-    # ★★ `B179`：结论存到【基图】上（★ 复用它的人不必再验；★ 且 GPL 的出图策略也在这）
-    _remember_license(base_graph, verdict)
+    # ⚠★ 2026-10-17：**不再在本函数里往基图写**（* 此刻行还没建）——
+    #   * 结论随返回值交给调用方，* 建行后再 `_remember_license` ✅
 
     if project is None:
         # ⚠ 没有项目记录（如调试命令 `parse_project`）⇒ ★ 只记日志，**不阻断**
         log.info("许可核验（无项目记录）：%s / %s", verdict.reason_code, verdict.decision)
-        return "rejected" if verdict.decision == licensing.DECISION_REJECT else "pass"
+        return (
+            "rejected" if verdict.decision == licensing.DECISION_REJECT else "pass",
+            verdict,
+        )
 
     # ★ 这条项目最近一次提交的流水（★ 就是那条「待核验」）
     review = (
@@ -496,11 +526,11 @@ def _license_gate(job: Job, project, root: str, *, base_graph=None) -> str:
 
     if review is not None and review.decision == ProjectReview.DECISION_APPROVED:
         # ★ 自动放行，**或者人工已经放行过** —— ★ 后者时 `resolve_license` 不会覆盖人工结论
-        return "pass"
+        return "pass", verdict
 
     if verdict.decision == licensing.DECISION_REJECT:
-        return "rejected"
-    return "awaiting_review"
+        return "rejected", verdict
+    return "awaiting_review", verdict
 
 
 def _finish(job: Job, payload: dict, *, outcome: str, extra: dict | None = None) -> None:

@@ -181,8 +181,25 @@ def find(provider: str, repo_full_name: str, sha: str) -> BaseGraph | None:
 
 
 def is_ready(bg: BaseGraph | None) -> bool:
-    """★ 这份基图**建好了吗**（★ 只有建好的才能"直接返回"）。"""
-    return bg is not None and bg.built_at is not None
+    """★★ 这份基图**真的建好了**吗（★ 只有建好的才能"直接返回"）⚠
+
+    ## ★★★ 判据：`built_at` 有值 **且真的有节点**
+
+    ```
+    ★★ 所有者裁定（2026-10-17）：「**节点为零，还要什么基图，空的还能叫基图吗？
+      解析出节点为零的，不能做基图。**」
+    ⇒ ★★ 基图 ⇔ 至少一个节点 ——* 0 节点的行**根本不该存在**：
+      · · ★ 正常解析出 0 节点 ⇒* `write_graph` 抛 `EmptyGraph`、* 作业失败、
+        * 基图行删除（* 见 `graph/writer.py` / `jobs/tasks.py`）✅
+      · · ★★ 而这里仍做一次防御：* 万一有人直接动库留下空行，
+        * **不复用**（* 不绑空图）* ✅
+    ```
+    """
+    if bg is None or bg.built_at is None:
+        return False
+    from graph.models import Node
+
+    return Node.objects.filter(base_graph_id=bg.pk).exists()
 
 
 def get_or_create(

@@ -1772,11 +1772,26 @@ class NoteLike(TimeStampedModel):
     #: ★★ `is_paragraph`（* 取代原先的 `anchor_kind` varchar(16)）——
     #: ★ 只有 2 种取值 ⇒ ★ bool **省 15 字节/条** ⚠
     is_paragraph = models.BooleanField(default=False)
+    #: ★★ **段赞指着哪个段落**（* 章赞恒 NULL）⚠
+    #:
+    #: ⚠★★ 2026-10-17（`B211`①）：`SET_NULL` ⇒ **`CASCADE`** ⚠
+    #:
+    #: ★★ 为什么改（* 所有者裁定：* 段赞锚点被删 ⇒ 赞跟着没）：
+    #:   · ★ 段落被 realign 删掉时（* 改了字的段换新 id），* 赞**跟着删**、* 计数 −1 ✅
+    #:   · ★★ 而 `SET_NULL` 的后果是**静默养脏数据**：
+    #:     · · ★ ⓪ PG 里两个 NULL **互不相等** ⇒* 偏唯一索引 `(block,user)` 挡不住
+    #:       ⇒* 同一用户能在同一篇上堆**多行失锚赞**（* 赞了新段 + 旧的挂着）⚠
+    #:     · · ① 合并计数**只涨不减**（* 失锚行永远算在里面）⚠
+    #:     · · ② 取消时按 `block_id` 匹配不到 NULL 行 ⇒* `removed:false`
+    #:       ⇒* **那个赞永远取消不掉** ⚠
+    #:   · ★★ 判据（* `B212`①）：* 计数错误必须**有界且自愈** ——*
+    #:     SET_NULL 的错误随时间累积，* ❌ 系统性漂移；* CASCADE 的错误是
+    #:     「锚点没了赞没了」，* ✅ 有界、* 可解释、* 与失锚评论同一族思想 ⚠
     block = models.ForeignKey(
         NoteBlock,
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
         related_name="likes",
     )
     user = models.ForeignKey(

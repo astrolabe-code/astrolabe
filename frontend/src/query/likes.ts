@@ -1,40 +1,65 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { apiDelete, apiPost } from '../api/client'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { apiDelete, apiGet, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { AnchorKind, LikeResult } from '../api/types'
+import type { AnchorKind, LikeResult, LikeStatus } from '../api/types'
 
 /**
- * ★ 点赞数据层（`B203⑤` / `B205` / `D83` · 契约 §22.4）
+ * ★ 点赞数据层（`B203⑤` / `B211` / `B212` / `D83` / `D91` · 契约 §22.4）
  *
- * ## ★★★ 本模块的两个出口
+ * ## ★★★ 本模块的三个出口
  *
  * | 出口 | 给谁用 | 说明 |
  * |---|---|---|
- * | `useLikeMutation` | 特殊场景（一次性脚本/管理操作） | 裸 mutation，不做防抖 |
- * | ★★ `useLikeToggle` | ★★ **所有点赞按钮**（章赞/段赞） | **开关语义 + 1–2 秒防抖 + 乐观更新**全在这里（`D83`） |
+ * | `useLikeStatus` | ★★ **首屏** | `GET /api/notes/<id>/likes/` —— 初始态的服务端来源（`B211`③） |
+ * | `useLikeMutation` | 特殊场景 | 裸 mutation，不做防抖 |
+ * | ★★ `useLikeToggle` | ★★ **所有点赞按钮** | 开关 + 防抖 + 初始态来自 `useLikeStatus` |
  *
- * ## ⚠★ `useLikeToggle` 的五条口径（逐条对应 `D83`）
+ * ## ★★★ B站机制（`B211`，所有者三次纠正后定论）
  *
  * ```
- * ① ★★ 开关语义：* 点一下赞、* 再点一下取消；* UI **立即变**（* 乐观）✅
- * ② ★★ 防抖 1–2 秒：* 最后一次点击后**等 1200ms** 才发请求；* 连续点击**只发一次**
- *      （* 带最终态：* 赞 ⇒ POST，* 取消 ⇒ DELETE）✅
- * ③ ★★ 以服务端回包为准：* 回包带 `liked` + `like_count` ⇒* 用它校正 ✅
- * ④ ★★ 待发状态在**页面隐藏 / 卸载**时必须发出（* `visibilitychange` /
- *      `beforeunload`）——* 否则「点了就走」状态丢 ⚠
- * ⑤ ★★ 连点回到原态：* 请求**照发**（* `D83④(b)`），* 服务端幂等返回
- *      （* `already:true` / `removed:false`）⇒* 计数不动 ✅
+ * ⓪ ★★ **计数与状态是两套数据** ⚠
+ *      · · ★ 计数 = 聚合合并（* 可滞后）· * 状态 = 每用户独立（* 要准）✅
+ * ① ★★ 初始态来自服务端（* `GET .../likes/` ⇒ `{liked, like_count}`）✅
+ *      · · ★ B站刷新后红拇指是恢复的 ——* 就是因为加载时知道你的状态 ✅
+ * ② ★★ 图标是本地状态 ⇒* 点一下**立即翻**（* 红/灰）✅
+ * ③ ★★★ **计数只信服务端回包** ⚠
+ *      · · ★ 合并数不是 UI 能本地 ±1 的数字（* `B211`⑥：* 乐观计数已作废）⚠
+ *      · · ★ 所以点下去计数**不变**，* 1.2s 防抖后发请求，* 回包才更新 ✅
+ *      · · ★★ 这段滞后是**允许的**（* `B212`①：* 有界 + 自愈）✅
+ * ④ ★★ 防抖 1–2 秒（* `D83` / `D91`）：* 少与服务器交互（* 服务器性能）——
+ *      * ⛔ 不许当延迟优化掉 ✅
+ * ⑤ ★★ 待发状态在页面隐藏 / 卸载时补发（* `D83④(a)`）⚠
  * ```
  *
- * ⚠★ **初始态没有服务端来源**（2026-10-17 联调摸底发现，已向所有者报告）：
- *   `note` 载荷里**没有**「我赞过没有」字段，也没有查询端点 ⇒
- *   调用方传 `initialLiked`（默认 `false`）；⚠ 刷新页面后未赞过的会显示为未赞，
- *   用户点一下即被服务端校正（`already:true`）。
+ * ⚠★ 正确性红线（`B212`①）：**滞后无罪，漂移有罪** ——
+ *   允许计数滞后 ≤1.2s / 卸载补发失败丢一次（±1 有界自愈）；
+ *   ❌ 不许只涨不减、重复计（后端 `B211`①② 已修）。
  */
 
-/** ⚠ 防抖时长（`D83`：1–2 秒，取中间值） */
+/** ⚠ 防抖时长（`D83`：1–2 秒，取中间值；`D91`：省写库，不是延迟优化） */
 const DEBOUNCE_MS = 1200
+
+/**
+ * GET /api/notes/<id>/likes/?anchor_kind=&block_id=（① 型）
+ * ★★ 初始态的服务端来源（`B211`③）—— B站刷新后恢复红拇指就靠这个
+ *
+ * ⚠ 未登录也能调（返回 `liked:false` + 计数）—— 计数对所有人可见 ✅
+ */
+export function useLikeStatus(
+  noteId: number | null | undefined,
+  anchor: AnchorKind = 'chapter',
+  blockId?: number | null,
+) {
+  const params = new URLSearchParams({ anchor_kind: anchor })
+  if (anchor === 'paragraph' && blockId != null) params.set('block_id', String(blockId))
+  return useQuery({
+    queryKey: ['like-status', noteId, anchor, blockId ?? null],
+    enabled: !!noteId,
+    queryFn: async (): Promise<LikeStatus> =>
+      unwrap(await apiGet<LikeStatus>(`/api/notes/${noteId!}/likes/?${params.toString()}`, 'data')),
+  })
+}
 
 /** POST/DELETE /api/notes/<id>/likes/（① 型）—— 裸 mutation，不做防抖 */
 export function useLikeMutation(noteId?: number | null, anchor: AnchorKind = 'chapter') {
@@ -56,13 +81,13 @@ export interface LikeToggleState {
 }
 
 /**
- * ★★ **点赞开关钩子**（`D83` 的落点）—— 所有点赞按钮用它
+ * ★★ **点赞开关钩子**（`D83` + `B211`）—— 所有点赞按钮用它
  *
  * @param noteId 笔记 id
  * @param anchor 章赞 / 段赞（`chapter` / `paragraph`）
- * @param initial 初始态（来自笔记载荷的 `like_count`；`liked` 见模块文档的⚠）
+ * @param initial 初始态 —— ★★ **来自 `useLikeStatus`**（`B211`③），⛔ 不再默认 false
  *
- * ⚠ 实现要点：`desired`（UI 态）与 `sent`（已确认态）分离；
+ * ⚠ 实现要点：`desired`（图标态，本地）与 `count`（合并数，只信回包）**分离**；
  *   定时器只保留**一个**（后到覆盖前到）⇒ 连续点击永远只发一次最终态 ✅
  */
 export function useLikeToggle(
@@ -92,14 +117,19 @@ export function useLikeToggle(
     })
   }, [mutation])
 
-  /** ★ 服务端回包 ⇒ 以它为准校正（`liked` + `like_count`） */
+  /** ★★ 服务端回包 ⇒* 以它为准校正（`liked` + `like_count` 都来自服务端）✅ */
   useEffect(() => {
     const r = mutation.data
     if (!r) return
     setState({ liked: r.liked, like_count: r.like_count })
   }, [mutation.data])
 
-  /** ★★ 点一下 = 翻转 + 重排防抖；连续点N次 = 最后一次排的那一次 ✅ */
+  /**
+   * ★★ 点一下 = 翻图标（* 本地状态，* 立即）✅
+   *
+   * ⚠★★ **计数不动**（`B211`⑥）——* 合并数不是 UI 能本地 ±1 的数字；
+   *   * 它 1.2s 后由回包带来（* `B212`①：* 这段滞后是允许的）⚠
+   */
   const toggle = useCallback(() => {
     desired.current = !desired.current
     setState((s) => ({ liked: desired.current, like_count: s.like_count }))

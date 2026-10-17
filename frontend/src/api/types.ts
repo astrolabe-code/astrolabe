@@ -706,3 +706,13 @@ export interface ModerateResult {
   /** take_down 有 */
   deleted?: boolean
 }
+
+/* ---------------------------------------------------------------- 点赞状态（B211③ / 契约 §22.4） */
+
+/** GET /api/notes/<id>/likes/?anchor_kind=&block_id= ⇒ ① 型 */
+export interface LikeStatus {
+  /** ★ 我赞过没有（每用户独立的状态；未登录 ⇒ false） */
+  liked: boolean
+  /** ★ 合并计数（聚合出来的，❌ 不是 UI 能本地 ±1 的数字） */
+  like_count: number
+}

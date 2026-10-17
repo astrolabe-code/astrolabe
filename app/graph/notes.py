@@ -232,8 +232,19 @@ def realign(note: "Note") -> "QuerySet[NoteBlock]":
             orphan_map[old.pk] = cids
         ordinal_of[old.pk] = old.ordinal
 
-    for old in stale:
-        old.delete()
+    # ⚠★★ `B211`②：**删旧段 + 重算计数必须是同一个事务** ⚠
+    #   · ★ 本项目**没有** `ATOMIC_REQUESTS` ⇒* ❌ 不显式包起来就是两次独立写，
+    #     中间挂掉即漂移（* 而漂移是 `B212`① 明令不许的）⚠
+    from django.db import transaction
+
+    with transaction.atomic():
+        for old in stale:
+            old.delete()
+        # ★★ `B211`①：* 旧段没了 ⇒* 其上的段赞 **CASCADE 跟着没** ⇒* **就地重算** ⚠
+        #   · · ★ 为什么重算而不是 −N：* 删的是**行**，* 真相在明细表 ⇒*
+        #     按行数重写计数列才是**单一真相**（* 同 `B146` 纪律）✅
+        #   · · ★ 一次 realign 可能删掉 N 个旧段 ⇒* N 条段赞一起没，* ±1 描述不了 ✅
+        recount_likes(note)
 
     if to_create:
         NoteBlock.objects.bulk_create(to_create)
@@ -293,6 +304,28 @@ def _handle_orphans(
             # ★ 新段比旧段少（* 用户删了段）⇒ ★ 无处可钉 ⇒ ★ 保持失锚 ✅
             continue
         NoteComment.objects.filter(pk__in=cids).update(block=target)
+
+
+def recount_likes(note: "Note") -> None:
+    """★★ **按明细表重写这篇笔记的点赞计数**（* `B211`② · `B212`①）⚠
+
+    ## ★★ 为什么是「重算」而不是「±1」
+
+    ```
+    ★★ `Note.like_count` 是**缓存**，* `core_note_like` 的**行**才是真相 ⚠
+      · · ★ 同 `B146` 的纪律：* 计数必须只有一个来源 ✅
+    ★★ CASCADE 删段赞是**行数变化**，* 不是一次 ±1 能描述的 ⚠
+      · · ★ 一次 realign 可能删掉 N 个旧段 ⇒* N 条段赞一起没 ✅
+    ```
+
+    ⚠★ 本函数同时供管理命令 `recount_note_likes` 复用
+      （* 自我纠错入口，* `B211`②；* 对应 B站架构的「程序拥有自我纠错的能力」）✅
+    """
+    from core.models import Note, NoteLike
+
+    Note.objects.filter(pk=note.pk).update(
+        like_count=NoteLike.objects.filter(note=note).count()
+    )
 
 
 def orphan_blocks(note: "Note") -> "QuerySet[NoteBlock]":

@@ -217,6 +217,17 @@ urlpatterns = [
         likes.collection,
         name="note-likes",
     ),
+    # --------------------------------------- 回收站 / 恢复（B210：软删 + 回收站）
+    # ★★ 软删的笔记进回收站（* 可恢复）；* 管理员删是物理删（* take_down）⚠
+    # ⚠★ 路由挂在 `me/` 下但视图在 `notes.py` ——* URL 命名空间讲的是"给谁看"，
+    #   模块归属讲的是"谁序列化"；* 回收站是**笔记列表**，* 序列化归 notes ⚠
+    path("me/notes/deleted/", notes.deleted_bin, name="me-notes-deleted"),
+    # ⚠★ 恢复 ⇒* 清 deleted_at / deleted_by；* 段落按 realign 重算（* D86②）✅
+    path(
+        "notes/<int:note_id>/undelete/",
+        notes.undelete,
+        name="note-undelete",
+    ),
     # ---------------------------------------------------------- 协作者（B202/B206/B207）
     # ★★ 管理页「按用户名直接加」——* ❌ 不发链接、* ❌ 不要 token（* `B206`）⚠
     path(

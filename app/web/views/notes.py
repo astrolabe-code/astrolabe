@@ -19,8 +19,11 @@
        （* `note_readable` 两层判据，* B207⑦）✅
      · · ★★ 协作者能看别人的私有笔记（* 所有者原话整句：「不能看，怎么修改？」）✅
 
-④ ★★ 删除笔记 ⇒ ★ 它的段落 / 评论 / 点赞 CASCADE 消失 ✅
-     · · ★ 而**修改记录（revision）也删** —— ★ 那是这个笔记自己的历史 ⚠
+④ ★★ 删除笔记 ⇒ ★★ **软删**（* `B210`）⚠
+     · · ★ 只写 `deleted_at` / `deleted_by` 两列，* 段落 / 评论 / 点赞**原样留着** ✅
+     · · ★★ 从回收站可恢复（* `GET /api/me/notes/deleted/` + `POST .../undelete/`）✅
+     · · ★★ 而**管理员删 = 物理删**（* `moderate` 的 `take_down`，* 无恢复）⚠
+     · · ★ 软删的笔记对**所有人**不可见（* 含作者，* `can_read_note` 顶部判定）✅
 
 ⑤ ★★ `title` 允许手改，* 但保存时**拿正文首行覆盖** ⚠
      · · ★ 折中：* 建时取正文前几字；* 保存时若开头有 `#` 标题则用它 ✅
@@ -35,6 +38,7 @@
 from __future__ import annotations
 
 from django.http import HttpRequest
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core.models import Note
@@ -49,6 +53,7 @@ from web.permissions import (
     get_project,
     note_readable,
     note_writable,
+    project_of,
 )
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
@@ -106,7 +111,8 @@ def _list(request: HttpRequest, project):
     #   · · ★★ 而 `scope.readable_nodes_of()` 正是"这个项目该读哪些节点"的
     #     唯一判据（* `B186` 立的，* 见 `graph/scope.py`）✅
     node_ids = scope.readable_nodes_of(project.project_ref).values_list("pk", flat=True)
-    qs = Note.objects.filter(node_id__in=node_ids)
+    # ★★ `B210`：**软删的笔记不进任何列表**（* 它在回收站里，* 见 `deleted_bin`）⚠
+    qs = Note.objects.filter(node_id__in=node_ids, deleted_at__isnull=True)
     # ⚠★ 私有笔记只有作者能看 ✅
     # ★★ `B208`⑧：* **被隐藏的笔记**（* state=hidden）对**非作者**一律不列 ✅
     #   （* 隐藏 = 只有作者能看到，* 比私有更严：* 协作者也不可）⚠
@@ -187,7 +193,10 @@ def detail(request: HttpRequest, note_id: int):
 
     ## DELETE
 
-    `{deleted:true}` —— ★★ 它的段落 / 评论 / 点赞 / 版本**一并消失** ⚠
+    `{deleted:true}` —— ★★ **软删**（* `B210`）：* 进回收站，* **可恢复** ⚠
+      · · ★ 段落 / 评论 / 点赞**原样留着**（* 恢复即全文回来）✅
+      · · ★★ 管理员删是另一条路：* `POST /api/admin/notes/<id>/moderate/`
+        `{action: take_down}` = **物理删、* 无恢复**（* `B208` / `B210`）⚠
     """
     note = Note.objects.filter(pk=note_id).select_related("node").first()
     if note is None:
@@ -199,7 +208,13 @@ def detail(request: HttpRequest, note_id: int):
     if request.method == "DELETE":
         if not note_writable(request, note):
             return fail("没有权限删除这篇笔记", 403, code="forbidden")
-        note.delete()
+        # ★★ `B210`：**软删** ——* 只写两列，* 行还在，* 从回收站可恢复 ✅
+        #   ⚠★ 谁删的记在 `deleted_by`（* 所有者要求「分清管理员删的还是
+        #     其他用户删的」；* 而管理员删的是物理删，* 行都没了 ⇒* 软删行
+        #     必然是非管理员删的）⚠
+        note.deleted_at = timezone.now()
+        note.deleted_by = current_user(request)
+        note.save(update_fields=["deleted_at", "deleted_by"])
         return ok_flat(deleted=True)
 
     if request.method == "PATCH":
@@ -209,6 +224,96 @@ def detail(request: HttpRequest, note_id: int):
 
     return ok_flat(note=_note_json(note),
                    blocks=[_block_json(b) for b in note.blocks.order_by("ordinal")])
+
+
+# ---------------------------------------------------------------------------
+# 回收站 / 恢复（★ `B210` · 2026-10-16）
+# ---------------------------------------------------------------------------
+
+@require_http_methods(["GET"])
+def deleted_bin(request: HttpRequest):
+    """`GET /api/me/notes/deleted/` —— ★★ **我的回收站**（* `B210`⑥）⚠
+
+    ⇒ `{items, total, limit, offset}`（* 与笔记列表同一种 ② 型扁平 ✅）
+
+    ## ★★ 装什么（* 三条口径）
+
+    ```
+    ① ★★ `deleted_at` 非空（* 软删的）✅
+    ② ★★ 且"我"能恢复它 ⇒* 我是作者 ∨ 项目 owner ∨ 项目协作者 ✅
+       · · ★★ 所以**协作者删的自己的笔记也看得见**（* 所有者要求的效果）✅
+    ③ ★★ 管理员删的不在这里 ——* 那是物理删（* take_down），* 行都没了 ⚠
+    ```
+
+    ⚠★ 列表**不含正文**（* 同 D86①：* 先看元信息，* 要看正文另调详情）⚠
+      · · ★ 详情也打不开（* 软删的对所有人不可见）⇒* 恢复后再看 ✅
+    """
+    user = current_user(request)
+    if user is None:
+        return fail("请先登录", 401, code="unauthenticated")
+
+    from django.db.models import Q
+
+    # ⚠★ `node__project__collaborators__user` ——* `Collaborator` 挂在项目上，
+    #   而笔记的节点可能属项目（* 外键）✅
+    qs = (
+        Note.objects.filter(deleted_at__isnull=False)
+        .filter(
+            Q(created_by=user)
+            | Q(node__project__owner=user)
+            | Q(node__project__collaborators__user=user)
+        )
+        .distinct()
+        .select_related("node", "node__project")
+    )
+
+    limit = _clamp(request.GET.get("limit"), 1, NOTES_PAGE_MAX, 50)
+    offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
+    total = qs.count()
+    items = []
+    for n in qs.order_by("-deleted_at")[offset:offset + limit]:
+        item = _note_json(n)
+        # ★★ `D86`①：* 列表**不含正文** ⚠
+        #   · · ★ 回收站只要"哪一篇、谁删的、何时删的"——* 正文是草稿，* ❌ 不往列表漏 ⚠
+        #   · · ★ 而且软删笔记的详情对**所有人** 404 ⇒* 想预览也打不开，* 恢复后再看 ✅
+        item.pop("body", None)
+        # ★ 前端跳回项目用（* `project_of` 认三种节点形态，* 见 `core/access.py`）✅
+        project = project_of(n)
+        item["project_ref"] = project.project_ref if project is not None else ""
+        items.append(item)
+    return ok_flat(total=total, limit=limit, offset=offset, items=items)
+
+
+@require_http_methods(["POST"])
+def undelete(request: HttpRequest, note_id: int):
+    """`POST /api/notes/<id>/undelete/` —— ★★ **从回收站恢复**（* `B210`⑥）⚠
+
+    ⇒ `{note, blocks}`（* 与 PATCH 同形 ✅）
+
+    ## ★★ 三条口径
+
+    ```
+    ① ★★ 谁能恢复 = 谁能删（* `note_writable`：* 作者 ∨ 协作者 ∨ owner）✅
+    ② ★★ 恢复 ⇒* 清 `deleted_at` / `deleted_by` 两列，* 内容一根毛都不动 ✅
+    ③ ★★ 段落按 realign 重算（* `D86`②）——* 与 PATCH 同一条路径 ✅
+    ```
+
+    ⚠★ 软删期间**没有**任何人改过它的段落（* 它对所有人不可见）⇒
+      realign 实际上是空转；* 照 `D86`② 走同一条路，* ❌ 不在这里抄近路 ⚠
+    """
+    note = Note.objects.filter(pk=note_id).select_related("node").first()
+    # ⚠ 不在回收站里（* 或根本没这篇）⇒* 404 ✅
+    if note is None or note.deleted_at is None:
+        return fail("笔记不存在（或不在回收站里）", 404, code="not_found")
+
+    if not note_writable(request, note):
+        return fail("没有权限恢复这篇笔记", 403, code="forbidden")
+
+    note.deleted_at = None
+    note.deleted_by = None
+    note.save(update_fields=["deleted_at", "deleted_by"])
+    blocks = note_alg.realign(note)
+    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
 
 
 def _patch(request: HttpRequest, note: Note):
@@ -294,6 +399,10 @@ def _note_json(n: Note) -> dict:
         "state": n.state,
         "moderation_reason": n.moderation_reason,
         "moderated_at": n.moderated_at.isoformat() if n.moderated_at else "",
+        # ★★ `B210`：* 软删两列 ——* 回收站靠它们显示"谁删的、何时删的" ✅
+        #   （* 正常笔记两项都是空串）✅
+        "deleted_at": n.deleted_at.isoformat() if n.deleted_at else "",
+        "deleted_by": n.deleted_by.get_username() if n.deleted_by_id else "",
         "like_count": n.like_count,
         "comment_count": n.comment_count,
         "created_by": n.created_by.get_username() if n.created_by_id else "",

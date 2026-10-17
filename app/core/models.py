@@ -1458,6 +1458,36 @@ class Note(TimeStampedModel):
     #: ★ **什么时候处置的** · ★ NULL = 没处置过
     moderated_at = models.DateTimeField(null=True, blank=True)
 
+    # ---------------------------------------------------------------- 软删（回收站）
+    # ★★ `B210`（* 2026-10-16）：* 删除改**软删** + 回收站 ⚠
+    #
+    # ★★ 所有者原话整句：「**管理员删除就是彻底删除，没有恢复机制，
+    #    所以，才有了隐藏这个不太严的。**」✅
+    #
+    # ★★ 两条删除路径因此分开（* 这是本设计的**全部要点**）：
+    # ```
+    # ① ★★ 其他人删（* 作者 / 协作者 / owner，* 走 DELETE /api/notes/<id>/）
+    #      ⇒ ★ 软删：* 本两列写上，* 行还在，* **可从回收站恢复** ✅
+    # ② ★★ 管理员删（* 走 POST /api/admin/notes/<id>/moderate/ take_down）
+    #      ⇒ ★★ **物理删除**（* 行都没了）⇒* **没有恢复机制** ⚠
+    # ```
+    # ★★ 所以：* **软删行必然是非管理员删的** ⇒* `deleted_by` 一列
+    #   就直接回答"谁删的"（* 所有者要求「分清管理员删的还是其他用户删的」）✅
+    #
+    # ⚠★ 读路径：* `core/access.py::can_read_note` 顶部判 `deleted_at` ⇒
+    #   软删笔记对**所有人**不可见（* 含作者，* 恢复走回收站）⚠
+    #: ★★ **什么时候被软删的** · ★ NULL = 没被删（* 正常笔记）✅
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    #: ★ **谁删的**（★ FK → `auth_user`）· ★ NULL = 没被删
+    #: ⚠★ **SET_NULL** 而不是 CASCADE ——* 删号不删笔记（* 同 `moderated_by`）⚠
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="deleted_notes",
+    )
+
     # ---- 冗余计数（★ 列表免 count；* 真相在明细表，* 必须可重算）----
     like_count = models.IntegerField(default=0)
     comment_count = models.IntegerField(default=0)

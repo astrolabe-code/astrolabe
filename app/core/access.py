@@ -232,7 +232,10 @@ def can_read_note(user: Any, note: Any) -> bool:
     ## ★★ 两层（* 顺序不能反）
 
     ```
-    ⓪ ★★ **项目大门**（* `can_view_project` 不过 ⇒ * 一律 False）⚠
+    ⓪ ★★ **软删判定**（* `deleted_at` 非空 ⇒ * 一律 False）⚠
+       · · ★ 对**所有人**不可见 ——* 含作者本人（* 恢复走回收站，* `B210`）⚠
+       · · ★★ 管理员删的是**物理删**（* 行都没了）⇒* 到不了这一道 ⚠
+    ① ★★ **项目大门**（* `can_view_project` 不过 ⇒ * 一律 False）⚠
        · · ★ 所有者原话整句：「私有项目上没有"公开笔记"，项目私有，
          其中的一切都私有，不可见，除非把项目改公开。」
        · · ★★ 所以：* 私有项目里 `is_public` **失去意义** ⚠
@@ -252,7 +255,11 @@ def can_read_note(user: Any, note: Any) -> bool:
     """
     project = project_of(note)
 
-    # ⓪ 项目大门（* `B207`⑦④）✅
+    # ⓪ 软删 ⇒* 对所有人不可见（* 含作者；* 恢复走回收站，* `B210`）✅
+    if note.deleted_at is not None:
+        return False
+
+    # ① 项目大门（* `B207`⑦④）✅
     if project is not None and not can_view_project(user, project):
         return False
 

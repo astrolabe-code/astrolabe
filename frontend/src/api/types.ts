@@ -545,3 +545,164 @@ export interface AdminSettingsData {
   /** ★ 当前用户够不够格改门禁类（★ 即 `is_superuser`） */
   can_edit_gated: boolean
 }
+
+/* ---------------------------------------------------------------- 设置（B190 / 契约 §22.1） */
+
+/** 设置规格（给前端渲染控件用）——⚠ 每项带 source ⇒ 能显示「这一项为什么是这个值」 */
+export interface SettingsSpec {
+  key: string
+  label: string
+  note: string
+  /** 后端 `type.__name__`：int / bool / str */
+  type: string
+  default: unknown
+  value: unknown
+  /** default / global / user / project */
+  source: string
+  /** ★ 门禁键：只有管理员能改（改 ⇒ 进 rejected ⇒ 整件 400 bad_setting） */
+  gated: boolean
+}
+
+/** GET /api/me/settings/ 与 /api/projects/<ref>/settings/ 同形（② 型） */
+export interface SettingsData {
+  settings: Record<string, unknown>
+  specs: SettingsSpec[]
+}
+
+/** PATCH 成功（② 型）——⚠ 请求体是【扁平】的 {键:值}，❌ 不是嵌套 settings */
+export interface SettingsPatchResult {
+  settings: Record<string, unknown>
+  applied: Record<string, unknown>
+}
+
+/* ---------------------------------------------------------------- 笔记（B187/B201/B210 / 契约 §22.2） */
+
+/** ★ kind 固定 5 种（B201）——❌ 不是用户自定义字段 */
+export type NoteKind = 'flash' | 'question' | 'confuse' | 'pitfall' | 'summary'
+
+export interface NoteBlock {
+  id: number
+  ordinal: number
+  text: string
+  fingerprint: string
+  comment_count: number
+}
+
+export interface Note {
+  id: number
+  node_id: number
+  kind: NoteKind
+  title: string
+  body: string
+  card_skin: string
+  is_public: boolean
+  /** active / hidden（B208：管理员隐藏 ⇒ 只有作者可见） */
+  state: string
+  moderation_reason: string
+  moderated_at: string
+  /** B210：软删两列——非空即在回收站（正常笔记是空串） */
+  deleted_at: string
+  deleted_by: string
+  like_count: number
+  comment_count: number
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+/** 回收站列表项 = note + project_ref，且【无 body 字段】（D86①） */
+export interface DeletedNote extends Omit<Note, 'body'> {
+  project_ref: string
+}
+
+/** 列表（② 型） */
+export interface NoteListData {
+  total: number
+  limit: number
+  offset: number
+  items: Note[]
+}
+
+/** 单篇读写（② 型）——⚠ PATCH 改了 body ⇒ blocks 会变，前端必须刷新段评锚点 */
+export interface NoteDetailData {
+  note: Note
+  blocks: NoteBlock[]
+}
+
+/* ---------------------------------------------------------------- 评论（B201/B203④ / 契约 §22.3） */
+
+export type AnchorKind = 'chapter' | 'paragraph'
+
+export interface Comment {
+  id: number
+  note_id: number
+  anchor_kind: AnchorKind
+  block_id: number | null
+  parent_id: number | null
+  body: string
+  /** 后端快照：段评 = 那一刻的原文 */
+  quote: string
+  /** 失锚标记（原段落已变更或已删除） */
+  orphaned: boolean
+  reply_count: number
+  created_by: string
+  created_at: string
+}
+
+export interface CommentListData {
+  total: number
+  limit: number
+  offset: number
+  items: Comment[]
+}
+
+/** POST 成功（① 型） */
+export interface CommentCreateResult {
+  comment: Comment
+  note_comment_count: number
+  block_comment_count: number | null
+}
+
+/* ---------------------------------------------------------------- 点赞（B203⑤/B205/D83 / 契约 §22.4） */
+
+export interface LikeResult {
+  liked: boolean
+  like_count: number
+  /** POST 时：本来就是赞过的；DELETE 时：本来就没赞过 */
+  already?: boolean
+  removed?: boolean
+}
+
+/* ---------------------------------------------------------------- 协作者（B202/B206/B207 / 契约 §22.5） */
+
+export interface CollaboratorList {
+  items: { username: string }[]
+  total: number
+}
+
+export interface CollaboratorAddResult {
+  added: boolean
+  already: boolean
+  username: string
+}
+
+export interface CollaboratorRemoveResult {
+  removed: boolean
+  username: string
+}
+
+/* ---------------------------------------------------------------- 管理处置（B208 / 契约 §22.6） */
+
+export type ModerateAction = 'hide' | 'take_down' | 'restore'
+
+export interface ModerateResult {
+  action: ModerateAction
+  /** hide / restore 有；take_down 没有（数据已物理删除） */
+  state?: string
+  reason: string
+  /** hide / restore 有 */
+  moderated_by?: string
+  moderated_at?: string
+  /** take_down 有 */
+  deleted?: boolean
+}

@@ -47,7 +47,12 @@ def user_settings(request: HttpRequest):
     """
     user = current_user(request)
     if user is None:
-        return fail("请先登录", 401, code="unauthorized")
+        # ⚠★ 2026-10-17（联调摸底发现）：**`code` 必须是 `unauthenticated`** ⚠
+        #   · ★ 前端 `api/client.ts` 的未登录处理器**只认这个 code**
+        #     （* 401 + `unauthenticated` ⇒* 清 token + 跳登录页）⚠
+        #   · ★ 原来写的是 `unauthorized` ⇒* token 过期时用户只会看到一句
+        #     「请先登录」，* ❌ 不会被踢去登录（* 而其他端点全是 `unauthenticated`）⚠
+        return fail("请先登录", 401, code="unauthenticated")
 
     if request.method == "PATCH":
         return _patch_user(request)

@@ -817,3 +817,98 @@ projects/<project_ref>/
 | 3 | **WebSocket 频道层订阅契约缺失**:频道名 / 订阅键规则 / 消息结构 / 鉴权 | 主文 §8.2 只说了 `ch:` 前缀与"LSP/终端消费端",**无对外订阅契约** | 实时功能无法按契约编码(§19.5) |
 | 4 | **`graph/edges/` 由 `offset` 改为 `cursor` 的兼容期** | 目标(§18.1)不再用深分页 offset;`cursor` 属新增参数,但**旧的 `offset` 何时可删未定** | 属 §14 登记表的弃用时间表缺口 |
 | 5 | **`graph/nodes/` 是否也要 `cursor` 化** | D8.2 只覆盖 `graph/edges/` 与跳数查询 | 影响列表页分页实现(§18.3 最后一行为当前口径) |
+
+---
+
+## 22. 读懂体验实现契约(`B187`–`B210` · 2026-10-17 补录)
+
+> **权威源** = `docs/backend-decisions.md` 的 `B187`–`B210`;本节只给**对外契约**,不重复机制。
+> ⚠★ **与 §20 的关系(必须写清,不许含糊)**:§20 那套 `annotations/` / `anchors/` / `reading-paths/` 是**旧站目标契约(v28)**,已被 `B183`–`B203` 的「笔记六张表」重构**整体取代** —— ★★ §20 的端点**一个都没有实现**,★ 本节登记的是**线上真身**。
+> ⚠ §20 的硬约束(游客只读 / UGC 写权不依赖 `can_edit` / 不得原地编辑他人内容 / 私有项目一律 404)**继续有效**;两节不冲突,冲突时以本节为准。
+
+### 22.1 设置(`B190` / `B203`②)—— 全部 ② 型
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/me/settings/` | — | `{settings:{键:值}, specs:[{key,label,note,type,default,value,source,gated}]}` |
+| `PATCH /api/me/settings/` | **扁平** `{键:值,…}`(⚠ 不是嵌套 `settings`) | `{settings:{…}, applied:{…}}` |
+| `GET /api/projects/<ref>/settings/` | — | 同上(`specs` 只含项目档键) |
+| `PATCH /api/projects/<ref>/settings/` | 扁平 | 同上 |
+
+- `source` ∈ `default/global/user/project` ⇒ 前端能显示「这一项为什么是这个值」。
+- `gated=true` 的键**只有管理员能改**;非管理员改 ⇒ 该键进 `rejected` ⇒ 整件 **400 `bad_setting`**(带 `applied` / `rejected`,❌ 不是部分成功);未注册的键同样 400。
+- 项目档 PATCH 需要 `can_edit`(owner ∨ 协作者);非成员 403。
+
+### 22.2 笔记(`B187`/`B188`/`B201`/`B210`)—— 全部 ② 型
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/projects/<ref>/notes/?kind=&limit=&offset=` | — | `{total,limit,offset,items:[note]}` |
+| `POST /api/projects/<ref>/notes/` | `{kind,title?,body,node_id,is_public?}` | `{note, blocks}` |
+| `GET /api/notes/<id>/` | — | `{note, blocks}` |
+| `PATCH /api/notes/<id>/` | `{kind?,title?,body?,card_skin?,is_public?}` | `{note, blocks}` |
+| `DELETE /api/notes/<id>/` | — | `{deleted:true}`(**软删**,`B210`) |
+| `GET /api/me/notes/deleted/?limit=&offset=` | — | `{total,limit,offset,items:[note+project_ref]}`(**无 `body` 字段**) |
+| `POST /api/notes/<id>/undelete/` | — | `{note, blocks}` |
+
+- `note` 字段:`{id,node_id,kind,title,body,card_skin,is_public,state,moderation_reason,moderated_at,deleted_at,deleted_by,like_count,comment_count,created_by,created_at,updated_at}`;`block` 字段:`{id,ordinal,text,fingerprint,comment_count}`。
+- ★★ **PATCH 改了 `body` ⇒ 后端重算段落并返回新 `blocks`**,前端**必须**用它刷新段评锚点;失锚段评按项目策略处置(`hide` 默认不进章评区 / `move_to_chapter` 进且标 `orphaned:true`)。
+- `state=hidden`(管理员隐藏)⇒ **只有作者可见**,前端不得为他人渲染入口;`deleted_at` 非空 ⇒ 对**所有人**不可见(回收站列表除外)。
+- `kind` 固定 5 种:`flash` / `question` / `confuse` / `pitfall` / `summary`;越界 400 `bad_kind`。
+
+### 22.3 评论(`B201`/`B203`④)—— ① 型
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/notes/<id>/comments/?anchor_kind=chapter\|paragraph&block_id=&parent=&include_hidden=&limit=&offset=` | — | `{total,limit,offset,items:[comment]}` |
+| `POST /api/notes/<id>/comments/` | `{body,anchor_kind,block_id?,parent_id?}` | `{comment,note_comment_count,block_comment_count}` |
+| `DELETE /api/comments/<id>/` | — | `{deleted:true}`(软删、**幂等**) |
+
+- `comment` 字段:`{id,note_id,anchor_kind,block_id,parent_id,body,quote,orphaned,reply_count,created_by,created_at}`。
+- ★★ **只删不改(`B201`③)**:契约里**没有 PATCH**;删除按钮仅对**作者本人 / 项目 owner / 协作者 / 管理员**渲染。
+- `anchor_kind` **创建时定死**;`quote` 由后端快照(段评 = 那一刻的原文);`orphaned=true` ⇒ 显示「原段落已变更」。
+- 楼中楼:默认只要顶层(每条带 `reply_count`);`?parent=<id>` 拉某条的回复(**旧→新正序**);回复只能回同类型评论(400 `parent_kind_mismatch`)。
+
+### 22.4 点赞(`B203`⑤/`B205`/`D83`)—— ① 型
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `POST /api/notes/<id>/likes/` | `{anchor_kind}` | `{liked:true,like_count,already}` |
+| `DELETE /api/notes/<id>/likes/` | `{anchor_kind}` | `{liked:false,like_count,removed}` |
+
+- ★★ **开关 + 1–2 秒防抖全在前端(`D83`)**:连续点击只发一次最终态;待发状态在页面隐藏 / 卸载(`visibilitychange` / `beforeunload`)时要发出。
+- 服务端幂等:重复请求 200 且**计数不变**(`already:true` / `removed:false`)。
+
+### 22.5 协作者(`B202`/`B206`/`B207`)—— ① 型
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/projects/<ref>/collaborators/` | — | `{items:[{username}],total}` |
+| `POST /api/projects/<ref>/collaborators/` | `{username}` | `{added,already,username}` |
+| `DELETE /api/projects/<ref>/collaborators/<username>/` | — | `{removed,username}` |
+
+- ★★ **不发链接、不要 token**:管理页一个用户名输入框即加(`D84`);幂等(已是对员 ⇒ 200 `already:true`);用户名不存在 ⇒ 404 `user_not_found`;输 owner 自己 ⇒ 400 `owner_not_allowed`。
+- 加人 / 移除只有 **owner / 管理员**;看名单 owner / 协作者 / 管理员都行(齐平)。
+- 协作者权限 = **除删项目外与 owner 同权**(`B207`);**不能**删项目、**不能**加 / 移协作者。
+
+### 22.6 管理处置(`B208`)—— ① 型,整条 `@staff_only`
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `POST /api/admin/projects/<ref>/moderate/` | `{action:hide\|take_down\|restore, reason}` | `{action,state,reason,moderated_by,moderated_at}` 或 `{action,deleted:true,reason}` |
+| `POST /api/admin/notes/<id>/moderate/` | 同上 | 同上 |
+
+- `hide` = 只有作者 / owner 可见(**协作者也不可**);`take_down` = **物理删除、无恢复**;`restore` = 仅 `hidden → active`。
+- `reason` 对 `hide` / `take_down` **必填**(400 `missing_reason`);`restore` 可空;非 hidden 状态 restore ⇒ 400 `not_hidden`。
+
+### 22.7 回收站(`B210`/`D86`)
+
+- 入口 = `GET /api/me/notes/deleted/`(22.2 已列);恢复 = `POST /api/notes/<id>/undelete/`。
+- ★★ 删除确认框必须写明「**可从回收站恢复**」;⚠ **不得**向普通用户承诺「彻底删除」—— 彻底删除只有管理员下架(`take_down`)一条路,且**不可恢复**。
+- 回收站列表要能显示「**被协作者 XX 删除**」(协作者删的也进作者回收站);**不做**回收站内的彻底删除 / 清空(所有者未要求)。
+
+### 22.8 envelope 与错误码登记(并入 §11 口径)
+
+- 本节端点形态:**设置 / 笔记 / 回收站 = ② 扁平;评论 / 点赞 / 协作者 / 处置 = ①**。`api()` 按调用点传 `kind`,两者客户端均已支持(`normalize` 对无 `data` 键的 ② 自动展开)。
+- 错误:新端点一律 **④** `{ok:false,error:{code,message}}`。`code` 清单:`unauthenticated`(401)/ `forbidden`(403)/ `not_found`(404)/ `bad_setting` / `bad_kind` / `bad_body` / `bad_anchor` / `bad_parent` / `missing_block` / `missing_node` / `node_not_found` / `block_not_found` / `parent_not_found` / `missing_username` / `user_not_found` / `owner_not_allowed` / `bad_action` / `missing_reason` / `not_hidden`。
+- ⚠★ **401 一律 `unauthenticated`**(前端凭它清 token 跳登录;2026-10-17 修掉 settings 端点一个不一致的 `unauthorized`)。

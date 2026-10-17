@@ -1,7 +1,7 @@
-import { useMutation } from '@tanstack/react-query'
-import { apiPost } from '../api/client'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { apiGet, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { ModerateAction, ModerateResult } from '../api/types'
+import type { ModerateAction, ModerateResult, ModeratedList } from '../api/types'
 
 /**
  * ★ 管理处置数据层（`B208` · 契约 §22.6）—— ★★ **管理员唯一的权力**
@@ -47,5 +47,20 @@ export function useModerateNote(noteId?: number | null) {
       unwrap(
         await apiPost<ModerateResult>(`/api/admin/notes/${noteId!}/moderate/`, body, 'data'),
       ),
+  })
+}
+
+/**
+ * GET /api/admin/moderated/（① 型）—— ★★ **已处置列表**（`B215`）
+ *
+ * ⚠★ 为什么需要它：隐藏的项目/笔记对 staff 也 404（`B208`：管理员无额外读权限）
+ *   ⇒ 没有这个列表，「恢复」在 UI 里够不着 ✅
+ * ⚠★ `take_down` 的项不在列表（物理删除，行都没了）✅
+ */
+export function useModeratedItems() {
+  return useQuery({
+    queryKey: ['moderated-items'],
+    queryFn: async (): Promise<ModeratedList> =>
+      unwrap(await apiGet<ModeratedList>('/api/admin/moderated/', 'data')),
   })
 }

@@ -97,6 +97,9 @@ urlpatterns = [
         moderate.moderate_note,
         name="admin-moderate-note",
     ),
+    # ★★ `B215`：**已处置列表**（staff）——* 被隐藏的项目 / 笔记，* 从这儿恢复 ⚠
+    #   ⚠ `take_down`（物理删）的不在列表（* 行都没了，* 无从列出）✅
+    path("admin/moderated/", moderate.moderated_list, name="admin-moderated"),
 
     # ------------------------------------------------------------ 项目
     path("projects/", projects.collection, name="project-collection"),

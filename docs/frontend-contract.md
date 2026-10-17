@@ -903,6 +903,16 @@ projects/<project_ref>/
 - `hide` = 只有作者 / owner 可见(**协作者也不可**);`take_down` = **物理删除、无恢复**;`restore` = 仅 `hidden → active`。
 - `reason` 对 `hide` / `take_down` **必填**(400 `missing_reason`);`restore` 可空;非 hidden 状态 restore ⇒ 400 `not_hidden`。
 
+### 22.6.1 已处置列表(`B215`)—— ① 型,整条 `@staff_only`
+
+| 端点 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/admin/moderated/` | — | `{projects:[{project_ref,name,owner,is_public,moderation_reason,moderated_by,moderated_at}], notes:[{id,title,kind,project_ref,created_by,moderation_reason,moderated_by,moderated_at}]}` |
+
+- ★★ 用途:给管理员一个**够得着**的恢复入口 —— 隐藏的项目 / 笔记对 staff 也 404(`B208`:管理员无额外读权限),没有本列表 `restore` 在 UI 里够不着。
+- ⚠ `take_down`(物理删除)的项**不在列表** —— 行都没了,无从列出(留痕在 `ProjectReview` / `AuditLog`)。
+- ⚠ 不分页:处置是低频动作,上限 200 条。
+
 ### 22.7 回收站(`B210`/`D86`)
 
 - 入口 = `GET /api/me/notes/deleted/`(22.2 已列);恢复 = `POST /api/notes/<id>/undelete/`。

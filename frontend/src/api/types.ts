@@ -742,3 +742,33 @@ export interface LikeStatus {
   /** ★ 合并计数（聚合出来的，❌ 不是 UI 能本地 ±1 的数字） */
   like_count: number
 }
+
+/* ---------------------------------------------------------------- 已处置列表（B215 / 契约 §22.6） */
+
+/** GET /api/admin/moderated/ 的项目项 */
+export interface ModeratedProject {
+  project_ref: string
+  name: string
+  owner: string
+  is_public: boolean
+  moderation_reason: string
+  moderated_by: string
+  moderated_at: string
+}
+
+/** GET /api/admin/moderated/ 的笔记项 */
+export interface ModeratedNote {
+  id: number
+  title: string
+  kind: string
+  project_ref: string
+  created_by: string
+  moderation_reason: string
+  moderated_by: string
+  moderated_at: string
+}
+
+export interface ModeratedList {
+  projects: ModeratedProject[]
+  notes: ModeratedNote[]
+}

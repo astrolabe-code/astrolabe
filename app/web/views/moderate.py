@@ -40,6 +40,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
+from core import access
 from core.models import AuditLog, Note, Project, ProjectReview
 from web.http import fail, ok, read_json
 from web.permissions import staff_only
@@ -233,3 +234,68 @@ def _audit(request: HttpRequest, action: str, *, project_ref: str = "",
         target_id=project_ref or str(note_id),
         detail={"name": name, "reason": reason},
     )
+
+
+# ---------------------------------------------------------------------------
+# 已处置列表（`B215`：补 restore 的入口）
+# ---------------------------------------------------------------------------
+
+@require_http_methods(["GET"])
+@staff_only
+def moderated_list(request: HttpRequest):
+    """★★ `GET /api/admin/moderated/` —— ★★ **已处置列表**（* `B215`）⚠
+
+    ⇒ `{projects:[…], notes:[…]}`（① 型）
+
+    ## ★★ 为什么需要它（* `B208` 的洞）
+
+    ```
+    ★★ `B208` 切掉了管理员的额外读权限 ⇒* 被隐藏的项目 / 笔记对 staff 也 404
+      ⇒* 「恢复」（* 仅管理员）在 UI 里**够不着** ——* 只能盲调 API ⚠
+    ★★ 本端点给 staff 一个「够得着」的入口：* 只列**被隐藏**的，
+      * 带理由 / 处置人 / 时间（* 恢复前知道自己在恢复什么）✅
+    ```
+
+    ⚠★ **`take_down` 的项不在列表** ——* 那是**物理删除**（* `B208`③），
+      * 行都没了，* 无从列出（* 留痕在 `ProjectReview` / `AuditLog`）⚠
+    ⚠★ **不分页**：* 处置是低频动作，* 隐藏项不该多；* 上限 200
+      （* 超了说明处置量异常，* 那要单独看，* ⛔ 不静默翻页）✅
+    """
+    limit = 200
+
+    projects = [
+        {
+            "project_ref": p.project_ref,
+            "name": p.name,
+            "owner": p.owner.get_username() if p.owner_id else "",
+            "is_public": p.is_public,
+            "moderation_reason": p.moderation_reason,
+            "moderated_by": p.moderated_by.get_username() if p.moderated_by_id else "",
+            "moderated_at": p.moderated_at.isoformat() if p.moderated_at else "",
+        }
+        for p in Project.objects.filter(state=Project.STATE_HIDDEN)
+        .select_related("owner", "moderated_by")
+        .order_by("-moderated_at")[:limit]
+    ]
+
+    notes = []
+    for n in (
+        Note.objects.filter(state=Note.STATE_HIDDEN)
+        .select_related("created_by", "moderated_by")
+        .order_by("-moderated_at")[:limit]
+    ):
+        project = access.project_of(n)
+        notes.append(
+            {
+                "id": n.pk,
+                "title": n.title,
+                "kind": n.kind,
+                "project_ref": project.project_ref if project is not None else "",
+                "created_by": n.created_by.get_username() if n.created_by_id else "",
+                "moderation_reason": n.moderation_reason,
+                "moderated_by": n.moderated_by.get_username() if n.moderated_by_id else "",
+                "moderated_at": n.moderated_at.isoformat() if n.moderated_at else "",
+            }
+        )
+
+    return ok({"projects": projects, "notes": notes})

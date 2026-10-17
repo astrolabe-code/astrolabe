@@ -73,6 +73,8 @@ export default function ModeratePanel({
       void qc.invalidateQueries({ queryKey: ['note', Number(target)] })
       void qc.invalidateQueries({ queryKey: ['projects'] })
       void qc.invalidateQueries({ queryKey: ['notes'] })
+      // ★★ `B215`：* 已处置列表也要刷新（* 恢复后那条该消失）⚠
+      void qc.invalidateQueries({ queryKey: ['moderated-items'] })
       onClose()
     } catch (e) {
       setErr(errorMessage(e))

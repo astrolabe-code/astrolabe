@@ -31,8 +31,6 @@ interface NoteEditorProps {
   note?: Note | null
   projectRef: string
   nodeId: number
-  /** ★★ 只读模式（`F2`）：给没权限的人看正文用 —— 控件全禁、只给「关闭」⚠ */
-  readOnly?: boolean
   /** ★★ 删除回调（`F2`）：编辑模式 + 可写时才渲染删除按钮 ⚠ */
   onDelete?: () => void
   onClose: () => void
@@ -45,7 +43,6 @@ export default function NoteEditor({
   note,
   projectRef,
   nodeId,
-  readOnly = false,
   onDelete,
   onClose,
   onSaved,
@@ -100,31 +97,27 @@ export default function NoteEditor({
       width={620}
       onClose={onClose}
       footer={
-        readOnly ? (
-          <Button onClick={onClose}>关闭</Button>
-        ) : (
-          <>
-            {/* ★★ 删除入口（`F2`）：编辑 + 可写才出现 ⚠
-                · 文案在 `NodePanel` 的确认框里（「可从回收站恢复」）✅ */}
-            {editing && onDelete && (
-              <Button
-                variant="danger"
-                icon={<Trash2 size={13} />}
-                disabled={busy}
-                onClick={onDelete}
-                style={{ marginRight: 'auto' }}
-              >
-                删除
-              </Button>
-            )}
-            <Button onClick={onClose} disabled={busy}>
-              取消
+        <>
+          {/* ★★ 删除入口（`F2`）：编辑模式才出现 ⚠
+              · 文案在 `NodePanel` / `NotePage` 的确认框里（「可从回收站恢复」）✅ */}
+          {editing && onDelete && (
+            <Button
+              variant="danger"
+              icon={<Trash2 size={13} />}
+              disabled={busy}
+              onClick={onDelete}
+              style={{ marginRight: 'auto' }}
+            >
+              删除
             </Button>
-            <Button variant="primary" loading={busy} onClick={save}>
-              {editing ? '保存' : '写下'}
-            </Button>
-          </>
-        )
+          )}
+          <Button onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" loading={busy} onClick={save}>
+            {editing ? '保存' : '写下'}
+          </Button>
+        </>
       }
     >
       {/* ① kind 五选一（固定） */}
@@ -138,17 +131,16 @@ export default function NoteEditor({
               <button
                 key={k}
                 type="button"
-                disabled={readOnly}
                 onClick={() => setKind(k)}
                 title={m.hint}
                 style={{
                   padding: '5px 10px',
                   borderRadius: 999,
                   fontSize: 12.5,
-                  cursor: readOnly ? 'default' : 'pointer',
-                  border: `1px solid ${active ? 'var(--brand)' : 'var(--card-border)'}`,
-                  background: active ? 'var(--brand-weak, rgba(99,102,241,.08))' : 'transparent',
-                  color: active ? 'var(--brand)' : 'var(--text-sub)',
+                  cursor: 'pointer',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--card-border)'}`,
+                  background: active ? 'var(--accent-dim)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--text-sub)',
                 }}
               >
                 {m.label}
@@ -170,7 +162,6 @@ export default function NoteEditor({
           id="note-title"
           className="input"
           maxLength={120}
-          disabled={readOnly}
           placeholder="不填就自动取正文前几字"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -186,8 +177,7 @@ export default function NoteEditor({
           id="note-body"
           className="input"
           rows={9}
-          disabled={readOnly}
-          style={{ resize: readOnly ? 'none' : 'vertical', lineHeight: 1.8, fontSize: 13.5 }}
+          style={{ resize: 'vertical', lineHeight: 1.8, fontSize: 13.5 }}
           placeholder="想到了什么就写什么 —— 段落之间空一行即可分段"
           value={body}
           onChange={(e) => setBody(e.target.value)}
@@ -197,7 +187,6 @@ export default function NoteEditor({
       {/* ④ 私有开关 */}
       <button
         type="button"
-        disabled={readOnly}
         onClick={() => setIsPublic((v) => !v)}
         className="flex items-center gap-2 w-full text-left"
         style={{
@@ -205,8 +194,7 @@ export default function NoteEditor({
           borderRadius: 8,
           border: '1px solid var(--card-border)',
           background: 'transparent',
-          cursor: readOnly ? 'default' : 'pointer',
-          opacity: readOnly ? 0.7 : 1,
+          cursor: 'pointer',
         }}
       >
         {isPublic ? <LockOpen size={14} /> : <Lock size={14} />}

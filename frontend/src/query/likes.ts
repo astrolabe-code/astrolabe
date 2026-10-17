@@ -100,6 +100,26 @@ export function useLikeToggle(
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sending = useRef(false)
 
+  /**
+   * ★★ **初始态查询回来后同步**（`F3` 补的洞）⚠
+   *
+   * ⚠ 为什么需要：`useState(initial)` 的初值**只在首渲染读一次** ——
+   *   · ★ 而 `GET .../likes/` 是**异步**的（`useLikeStatus`）⇒ ★ 首渲染时它还没回来 ⚠
+   *   · · ★ 后果：* 按钮先显示「未赞 / 0」，* 查询回来后**不会自己更正** ⚠
+   *   · ★★ 这正是 `B211`③ 要修的「刷新后想不起自己赞没赞过」——
+   *     * 数据层有了初始态端点，* 前端必须真的用它 ✅
+   *
+   * ⚠★ 只认**值变化**（`liked:count` 拼成 key）——
+   *   · · ★ 调用方每次渲染都会传新的对象字面量 ⇒* ⛔ 不能直接依赖 `initial` 引用 ⚠
+   *   · · ★ 值没变就不重置（* 否则会把用户的乐观翻牌**拍回去**）⚠
+   */
+  const initKey = `${initial.liked}:${initial.like_count}`
+  useEffect(() => {
+    setState({ liked: initial.liked, like_count: initial.like_count })
+    desired.current = initial.liked
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initKey])
+
   const mutation = useLikeMutation(noteId, anchor)
 
   /** ★ 把「最终态」发出去（⛔ 不判断要不要发——`D83④(b)`：照发，靠服务端幂等） */

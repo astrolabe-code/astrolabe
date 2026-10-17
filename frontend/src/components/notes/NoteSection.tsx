@@ -31,8 +31,12 @@ interface NoteSectionProps {
   canWrite: boolean
   /** 当前登录用户名（判断"是不是我写的"用） */
   meUsername?: string
-  onOpenNote: (note: Note) => void
+  /** ★★ `F3`：点卡片进阅读页（NoteCard 内部 navigate，这里只作预留扩展位） */
+  onOpenNote?: (note: Note) => void
+  /** 新建笔记（打开编辑器） */
   onCreateNote: () => void
+  /** ★★ `F3`：编辑某篇（打开编辑器） */
+  onEditNote: (note: Note) => void
 }
 
 export default function NoteSection({
@@ -42,6 +46,7 @@ export default function NoteSection({
   meUsername,
   onOpenNote,
   onCreateNote,
+  onEditNote,
 }: NoteSectionProps) {
   const [showAll, setShowAll] = useState(false)
   const notes = useNotes(projectRef, { limit: 200 })
@@ -113,8 +118,9 @@ export default function NoteSection({
                 <NoteCard
                   key={n.id}
                   note={n}
+                  projectRef={projectRef}
                   canWrite={canWrite || n.created_by === meUsername}
-                  onOpen={onOpenNote}
+                  onEdit={onEditNote}
                 />
               ))}
             </div>

@@ -120,13 +120,13 @@ export default function NodeList({ projectRef, selectedUid, onSelect }: NodeList
                     style={{
                       padding: '7px 10px',
                       borderRadius: 8,
-                      border: `1px solid ${active ? 'var(--brand)' : 'transparent'}`,
-                      background: active ? 'var(--brand-weak, rgba(99,102,241,.08))' : 'transparent',
+                      border: `1px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                      background: active ? 'var(--accent-dim)' : 'transparent',
                       cursor: 'pointer',
                     }}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="mono" style={{ fontSize: 12.5, color: 'var(--text)' }}>
+                      <span className="mono" style={{ fontSize: 12.5, color: 'var(--text-main)' }}>
                         {n.name}
                       </span>
                       <span className="tag" style={{ fontSize: 10.5 }}>

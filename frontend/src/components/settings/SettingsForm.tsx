@@ -98,7 +98,7 @@ export default function SettingsForm({ data, saving, error, isAdmin, onSave }: S
                       height: 22,
                       borderRadius: 999,
                       border: '1px solid var(--card-border)',
-                      background: value ? 'var(--brand)' : 'transparent',
+                      background: value ? 'var(--accent)' : 'transparent',
                       cursor: gatedLocked ? 'not-allowed' : 'pointer',
                       position: 'relative',
                     }}

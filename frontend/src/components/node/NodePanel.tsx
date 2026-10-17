@@ -37,7 +37,6 @@ interface NodePanelProps {
 export default function NodePanel({ projectRef, node, canWrite, meUsername }: NodePanelProps) {
   const [editing, setEditing] = useState<Note | null>(null)
   const [creating, setCreating] = useState(false)
-  const [readOnlyNote, setReadOnlyNote] = useState<Note | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
   const [delErr, setDelErr] = useState('')
   const del = useDeleteNote()
@@ -50,14 +49,6 @@ export default function NodePanel({ projectRef, node, canWrite, meUsername }: No
         </div>
       </div>
     )
-  }
-
-  const noteWritable = (n: Note) => canWrite || n.created_by === meUsername
-
-  const openNote = (n: Note) => {
-    // ★ 能写 ⇒ 编辑器；不能写 ⇒ 只读查看（同一组件两种模式，⛔ 不另做一套）✅
-    if (noteWritable(n)) setEditing(n)
-    else setReadOnlyNote(n)
   }
 
   const confirmDelete = async () => {
@@ -101,23 +92,25 @@ export default function NodePanel({ projectRef, node, canWrite, meUsername }: No
           nodeId={node.vid}
           canWrite={canWrite}
           meUsername={meUsername}
-          onOpenNote={openNote}
+          onOpenNote={() => {
+            /* ★★ `F3`：点卡片进**阅读页**（NoteCard 内部 navigate）——
+               这里不需要再做跳转，⛔ 不留空转的入口 ✅ */
+          }}
           onCreateNote={() => setCreating(true)}
+          onEditNote={setEditing}
         />
       </div>
 
-      {/* ③ 编辑器 / 只读 */}
+      {/* ③ 编辑器（只承担「新建 / 编辑」—— 阅读与互动在 NotePage） */}
       <NoteEditor
-        open={creating || !!editing || !!readOnlyNote}
+        open={creating || !!editing}
         note={editing}
         projectRef={projectRef}
         nodeId={node.vid}
-        readOnly={!!readOnlyNote && !editing}
         onDelete={editing ? () => setPendingDelete(editing) : undefined}
         onClose={() => {
           setCreating(false)
           setEditing(null)
-          setReadOnlyNote(null)
         }}
         onSaved={() => {
           // ⚠ 保存后刷新由 react-query 的 invalidate 负责（useUpdateNote 内部已做）✅

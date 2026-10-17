@@ -5,6 +5,7 @@ import TopNav from './components/TopNav'
 import Home from './pages/Home'
 import Workspace from './pages/Workspace'
 import ProjectPage from './pages/ProjectPage'
+import NotePage from './pages/NotePage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import Login from './pages/Login'
@@ -70,6 +71,9 @@ export default function App() {
             · ⚠★ 私有/隐藏项目**页面自己不做拦截** —— 后端 404 即「不存在或无权」，
               前端照实显示错误文案（⛔ 不泄露"项目存在但你不配"）⚠ */}
         <Route path="/p/:projectRef" element={<ProjectPage />} />
+        {/* ★★ `F3`：**笔记阅读页** —— 评论 / 点赞 / 段评都挂在笔记上 ⇒* 它需要
+            一个「能停下来读」的地方（* 可分享 URL + 纵向空间），* ⛔ 不是抽屉 ✅ */}
+        <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
         <Route path="/p/:projectRef/settings" element={<ProjectSettingsPage />} />
         <Route path="/me/settings" element={<UserSettingsPage />} />
         {/* ★★ `B170`：用户名 + 密码 —— ★ 两个页面都是【公开】的

@@ -1,22 +1,35 @@
-import { EyeOff, MessageSquare, ThumbsUp } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { EyeOff, MessageSquare, Pencil, ThumbsUp } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { kindMeta } from './kindMeta'
 
 /**
- * ★ 单篇笔记卡片（`F2` · D92）
+ * ★ 单篇笔记卡片（`F2` 建 · `F3` 改点击行为）
  *
- * ⚠★ 三条显示口径：
+ * ## ⚠★ `F3` 起的点击口径（* 与 F2 不同）
+ *
+ * | 动作 | 去哪 |
+ * |---|---|
+ * | ★ 点卡片 | ★★ **阅读页**（`/p/:ref/notes/:id`）——* 读评论、点赞、段评的地方 ✅ |
+ * | ★ 点「编辑」 | 编辑器 Modal（* 顺手改一笔就走）✅ |
+ *
+ * ⚠ 为什么改：* F2 时「点开即编辑」是因为没有阅读页；* `F3` 阅读页出来后，
+ *   * 「读」与「改」是两件事，* ⛔ 不该混同一个入口 ✅
+ *
+ * ## 三条显示口径
+ *
  * | # | 口径 |
  * |---|---|
- * | ① | ★ 正文只显示**摘要**（前两行）—— 卡片不是阅读区，点开才是 |
- * | ② | ★ `is_public=false` ⇒ 显示「私有」徽标（作者自己可见的提醒） |
- * | ③ | ★ `state=hidden` ⇒ 显示「已被隐藏」徽标（只有 owner 看得到，见 D92⑤） |
+ * | ① | ★ 正文只显示**摘要**（前两行）—— 卡片不是阅读区 |
+ * | ② | ★ `is_public=false` ⇒ 显示「私有」徽标 |
+ * | ③ | ★ `state=hidden` ⇒ 显示「已被隐藏」徽标（只有 owner 看得到） |
  */
 interface NoteCardProps {
   note: Note
-  /** 当前用户能不能改它（作者 ∨ owner ∨ 协作者）—— 决定点开是编辑还是只读 */
+  projectRef: string
+  /** 当前用户能不能改它（作者 ∨ owner ∨ 协作者）—— 决定显不显示「编辑」 */
   canWrite: boolean
-  onOpen: (note: Note) => void
+  onEdit: (note: Note) => void
 }
 
 /** ★ 摘要：取前两行非空内容，超过 160 字截断 */
@@ -29,15 +42,15 @@ function preview(body: string): string {
   return text.length > 160 ? `${text.slice(0, 160)}…` : text
 }
 
-export default function NoteCard({ note, canWrite, onOpen }: NoteCardProps) {
+export default function NoteCard({ note, projectRef, canWrite, onEdit }: NoteCardProps) {
+  const navigate = useNavigate()
   const meta = kindMeta(note.kind)
   const Icon = meta.icon
   return (
-    <button
-      type="button"
+    <div
       className="card w-full text-left"
-      style={{ padding: '10px 12px', cursor: 'pointer' }}
-      onClick={() => onOpen(note)}
+      style={{ padding: '10px 12px', cursor: 'pointer', position: 'relative' }}
+      onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.id}`)}
     >
       <div className="flex items-center gap-2 flex-wrap">
         <span className="tag" style={{ fontSize: 10.5 }}>
@@ -72,8 +85,22 @@ export default function NoteCard({ note, canWrite, onOpen }: NoteCardProps) {
         <span className="flex items-center gap-1">
           <MessageSquare size={11} /> {note.comment_count}
         </span>
-        <span style={{ marginLeft: 'auto' }}>{canWrite ? '点击编辑' : '点击查看'}</span>
+        {canWrite && (
+          <button
+            type="button"
+            className="flex items-center gap-1"
+            style={{ marginLeft: 'auto', color: 'var(--text-sub)', cursor: 'pointer' }}
+            onClick={(e) => {
+              // ⚠ 必须阻止冒泡 —— 否则会先跳阅读页 ⚠
+              e.stopPropagation()
+              onEdit(note)
+            }}
+          >
+            <Pencil size={11} />
+            编辑
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   )
 }

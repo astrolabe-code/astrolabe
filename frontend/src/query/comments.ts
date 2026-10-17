@@ -27,6 +27,13 @@ export interface CommentsQuery {
   parent?: number
   /** 失锚且被策略隐藏的段评也列出来（仅有权者有效） */
   include_hidden?: boolean
+  /**
+   * ★★ `F3` 新增：**要不要自动拉**（默认 true）⚠
+   *   · · ★ 段评 / 楼中楼回复默认**折叠** ⇒* 没展开的就是 0 请求 ✅
+   *   · · ★ 展开时由调用方 `refetch()`（* ⛔ 不用 `enabled: open` ——* 那会在
+   *     关闭时也保留一份已取数据，* 没必要）✅
+   */
+  enabled?: boolean
   limit?: number
   offset?: number
 }
@@ -42,7 +49,8 @@ export function useComments(noteId?: number | null, q: CommentsQuery = { anchor_
   const key = ['comments', noteId, q.anchor_kind, q.block_id ?? null, q.parent ?? null, !!q.include_hidden]
   return useQuery({
     queryKey: key,
-    enabled: !!noteId,
+    // ⚠★ `enabled` 默认 true ——* 显式传 false 时**永不自动取**（* 展开后 refetch）✅
+    enabled: !!noteId && q.enabled !== false,
     queryFn: async (): Promise<{ total: number; items: Comment[] }> => {
       const data = unwrap(
         await apiGet<CommentListData>(`/api/notes/${noteId!}/comments/?${params.toString()}`, 'data'),

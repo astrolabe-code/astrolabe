@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { startMeteor } from '../../lib/meteorFx'
 import { Graph } from '@antv/g6'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
 
@@ -46,6 +47,8 @@ interface GraphCanvasProps {
   onDeselect?: () => void
   /** 搜索聚焦（* 只移动视口，不改变选中） */
   focusVid?: number | null
+  /** ★★ `D104`：* 流星轨迹开关（* 默认开）⚠ */
+  meteors?: boolean
 }
 
 export default function GraphCanvas({
@@ -54,6 +57,7 @@ export default function GraphCanvas({
   onSelect,
   onDeselect,
   focusVid,
+  meteors = true,
 }: GraphCanvasProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
@@ -165,6 +169,22 @@ export default function GraphCanvas({
     if (!g || focusVid == null) return
     void g.focusElement(String(focusVid))
   }, [focusVid])
+
+  // ★★★ `D104`：**流星轨迹** —— 一块透明 canvas 罩在 G6 上（* 复用 meteorFx）⚠
+  //   · · ★ 与主 effect 同一次提交执行 ⇒* 此时 `graphRef.current` 已就绪 ✅
+  //   · · ★ 卸载 / 关开关时调停止函数（* ⛔ 不取消会泄漏 rAF）⚠
+  useEffect(() => {
+    const g = graphRef.current
+    const box = boxRef.current
+    if (!g || !box || !graph || !meteors) return
+    // ★ 无障碍：* 用户要求「减少动态效果」时不启动 ✅
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    return startMeteor(
+      g,
+      box,
+      graph.edges.map((e) => ({ from: String(e.from), to: String(e.to) })),
+    )
+  }, [graph, meteors])
 
   return <div ref={boxRef} style={{ width: '100%', height: '100%' }} />
 }

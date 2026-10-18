@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { List, Loader2, Search, Workflow } from 'lucide-react'
+import { List, Loader2, Search, Sparkles, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useFullGraph } from '../query/graph'
@@ -54,6 +54,8 @@ export default function ProjectGraphPage() {
   const project = useProject(projectRef)
   const me = useMe()
   const [selectedVid, setSelectedVid] = useState<number | null>(null)
+  // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
+  const [meteors, setMeteors] = useState(true)
   const [focusVid, setFocusVid] = useState<number | null>(null)
   const [q, setQ] = useState('')
 
@@ -138,6 +140,15 @@ export default function ProjectGraphPage() {
             <Link to={`/p/${encodeURIComponent(projectRef)}`}>
               <Button icon={<List size={13} />}>回列表</Button>
             </Link>
+            {/* ★★ `D104`：流星开关 */}
+            <Button
+              variant={meteors ? 'primary' : 'ghost'}
+              icon={<Sparkles size={13} />}
+              onClick={() => setMeteors((v) => !v)}
+              title="节点之间飞过的流光效果"
+            >
+              流星
+            </Button>
             <span className="faint" style={{ fontSize: 11.5, marginLeft: 'auto' }}>
               {g && `${g.nodes.length} 节点 · ${g.edges.length} 边`}
               {g && (g.manualNodeCount > 0 || g.manualEdgeCount > 0) && (
@@ -175,6 +186,7 @@ export default function ProjectGraphPage() {
             ) : (
               <GraphCanvas
                 graph={g}
+                meteors={meteors}
                 selectedVid={selectedVid}
                 onSelect={setSelectedVid}
                 onDeselect={() => setSelectedVid(null)}

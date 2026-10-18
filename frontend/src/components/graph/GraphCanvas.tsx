@@ -125,6 +125,18 @@ export default function GraphCanvas({
         // ★ 代码图 = 「谁调谁」⇒* 力导向最直观 ✅
         type: 'd3-force',
         animate: false,
+        // ★★ `D105` 起只画十几个节点 ⇒* 默认参数（边距 50 / 斥力 -30）会把它们
+        //   **挤成一团**、* 标签互相盖住 ⚠ ——* 这里按「少而疏」调：
+        //   · · ★ 边理想长度 150（* 拉开通向）
+        link: { distance: 150, strength: 0.5 },
+        //   · · ★ 斥力 -520 + 作用范围 1400（* 少节点时也能撑开）
+        manyBody: { strength: -520, distanceMax: 1400 },
+        //   · · ★ 碰撞半径 38（* 节点 14 + 标签，* 不许重叠）
+        collide: { radius: 38, strength: 0.95, iterations: 3 },
+        //   · · ★ 向心力弱一点（* 否则全被拽回中心）
+        center: { strength: 0.06 },
+        //   · · ★ 多迭代几次让布局稳定（* 少节点时收益明显）
+        iterations: 400,
       },
       behaviors: ['zoom-canvas', 'drag-canvas', 'drag-element', 'click-select'],
     })
@@ -178,7 +190,11 @@ export default function GraphCanvas({
     const box = boxRef.current
     if (!g || !box || !graph || !meteors) return
     // ★ 无障碍：* 用户要求「减少动态效果」时不启动 ✅
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      console.debug('[meteor] 跳过：系统设置了「减少动态效果」')
+      return
+    }
+    console.debug('[meteor] 启动，边数 =', graph.edges.length)
     return startMeteor(
       g,
       box,
@@ -186,5 +202,7 @@ export default function GraphCanvas({
     )
   }, [graph, meteors])
 
-  return <div ref={boxRef} style={{ width: '100%', height: '100%' }} />
+  // ★★ `D104`：**必须 `position:'relative'`** ——* 流星罩层是 `position:absolute;inset:0`，
+  //   * 没有这个就会相对外层已定位祖先定位，* 整个跑到画布外面去（* 流星"不显示"的根因）⚠
+  return <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
 }

@@ -1,24 +1,21 @@
 /**
- * ★★ **流星（流光）效果 —— G6 版**（`D98` · 2026-10-17 重写）
+ * ★★ **流星（流光）效果 —— G6 版**（`D98` · 2026-10-18 重写加固）
  *
- * ## ★ 从哪来的
- *
- * 旧版是 **vis-network** 的（* 还依赖旧站 vendored 补丁的 `__visFlowLayer` 钩子，
- * 靠运行时包装 `_drawNodes` 得到"边 → 流星 → 节点"的层序）⚠
- *
- * ## ★★ G6 版怎么画（* 不复刻内部钩子）
+ * ## ★★ 怎么画
  *
  * ```
  * ★★ 在画布容器上叠一层**独立 canvas**（`pointer-events:none`）——
  *   · · ★ 每帧自己画流星 ⇒* 天然在节点**上方**同层混排，* 不碰 G6 内部渲染 ⚠
  * ★★ 取节点屏幕坐标：* `graph.getElementPosition(id)` ⇒ `graph.getViewportByCanvas()`
  *   （* 后者把世界坐标换算成视口坐标 —— 缩放/平移后也是对的）✅
- * ★★ 尾迹 = 沿直线取 6 段（* 旧版按边曲线取点；* 本图是直线边，* 线性足够）⚠
+ * ★★ 尾迹 = 沿直线取 6 段（* 本图是直线边，* 线性足够）⚠
  * ```
  *
- * ⚠ 位置还没算出来（布局未完成）时**跳过该帧**，* 不报错。
+ * ⚠★ 三条加固（* 2026-10-18：* 首页与图谱页都出现过“不显示”）：
+ *   ① **尺寸**：`ResizeObserver` + 首帧后再量一次 —— ⛔ 不信 effect 执行时的 clientHeight
+ *   ② **坐标**：视口坐标无效时**回落到画布坐标**（两种坐标系总有一种对）
+ *   ③ **层级**：`z-index:999` 显式压过 G6 的多层 canvas
  */
-
 import type { Graph } from '@antv/g6'
 
 export interface MeteorOptions {
@@ -46,6 +43,27 @@ function readFxColor() {
   return { r: 56, g: 189, b: 248 }
 }
 
+/** ★ 取一个节点的屏幕坐标（* 视口优先，* 无效则回落画布坐标）⚠ */
+function posOf(graph: Graph, id: string): number[] | null {
+  try {
+    const raw = graph.getElementPosition(id) as Float32Array | number[] | null | undefined
+    if (!raw) return null
+    const canvas = Array.from(raw as ArrayLike<number>)
+    if (!isFinite(canvas[0]) || !isFinite(canvas[1])) return null
+    try {
+      const vp = Array.from(
+        graph.getViewportByCanvas(raw as never) as ArrayLike<number>,
+      )
+      if (isFinite(vp[0]) && isFinite(vp[1])) return vp
+    } catch {
+      /* 回落 */
+    }
+    return canvas
+  } catch {
+    return null
+  }
+}
+
 /**
  * ★ 启动流星效果
  *
@@ -61,8 +79,9 @@ export function startMeteor(
   opts: MeteorOptions = {},
 ): () => void {
   const overlay = document.createElement('canvas')
+  // ★★ ③ z-index 提到 999 ——* G6 自己会建好几层 canvas，* 不显式压不住 ⚠
   overlay.style.cssText =
-    'position:absolute;inset:0;pointer-events:none;z-index:2;'
+    'position:absolute;inset:0;pointer-events:none;z-index:999;'
   container.appendChild(overlay)
   const ctx = overlay.getContext('2d')
   if (!ctx) {
@@ -74,8 +93,9 @@ export function startMeteor(
   let w = 0
   let h = 0
   const resize = () => {
-    w = container.clientWidth
-    h = container.clientHeight
+    w = container.clientWidth || 0
+    h = container.clientHeight || 0
+    if (!w || !h) return
     overlay.width = Math.max(1, Math.round(w * dpr))
     overlay.height = Math.max(1, Math.round(h * dpr))
     overlay.style.width = `${w}px`
@@ -91,33 +111,22 @@ export function startMeteor(
   let t = opts.phase ?? 0
   let raf: number | null = null
   let frame = 0
-
-  /** ★ G6 的 `Point` 是 `[x, y]` 元组 / `Float32Array`（* 不是 `{x,y}`）⚠ */
-  const toViewport = (p: Float32Array | number[]): number[] => {
-    try {
-      return Array.from(graph.getViewportByCanvas(p as never) as ArrayLike<number>)
-    } catch {
-      return Array.from(p)
-    }
-  }
+  let drawn = 0
 
   const draw = () => {
     if (!w || !h) return
     ctx.clearRect(0, 0, w, h)
     const n = list.length
+    if (!n) return
+    let painted = 0
     for (let i = 0; i < n; i++) {
       const e = list[i]
-      let p1: number[]
-      let p2: number[]
-      try {
-        p1 = toViewport(graph.getElementPosition(e.from) as Float32Array | number[])
-        p2 = toViewport(graph.getElementPosition(e.to) as Float32Array | number[])
-      } catch {
-        continue
-      }
-      if (!p1 || !p2 || !isFinite(p1[0]) || !isFinite(p2[0])) continue
+      const p1 = posOf(graph, e.from)
+      const p2 = posOf(graph, e.to)
+      if (!p1 || !p2) continue
       // ★ 布局还没位置（全 0）⇒ 跳过本帧
       if (p1[0] === 0 && p1[1] === 0 && p2[0] === 0 && p2[1] === 0) continue
+      painted++
 
       const tt = (t + i / n) % 1
       // 尾迹：逐段描线，透明度 / 线宽向头部渐增
@@ -145,6 +154,12 @@ export function startMeteor(
       ctx.arc(hx, hy, 2, 0, Math.PI * 2)
       ctx.fill()
     }
+
+    // ★ 诊断：* 前 3 帧打一次（* 若仍不显示，* F12 里能看到尺寸 / 边数 / 命中数）⚠
+    drawn++
+    if (drawn <= 3) {
+      console.debug('[meteor]', { w, h, edges: n, painted, sample: list[0] })
+    }
   }
 
   const loop = () => {
@@ -155,13 +170,26 @@ export function startMeteor(
     raf = requestAnimationFrame(loop)
   }
   raf = requestAnimationFrame(loop)
+  // ★★ ② 首帧后再量一次尺寸（* effect 执行时容器可能还没被布局）⚠
+  const warm = requestAnimationFrame(() => {
+    resize()
+    draw()
+  })
 
+  // ★★ ① 容器尺寸变化时重新量（* ⛔ 原来只听 window resize —— flex 布局下不触发）⚠
+  let ro: ResizeObserver | null = null
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(() => resize())
+    ro.observe(container)
+  }
   const onResize = () => resize()
   window.addEventListener('resize', onResize)
 
   return () => {
     if (raf != null) cancelAnimationFrame(raf)
+    cancelAnimationFrame(warm)
     window.removeEventListener('resize', onResize)
+    ro?.disconnect()
     overlay.remove()
   }
 }

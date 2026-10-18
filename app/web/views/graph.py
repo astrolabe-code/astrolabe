@@ -452,3 +452,23 @@ def rev(request: HttpRequest, project_ref: str) -> JsonResponse:
         graph_rev=graph_rev_of(project_ref),
         parse_status=job.state if job else "none",
     )
+
+
+@require_http_methods(["GET"])
+def meta(request: HttpRequest):
+    """★★ `GET /api/graph/meta/` —— ★★ **图修补元数据**（`B230`）⚠
+
+    ⇒ `{node_fields, edge_fields, kinds, edge_types}`
+
+    ## ★★ 为什么要这个端点
+
+    ```
+    ★★ 前端要用下拉 / 数字框，* 就得知道「有哪些合法值」——
+      · · ★ 硬编码一份 ⇒* 迟早和 `graph/kinds.py` / 模型漂移 ⚠
+      · · ★★ 本端点与后端校验**同一个反射函数** ⇒* 同源、* 不漂移 ✅
+    ⚠ 公开只读（* 这是元数据，* 不是业务数据）✅
+    ```
+    """
+    from graph import patch_spec
+
+    return ok(patch_spec.graph_meta())

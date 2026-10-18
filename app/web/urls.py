@@ -132,6 +132,12 @@ urlpatterns = [
         jobs_api.project_jobs,
         name="project-jobs",
     ),
+    # ★★ `B230`：**图修补元数据**（* 公开只读；* 前端表单的唯一来源）⚠
+    path(
+        "graph/meta/",
+        graph.meta,
+        name="graph-meta",
+    ),
     # ------------------------------------------------------------ 图谱
     path(
         "projects/<project_ref:project_ref>/graph/summary/",

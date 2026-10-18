@@ -617,6 +617,11 @@ def _do_remove_node(project, c: dict, by=None) -> CurateResult:
 
     > **用户原话**：「他删除了，是他的事。」⇒ ★ **不阻拦**（只要求记理由）。
     """
+    # ⚠★ `B229`：* 删除动作**不接受**任何 payload ——* 传了就拒绝（* ⛔ 不静默忽略）⚠
+    if c.get("fields"):
+        return CurateResult(ok=False, action=ACTION_REMOVE_NODE,
+                            message="删除节点不接受 fields（删除就是删除）")
+
     vid = c.get("vid")
     node = _target_node(project.project_ref, vid)
     if node is None:
@@ -750,6 +755,11 @@ def _do_update_edge(project, c: dict, by=None) -> CurateResult:
 
 def _do_remove_edge(project, c: dict, by=None) -> CurateResult:
     """★★★ **删一条边 ⇒ 只写补丁**（★ 基图边一行不动）⚠"""
+    # ⚠★ `B229`：* 同上 ——* 删除动作不接受 payload ✅
+    if c.get("fields"):
+        return CurateResult(ok=False, action=ACTION_REMOVE_EDGE,
+                            message="删除边不接受 fields（删除就是删除）")
+
     edge = _target_edge(project.project_ref, c.get("edge_id"))
     if edge is None:
         return CurateResult(ok=False, action=ACTION_REMOVE_EDGE,
@@ -872,9 +882,10 @@ def apply_changes(
                     "count": len(applied),
                     "manual_nodes": sum(1 for a in applied if a["action"] == ACTION_ADD_NODE),
                     "manual_edges": sum(1 for a in applied if a["action"] == ACTION_ADD_EDGE),
-                    # ★★ 管理员代改**必须看得出来**（⚠ 与"owner 自己改"性质不同）
-                    "via_admin": perm.via_admin,
+                    # ★★ 谁改的要看得出来（⚠ `B208`① 起管理员**不能**代改图 ⇒
+                    #   * 只记 owner / 协作者两个标记）✅
                     "is_owner": perm.is_owner,
+                    "is_collaborator": perm.is_collaborator,
                     "applied": applied,
                 },
             )
@@ -885,10 +896,13 @@ def apply_changes(
         # ★ 事务已回滚（★ 因为异常穿过了 `atomic()` 的边界）
         return CurateBatchResult(ok=False, message=exc.message, detail=exc.detail)
 
+    # ⚠★ 2026-10-18 修：* `via_admin` 字段在 `B208`① 时已删（* 管理员不能代改图）
+    #   · · ★ 原代码在**成功路径**上读它 ⇒* 任何成功的修补都会 `AttributeError` ⚠
+    #   · · ★★ 审计要区分"谁改的" ⇒* 记 `is_owner` / `is_collaborator` 两个标记 ✅
     return CurateBatchResult(
         ok=True, graph_rev=rev, applied=applied,
         message=f"已应用 {len(applied)} 项修改（graph_rev → {rev}）",
-        detail={"via_admin": perm.via_admin},
+        detail={"is_owner": perm.is_owner, "is_collaborator": perm.is_collaborator},
     )
 
 

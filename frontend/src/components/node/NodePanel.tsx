@@ -32,9 +32,26 @@ interface NodePanelProps {
   canWrite: boolean
   /** 当前登录用户名（判断"是不是我写的"） */
   meUsername?: string
+  /** ★★ `D106`：这个节点在学习路径里的序号（* null = 不在路径里）⚠ */
+  inPathOrdinal?: number | null
+  /** ★★ `D106`：能不能改学习路径（* owner ∨ 协作者）⚠ */
+  canEditPath?: boolean
+  /** ★★ `D106`：加入路径 */
+  onAddToPath?: () => void
+  /** ★★ `D106`：从路径移除 */
+  onRemoveFromPath?: () => void
 }
 
-export default function NodePanel({ projectRef, node, canWrite, meUsername }: NodePanelProps) {
+export default function NodePanel({
+  projectRef,
+  node,
+  canWrite,
+  meUsername,
+  inPathOrdinal,
+  canEditPath,
+  onAddToPath,
+  onRemoveFromPath,
+}: NodePanelProps) {
   const [editing, setEditing] = useState<Note | null>(null)
   const [creating, setCreating] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
@@ -83,6 +100,41 @@ export default function NodePanel({ projectRef, node, canWrite, meUsername }: No
         <div className="mono faint" style={{ fontSize: 11.5, marginTop: 2 }}>
           {node.file_path}:{node.line} · {node.lang}
         </div>
+        {/* ★★ `D106`：学习路径入口（* 作者才能改；* 在路径里显示序号）⚠ */}
+        {canEditPath && (
+          <div className="flex items-center gap-2" style={{ marginTop: 8 }}>
+            {inPathOrdinal != null ? (
+              <>
+                <span className="tag" style={{ fontSize: 10.5 }}>
+                  学习路径第 {inPathOrdinal + 1} 个
+                </span>
+                <button
+                  type="button"
+                  className="faint"
+                  style={{ fontSize: 11.5, cursor: 'pointer', background: 'none', border: 'none' }}
+                  onClick={onRemoveFromPath}
+                >
+                  从路径移除
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                style={{
+                  fontSize: 11.5,
+                  cursor: 'pointer',
+                  color: 'var(--accent)',
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                }}
+                onClick={onAddToPath}
+              >
+                + 加入学习路径
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ② 笔记区 */}

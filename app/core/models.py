@@ -14,6 +14,7 @@
 """
 
 from django.conf import settings
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 from core.refs import new_project_ref
@@ -128,6 +129,20 @@ class Project(TimeStampedModel):
     #: ★★★ **基图被显式清理的时刻**（`B218`）—— ⛔ 正常为 NULL ⚠
     #:   · · ★ 只有「管理员删了基图、项目解绑」这一条**显式路径**才写它
     #:   · · ★★ 前端据此显示「原基图已被清理，请重新拉取代码」（* 与“还没解析”区分）✅
+    #: ★★★ **学习路径**（`B234`）—— ★★ 作者按顺序指定的节点 vid 列表 ⚠
+    #:
+    #: ## ★★★ 所有者裁定（逐字）
+    #:
+    #: > 「**你直接在项目表里加一个顺序字段不就完了？按序存储节点vid按里面出现的
+    #: > 顺序展示节点，只要前端整合后，按顺序显示，不就完了？用得着新建一个表吗。**」
+    #:
+    #: ```
+    #: ★★ 存 vid（* 不是主键）——* 同版本重建后 vid 不变 ⇒* 路径不失效 ⚠
+    #:   （* node_id 与 stable_vid 都是 bigint 8 字节，* 占用相同，* 但主键会变）✅
+    #: ★★ 数组下标即展示顺序 ⇒* 服务端零排序成本 ✅
+    #: ★★ 不是冗余：* 这是**作者产出的数据**（* 像歌单），* 算不出来 ✅
+    #: ```
+    reading_path = ArrayField(models.BigIntegerField(), default=list, blank=True)
     graph_dropped_at = models.DateTimeField(null=True, blank=True)
     base_graph = models.ForeignKey(
         "graph.BaseGraph",

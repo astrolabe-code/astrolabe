@@ -793,3 +793,26 @@ export interface ModeratedList {
   projects: ModeratedProject[]
   notes: ModeratedNote[]
 }
+
+
+/* ------------------------------------------------ 学习路径（B234 / D105） */
+
+/** 路径里的一项（按数组顺序，`ordinal` = 第几个） */
+export interface ReadingPathItem {
+  ordinal: number
+  vid: number
+  name: string
+  kind: string
+  qname: string
+  file_path: string
+  line: number
+  line_end: number
+}
+
+/** GET /api/projects/<ref>/reading-path/ */
+export interface ReadingPathData {
+  total: number
+  items: ReadingPathItem[]
+  /** ★ `D107`：已不在项目图里的 vid（* 前端提示用户处理，* ⛔ 不自动删）*/
+  stale: number[]
+}

@@ -28,6 +28,7 @@ from web.views import (
     notes,
     projects,
     publish,
+    reading_path,
     review,
     settings,
 )
@@ -197,7 +198,13 @@ urlpatterns = [
         graph.rev,
         name="graph-rev",
     ),
-    # ★★ `B231`：**导出所选笔记**（* 打包成带签名的 `.astrolabe-backup`）⚠
+    # ★★ `B234`：**学习路径**（* 作者指定的节点展示顺序）⚠
+    path(
+        "projects/<project_ref:project_ref>/reading-path/",
+        reading_path.collection,
+        name="reading-path",
+    ),
+    # ★★ `B231`：**导出所选笔记**（* 打包成带签名的 `.astrolobe-backup`）⚠
     path(
         "me/deleted/export/",
         notes.export_deleted,

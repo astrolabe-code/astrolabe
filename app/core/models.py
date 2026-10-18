@@ -1421,6 +1421,16 @@ class Note(TimeStampedModel):
         on_delete=models.SET_NULL,
         related_name="notes",
     )
+    # ---- ★★★ `B231`：**项目被删时写下的项目快照**（平时为空 ✅）
+    #:   · · ★ 项目活着 ⇒ 查外键就有，* ⛔ 不存冗余（`B221`）
+    #:   · · ★★ 项目行没了 ⇒ 这三列成为**历史事实**（* 回收站分组 + 导出靠它）⚠
+    #: ★ 项目 ref（* 分组与定位用）
+    project_ref = models.CharField(max_length=64, blank=True, default="")
+    #: ★ 项目名
+    project_name = models.CharField(max_length=200, blank=True, default="")
+    #: ★ 版本标签：* `provider:owner/repo@sha`（* 哪一版代码的笔记）
+    version_label = models.CharField(max_length=600, blank=True, default="")
+
     # ---- ★★★ `B218`：**锚定时刻的节点快照**（* 节点被删后，* 笔记仍能自描述 / 导出 / 重挂）⚠
     #: ★ 节点身份（* 与 `B219` 的 stable_vid 同一个值；* 重挂靠它匹配）✅
     node_vid = models.BigIntegerField(null=True, blank=True)

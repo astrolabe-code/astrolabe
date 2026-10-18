@@ -37,7 +37,9 @@
 
 from __future__ import annotations
 
-from django.http import HttpRequest
+from urllib.parse import quote
+
+from django.http import HttpResponse, HttpRequest
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
@@ -274,15 +276,17 @@ def deleted_bin(request: HttpRequest):
 
     # ⚠★ `node__project__collaborators__user` ——* `Collaborator` 挂在项目上，
     #   而笔记的节点可能属项目（* 外键）✅
+    # ★★ `B226` 之后笔记**绑项目** ⇒ 协作者 / owner 的判断改走 `project__`
+    #   （* 原来只能靠 `node__project`，* 挂在基图节点上的笔记就漏了）⚠
     qs = (
         Note.objects.filter(deleted_at__isnull=False)
         .filter(
             Q(created_by=user)
-            | Q(node__project__owner=user)
-            | Q(node__project__collaborators__user=user)
+            | Q(project__owner=user)
+            | Q(project__collaborators__user=user)
         )
         .distinct()
-        .select_related("node", "node__project")
+        .select_related("node", "project", "project__base_graph")
     )
 
     limit = _clamp(request.GET.get("limit"), 1, NOTES_PAGE_MAX, 50)
@@ -295,9 +299,9 @@ def deleted_bin(request: HttpRequest):
         #   · · ★ 回收站只要"哪一篇、谁删的、何时删的"——* 正文是草稿，* ❌ 不往列表漏 ⚠
         #   · · ★ 而且软删笔记的详情对**所有人** 404 ⇒* 想预览也打不开，* 恢复后再看 ✅
         item.pop("body", None)
-        # ★ 前端跳回项目用（* `project_of` 认三种节点形态，* 见 `core/access.py`）✅
-        project = project_of(n)
-        item["project_ref"] = project.project_ref if project is not None else ""
+        # ★★★ `B231`：**项目维度三件套** ——* 前端据此按项目分组 ✅
+        #   · · ★ 有快照（* 项目已删）⇒* 用快照；* 否则查活着的项目 ✅
+        item.update(_project_label(n))
         items.append(item)
     return ok_flat(total=total, limit=limit, offset=offset, items=items)
 
@@ -404,6 +408,114 @@ def _auto_title(body: str) -> str:
     return ""
 
 
+def _project_label(n: Note) -> dict:
+    """★★★ **项目维度三件套**（`B231`②）——* 回收站按项目分组就靠它 ⚠
+
+    ① 有快照（* 项目已被删）⇒* 用快照 ✅
+    ② 否则查活着的项目（* `Note.project` 或节点归属）✅
+    """
+    if n.project_ref:
+        return {
+            "project_ref": n.project_ref,
+            "project_name": n.project_name,
+            "version_label": n.version_label,
+        }
+    project = n.project or project_of(n)
+    if project is None:
+        return {"project_ref": "", "project_name": "", "version_label": ""}
+    bg = project.base_graph
+    return {
+        "project_ref": project.project_ref,
+        "project_name": project.name,
+        "version_label": (
+            f"{bg.provider}:{bg.repo_full_name}@{bg.sha}" if bg is not None else ""
+        ),
+    }
+
+
+def _note_export_text(n: Note) -> str:
+    """★★★ **一篇笔记 = 一个 Markdown 文件**（`B231`②ⓐ）⚠
+
+    ```
+    ★★ 文件头一小段 YAML front matter（* 恢复所需信息**只写在这一处**）✅
+      · · ★ 下面是正文 ——* ⛔ 不把一篇笔记拆成多个文件 ⚠
+    ```
+    """
+    label = _project_label(n)
+    head = {
+        "title": n.title,
+        "kind": n.kind,
+        "created_at": n.created_at.isoformat() if n.created_at else "",
+        "is_public": n.is_public,
+        "project_ref": label["project_ref"],
+        "project_name": label["project_name"],
+        "version_label": label["version_label"],
+        # ★★ 锚点快照（* 恢复就靠 `vid` = `stable_vid`）⚠
+        "node": {
+            "vid": n.node_vid if n.node_vid is not None else 0,
+            "name": n.node_name,
+            "kind": n.node_kind,
+            "qname": n.node_qname,
+            "file_path": n.node_file_path,
+            "line": n.node_line,
+            "line_end": n.node_line_end,
+        },
+    }
+    text = "---\n"
+    for key, value in head.items():
+        if key == "node":
+            text += "node:\n"
+            for nk, nv in value.items():
+                text += f"  {nk}: {nv}\n"
+        else:
+            text += f"{key}: {value}\n"
+    text += "---\n\n"
+    return text + (n.body or "")
+
+
+
+def _parse_front_matter(text: str) -> tuple[dict, str]:
+    """★★ 解析导出文件的 front matter（* 自研小解析器，* 无 yaml 依赖）⚠
+
+    格式见 `_note_export_text()`：* 顶层 `key: value` + 一段两空格缩进的 `node:` 块。
+    Returns: `(元信息字典, 正文)`
+    """
+    meta: dict = {}
+    body = text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            head = text[3:end]
+            body = text[end + 4 :].lstrip("\n")
+            node: dict = {}
+            in_node = False
+            for line in head.splitlines():
+                if not line.strip():
+                    continue
+                if line.startswith("node:"):
+                    in_node = True
+                    continue
+                if in_node and line.startswith("  "):
+                    key, _, value = line.strip().partition(":")
+                    node[key.strip()] = value.strip()
+                    continue
+                in_node = False
+                key, _, value = line.partition(":")
+                meta[key.strip()] = value.strip()
+            if node:
+                meta["node"] = node
+    return meta, body
+
+
+def _slug(text: str) -> str:
+    """★ 文件名用的标题片段（* 只留安全字符，* 截断）⚠"""
+    keep = []
+    for ch in (text or "")[:40]:
+        keep.append(ch if (ch.isalnum() or ch in "-_") else "-")
+    slug = "".join(keep).strip("-")
+    return slug or "note"
+
+
 def _note_json(n: Note) -> dict:
     return {
         "id": n.pk,
@@ -456,3 +568,217 @@ def _clamp(raw, lo: int, hi: int, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(lo, min(hi, v))
+
+
+@require_http_methods(["POST"])
+def export_deleted(request: HttpRequest):
+    """★★ `POST /api/me/deleted/export/` —— ★★ **导出所选笔记**（`B231`）⚠
+
+    Body: `{note_ids: [1, 2, 3]}`
+
+    ⇒ `application/octet-stream`（`.astrolabe-backup`，* 见 `core/backup.py`）
+
+    ## ★★ 打包内容（`B231`②）
+
+    ```
+    ⓐ 每篇笔记一个 Markdown：* 文件头 front matter（* 含 node 快照）+ 正文
+       · · ⛔ 不把一篇笔记拆成多个文件 ✅
+    ⓑ manifest.json：* **只记项目级信息** + 文件名清单
+       · · ⛔ 不重复每篇的 node 快照（* 文件头已经有了）⚠
+    ```
+
+    ⚠★ 权限与回收站列表**同一条判据**（* 只能导自己看得见的）✅
+    """
+    user = current_user(request)
+    if user is None:
+        return fail("请先登录", 401, code="unauthenticated")
+
+    body = read_json(request)
+    ids = body.get("note_ids")
+    if not isinstance(ids, list) or not ids:
+        return fail("note_ids 不能为空", 400, code="empty_ids")
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return fail("note_ids 必须是数字数组", 400, code="bad_ids")
+    if len(ids) > 500:
+        return fail("一次最多导出 500 篇", 400, code="too_many")
+
+    from django.db.models import Q
+
+    qs = (
+        Note.objects.filter(pk__in=ids, deleted_at__isnull=False)
+        .filter(
+            Q(created_by=user)
+            | Q(project__owner=user)
+            | Q(project__collaborators__user=user)
+        )
+        .distinct()
+        .select_related("project", "project__base_graph")
+    )
+    notes = list(qs)
+    if not notes:
+        return fail("没有可导出的笔记（或无权导出）", 404, code="nothing")
+
+    # ---- ⓐ 每篇一个文件 ----
+    files: dict[str, bytes] = {}
+    manifest_notes = []
+    for n in notes:
+        name = f"notes/{n.pk:03d}-{n.kind}-{_slug(n.title)}.md"
+        files[name] = _note_export_text(n).encode("utf-8")
+        label = _project_label(n)
+        manifest_notes.append(
+            {
+                "file": name,
+                "note_id": n.pk,
+                "kind": n.kind,
+                "title": n.title,
+                "created_at": n.created_at.isoformat() if n.created_at else "",
+                "node": {
+                    "vid": n.node_vid if n.node_vid is not None else 0,
+                    "name": n.node_name,
+                    "kind": n.node_kind,
+                    "file_path": n.node_file_path,
+                    "line": n.node_line,
+                    "line_end": n.node_line_end,
+                },
+                "project_ref": label["project_ref"],
+                "project_name": label["project_name"],
+                "version_label": label["version_label"],
+            }
+        )
+
+    # ---- ⓑ manifest（* 项目级 + 文件名清单，* 不重复 node 快照）----
+    first = _project_label(notes[0])
+    manifest = {
+        "project_ref": first["project_ref"],
+        "project_name": first["project_name"],
+        "version_label": first["version_label"],
+        "exported_at": timezone.now().isoformat(),
+        "exported_by": user.get_username(),
+        "note_count": len(notes),
+        "files": sorted(files),
+        "notes": manifest_notes,
+    }
+
+    from core import backup
+
+    blob = backup.pack(backup.build_zip(files, manifest))
+    filename = f"{_slug(first['project_name'] or 'notes')}-笔记备份.backup"
+    resp = HttpResponse(blob, content_type="application/octet-stream")
+    resp["Content-Disposition"] = (
+        f'attachment; filename*=UTF-8''{quote(filename)}'
+    )
+    return resp
+
+
+@require_http_methods(["POST"])
+def import_notes(request: HttpRequest):
+    """★★ `POST /api/notes/import/` —— ★★ **从导出包恢复笔记**（`B231` / `B232`）⚠
+
+    Form: `file=<.astrolabe-backup>` + `project_ref=<目标项目>`
+
+    ## ★★ 流程（* 顺序不能乱）
+
+    ```
+    ① ★★ **先验签**（`B232`）——* 不通过 ⇒ 拒绝（* 文件被篡改）⚠
+    ② 解包 ⇒* 逐篇读文件头的 `node.vid`
+    ③ ★ 在**目标项目可读的节点**里按 `stable_vid` 找锚点
+       · · 命中 ⇒* 原样挂回 ✅
+       · · ★★ 没命中（* 代码变了 / 版本不同）⇒* 笔记仍建（* 带快照），
+         * 但列入「未能挂回」，* 如实告诉用户 ⚠
+    ```
+
+    ⚠★ 权限：* 目标项目要能编辑（* owner ∨ 协作者）✅
+    """
+    user = current_user(request)
+    if user is None:
+        return fail("请先登录", 401, code="unauthenticated")
+
+    upload = request.FILES.get("file")
+    project_ref = (request.POST.get("project_ref") or "").strip()
+    if upload is None:
+        return fail("缺少文件（file）", 400, code="missing_file")
+    if not project_ref:
+        return fail("缺少 project_ref（要恢复到哪个项目）", 400, code="missing_project")
+
+    project = get_project(request, project_ref)
+    if project is None:
+        return fail("项目不存在或无权访问", 404, code="not_found")
+    if not can_edit(request, project):
+        return fail("只有项目所有者或协作者能恢复笔记", 403, code="forbidden")
+
+    # ---- ① 验签（* `B232`：* 先验签再解包）----
+    from core import backup
+
+    blob = upload.read()
+    zip_bytes, err = backup.unpack(blob)
+    if err is not None:
+        return fail(err, 400, code="bad_signature")
+
+    files, manifest, err = backup.read_zip(zip_bytes)
+    if err is not None:
+        return fail(err, 400, code="bad_zip")
+
+    # ---- ② 逐篇恢复 ----
+    from graph import scope
+
+    readable = scope.readable_nodes_of(project_ref)
+    restored, unanchored = [], []
+
+    for name in sorted(files):
+        if not name.endswith(".md"):
+            continue
+        meta, body = _parse_front_matter(files[name].decode("utf-8"))
+        node_info = meta.get("node") or {}
+
+        try:
+            want_vid = int(node_info.get("vid") or 0)
+        except (TypeError, ValueError):
+            want_vid = 0
+        node = (
+            readable.filter(stable_vid=want_vid).first() if want_vid else None
+        )
+
+        title = str(meta.get("title") or "")[:120] or _auto_title(body)
+        kind = str(meta.get("kind") or "flash").strip()
+        if kind not in KINDS:
+            kind = "flash"
+
+        note = Note.objects.create(
+            project=project,
+            node=node,
+            node_vid=want_vid or None,
+            node_name=str(node_info.get("name") or "")[:512],
+            node_kind=str(node_info.get("kind") or "")[:32],
+            node_qname=str(node_info.get("qname") or "")[:512],
+            node_file_path=str(node_info.get("file_path") or "")[:1024],
+            node_line=int(node_info.get("line") or -1),
+            node_line_end=int(node_info.get("line_end") or -1),
+            kind=kind,
+            title=title,
+            body=body,
+            is_public=str(meta.get("is_public", "True")).lower() != "false",
+            created_by=user,
+        )
+        blocks = note_alg.realign(note)
+
+        row = {"note_id": note.pk, "file": name, "title": title}
+        if node is None:
+            row["unanchored"] = True
+            unanchored.append(row)
+        else:
+            restored.append(row)
+
+
+    return ok_flat(
+        restored_count=len(restored),
+        unanchored_count=len(unanchored),
+        restored=restored,
+        unanchored=unanchored,
+        manifest_project=manifest.get("project_name", ""),
+        message=(
+            f"已恢复 {len(restored)} 篇"
+            + (f"；{len(unanchored)} 篇没能挂回原节点（代码可能已变）" if unanchored else "")
+        ),
+    )

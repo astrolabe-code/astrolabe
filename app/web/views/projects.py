@@ -81,6 +81,17 @@ def purge_project(project_ref: str, *, by=None) -> int:
 
         from core.models import Note
 
+        # ★★★ `B231`：**项目快照写进笔记**（项目行即将消失 ⇒ 现在不写就永远查不到）⚠
+        #   · · ★ 该项目**全部**笔记都写（* 含已在回收站里的）⇒* 导出时归到同一张卡片 ✅
+        bg = project.base_graph
+        Note.objects.filter(project=project).update(
+            project_ref=project.project_ref,
+            project_name=project.name[:200],
+            version_label=(
+                f"{bg.provider}:{bg.repo_full_name}@{bg.sha}" if bg is not None else ""
+            ),
+        )
+        # ★★ `B228`：还没删的 ⇒ 软删进回收站（* 上面的 update 已覆盖它们）
         Note.objects.filter(project=project, deleted_at__isnull=True).update(
             deleted_at=timezone.now(), deleted_by=by
         )

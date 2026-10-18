@@ -197,6 +197,12 @@ urlpatterns = [
         graph.rev,
         name="graph-rev",
     ),
+    # ★★ `B231`：**导出所选笔记**（* 打包成带签名的 `.astrolabe-backup`）⚠
+    path(
+        "me/deleted/export/",
+        notes.export_deleted,
+        name="deleted-export",
+    ),
     # ---------------------------------------------------------- 笔记（B187）
     # ⚠★ 列表 / 新建挂在【项目】下（* 一篇笔记属于一个项目 ✅）
     path(
@@ -207,6 +213,8 @@ urlpatterns = [
     # ⚠★ 单篇【不挂项目】—— ★ 笔记自己有 id，* 且权限在视图里判 ✅
     #   · · ★ 挂在项目下会逼着 URL 里带 ref ⇒ ★ 而 ref 与笔记是**多对一** ⚠
     #     （* 一篇笔记只属于一个项目，* 但 URL 不必 redundant 地再写一遍）⚠
+    # ★★ `B231`：**从导出包恢复笔记**（* 先验签再解包）⚠
+    path("notes/import/", notes.import_notes, name="note-import"),
     path("notes/<int:note_id>/", notes.detail, name="note-detail"),
     # ------------------------------------------------------------ 评论（B201/B203）
     # ★★ 章评 + 段评【同表】；* `anchor_kind` **创建时定死**（* B203④）⚠

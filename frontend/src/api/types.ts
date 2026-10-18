@@ -636,6 +636,27 @@ export interface Note {
 /** 回收站列表项 = note + project_ref，且【无 body 字段】（D86①） */
 export interface DeletedNote extends Omit<Note, 'body'> {
   project_ref: string
+  /** ★ `B231`：项目维度三件套 ——* 回收站按项目分组就靠它 */
+  project_name: string
+  version_label: string
+}
+
+/** ★ `B231`：按项目分组后的一个卡片 */
+export interface DeletedProjectGroup {
+  project_ref: string
+  project_name: string
+  version_label: string
+  notes: DeletedNote[]
+}
+
+/** ★ `B231`：导入结果 */
+export interface ImportResult {
+  restored_count: number
+  unanchored_count: number
+  restored: { note_id: number; file: string; title: string }[]
+  unanchored: { note_id: number; file: string; title: string; unanchored?: boolean }[]
+  manifest_project: string
+  message: string
 }
 
 /** 列表（② 型） */

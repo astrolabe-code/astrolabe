@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, getToken, upload } from '../api/client'
 import { unwrap } from '../api/errors'
 import type {
   DeletedNote,
+  ImportResult,
   Note,
   NoteBlock,
   NoteDetailData,
@@ -178,3 +179,87 @@ export function useUndeleteNote() {
 
 /** ★ 导出给 F2 编辑器用：从响应里取 blocks 的便捷类型 */
 export type { Note, NoteBlock }
+
+
+/**
+ * ★★★ `B231`：**把回收站按项目分组**（* 前端据此渲染项目卡片）⚠
+ *
+ * ```
+ * ★★ 分组键 = `project_ref`（* 项目已删的用快照里的那个）✅
+ * ```
+ */
+export function groupByProject(notes: DeletedNote[]) {
+  const groups = new Map<string, { project_name: string; version_label: string; notes: DeletedNote[] }>()
+  for (const n of notes) {
+    const key = n.project_ref || `note-${n.id}`
+    const g = groups.get(key)
+    if (g) {
+      g.notes.push(n)
+    } else {
+      groups.set(key, { project_name: n.project_name, version_label: n.version_label, notes: [n] })
+    }
+  }
+  return [...groups.entries()].map(([project_ref, g]) => ({ project_ref, ...g }))
+}
+
+/**
+ * POST /api/me/deleted/export/（`B231`）—— ★★ **导出所选笔记**
+ *
+ * ⚠ 响应是**二进制**（`.astrolabe-backup`，签名容器）⇒ ⛔ 不能走 `apiPost`
+ *   （它会把响应当 JSON/text 解析，二进制会被毁）✅
+ */
+export async function downloadNotesBackup(noteIds: number[]): Promise<void> {
+  const token = getToken()
+  const res = await fetch('/api/me/deleted/export/', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/octet-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ note_ids: noteIds }),
+  })
+  if (!res.ok) {
+    let msg = `导出失败（${res.status}）`
+    try {
+      const data = await res.json()
+      msg = data?.error?.message || data?.error || msg
+    } catch {
+      /* 非 JSON 响应就用默认文案 */
+    }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `astrolabe-笔记备份-${new Date().toISOString().slice(0, 10)}.backup`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * POST /api/notes/import/（`B231` / `B232`）—— ★★ **从导出包恢复笔记**
+ *
+ * ⚠★ 先验签再解包；挂不回原节点的会如实上报（`unanchored_count`）⚠
+ */
+export function useImportNotes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (vars: { file: File; projectRef: string }): Promise<ImportResult> => {
+      const handle = upload('/api/notes/import/', vars.file, {
+        field: 'file',
+        extra: { project_ref: vars.projectRef },
+      })
+      const result = await handle.promise
+      if (!result.ok) throw new Error(result.error?.message || '导入失败')
+      return unwrap(result as any)
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['notes'] })
+    },
+  })
+}

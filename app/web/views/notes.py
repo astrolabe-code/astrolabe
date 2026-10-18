@@ -110,9 +110,10 @@ def _list(request: HttpRequest, project):
     #     （* 而那是静默的：* 列表看着正常，* 只是少了一部分）⚠
     #   · · ★★ 而 `scope.readable_nodes_of()` 正是"这个项目该读哪些节点"的
     #     唯一判据（* `B186` 立的，* 见 `graph/scope.py`）✅
-    node_ids = scope.readable_nodes_of(project.project_ref).values_list("pk", flat=True)
-    # ★★ `B210`：**软删的笔记不进任何列表**（* 它在回收站里，* 见 `deleted_bin`）⚠
-    qs = Note.objects.filter(node_id__in=node_ids, deleted_at__isnull=True)
+    # ★★★ `B226`：* 笔记**绑项目** ⇒* 直接按项目筛（* 不再用「可读节点」反推）⚠
+    #   · · ★ 这也顺带保证「**不跨版本**」—— * 项目不可换绑（`B227`）✅
+    # ★★ `B210`：* 软删的笔记不进任何列表（* 它在回收站里）⚠
+    qs = Note.objects.filter(project=project, deleted_at__isnull=True)
     # ⚠★ 私有笔记只有作者能看 ✅
     # ★★ `B208`⑧：* **被隐藏的笔记**（* state=hidden）对**非作者**一律不列 ✅
     #   （* 隐藏 = 只有作者能看到，* 比私有更严：* 协作者也不可）⚠
@@ -170,6 +171,8 @@ def _create(request: HttpRequest, project):
     title = str(body.get("title") or "").strip()[:TITLE_MAX] or _auto_title(text)
 
     note = Note.objects.create(
+        # ★★ `B226`：* 笔记**绑项目**（版本由「项目 → 基图」查得）⚠
+        project=project,
         node=node,
         # ★★★ `B218`：**锚定时刻的节点快照** —— 节点行没了，* 笔记仍能自描述 / 导出 / 重挂 ⚠
         node_vid=node.stable_vid,

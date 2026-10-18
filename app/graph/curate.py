@@ -510,24 +510,45 @@ def _do_add_node(project, c: dict, by=None) -> CurateResult:
     canon = identity.canonical(kind_name, file_path, name, line, line_end)
     vid = identity.hash53(canon)
 
-    # ★★ 幂等：* 项目里同一个 vid 已存在 ⇒* 复用它（⛔ 不重复建）⚠
-    node = Node.objects.filter(project=project, stable_vid=vid).first()
-    if node is None:
-        node = Node.objects.create(
-            project=project,
-            stable_vid=vid,
-            versions=[],
-            uid=(str(c.get("uid") or f"{kind_name}#{file_path}#{name}"))[:512],
-            kind=kinds.kind_id(kind_name),
-            name=name[:512],
-            qname=str(c.get("qname") or "")[:512],
-            file_path=file_path[:1024],
-            line=line,
-            line_end=(int(line_end) if line_end is not None else -1),
-            lang=str(c.get("lang") or "")[:32],
-            signature=str(c.get("signature") or "")[:512],
-            extra=c.get("extra") or {},
+    # ★★★ `B225`：**已有同 vid 的节点 ⇒ 拒绝新增**（⛔ 不造第二份）⚠
+    #   · · ★ 先查本项目可读的**基图节点**，* 再查**项目自己的叠加层** ⚠
+    #   · · ★★ 同一份代码造两份 ⇒* 数据重复 + 笔记分裂（* 一份里写的笔记另一份看不见）⚠
+    duplicate = scope.nodes_of(project.project_ref).filter(stable_vid=vid).first()
+    if duplicate is None:
+        duplicate = Node.objects.filter(project=project, stable_vid=vid).first()
+    if duplicate is not None:
+        return CurateResult(
+            ok=False,
+            action=ACTION_ADD_NODE,
+            message=(
+                f"这个节点已经在图里了（vid={vid}，{duplicate.name}）—— "
+                "不要新增，请改用 update_node 修改它"
+            ),
+            detail={
+                "code": "duplicate_node",
+                "vid": vid,
+                "existing_kind": kinds.kind_name(duplicate.kind),
+                "existing_name": duplicate.name,
+                "existing_file_path": duplicate.file_path,
+                "existing_line": duplicate.line,
+            },
         )
+
+    node = Node.objects.create(
+        project=project,
+        stable_vid=vid,
+        versions=[],
+        uid=(str(c.get("uid") or f"{kind_name}#{file_path}#{name}"))[:512],
+        kind=kinds.kind_id(kind_name),
+        name=name[:512],
+        qname=str(c.get("qname") or "")[:512],
+        file_path=file_path[:1024],
+        line=line,
+        line_end=(int(line_end) if line_end is not None else -1),
+        lang=str(c.get("lang") or "")[:32],
+        signature=str(c.get("signature") or "")[:512],
+        extra=c.get("extra") or {},
+    )
 
     patch = _write_patch(
         project,
@@ -632,11 +653,15 @@ def _do_add_edge(project, c: dict, by=None) -> CurateResult:
     """
     from graph import patch_spec
 
-    fields, err = patch_spec.validate_payload("add_edge", c.get("fields") or {
-        "type": c.get("type"),
-        "line": c.get("line"),
-        "confidence": c.get("confidence"),
-    })
+    # ★ 兼容两种传法：* `fields` 对象（* 新口径）或平铺在 change 上（* 旧口径）⚠
+    # ⚠ 只收**传了**的键 ——* 把没传的 `confidence=None` 塞进去会被白名单挡下 ⚠
+    fields_src = c.get("fields")
+    if fields_src is None:
+        fields_src = {}
+        for key in ("type", "line", "confidence"):
+            if c.get(key) is not None:
+                fields_src[key] = c[key]
+    fields, err = patch_spec.validate_payload("add_edge", fields_src)
     if err is not None:
         return CurateResult(ok=False, action=ACTION_ADD_EDGE, message=err)
 
@@ -652,6 +677,32 @@ def _do_add_edge(project, c: dict, by=None) -> CurateResult:
                             message=f"端点不存在，或不属于这个项目：vid={missing}")
 
     src, dst = nodes[from_vid], nodes[to_vid]
+
+    # ★★★ `B225`：**已有同一条边 ⇒ 拒绝新增**（* 建议改用 `update_edge`）⚠
+    edge_type = fields.get("type") or "calls"
+    edge_line = fields.get("line", -1)
+    duplicate_edge = (
+        scope.edges_of(project.project_ref)
+        .filter(from_node=src, to_node=dst, type=edge_type, line=edge_line)
+        .first()
+    )
+    if duplicate_edge is None:
+        duplicate_edge = (
+            Edge.objects.filter(
+                project=project, from_node=src, to_node=dst, type=edge_type, line=edge_line
+            ).first()
+        )
+    if duplicate_edge is not None:
+        return CurateResult(
+            ok=False,
+            action=ACTION_ADD_EDGE,
+            message=(
+                f"这条边已经在图里了（{src.name} -[{edge_type}]-> {dst.name}，"
+                f"edge_id={duplicate_edge.pk}）—— 不要新增，请改用 update_edge 修改它"
+            ),
+            detail={"code": "duplicate_edge", "edge_id": duplicate_edge.pk},
+        )
+
     patch = _write_patch(
         project,
         lookup={"from_node": src, "to_node": dst},
@@ -805,9 +856,11 @@ def apply_changes(
                     )
                 r = fn(project, raw or {}, by=by)
                 if not r.ok:
+                    # ★★ `B225`：* 单条的 detail（* 如 `duplicate_node` 的 code / vid）⚠
+                    #   · · ★ 必须透出批量结果 ——* 否则前端只知道"失败了"，* 不知道怎么处理 ⚠
                     raise _BatchFailed(
                         f"第 {idx + 1} 条失败：{r.message}",
-                        {"failed_index": idx, "action": action},
+                        {"failed_index": idx, "action": action, **(r.detail or {})},
                     )
                 applied.append({"action": action, "message": r.message, **r.detail})
 

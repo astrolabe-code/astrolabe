@@ -82,6 +82,21 @@ CACHE_PREFIX = "astrolabe:basegraph"
 CACHE_TTL = 7 * 24 * 3600
 
 
+class BindingImmutable(Exception):
+    """★★★ **项目已绑定基图，不可更换**（`B227` · 2026-10-18）⚠
+
+    ★★★ 所有者原话（逐字）：
+
+    > 「**项目不允许换绑，建项目时绑定什么版本，以后永远是。**」
+
+    ```
+    ★★ `project.base_graph` 一旦有值 ⇒* **只能还是那一份**
+      · · ★ 同值重复绑定 ⇒ 幂等放行（* 作业重跑 / 并发重入）✅
+      · · ★★ 想换版本 ⇒* **建新项目** ⚠
+    ```
+    """
+
+
 def _redis() -> "redis.Redis":
     """★ Redis 客户端（★ 与 `jobs/queue.py` 同一口径）。
 
@@ -291,14 +306,25 @@ def bind(
         #   ★★ `update_or_create` 换成一个 `update`：* 项目**必然已存在**（* 绑定发生在建项目之后）⚠
         #   · ★ `requested_ref`（* 用户当时指定的分支）* **不再存** ——
         #     ★ 基图的 `ref` / `default_branch` 已经是权威（* `B197`：* 一个概念一处）⚠
-        row = Project.objects.filter(project_ref=project_ref).update(
-            base_graph=base_graph
+        # ★★★ `B227`：**绑定不可更换**（* 锁住项目行，* 防并发换绑）⚠
+        project = (
+            Project.objects.select_for_update()
+            .filter(project_ref=project_ref)
+            .only("pk", "base_graph_id")
+            .first()
         )
-        if not row:
+        if project is None:
             raise ValueError(
                 f"绑定失败：项目不存在（project_ref={project_ref!r}）—— "
                 "绑定只能发生在项目建好之后"
             )
+        if project.base_graph_id is not None and project.base_graph_id != base_graph.pk:
+            raise BindingImmutable(
+                f"项目已绑定另一个版本（base_graph={project.base_graph_id}），不可更换 —— "
+                "要看别的版本，请新建一个项目"
+            )
+        if project.base_graph_id is None:
+            Project.objects.filter(pk=project.pk).update(base_graph=base_graph)
 
         # ⚠★★ 2026-10-13：**必须重新读一次 `built_at`**（★ 别信传进来那个对象的属性）⚠
         #

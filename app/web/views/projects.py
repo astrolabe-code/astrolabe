@@ -40,7 +40,7 @@ from web.http import fail, ok, ok_flat
 # ---------------------------------------------------------------------------
 
 
-def purge_project(project_ref: str) -> int:
+def purge_project(project_ref: str, *, by=None) -> int:
     """★★ **物理删除一个项目自己的全部数据**（★ `B208`③：* 下架 = 彻底删除）⚠
 
     ★★ 所有者原话整句：「**下架是彻底从服务器上删除数据。**」✅
@@ -74,12 +74,17 @@ def purge_project(project_ref: str) -> int:
     # ★★ `B221`：* 叠加层按 `project` 外键（* 裸 `project_ref` 列已删）⚠
     project = Project.objects.filter(project_ref=project_ref).first()
     if project is not None:
-        GraphPatch.objects.filter(project=project).delete()
-        # ★★ `B218`：* 挂在**本项目叠加层节点**上的笔记要一起删（* `Note.node` 已是 SET_NULL，
-        #   * 不先删就会留下无锚笔记）⚠ · 基图节点上的笔记**不删**（* 那是共享的）✅
+        # ★★★ `B228`（所有者裁定）：**笔记是最重要的数据 —— 不删，只软删进回收站** ⚠
+        #   · · ★ 项目没了，* 笔记行**留着**（* `Note.project` = `SET_NULL`）✅
+        #   · · ★★ 作者从回收站（* 按 `created_by` 列）就能看到并导出 ✅
+        from django.utils import timezone
+
         from core.models import Note
 
-        Note.objects.filter(node__project=project).delete()
+        Note.objects.filter(project=project, deleted_at__isnull=True).update(
+            deleted_at=timezone.now(), deleted_by=by
+        )
+        GraphPatch.objects.filter(project=project).delete()
         Node.objects.filter(project=project).delete()
         Edge.objects.filter(project=project).delete()
     Job.objects.filter(project_ref=project_ref).delete()
@@ -362,7 +367,7 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         #   · ★ 而 PATCH（* 改名 / 改描述 / 改公开性）仍走 `can_edit` ✅
         if not permissions.can_delete(request, project):
             return fail("只有项目所有者能删除项目", 403, code="forbidden")
-        freed = purge_project(project_ref)
+        freed = purge_project(project_ref, by=permissions.current_user(request))
         return ok({"deleted": True, "storage_freed_bytes": freed})
 
     # PATCH —— ★ 改内容 ⇒ `can_edit`（owner ∨ 协作者，`B207`②；⚠ staff 已切，`B208`①）✅

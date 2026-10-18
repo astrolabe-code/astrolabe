@@ -69,12 +69,14 @@ export default function GraphCanvas({
     if (!box || !graph) return
 
     const big = graph.nodes.length > 800
+    // ★★ 布局必须知道**画布尺寸** ——* 不传就以 (0,0) 为中心铺开 ⇒
+    //   图整个跑到画布右/下侧，只剩左上角一小块（* 实测挤成一团的真因）⚠
+    const LW = box.clientWidth || 900
+    const LH = box.clientHeight || 600
 
     const g = new Graph({
       container: box,
       autoResize: true,
-      // ★ 首次渲染后自适应视图（`autoFit` 的对象形态，v5 口径）
-      autoFit: { type: 'view' },
       animation: false,
       data: {
         nodes: graph.nodes.map((n) => {
@@ -122,25 +124,39 @@ export default function GraphCanvas({
       },
       edge: { style: { endArrow: true, lineWidth: 1 } },
       layout: {
-        // ★ 代码图 = 「谁调谁」⇒* 力导向最直观 ✅
-        type: 'd3-force',
-        animate: false,
-        // ★★ `D105` 起只画十几个节点 ⇒* 默认参数（边距 50 / 斥力 -30）会把它们
-        //   **挤成一团**、* 标签互相盖住 ⚠ ——* 这里按「少而疏」调：
-        //   · · ★ 边理想长度 150（* 拉开通向）
-        link: { distance: 150, strength: 0.5 },
-        //   · · ★ 斥力 -520 + 作用范围 1400（* 少节点时也能撑开）
-        manyBody: { strength: -520, distanceMax: 1400 },
-        //   · · ★ 碰撞半径 38（* 节点 14 + 标签，* 不许重叠）
-        collide: { radius: 38, strength: 0.95, iterations: 3 },
-        //   · · ★ 向心力弱一点（* 否则全被拽回中心）
-        center: { strength: 0.06 },
-        //   · · ★ 多迭代几次让布局稳定（* 少节点时收益明显）
-        iterations: 400,
+        // ★★★ `D105`：* 用 **fruchterman**（* FR 力导向，* 内置 width/height
+        //   边界 ⇒* 布局天然被限制在画布内，* 不会飘出离群点）⚠
+        //   · · ★ d3-force 实测：* 无连线的孤岛会被斥力推到画布外 ⇒
+        //     fit 后主群挤成一团（* 已放弃）⚠
+        //   · · ★ 2.5 秒动画收敛 ——* 流星等它稳了再出来（* 见下方 effect）✅
+        type: 'fruchterman',
+        width: LW,
+        height: LH,
+        gravity: 8,
+        speed: 8,
+        animate: true,
       },
       behaviors: ['zoom-canvas', 'drag-canvas', 'drag-element', 'click-select'],
     })
 
+    // ★★★ 布局完成后**显式适配视图**（`autoFit` 的对象形态在 v5 里不生效——
+    //   实测图会挤在左上角一小块、* 节点密密麻麻）⚠
+    //   · · ★★ 必须在 `afterlayout` 里做：* 布局是**异步**的，* 在 `render()`
+    //     resolve 时就 fit ⇒* 节点还在 (0,0) ⇒* fit 到空气 ⇒* 等于没做 ⚠
+    let alive = true
+    // ★ 布局稳定后适配一次视图（* 只在 `afterlayout` 做，* 不搞第二个兜底）⚠
+    const fitOnce = () => {
+      if (!alive) return
+      void (async () => {
+        try {
+          await g.fitView({ when: 'always' })
+          await g.fitCenter()
+        } catch {
+          /* 适配失败不影响看 */
+        }
+      })()
+    }
+    g.on('afterlayout', fitOnce)
     void g.render()
 
     g.on('node:click', (evt: unknown) => {
@@ -152,6 +168,7 @@ export default function GraphCanvas({
 
     graphRef.current = g
     return () => {
+      alive = false
       graphRef.current = null
       selectedRef.current = null
       g.destroy()
@@ -194,12 +211,21 @@ export default function GraphCanvas({
       console.debug('[meteor] 跳过：系统设置了「减少动态效果」')
       return
     }
-    console.debug('[meteor] 启动，边数 =', graph.edges.length)
-    return startMeteor(
-      g,
-      box,
-      graph.edges.map((e) => ({ from: String(e.from), to: String(e.to) })),
-    )
+    // ★★ `D104`：**等布局稳了再出流星**（布局动画 2.5s ⇒ 流星延迟 2.6s）⚠
+    //   · · ★ 布局还在动的时候，节点位置每帧都在变，* 流星会乱窜 ⚠
+    //   · · ★ 延迟完全没影响：* 用户先看图散开，* 然后流星才亮起来 ✅
+    let stop: (() => void) | null = null
+    const timer = window.setTimeout(() => {
+      stop = startMeteor(
+        g,
+        box,
+        graph.edges.map((e) => ({ from: String(e.from), to: String(e.to) })),
+      )
+    }, 2600)
+    return () => {
+      window.clearTimeout(timer)
+      stop?.()
+    }
   }, [graph, meteors])
 
   // ★★ `D104`：**必须 `position:'relative'`** ——* 流星罩层是 `position:absolute;inset:0`，

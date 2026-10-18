@@ -71,9 +71,17 @@ def purge_project(project_ref: str) -> int:
     #   ★ `project_ref` 的那些节点 / 边 = **用户自己新增的**（★ 叠加层）⚠
     #   ★★★ **绝不删基图** —— ★ 基图是**共享**的 ⚠
     #   ★ 顺序：★ **先删修改**（它指着叠加层的节点）⇒ 再删节点 / 边 ✅
-    GraphPatch.objects.filter(project_ref=project_ref).delete()
-    Node.objects.filter(project_ref=project_ref).delete()
-    Edge.objects.filter(project_ref=project_ref).delete()
+    # ★★ `B221`：* 叠加层按 `project` 外键（* 裸 `project_ref` 列已删）⚠
+    project = Project.objects.filter(project_ref=project_ref).first()
+    if project is not None:
+        GraphPatch.objects.filter(project=project).delete()
+        # ★★ `B218`：* 挂在**本项目叠加层节点**上的笔记要一起删（* `Note.node` 已是 SET_NULL，
+        #   * 不先删就会留下无锚笔记）⚠ · 基图节点上的笔记**不删**（* 那是共享的）✅
+        from core.models import Note
+
+        Note.objects.filter(node__project=project).delete()
+        Node.objects.filter(project=project).delete()
+        Edge.objects.filter(project=project).delete()
     Job.objects.filter(project_ref=project_ref).delete()
     Project.objects.filter(project_ref=project_ref).delete()
     return freed
@@ -151,17 +159,13 @@ def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
     if not bg_ids:
         return {}, {}
 
+    # ★★ `B220`：* 节点跨版本共用 ⇒* 不能再按 `base_graph_id` 数 ⚠
+    #   · · ★ 直接用基图行上的**每版本计数**（* 写图时落的 `node_count` / `edge_count`）✅
     by_bg_nodes = dict(
-        Node.objects.filter(base_graph_id__in=bg_ids)
-        .values_list("base_graph_id")
-        # ⚠ 用 "pk" 而不是 "node_id"/"id" —— ★ 不依赖主键的**字段名**
-        #   （`Node` 的主键叫 `node_id`，`Edge` 的叫 `id`，写死任一个都会炸）
-        .annotate(n=Count("pk"))
+        BaseGraph.objects.filter(pk__in=bg_ids).values_list("pk", "node_count")
     )
     by_bg_edges = dict(
-        Edge.objects.filter(base_graph_id__in=bg_ids)
-        .values_list("base_graph_id")
-        .annotate(n=Count("pk"))
+        BaseGraph.objects.filter(pk__in=bg_ids).values_list("pk", "edge_count")
     )
 
     nodes = {ref: by_bg_nodes.get(bg, 0) for ref, bg in binds.items()}

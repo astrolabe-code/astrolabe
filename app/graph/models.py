@@ -11,6 +11,8 @@
 """
 
 from django.db import models
+from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.indexes import GinIndex
 
 from core.models import TimeStampedModel, UidMixin
 # ⚠★ `B179`：`ProjectRefMixin` **不再用于 `Node` / `Edge`** ——
@@ -36,8 +38,45 @@ EDGE_CONTAINS = "contains"
 EDGE_OVERRIDES = "overrides"
 EDGE_IMPLEMENTS = "implements"
 
+#: ★ 全部边类型（`B224` 的 payload 校验用）——* 惰性 import 到 `patch_spec` ⚠
+EDGE_TYPE_NAMES = (
+    EDGE_CALLS,
+    EDGE_IMPORTS,
+    EDGE_INCLUDES,
+    EDGE_DEFINES,
+    EDGE_CONTAINS,
+    EDGE_OVERRIDES,
+    EDGE_IMPLEMENTS,
+)
+
 ORIGIN_PARSED = "parsed"
 ORIGIN_MANUAL = "manual"
+
+
+class Repo(TimeStampedModel):
+    """★★★ **仓库**（`B220` · 2026-10-18）—— ★★ 节点归属的根，* 跨版本共用 ⚠
+
+    ```
+    ★★ 为什么要有这一层：
+      · ★ 节点的身份 = (repo, stable_vid) ——* vid 只在**仓库内**唯一 ⚠
+      · ★★ 没有 repo 这层 ⇒* 两个仓库同名同路径的函数会被**错误合并** ⚠
+    ```
+    """
+
+    provider = models.CharField(max_length=16)
+    repo_full_name = models.CharField(max_length=512)
+
+    class Meta:
+        constraints = [
+            # ★★ 一个仓库一行（* provider + owner/repo）⚠
+            models.UniqueConstraint(
+                fields=["provider", "repo_full_name"], name="uniq_repo"
+            ),
+        ]
+        verbose_name = "仓库"
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.repo_full_name}"
 
 
 class BaseGraph(TimeStampedModel):
@@ -330,9 +369,19 @@ class Node(UidMixin, TimeStampedModel):
 
     node_id = models.BigAutoField(primary_key=True)
 
+    #: ★★ **内容确定的身份**（`B219`）：* kind|file_path|name|line|line_end 的 53 位哈希 ⚠
+    stable_vid = models.BigIntegerField(default=0)
+    #: ★★ **被哪些基图（版本）包含**（`B220`）——* 升序、去重；* ⛔ 不用成员表 ⚠
+    versions = ArrayField(models.BigIntegerField(), default=list)
+
     # ---- ★ 归属（★ 恰好一个有值，见类文档）----
-    base_graph = models.ForeignKey(
-        BaseGraph, null=True, blank=True, on_delete=models.CASCADE, related_name="nodes"
+    # ---- ★★ 归属之一：**仓库**（池化节点，* 跨版本共用 —— `B220`）⚠
+    repo = models.ForeignKey(
+        "graph.Repo",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="nodes",
     )
     # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
     #
@@ -359,9 +408,9 @@ class Node(UidMixin, TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="+",
     )
-    project_ref = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
-    kind = models.CharField(max_length=32)
+    #: ★★ `B222`：* smallint id（* 映射唯一来源 `graph/kinds.py`）⚠
+    kind = models.SmallIntegerField()
     name = models.CharField(max_length=512)
     qname = models.CharField(max_length=512, blank=True, default="")
 
@@ -388,53 +437,36 @@ class Node(UidMixin, TimeStampedModel):
     extra = models.JSONField(default=dict, blank=True)
 
     class Meta:
-        # ⚠ uid 【不加唯一约束】—— B117 明确允许偶发重复
+        # ★★ `B220`：* 一个节点被多个版本共用 ⇒* 按 `versions` 反查（GIN）⚠
+        # ★★ `B222`：* `kind` 是 smallint（* 映射在 `graph/kinds.py`）✅
         indexes = [
-            # ★ 基图侧（★ 按 sha 命中的那份基图，★ 读它的节点）
-            models.Index(fields=["base_graph", "file_path"]),
-            models.Index(fields=["base_graph", "kind"]),
-            # ★ 叠加层侧（★ 某个项目自己加的节点）
-            models.Index(fields=["project_ref", "kind"]),
+            GinIndex(fields=["versions"], name="ix_node_versions"),
+            models.Index(fields=["repo", "file_path"], name="ix_node_repo_path"),
+            models.Index(fields=["repo", "kind"], name="ix_node_repo_kind"),
+            models.Index(fields=["project", "kind"], name="ix_node_project_kind"),
         ]
         constraints = [
-            # ★★★ 恰好属于一个地方（★ 见类文档）⚠
-            #
-            # ⚠★★ 2026-10-15（`B197` 第四步）：**这条 CHECK 必须把新外键 `project_id` 算进来** ⚠
-            #
-            # ★★ 为什么才发现（★ 如实记）：
-            #   · ★ 我加了 `project` 外键，* 却【没改这条 CHECK】⚠
-            #   · ★★ 后果：* 只设 `project_id` 而不设 `project_ref` 的行
-            #     ⇒ **当场被挡住** ⚠
-            #   · ★ 也就是说：* 新外键**还不能用于写入** ⚠
-            #   · ★ 实测踩到：* 建一个只挂外键的节点 ⇒
-            #     `violates check constraint "node_belongs_to_exactly_one"` ⚠
-            #
-            # ★★ 修法：★ 判据从「`base_graph_id` 与 `project_ref` 二选一」
-            #   ★★ 升级成「`base_graph_id` 与（`project_id` 或 `project_ref`）二选一」⚠
-            #   · ★ 两种合法形态：
-            #     ```
-            #     ① 基图层   base_graph_id 有值 · project_id / project_ref 全空
-            #     ② 修改层   project_id 或 project_ref 有值 · base_graph_id 空
-            #     ```
-            #   · ★★ 到切完读路径、* 删掉 project_ref 之后，* ②会窄化成"只有 project_id" ⚠
-            #   · ★★ 而"两处都空"或"两处都有"仍然挡住 ✅
+            # ★★ 仓库内一个 vid 只有一个节点（* 跨版本同 vid = 同一个节点）✅
+            models.UniqueConstraint(
+                fields=["repo", "stable_vid"],
+                condition=models.Q(repo__isnull=False),
+                name="uniq_node_in_repo",
+            ),
+            # ★ 叠加层节点：项目内唯一 ✅
+            models.UniqueConstraint(
+                fields=["project", "stable_vid"],
+                condition=models.Q(project__isnull=False),
+                name="uniq_node_in_project",
+            ),
+            # ★★ 池化节点与叠加层节点**互斥**（`B220`：base_graph ⇒ repo）⚠
             models.CheckConstraint(
                 condition=(
-                    # ① 基图层：有基图、且项目侧（外键 + 老口径）全空
-                    models.Q(base_graph__isnull=False, project__isnull=True, project_ref="")
-                    # ② 修改层：没基图、且项目侧（外键 或 老口径）恰有一个
-                    | (
-                        models.Q(base_graph__isnull=True)
-                        & (
-                            models.Q(project__isnull=False, project_ref="")
-                            | models.Q(project__isnull=True, project_ref__gt="")
-                        )
-                    )
+                    models.Q(repo__isnull=False, project__isnull=True)
+                    | models.Q(repo__isnull=True, project__isnull=False)
                 ),
                 name="node_belongs_to_exactly_one",
-            )
+            ),
         ]
-
     def __str__(self) -> str:
         return self.uid
 
@@ -452,8 +484,13 @@ class Edge(TimeStampedModel):
     to_node = models.ForeignKey(Node, on_delete=models.CASCADE, related_name="in_edges")
 
     # ---- ★ 归属（★ 恰好一个有值 —— 与 `Node` 同口径）----
-    base_graph = models.ForeignKey(
-        BaseGraph, null=True, blank=True, on_delete=models.CASCADE, related_name="edges"
+    # ---- ★★ 归属之一：**仓库**（`B220`）⚠
+    repo = models.ForeignKey(
+        "graph.Repo",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="edges",
     )
     # ⚠★★ 2026-10-14（`B183`/`B197`）：**裸 `project_ref` 换成真外键** ⚠
     #
@@ -480,12 +517,14 @@ class Edge(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="+",
     )
-    project_ref = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    #: ★★ **被哪些基图（版本）包含**（`B220`）⚠
+    versions = ArrayField(models.BigIntegerField(), default=list)
 
     type = models.CharField(max_length=32)
     # ⚠★ `B179`：**本处曾有一个 `origin` 列** —— ★ 同 `Node`，归属已决定它，❌ 不再建列 ⚠
 
-    line = models.IntegerField(null=True, blank=True)
+    #: ★★ `B221`：* 未知行号取 **-1**（* NULL 在 PG 里互不相等，会破坏去重）⚠
+    line = models.IntegerField(default=-1)
     # ★ 语法级拿不到精确调用图时如实标注（GRAPH-SCHEMA.md S3）
     confidence = models.CharField(max_length=16, blank=True, default="")
 
@@ -493,40 +532,28 @@ class Edge(TimeStampedModel):
 
     class Meta:
         indexes = [
-            # ★★ 两个索引，一个都不能少（G3）
-            # ⚠★★ 2026-10-15（`B199`）：**四棵都去掉 `type` 末列** ⚠
-            #
-            # ★★ 为什么能去掉（* 这就是"能少加一个字段就少加一个"）：
-            #   · ★ 一个 `from_node` 的出边**通常个位数** ⇒
-            #     ★★ 找到 `from` 之后**再筛 type 几乎免费** ⚠
-            #   · ★ 而 `type` 只有 **3 种**取值 ⇒ ★ 放索引里**帮不上忙** ⚠
-            #   ⇒ ★★ 索引项从 **24 字节降到 16 字节** ⚠
-            models.Index(fields=["base_graph", "from_node"]),   # 正向：我调用了谁
-            models.Index(fields=["base_graph", "to_node"]),     # ★ 反向：谁调用了我
-            models.Index(fields=["project_ref", "from_node"]),
-            models.Index(fields=["project_ref", "to_node"]),
+            GinIndex(fields=["versions"], name="ix_edge_versions"),
+            models.Index(fields=["repo", "from_node"], name="ix_edge_repo_from"),
+            models.Index(fields=["repo", "to_node"], name="ix_edge_repo_to"),
+            models.Index(fields=["project", "from_node"], name="ix_edge_project_from"),
+            models.Index(fields=["project", "to_node"], name="ix_edge_project_to"),
         ]
         constraints = [
-            # ⚠★★ 2026-10-15（`B197` 第四步）：**与 `node_belongs_to_exactly_one` 同修** ⚠
-            #   ★ 判据升级成「`base_graph_id` 与（`project_id` 或 `project_ref`）二选一」⚠
-            #   · ★ 三种合法形态：* ① 基图层 · ② 修改层（* 新外键 ✅）· ③ 过渡态（* 老口径）⚠
-            #   · ★★ "两处都空"或"两处都有"仍然挡住 ✅
+            # ★★ 同一仓库里，同一条边只存一份（* 跨版本共用）⚠
+            models.UniqueConstraint(
+                fields=["repo", "from_node", "to_node", "type", "line"],
+                condition=models.Q(repo__isnull=False),
+                name="uniq_edge_in_repo",
+            ),
+            # ★★ 池化边与叠加层边互斥（`B220`）⚠
             models.CheckConstraint(
                 condition=(
-                    models.Q(base_graph__isnull=False, project__isnull=True, project_ref="")
-                    | (
-                        models.Q(base_graph__isnull=True)
-                        & (
-                            models.Q(project__isnull=False, project_ref="")
-                            | models.Q(project__isnull=True, project_ref__gt="")
-                        )
-                    )
+                    models.Q(repo__isnull=False, project__isnull=True)
+                    | models.Q(repo__isnull=True, project__isnull=False)
                 ),
                 name="edge_belongs_to_exactly_one",
-            )
+            ),
         ]
-
-
 # ---- ★ 修改动作（★ 与 `graph/curate.py` 的六种动作**同一套字面值**）----
 PATCH_ADD_NODE = "add_node"
 PATCH_UPDATE_NODE = "update_node"
@@ -608,9 +635,9 @@ class GraphPatch(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="+",
     )
-    project_ref = models.CharField(max_length=64, db_index=True)
 
-    action = models.CharField(max_length=16, choices=[(a, a) for a in PATCH_ACTIONS])
+    #: ★★ `B224`：* smallint id（* 映射与 payload 白名单见 `graph/patch_spec.py`）⚠
+    action = models.SmallIntegerField()
 
     #: ★ 被改 / 被删的【基图】节点（⚠ `add_node` 不落这里 ⇒ 必为 NULL）
     target_node = models.ForeignKey(
@@ -639,12 +666,34 @@ class GraphPatch(TimeStampedModel):
 
     class Meta:
         indexes = [
-            # ★★★ 前端比对的关键索引：★ 按【项目 + 目标节点】直查出改动 ⚠
-            #   ★ 所有者原话：「**这就要求节点索引一定要设计好，能迅速对比出修改的部分**」
-            models.Index(fields=["project_ref", "target_node"]),
-            models.Index(fields=["project_ref", "target_edge"]),
-            models.Index(fields=["project_ref", "action"]),
-            models.Index(fields=["project_ref", "-created_at"]),
+            models.Index(fields=["project", "target_node"], name="ix_patch_project_node"),
+            models.Index(fields=["project", "target_edge"], name="ix_patch_project_edge"),
+            models.Index(fields=["project", "action"], name="ix_patch_project_action"),
+            models.Index(fields=["project", "-created_at"], name="ix_patch_project_time"),
+        ]
+        constraints = [
+            # ★★★ `B223`：* 一个项目对一个目标**只有一条现行意见** ⚠
+            models.UniqueConstraint(
+                fields=["project", "target_node"],
+                condition=models.Q(target_node__isnull=False),
+                name="uniq_patch_target_node",
+            ),
+            models.UniqueConstraint(
+                fields=["project", "target_edge"],
+                condition=models.Q(target_edge__isnull=False),
+                name="uniq_patch_target_edge",
+            ),
+            # ★ `add_edge` 的端点对也唯一（* 一对节点一条新增边）⚠
+            models.UniqueConstraint(
+                fields=["project", "from_node", "to_node"],
+                condition=models.Q(action=4),
+                name="uniq_patch_add_edge",
+            ),
+            # ★★ `B224`：* 动作 id 必须在 1..6 ⚠
+            models.CheckConstraint(
+                condition=models.Q(action__gte=1) & models.Q(action__lte=6),
+                name="patch_action_valid",
+            ),
         ]
         verbose_name = "图修改"
 

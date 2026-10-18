@@ -23,13 +23,14 @@ from dataclasses import dataclass, field
 from django.db import transaction
 
 from codeparser.base import ParseResult
-from graph.models import BaseGraph, Edge, Node
+from graph import identity, kinds
+from graph.models import BaseGraph, Edge, Node, Repo
 
 #: 解析器给出的「延迟解析引用」前缀（约定见 `codeparser/base.py` 的 `ParsedEdge`）
 _UNRESOLVED = "unresolved#"
 
 #: 归属 kind（用于 `unresolved#call#` 的名字索引）
-_CALLABLE_KINDS = ("function", "method")
+_CALLABLE_KINDS = (kinds.KIND_IDS["function"], kinds.KIND_IDS["method"])
 
 
 @dataclass(slots=True)
@@ -66,7 +67,7 @@ class _Index:
         for node in nodes.values():
             if node.kind in _CALLABLE_KINDS:
                 by_name.setdefault(node.name, []).append(node)
-            elif node.kind == "file":
+            elif node.kind == kinds.KIND_IDS["file"]:
                 by_file_path[node.file_path] = node
                 base = node.file_path.rsplit("/", 1)[-1]
                 by_file_basename.setdefault(base, []).append(node)
@@ -81,6 +82,11 @@ class _Index:
             by_file_basename=by_file_basename,
             by_file_stem=by_file_stem,
         )
+
+
+def _canonical(pn) -> str:
+    """★ 规范串（* 唯一实现见 `graph/identity.py`）⚠"""
+    return identity.canonical(pn.kind, pn.file_path, pn.name, pn.line, pn.line_end)
 
 
 class EmptyGraph(Exception):
@@ -162,59 +168,97 @@ def write_graph(
         if bg is None:
             raise GraphImmutable("这份基图已经不在了（可能被并发删掉了）。")
 
-        if Node.objects.filter(base_graph=bg).exists():
+        # ★★ 定版闸门（`B220` 之后节点不再挂基图 ⇒* 用 `built_at` 判）⚠
+        if bg.built_at is not None:
             if not replace:
                 raise GraphImmutable(
                     "这份基图已经建好了，不会重新生成。"
                     "★ 要看别的版本，请换一个分支 / tag 再拉一次。"
                 )
             if not (replace_reason or "").strip():
-                # ★★ 强制留痕 —— ⚠ 否则"图被覆盖过"这件事**事后查不出来**
                 raise ValueError("replace=True 必须给出 replace_reason（⚠ 会写进审计日志）")
-            Edge.objects.filter(base_graph=bg).delete()
-            Node.objects.filter(base_graph=bg).delete()
+            # ⚠ 覆盖（* 仅调试）：* 把本版本从 versions 里摘掉，* ⛔ 不动其它版本 ⚠
+            for n in Node.objects.filter(versions__contains=[bg.pk]).only("node_id", "versions"):
+                n.versions = [v for v in n.versions if v != bg.pk]
+                n.save(update_fields=["versions", "updated_at"])
+            for e in Edge.objects.filter(versions__contains=[bg.pk]).only("id", "versions"):
+                e.versions = [v for v in e.versions if v != bg.pk]
+                e.save(update_fields=["versions", "updated_at"])
+
+        # ---------------------------------------------------------- ⓪-1 ★★ 仓库（`B220`）
+        repo, _ = Repo.objects.get_or_create(
+            provider=bg.provider, repo_full_name=bg.repo_full_name
+        )
 
         # ---------------------------------------------------------- ① 节点
         seen: dict[str, Node] = {}
+        parsed = []
         for pn in result.nodes:
             if pn.uid in seen:
-                # ⚠ 同一批里 uid 重复（例如宏重定义）—— 归为一个逻辑节点，
-                #   这样边引用才不会有歧义（B117：uid 允许重复，但要能稳定匹配）
+                # ⚠ 同一批里 uid 重复（宏重定义等）⇒ 归为一个逻辑节点，边引用才无歧义
                 stats.nodes_deduped += 1
                 continue
-            seen[pn.uid] = Node(
-                # ★★ `B179`：挂【基图】—— ★ 不再挂项目、也不再有 `origin` 列 ⚠
-                #   （★ 基图行【必然】是"解析出来的"，★ 不需要一列去记它）
-                base_graph=bg,
-                uid=pn.uid,
-                kind=pn.kind,
-                name=pn.name[:512],
-                qname=(pn.qname or "")[:512],
-                file_path=pn.file_path[:1024],
-                line=pn.line,
-                line_end=pn.line_end,
-                lang=pn.lang,
-                signature=(pn.signature or "")[:512],
-                # ⚠★ `B176`：此处曾写 `doc=pn.doc or ""` —— ★ 随 `ParsedNode.doc` 一并删除 ✅
-                extra=pn.extra or {},
-            )
+            parsed.append(pn)
+            seen[pn.uid] = None  # 占位（下面填真对象）
 
-        # ★ PostgreSQL 上 bulk_create 会回填主键 —— 这就是 vid（B117）
-        Node.objects.bulk_create(list(seen.values()), batch_size=1000)
-        stats.nodes_written = len(seen)
+        vids = identity.assign_vids([_canonical(p) for p in parsed])
+        existing = {
+            n.stable_vid: n
+            for n in Node.objects.filter(repo=repo, stable_vid__in=list(vids.values()))
+        }
+
+        to_create: list[Node] = []
+        for pn in parsed:
+            vid = vids[_canonical(pn)]
+            node = existing.get(vid)
+            if node is None:
+                node = Node(
+                    repo=repo,
+                    stable_vid=vid,
+                    versions=[bg.pk],
+                    uid=pn.uid,
+                    kind=kinds.kind_id(pn.kind),
+                    name=pn.name[:512],
+                    qname=(pn.qname or "")[:512],
+                    file_path=pn.file_path[:1024],
+                    line=pn.line,
+                    line_end=(pn.line_end if pn.line_end is not None else -1),
+                    lang=pn.lang,
+                    signature=(pn.signature or "")[:512],
+                    extra=pn.extra or {},
+                )
+                to_create.append(node)
+                existing[vid] = node
+            else:
+                # ★★ 复用：* 把这个版本追加进它的 `versions`（* 同一个节点，* 不重复存）⚠
+                if bg.pk not in node.versions:
+                    node.versions = sorted(set(node.versions) | {bg.pk})
+                    node.save(update_fields=["versions", "updated_at"])
+            seen[pn.uid] = node
+
+        # ★ PostgreSQL 上 bulk_create 会回填主键（* 边解析要用）✅
+        Node.objects.bulk_create(to_create, batch_size=1000)
+        stats.nodes_written = len(parsed)
 
         index = _Index.build(seen)
 
         # ---------------------------------------------------------- ② 边
-        # ★★★ `B176` ④：**传染性许可（GPL 等）⇒ 只出节点、不自动生成调用关系** ⚠
-        #   ★ 所有者原话：「**GPL 项目不解析，但生成节点图，不生成调用关系**」⚠
-        #   ★★ 判据写在**基图**上（★ 作业在许可核验时置好 —— ★ 见 `jobs/tasks.py`）⚠
-        #   ★ 这样做是刻意的：★ 边是"对**代码结构**的提取"，★ 而那正是那条争议最大的一块 ⚠
-        edges: list[Edge] = []
+        # ★★★ `B176` ④：**传染性许可（GPL 等）⇒ 只出节点、不生成调用关系** ⚠
+        edges_to_create: list[Edge] = []
+        version_edges = 0
+
         if not bg.edges_generated:
-            # ⚠ 如实计数（★ 不静默丢掉）：★ 前端要能解释"为什么没有连线" ⚠
+            # ⚠ 如实计数（不静默丢掉）：前端要能解释「为什么没有连线」
             stats.edges_skipped += len(result.edges)
         else:
+            pks = [n.node_id for n in seen.values() if n is not None and n.pk]
+            existing_edges: dict[tuple, Edge] = {}
+            if pks:
+                for e in Edge.objects.filter(
+                    repo=repo, from_node_id__in=pks, to_node_id__in=pks
+                ):
+                    existing_edges[(e.from_node_id, e.to_node_id, e.type, e.line)] = e
+
             for pe in result.edges:
                 from_node = _resolve(pe.from_uid, index, stats)
                 to_node = _resolve(pe.to_uid, index, stats)
@@ -222,23 +266,34 @@ def write_graph(
                     stats.edges_skipped += 1
                     continue
                 if from_node.pk == to_node.pk:
-                    # 自环对"发散思维"没有价值，且多半是解析噪声
+                    # 自环对「发散思维」没价值，且多半是解析噪声
                     stats.edges_skipped += 1
                     continue
-                edges.append(
-                    Edge(
-                        base_graph=bg,
+
+                line = pe.line if pe.line is not None else -1
+                key = (from_node.pk, to_node.pk, pe.type, line)
+                edge = existing_edges.get(key)
+                if edge is None:
+                    edge = Edge(
+                        repo=repo,
+                        versions=[bg.pk],
                         from_node=from_node,
                         to_node=to_node,
                         type=pe.type,
-                        line=pe.line,
+                        line=line,
                         confidence=(pe.confidence or "")[:16],
                         extra=pe.extra or {},
                     )
-                )
+                    edges_to_create.append(edge)
+                    existing_edges[key] = edge
+                elif bg.pk not in edge.versions:
+                    edge.versions = sorted(set(edge.versions) | {bg.pk})
+                    edge.save(update_fields=["versions", "updated_at"])
+                version_edges += 1
 
-            Edge.objects.bulk_create(edges, batch_size=1000)
-        stats.edges_written = len(edges)
+            Edge.objects.bulk_create(edges_to_create, batch_size=1000)
+
+        stats.edges_written = version_edges
 
         # ---------------------------------------------------------- ★★★ 空图拒收
         #   ★★ 所有者裁定（2026-10-17）：「**节点为零，还要什么基图，空的还能叫

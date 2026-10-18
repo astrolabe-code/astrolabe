@@ -125,6 +125,10 @@ class Project(TimeStampedModel):
     #   · ★ 而所有者裁定基图「**一直留着，不要做定期清理**」✅
     #   ⇒ ★★ 所以：★ 要删基图 ⇒ **先显式解绑**（★ 那是明面动作）✅
     #   ★（★ 第 1 批删那 15 份冒烟基图时，* 正是**先摘绑定再删**才没出事的 ✅）
+    #: ★★★ **基图被显式清理的时刻**（`B218`）—— ⛔ 正常为 NULL ⚠
+    #:   · · ★ 只有「管理员删了基图、项目解绑」这一条**显式路径**才写它
+    #:   · · ★★ 前端据此显示「原基图已被清理，请重新拉取代码」（* 与“还没解析”区分）✅
+    graph_dropped_at = models.DateTimeField(null=True, blank=True)
     base_graph = models.ForeignKey(
         "graph.BaseGraph",
         null=True,
@@ -1391,11 +1395,33 @@ class Note(TimeStampedModel):
     """
 
     #: ★★ **它挂在哪个代码节点下**（★ 1:N 的"1"）⚠
+    #: ★★ **锚定节点**（`B218`：* `CASCADE` ⇒ **`SET_NULL` + 可空**）⚠
+    #:
+    #: ⚠★ 所有者裁定：「**就算基图被删了，笔记也不能删**」
+    #:   · · ★ `CASCADE` 会把笔记**静默带走** ⚠
+    #:   · · ★★ `SET_NULL` + 下面的**快照列** ⇒* 节点行没了，* 笔记仍在（* 进回收站）✅
     node = models.ForeignKey(
         "graph.Node",
-        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="notes",
     )
+    # ---- ★★★ `B218`：**锚定时刻的节点快照**（* 节点被删后，* 笔记仍能自描述 / 导出 / 重挂）⚠
+    #: ★ 节点身份（* 与 `B219` 的 stable_vid 同一个值；* 重挂靠它匹配）✅
+    node_vid = models.BigIntegerField(null=True, blank=True)
+    #: ★ 节点名（* 导出与回收站显示用）✅
+    node_name = models.CharField(max_length=512, blank=True, default="")
+    #: ★ 节点类型（* 存**名字**而不是 id ——* 快照要人类可读，* 且不受映射变更影响）✅
+    node_kind = models.CharField(max_length=32, blank=True, default="")
+    #: ★ 全名
+    node_qname = models.CharField(max_length=512, blank=True, default="")
+    #: ★ 文件路径
+    node_file_path = models.CharField(max_length=1024, blank=True, default="")
+    #: ★ 起始行（* 未知 ⇒ -1，* 与 `B219` 同口径）⚠
+    node_line = models.IntegerField(default=-1)
+    #: ★ 结束行（* 未知 ⇒ -1）⚠
+    node_line_end = models.IntegerField(default=-1)
     #: ★★ **盒子**（* `flash` 灵光一闪 / `question` 提问质疑 / …）——
     #: ★ 所有者：「**笔记以后我会划分为几个类型…分别放入一个节点下的四个不同盒子**」
     #: ⚠★ **固定枚举**（* 所有者 2026-10-14：*「**可增删最多四五个，你整个表干什么？**」）✅

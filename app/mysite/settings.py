@@ -55,6 +55,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # ★★ `B220`：* ArrayField / GinIndex 需要（* 数组列 + GIN 索引）⚠
+    "django.contrib.postgres",
     # ---- Astrolabe ----
     "core",
     "graph",

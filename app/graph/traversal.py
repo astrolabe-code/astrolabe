@@ -315,7 +315,8 @@ class PostgresAdjacencyReader:
         # ★ 只取画图需要的字段（G4-3）
         node_rows = list(
             scope.nodes_of(project_ref).filter(node_id__in=list(allowed)).values(
-                "node_id", "uid", "kind", "name", "file_path", "line", "line_end", "lang"
+                "node_id", "stable_vid", "uid", "kind", "name",
+                "file_path", "line", "line_end", "lang",
             )
         )
 
@@ -327,9 +328,12 @@ class PostgresAdjacencyReader:
                 stats={"error": "节点不存在", "requested_depth": requested, "root": root_vid},
             )
 
+        # ★★ `B219`：* 对外一律 stable_vid ⇒* 先把 pk 映射过去（* 边也一样）⚠
+        pk_to_vid = {r["node_id"]: r["stable_vid"] for r in node_rows}
+
         nodes = [
             GraphNode(
-                vid=r["node_id"],
+                vid=r["stable_vid"],
                 uid=r["uid"],
                 kind=r["kind"],
                 name=r["name"],
@@ -344,7 +348,8 @@ class PostgresAdjacencyReader:
         nodes.sort(key=lambda n: (n.depth, n.vid))
 
         edges = [
-            GraphEdge(src=s, dst=d, type=t, line=ln) for (s, d, t, ln) in final_edges
+            GraphEdge(src=pk_to_vid[s], dst=pk_to_vid[d], type=t, line=ln)
+            for (s, d, t, ln) in final_edges
         ]
 
         per_level: dict[int, int] = {}
@@ -353,7 +358,7 @@ class PostgresAdjacencyReader:
 
         return SubGraph(
             project_ref=project_ref,
-            root=root_vid,
+            root=pk_to_vid.get(root_vid, 0),
             nodes=nodes,
             edges=edges,
             truncated=bool(reasons),
@@ -391,7 +396,14 @@ def _resolve_node(project_ref: str, node: int | str) -> tuple[int | None, bool]:
       "起点不存在"由**最终节点集**判断（见调用处）。
     """
     if isinstance(node, int):
-        return node, False
+        # ★★ `B219`：* 路径里的 `vid` 是 **stable_vid** ⇒* 换成内部主键（* BFS 用 pk）⚠
+        pk = (
+            scope.nodes_of(project_ref)
+            .filter(stable_vid=node)
+            .values_list("node_id", flat=True)
+            .first()
+        )
+        return pk, False
 
     rows = list(
         scope.nodes_of(project_ref).filter(uid=str(node)).values_list(

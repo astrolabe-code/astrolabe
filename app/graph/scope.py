@@ -71,7 +71,8 @@ def nodes_of(project_ref: str) -> "QuerySet[Node]":
     bg = base_graph_of(project_ref)
     if bg is None:
         return Node.objects.none()
-    return Node.objects.filter(base_graph=bg)
+    # ★★ `B220`：* 节点跨版本共用 ⇒* 按 `versions` 数组取（* GIN 索引）⚠
+    return Node.objects.filter(versions__contains=[bg.pk])
 
 
 def edges_of(project_ref: str) -> "QuerySet[Edge]":
@@ -79,7 +80,8 @@ def edges_of(project_ref: str) -> "QuerySet[Edge]":
     bg = base_graph_of(project_ref)
     if bg is None:
         return Edge.objects.none()
-    return Edge.objects.filter(base_graph=bg)
+    # ★★ `B220`：* 同上 ——* 按 `versions` 数组取 ⚠
+    return Edge.objects.filter(versions__contains=[bg.pk])
 
 
 # ===========================================================================
@@ -120,20 +122,43 @@ def edges_of(project_ref: str) -> "QuerySet[Edge]":
 #   · ★（* 绑了基图的项目 ⇒ * 修改层仍由 `patches` / `curate` 端点单独发 ✅）
 
 
+def _project_of(project_ref: str):
+    """★ 取项目行（* 叠加层查询用；* 不存在 ⇒ None）⚠"""
+    from core.models import Project
+
+    return Project.objects.filter(project_ref=project_ref).first()
+
+
+def _overlay_nodes_of(project_ref: str) -> "QuerySet[Node]":
+    """★★ 项目**自己新增**的节点（* 叠加层；`B221` 走 `project` 外键）⚠"""
+    project = _project_of(project_ref)
+    if project is None:
+        return Node.objects.none()
+    return Node.objects.filter(project=project)
+
+
+def _overlay_edges_of(project_ref: str) -> "QuerySet[Edge]":
+    """★★ 同上（* 叠加层边）⚠"""
+    project = _project_of(project_ref)
+    if project is None:
+        return Edge.objects.none()
+    return Edge.objects.filter(project=project)
+
+
 def readable_nodes_of(project_ref: str) -> "QuerySet[Node]":
     """★★★ **读端点该发的节点**（★ `B186`：没绑基图 ⇒ 发修改层）⚠"""
     bg = base_graph_of(project_ref)
     if bg is None:
-        return Node.objects.filter(project_ref=project_ref)
-    return Node.objects.filter(base_graph=bg)
+        return _overlay_nodes_of(project_ref)
+    return Node.objects.filter(versions__contains=[bg.pk])
 
 
 def readable_edges_of(project_ref: str) -> "QuerySet[Edge]":
     """★★★ **读端点该发的边**（★ 同上）⚠"""
     bg = base_graph_of(project_ref)
     if bg is None:
-        return Edge.objects.filter(project_ref=project_ref)
-    return Edge.objects.filter(base_graph=bg)
+        return _overlay_edges_of(project_ref)
+    return Edge.objects.filter(versions__contains=[bg.pk])
 
 
 def is_manual_only(project_ref: str) -> bool:
@@ -169,7 +194,8 @@ def blob_url_of(node: Node, base_graph) -> str:
       · ★★ 作者若**彻底删掉**那个版本 ⇒ 链接会 404 —— ★ 而我们**只能如实给出**它 ⚠
         ★（★ 这正是所有者那句"除非"所承认的边界）
     """
-    if node.base_graph_id is None or base_graph is None:
+    # ★★ `B220`：* 归属判据换成 `repo_id`（* 叠加层节点没有 repo）⚠
+    if node.repo_id is None or base_graph is None:
         return ""
     base = base_graph.blob_url
     if not base:

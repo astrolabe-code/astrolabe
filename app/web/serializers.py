@@ -22,7 +22,8 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from graph import scope
-from graph.models import PATCH_ADD_NODE, Edge, Node
+from graph import kinds
+from graph.models import PATCH_ADD_NODE, BaseGraph, Edge, Node
 
 
 def node_json(
@@ -42,11 +43,12 @@ def node_json(
       ★ 而这里的兜底分支是**留给单节点场景**的（★ 节点详情只查一个 —— 可以接受）✅
     """
     data: dict[str, Any] = {
-        # ★★ 权威标识（B117）—— 锚点、邻域查询、详情路径都用它
-        "vid": node.node_id,
+        # ★★ 权威标识（`B219`）：* **内容确定的 stable_vid**（* 跨版本稳定）⚠
+        #   · · ★ 内部主键 `node_id` **不出门**（* 它每个版本都变）⚠
+        "vid": node.stable_vid,
         # ★ 人类可读标签（⚠ 可能重复）—— 仅用于展示 / 搜索
         "uid": node.uid,
-        "kind": node.kind,
+        "kind": kinds.kind_name(node.kind),
         "name": node.name,
         "qname": node.qname,
         "file_path": node.file_path,
@@ -55,15 +57,16 @@ def node_json(
         "lang": node.lang,
         "signature": node.signature,
         # ★★ 算出来的（⚠ 不再是读列）—— ★ 归属决定它，见函数文档
-        "origin": "parsed" if node.base_graph_id else "manual",
+        "origin": "parsed" if node.repo_id else "manual",
     }
     if depth is not None:
         data["depth"] = depth
 
     bg = base_graph
-    if bg is None and node.base_graph_id:
+    if bg is None and node.versions:
         # ⚠ 兜底（★ 单节点场景可用；★ **列表端点别走这里** —— 那是 N+1）
-        bg = node.base_graph
+        #   ⚠★ `B220`：* 节点跨版本共用 ⇒* 拿它所属的**最新版本**当锚（* 只为拼 blob 链接）⚠
+        bg = BaseGraph.objects.filter(pk=max(node.versions)).first()
     blob = scope.blob_url_of(node, bg)
     if blob:
         data["blob_url"] = blob
@@ -88,12 +91,13 @@ def edge_json(edge: Edge) -> dict[str, Any]:
         #   ⇒ ★★ 于是"前端整合"这件事对边就**做不到**了 ⚠
         #   ★ 节点那边没这个问题 —— ★ 它们本来就带 `vid` ✅
         "id": edge.pk,
-        "from": edge.from_node_id,
-        "to": edge.to_node_id,
+        # ★★ `B219`：* 端点给 **stable_vid**（* 与节点的 `vid` 同一套值）⚠
+        "from": edge.from_node.stable_vid,
+        "to": edge.to_node.stable_vid,
         "type": edge.type,
         "line": edge.line,
         # ⚠★ `B179`：`origin` 不再是一列 ⇒ ★ 按归属算（★ 同 `node_json`）⚠
-        "origin": "parsed" if edge.base_graph_id else "manual",
+        "origin": "parsed" if edge.repo_id else "manual",
         "confidence": edge.confidence,
     }
 
@@ -161,13 +165,13 @@ def patch_json(patch) -> dict[str, Any]:
 
     # ★ 它改的是谁（★ 前端就靠这几个 id 去基图那份里对上）⚠
     if patch.target_node_id:
-        out["target_vid"] = patch.target_node_id
+        out["target_vid"] = patch.target_node.stable_vid
     if patch.target_edge_id:
         out["target_edge"] = patch.target_edge_id
     if patch.from_node_id:
-        out["from"] = patch.from_node_id
+        out["from"] = patch.from_node.stable_vid
     if patch.to_node_id:
-        out["to"] = patch.to_node_id
+        out["to"] = patch.to_node.stable_vid
     if patch.payload:
         out["payload"] = patch.payload
 

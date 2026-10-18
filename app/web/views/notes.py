@@ -153,9 +153,16 @@ def _create(request: HttpRequest, project):
     if node_id is None:
         return fail("必须指定 node_id（笔记挂在哪个节点下）", 400, code="missing_node")
 
-    from graph.models import Node
+    from graph import kinds, scope
 
-    node = Node.objects.filter(pk=node_id).first()
+    # ★★ `B219`/`B220`：* `node_id` 现在是 **stable_vid** ⇒
+    #   * 必须在本项目**可读节点**里找（* 防跨项目 / 跨仓库撞号）⚠
+    try:
+        want_vid = int(node_id)
+    except (TypeError, ValueError):
+        return fail("node_id 必须是数字", 400, code="bad_node")
+
+    node = scope.readable_nodes_of(project.project_ref).filter(stable_vid=want_vid).first()
     if node is None:
         return fail("节点不存在", 404, code="node_not_found")
 
@@ -164,6 +171,14 @@ def _create(request: HttpRequest, project):
 
     note = Note.objects.create(
         node=node,
+        # ★★★ `B218`：**锚定时刻的节点快照** —— 节点行没了，* 笔记仍能自描述 / 导出 / 重挂 ⚠
+        node_vid=node.stable_vid,
+        node_name=node.name[:512],
+        node_kind=kinds.kind_name(node.kind)[:32],
+        node_qname=(node.qname or "")[:512],
+        node_file_path=node.file_path[:1024],
+        node_line=node.line,
+        node_line_end=node.line_end if node.line_end is not None else -1,
         kind=kind,
         title=title,
         body=text,
@@ -389,7 +404,18 @@ def _auto_title(body: str) -> str:
 def _note_json(n: Note) -> dict:
     return {
         "id": n.pk,
-        "node_id": n.node_id,
+        # ★★ `B219`：* 对外发 stable_vid（* 内部主键不出门）；* 节点没了仍可从快照读 ✅
+        "node_id": n.node_vid if n.node_vid is not None else 0,
+        # ★★★ `B218`：* 节点快照（* 回收站显示「原节点：name @ file:line」用）⚠
+        "node_snapshot": {
+            "vid": n.node_vid if n.node_vid is not None else 0,
+            "name": n.node_name,
+            "kind": n.node_kind,
+            "qname": n.node_qname,
+            "file_path": n.node_file_path,
+            "line": n.node_line,
+            "line_end": n.node_line_end,
+        },
         "kind": n.kind,
         "title": n.title,
         "body": n.body,

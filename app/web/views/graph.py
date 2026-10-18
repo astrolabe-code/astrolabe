@@ -28,7 +28,7 @@ from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
-from graph import scope
+from graph import kinds, scope
 from graph.models import Edge, GraphPatch, Node
 from graph.revision import current as graph_rev_of
 from graph.traversal import DIRECTION_OUT, neighborhood
@@ -100,7 +100,11 @@ def summary(request: HttpRequest, project_ref: str) -> JsonResponse:
             "nodes": node_qs.count(),
             "edges": edge_qs.count(),
             # ⚠ 一律用 "pk"（★ 不依赖主键字段名：Node 的是 node_id，Edge 的是 id）
-            "by_kind": count_by(node_qs.values_list("kind").annotate(n=Count("pk"))),
+            # ★★ `B222`：* 列里是 id ⇒* 输出前换成名字 ⚠
+            "by_kind": {
+                kinds.kind_name(int(k)): int(v)
+                for k, v in node_qs.values_list("kind").annotate(n=Count("pk"))
+            },
             "by_type": count_by(edge_qs.values_list("type").annotate(n=Count("pk"))),
             "by_lang": count_by(node_qs.values_list("lang").annotate(n=Count("pk"))),
         },
@@ -126,7 +130,8 @@ def nodes(request: HttpRequest, project_ref: str) -> JsonResponse:
 
     kind = (request.GET.get("kind") or "").strip()
     if kind:
-        qs = qs.filter(kind=kind)
+        # ★★ `B222`：* 列里是 smallint，* 查询参数是名字 ⇒* 先映射（* 未登记 ⇒ 空集）⚠
+        qs = qs.filter(kind=kinds.kind_id(kind))
 
     lang = (request.GET.get("lang") or "").strip()
     if lang:
@@ -194,14 +199,16 @@ def node_detail(request: HttpRequest, project_ref: str, vid: int) -> JsonRespons
     if _viewable(request, project_ref) is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    # ★★ `B179`：★ 在**这个项目绑定的那份基图**里找（★ 见 `graph/scope.py`）⚠
-    node = scope.readable_nodes_of(project_ref).filter(node_id=vid).first()
+    # ★★ `B219`：* 路径里的 `vid` 现在是 **stable_vid** ⚠
+    node = scope.readable_nodes_of(project_ref).filter(stable_vid=vid).first()
     if node is None:
         return fail("节点不存在", 404)
 
+    # ⚠ 边的 from/to 仍是**内部主键** ⇒ 先换成 pk 再查 ✅
+    node_pk = node.node_id
     base_edges = scope.readable_edges_of(project_ref)
-    out_qs = base_edges.filter(from_node_id=vid)
-    in_qs = base_edges.filter(to_node_id=vid)
+    out_qs = base_edges.filter(from_node_id=node_pk)
+    in_qs = base_edges.filter(to_node_id=node_pk)
 
     callees = list(out_qs.select_related("to_node").order_by("type", "to_node_id")[:CALLEES_MAX])
     callers = list(in_qs.select_related("from_node").order_by("type", "from_node_id")[:CALLERS_MAX])
@@ -221,9 +228,9 @@ def _brief(other: Node, edge: Edge) -> dict:
     ⚠ 只给"够点一下跳过去"的字段 —— 完整字段走节点详情，❌ 不要在这里塞全集。
     """
     return {
-        "vid": other.node_id,
+        "vid": other.stable_vid,
         "uid": other.uid,
-        "kind": other.kind,
+        "kind": kinds.kind_name(other.kind),
         "name": other.name,
         "file_path": other.file_path,
         "line": other.line,
@@ -284,7 +291,11 @@ def edges(request: HttpRequest, project_ref: str) -> JsonResponse:
 
     total = qs.count()
     # ★ 固定排序 `type, from, to`（契约 §6）—— 保证分页稳定
-    items = [edge_json(e) for e in qs.order_by("type", "from_node_id", "to_node_id")[offset : offset + limit]]
+    # ★★ `B219`：* 边的 from/to 要发 stable_vid ⇒* 必须带出两端节点（* 否则 N+1）⚠
+    page = qs.select_related("from_node", "to_node").order_by(
+        "type", "from_node_id", "to_node_id"
+    )[offset : offset + limit]
+    items = [edge_json(e) for e in page]
 
     return ok({"total": total, "limit": limit, "offset": offset, "items": items})
 
@@ -324,11 +335,13 @@ def patches(request: HttpRequest, project_ref: str) -> JsonResponse:
       ★★ 前端据此判断"我手上的两份是不是**同一代**" ⚠
       （⚠ 否则会出现"修改来自新版、基图还是旧版"的错配 —— ★ 而那是**静默**的）
     """
-    if _viewable(request, project_ref) is None:
+    project = _viewable(request, project_ref)
+    if project is None:
         return fail(permissions.NOT_FOUND, 404)
 
-    qs = GraphPatch.objects.filter(project_ref=project_ref).select_related(
-        "target_node", "created_by"
+    # ★★ `B221`：* 补丁按 `project` 外键取（* 裸 `project_ref` 列已删）⚠
+    qs = GraphPatch.objects.filter(project=project).select_related(
+        "target_node", "from_node", "to_node", "created_by"
     )
 
     limit = _clamp(request.GET.get("limit"), 1, PATCHES_PAGE_MAX, 200)

@@ -199,7 +199,8 @@ def is_ready(bg: BaseGraph | None) -> bool:
         return False
     from graph.models import Node
 
-    return Node.objects.filter(base_graph_id=bg.pk).exists()
+    # ★★ `B220`：* 节点跨版本共用 ⇒* 按 `versions` 数组判「这个版本有没有节点」⚠
+    return Node.objects.filter(versions__contains=[bg.pk]).exists()
 
 
 def get_or_create(

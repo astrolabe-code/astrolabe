@@ -162,7 +162,8 @@ export default function ProjectGraphPage() {
     if (Math.abs(e.clientY - gripRef.current.startY) > 3) didDragRef.current = true
     const h = mainRef.current?.clientHeight ?? window.innerHeight
     const d = ((gripRef.current.startY - e.clientY) / h) * 100
-    setPanelPct(Math.min(85, Math.max(25, gripRef.current.startPct + d)))
+    // ★★ 上限 **100%**（* 所有者：「向上提升可以把图谱高度挤没的」）⚠
+    setPanelPct(Math.min(100, Math.max(15, gripRef.current.startPct + d)))
   }
   const onGripUp = () => {
     gripRef.current = null
@@ -742,7 +743,7 @@ export default function ProjectGraphPage() {
               ? {
                   // ★ 收起时只留抓手高度（* 否则抓手被裁掉、再也拉不开）⚠
                   height: panelFull ? undefined : panelCollapsed ? 22 : `${panelPct}%`,
-                  marginTop: panelCollapsed ? 0 : -12,
+                  marginTop: panelCollapsed || panelPct >= 99 ? 0 : -12,
                   zIndex: 5,
                   background: 'var(--card)',
                   borderRadius: panelCollapsed ? 0 : '14px 14px 0 0',

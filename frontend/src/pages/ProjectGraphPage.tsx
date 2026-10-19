@@ -133,13 +133,8 @@ export default function ProjectGraphPage() {
   const [panelFull, setPanelFull] = useState(false)
   // ★★★ **移动端响应式**（* 窄屏 ⇒ 单列 + 写作区抽屉）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
-  // ★ 窄屏下抽屉是否展开（* 点节点自动开，点画布/遮罩关）⚠
-  const [drawerOpen, setDrawerOpen] = useState(false)
-
-  // ★ 窄屏选中节点 ⇒ 自动拉开抽屉（* 桌面不需要）
-  useEffect(() => {
-    if (isNarrow && selectedVid != null) setDrawerOpen(true)
-  }, [isNarrow, selectedVid])
+  // ★★★ 移动端 = **上下式**（* 照原型：图在上、* 写作区在下，* 占 62%）⚠
+  //   · · ⛔ 不做右侧抽屉 ——* 所有者：「移动点就用上下式的，不就完了」⚠
   // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
   const [panelWidth, setPanelWidth] = useState(340)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
@@ -659,10 +654,7 @@ export default function ProjectGraphPage() {
                 fullGraph={g}
                 selectedVid={selectedVid}
                 onSelect={setSelectedVid}
-                onDeselect={() => {
-                  setSelectedVid(null)
-                  setDrawerOpen(false)
-                }}
+                onDeselect={() => setSelectedVid(null)}
                 focusVid={focusVid}
               />
               </>
@@ -688,18 +680,6 @@ export default function ProjectGraphPage() {
           />
         )}
 
-        {!fullscreen && isNarrow && drawerOpen && (
-          // ★ 窄屏遮罩：点它关抽屉
-          <div
-            onClick={() => setDrawerOpen(false)}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: 'rgba(0,0,0,.38)',
-              zIndex: 35,
-            }}
-          />
-        )}
         {!fullscreen && (
         <div
           style={{
@@ -710,20 +690,17 @@ export default function ProjectGraphPage() {
             flexDirection: 'column',
             minHeight: 0,
             position: 'relative',
-            // ★★★ 窄屏 ⇒ **覆盖式抽屉**：* 绝对定位在画布上，* 滑入滑出 ⚠
+            // ★★★ 窄屏 ⇒ **上下式**：* 占 62% 高、* 上圆角、* 压住图底边一点
+            //   （* 照原型 .code-panel 在 @media(max-width:768px) 的写法）⚠
             ...(isNarrow
               ? {
-                  position: 'absolute',
-                  top: 0,
-                  right: 0,
-                  bottom: 0,
-                  width: 'min(88%, 380px)',
-                  zIndex: 36,
+                  height: panelFull ? undefined : '62%',
+                  marginTop: -12,
+                  zIndex: 5,
                   background: 'var(--surface)',
-                  boxShadow: '-8px 0 24px rgba(15,23,42,.22)',
-                  transform: drawerOpen ? 'translateX(0)' : 'translateX(100%)',
-                  transition: 'transform .25s ease',
-                  display: drawerOpen || panelFull ? 'flex' : 'none',
+                  borderRadius: '14px 14px 0 0',
+                  boxShadow: '0 -8px 24px rgba(15,23,42,.18)',
+                  overflow: 'hidden',
                 }
               : {}),
           }}
@@ -753,30 +730,6 @@ export default function ProjectGraphPage() {
           >
             {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
-          {isNarrow && (
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(false)}
-              title="收起写作区"
-              style={{
-                position: 'absolute',
-                top: 6,
-                left: 6,
-                zIndex: 14,
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                border: '1px solid var(--card-border)',
-                background: 'var(--surface)',
-                color: 'var(--text-sub)',
-                cursor: 'pointer',
-                fontSize: 14,
-                lineHeight: 1,
-              }}
-            >
-              ×
-            </button>
-          )}
           <NodePanel
             projectRef={projectRef}
             node={selected}

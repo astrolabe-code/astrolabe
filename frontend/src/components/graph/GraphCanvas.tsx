@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
+import { useTheme } from '../../hooks/useTheme'
 import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
 
 /**
@@ -78,6 +79,11 @@ export default function GraphCanvas({
   meteorSizeRatio,
   onPhase,
 }: GraphCanvasProps) {
+  // ★★★ 节点标签颜色**跟随主题反转**（* 所有者：「深色背景就用白色，跟着反转」）⚠
+  //   · · ★ 原来写死 #cbd5e1（浅灰）⇒ 深色下发灰、浅色下糊成一片 ⚠
+  const { theme } = useTheme()
+  const labelColor = theme === 'dark' ? '#ffffff' : '#000000'
+
   const boxRef = useRef<HTMLDivElement>(null)
   const gRef = useRef<Graph | null>(null)
   const selectedRef = useRef<number | null>(null)
@@ -122,7 +128,7 @@ export default function GraphCanvas({
               lineDash: n.patched ? [4, 3] : undefined,
               labelText: n.name,
               labelPlacement: 'bottom',
-              labelFill: '#cbd5e1',
+              labelFill: labelColor,
               labelFontSize: 10,
             },
           }
@@ -148,7 +154,7 @@ export default function GraphCanvas({
         }),
       },
       node: {
-        style: { labelPlacement: 'bottom', labelFill: '#cbd5e1', labelFontSize: 10 },
+        style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 10 },
         state: { selected: { lineWidth: 3, stroke: '#f59e0b' } },
       },
       edge: { style: { endArrow: true, lineWidth: 1 } },
@@ -202,6 +208,15 @@ export default function GraphCanvas({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph])
+
+  // ============================================================ 主题切换：只改标签色
+  useEffect(() => {
+    const g = gRef.current
+    if (!g) return
+    // ★ 不重建图（* 那会重跑 2.5s 布局动画）——* 只改全局节点样式再重绘 ⚠
+    g.setOptions({ node: { style: { labelFill: labelColor } } })
+    void g.draw()
+  }, [labelColor])
 
   // ============================================================ 选中态（受控）
   useEffect(() => {

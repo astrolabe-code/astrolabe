@@ -272,7 +272,7 @@ export default function ProjectGraphPage() {
 
   if (graph.isError || pathQ.isError) {
     return (
-      <AppLayout title="图谱">
+      <AppLayout page={false} title="图谱">
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>不存在或无权访问</div>
           <div className="faint" style={{ fontSize: 12.5, marginTop: 6 }}>
@@ -297,14 +297,17 @@ export default function ProjectGraphPage() {
       <div
         style={{
           display: 'flex',
-          gap: 12,
-          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-offset, 150px))',
+          flexDirection: 'column',
+          gap: 0,
+          padding: fullscreen ? 12 : '10px 16px 0',
+          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-offset, 90px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
             ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }
             : {}),
         }}
       >
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
@@ -562,58 +565,8 @@ export default function ProjectGraphPage() {
               </div>
             ) : (
               <>
-              {/* ★ 统计徽标：* 左下角胶囊（* 形似 code_network 的「局部视图」标）⚠ */}
-              <div
-                className="card"
-                style={{
-                  position: 'absolute',
-                  left: 10,
-                  bottom: 10,
-                  zIndex: 25,
-                  padding: '2px 10px',
-                  borderRadius: 999,
-                  fontSize: 11,
-                  pointerEvents: 'none',
-                  boxShadow: '0 2px 8px rgba(15,23,42,.12)',
-                }}
-              >
-                {g && `共 ${g.nodes.length} 节点 · ${g.edges.length} 边，已展示 ${view?.nodes.length ?? 0}`}
-                {phase && <span style={{ color: 'var(--accent)' }}>{` · ${phase}`}</span>}
-                <span style={{ opacity: 0.5 }}>
-                  {' · 构建 '}
-                  {(typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '').slice(5, 16).replace('T', ' ')}
-                </span>
-                {g && (g.manualNodeCount > 0 || g.manualEdgeCount > 0) && (
-                  <span style={{ color: 'var(--warn)' }}>
-                    {` · 人工补 ${g.manualNodeCount + g.manualEdgeCount}`}
-                  </span>
-                )}
-              </div>
-
-          <div
-                className="faint"
-                style={{ position: 'absolute', left: 10, bottom: 36, zIndex: 24, fontSize: 10.5, display: 'flex', gap: 10, flexWrap: 'wrap', pointerEvents: 'none' }}
-              >
-            {kinds.map(([kind, count]) => (
-              <span key={kind} className="flex items-center gap-1">
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    background: KIND_COLOR[kind] || '#94a3b8',
-                    display: 'inline-block',
-                  }}
-                />
-                <span className="faint">
-                  {KIND_LABEL[kind] || kind} {count}
-                </span>
-              </span>
-            ))}
-            <span className="faint">◆ 菱形 = 人工补的节点</span>
-          </div>
-
-              <GraphCanvas
+              {/* ★ 统计已移到页脚托底条（* 避免和图例叠在左下角）⚠ */}
+                            <GraphCanvas
                 graph={view}
                 meteors={meteors}
                 meteorSpeed={meteorSpeed}
@@ -645,6 +598,39 @@ export default function ProjectGraphPage() {
           />
         </div>
         )}
+        </div>
+
+        {/* ★★★ **托底状态条**（* 所有者：「我页面底下也有一块的，你写的界面没了，
+            整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}
+        <div
+          style={{
+            height: 26,
+            marginTop: 6,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 11,
+            color: 'var(--text-sub)',
+            borderTop: '1px solid var(--card-border)',
+            paddingLeft: 4,
+            flexShrink: 0,
+          }}
+        >
+          {g && (
+            <span>
+              已展示 {view?.nodes.length ?? 0} / {g.nodes.length} 节点
+            </span>
+          )}
+          {phase && <span style={{ color: 'var(--accent)' }}>{phase}</span>}
+          <span style={{ marginLeft: 'auto', opacity: 0.55 }}>
+            {g ? `${g.edges.length} 边` : ''}
+            {g && (g.manualNodeCount + g.manualEdgeCount > 0
+              ? ` · 人工补 ${g.manualNodeCount + g.manualEdgeCount} 项`
+              : '')}
+            {' · 构建 '}
+            {(typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '').slice(5, 16).replace('T', ' ')}
+          </span>
+        </div>
       </div>
     </AppLayout>
   )

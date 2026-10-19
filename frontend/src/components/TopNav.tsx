@@ -35,7 +35,7 @@ export default function TopNav() {
 
   // ★ 收起时把页面高度补偿量交给 CSS 变量（* 图谱页用 calc(100vh - var(--nav-offset))）
   useEffect(() => {
-    document.documentElement.style.setProperty('--nav-offset', collapsed ? '100px' : '150px')
+    document.documentElement.style.setProperty('--nav-offset', collapsed ? '0px' : '54px')
     return () => {
       document.documentElement.style.removeProperty('--nav-offset')
     }

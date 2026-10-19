@@ -323,8 +323,11 @@ export default function GraphCanvas({
       }
     })
     g.on('canvas:click', () => {
+      // ★★ 只收起环形按钮，**不清空选中** ——
+      //   · · 所有者：「应该点击节点才切换，点击节点以外的地方，写作区内容不变。
+      //     不然，写作时，不小心点了别的地方写作内容直接换成别的了」⚠
+      //   · · ★ 否则写笔记时点到画布空白 ⇒ selectedVid 变 null ⇒ 写作区瞬间清空 ⚠
       setRing(null)
-      onDeselect?.()
     })
 
     gRef.current = g

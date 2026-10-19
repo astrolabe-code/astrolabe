@@ -561,6 +561,10 @@ export default function GraphCanvas({
             transform: `translate(-50%, -50%) scale(${ringScale})`,
             zIndex: 20,
             overflow: 'visible',
+            // ★★★ 关键：* 环外空白**不拦截**图的拖拽 / 缩放 ——
+            //   否则 96×96 整个盖住节点，* 节点就拖不动了（* 所有者踩过的坑）⚠
+            pointerEvents: 'none',
+            filter: 'drop-shadow(0 1px 3px rgba(15,23,42,.16))',
           }}
           viewBox="0 0 96 96"
         >
@@ -573,34 +577,40 @@ export default function GraphCanvas({
                   seg.run(ring.id)
                 }}
                 style={{
-                  // ★★ 照原型：* 白色实底 + 浅灰边（* 原来看不清就是底太透）⚠
-                  fill: 'var(--surface)',
-                  stroke: 'var(--card-border)',
+                  // ★★★ 完全照原型 .node-ring-seg：
+                  //   白实底 rgba(255,255,255,.96) + 边 #cbd5e1 + pointer-events auto ⚠
+                  fill: 'rgba(255,255,255,.96)',
+                  stroke: '#cbd5e1',
                   strokeWidth: 1,
+                  pointerEvents: 'auto',
                   cursor: 'pointer',
                   transition: 'fill .15s, stroke .15s',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.fill = 'rgba(56,189,248,.28)'
-                  e.currentTarget.style.stroke = '#38bdf8'
+                  e.currentTarget.style.fill = '#eff6ff'
+                  e.currentTarget.style.stroke = '#93c5fd'
+                  const icon = e.currentTarget.nextElementSibling as SVGElement | null
+                  if (icon) icon.style.stroke = '#2563eb'
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.fill = 'var(--surface)'
-                  e.currentTarget.style.stroke = 'var(--card-border)'
+                  e.currentTarget.style.fill = 'rgba(255,255,255,.96)'
+                  e.currentTarget.style.stroke = '#cbd5e1'
+                  const icon = e.currentTarget.nextElementSibling as SVGElement | null
+                  if (icon) icon.style.stroke = '#475569'
                 }}
               >
                 <title>{seg.title}</title>
               </path>
               <g
                 transform={`translate(${seg.icon.x} ${seg.icon.y}) scale(0.55) translate(-12 -12)`}
-                style={{ pointerEvents: 'none' }}
+                style={{ pointerEvents: 'none', fill: 'none', stroke: '#475569' }}
               >
                 <path
                   d={seg.icon.d}
                   style={{
-                    // ★ 图标用**主题前景色**（* 原来是 #e2e8f0，* 浅色底上几乎隐形）⚠
+                    // ★★★ 照原型 .node-ring-icon：* 深灰蓝 #475569（* 白底上清晰）⚠
                     fill: 'none',
-                    stroke: 'var(--text)',
+                    stroke: 'inherit',
                     strokeWidth: 2.6,
                     strokeLinecap: 'round',
                     strokeLinejoin: 'round',

@@ -36,6 +36,8 @@ interface NodePanelProps {
   inPathOrdinal?: number | null
   /** ★★ `D106`：能不能改学习路径（* owner ∨ 协作者）⚠ */
   canEditPath?: boolean
+  /** ★ 移动端：* 不画自己的卡片（* 由外层写作区统一提供背景/边框）⚠ */
+  flat?: boolean
   /** ★★ `D106`：加入路径 */
   onAddToPath?: () => void
   /** ★★ `D106`：从路径移除 */
@@ -50,7 +52,7 @@ export default function NodePanel({
   inPathOrdinal,
   canEditPath,
   onAddToPath,
-  onRemoveFromPath,
+  onRemoveFromPath,  flat,
 }: NodePanelProps) {
   const [editing, setEditing] = useState<Note | null>(null)
   const [creating, setCreating] = useState(false)
@@ -63,7 +65,7 @@ export default function NodePanel({
   if (!node) {
     return (
       <div
-        className="card flex items-center justify-center"
+        className="flex items-center justify-center"
         style={{ flex: 1, minHeight: 320, padding: 24 }}
       >
         <div className="faint" style={{ fontSize: 13 }}>
@@ -85,10 +87,20 @@ export default function NodePanel({
   }
 
   return (
-    // ★★ 根要撑满父容器（* 否则右侧只到内容高度，* 下面空一大块）⚠
+    // ★★★ **整块一张卡**（* 所有者：「文件信息卡片不要与下面的写作区分离了，
+    //   看起来怪怪的」）——* 照原型 `.code-panel`：* 头部 + 正文，* 中间一条分隔线 ⚠
+    //   · · ★ `flat` = 移动端：* 卡片样式交给外层（* 抓手与外层同背景 ⇒ 一体）✅
     <div
-      className="flex flex-col gap-3"
-      style={{ flex: 1, minHeight: 0, position: 'relative' }}
+      className={flat ? undefined : 'card'}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        padding: 0,
+        overflow: 'hidden',
+      }}
     >
       {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
       {!infoOpen && (
@@ -121,7 +133,13 @@ export default function NodePanel({
         </button>
       )}
       {infoOpen && (
-      <div className="card" style={{ padding: '12px 14px' }}>
+      <div
+        style={{
+          padding: '12px 14px',
+          flexShrink: 0,
+          borderBottom: '1px solid var(--card-border)',
+        }}
+      >
         {/* ★ 右侧留 34px 给「写作区全屏」按钮（* 否则收起按钮被它压住、按不到）⚠ */}
         <div className="flex items-center gap-2 flex-wrap" style={{ paddingRight: 34 }}>
           <FileCode2 size={14} style={{ color: 'var(--text-sub)' }} />
@@ -202,10 +220,7 @@ export default function NodePanel({
       )}
 
       {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}
-      <div
-        className="card"
-        style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}
-      >
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>
         <NoteSection
           projectRef={projectRef}
           nodeId={node.vid}

@@ -746,8 +746,11 @@ export default function ProjectGraphPage() {
                   marginTop: panelCollapsed || panelPct >= 99 ? 0 : -12,
                   zIndex: 5,
                   background: 'var(--card)',
-                  borderRadius: panelCollapsed ? 0 : '14px 14px 0 0',
-                  boxShadow: panelCollapsed ? 'none' : '0 -8px 24px rgba(15,23,42,.18)',
+                  // ★★ 所有者：「写作区与图谱区，就用一条横线分割就行，不要整些阴影效果」
+                  //   ⇒ * 无圆角、* 无阴影，* 只留 1px 上边框 ⚠
+                  borderTop: panelCollapsed ? 'none' : '1px solid var(--card-border)',
+                  borderRadius: 0,
+                  boxShadow: 'none',
                   overflow: 'hidden',
                   transition: panelDragging
                     ? 'none'
@@ -816,32 +819,6 @@ export default function ProjectGraphPage() {
                   }}
                 />
               </div>
-              {/* ★ 收起按钮（* 原型 .code-panel-close）⚠ */}
-              <button
-                type="button"
-                onClick={() => {
-                  setPanelCollapsed(true)
-                  setSelectedVid(null)
-                }}
-                title="收起写作区"
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  right: 8,
-                  zIndex: 14,
-                  width: 26,
-                  height: 26,
-                  borderRadius: 6,
-                  border: '1px solid var(--card-border)',
-                  background: 'var(--card)',
-                  color: 'var(--text-sub)',
-                  cursor: 'pointer',
-                  fontSize: 15,
-                  lineHeight: 1,
-                }}
-              >
-                ×
-              </button>
             </>
           )}
           <NodePanel
@@ -851,6 +828,7 @@ export default function ProjectGraphPage() {
             meUsername={meUsername}
             inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
             canEditPath={canWrite}
+            flat={isNarrow}
             onAddToPath={selected ? () => addToPath(selected) : undefined}
             onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
           />

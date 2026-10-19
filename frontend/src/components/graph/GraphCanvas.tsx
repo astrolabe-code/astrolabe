@@ -251,6 +251,26 @@ export default function GraphCanvas({
     void g.draw()
   }, [labelColor])
 
+  // ============================================================ 容器尺寸变化 ⇒ 重画
+  useEffect(() => {
+    const g = gRef.current
+    const box = boxRef.current
+    if (!g || !box) return
+    // ★★ 拖动分隔条 / 写作区全屏时容器宽度会变 ——* G6 的 autoResize 不够，
+    //   * 必须显式 `resize()` 才会按新尺寸重绘（* 否则节点不动，* 看着像卡住）⚠
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        try {
+          g.resize()
+        } catch {
+          /* 实例已销毁 */
+        }
+      })
+    })
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [graph])
+
   // ============================================================ 选中态（受控）
   useEffect(() => {
     const g = gRef.current

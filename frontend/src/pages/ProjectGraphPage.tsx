@@ -331,7 +331,8 @@ export default function ProjectGraphPage() {
             : {}),
         }}
       >
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12 }}>
+        {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 0 }}>
         {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
         <div
           style={{
@@ -626,11 +627,11 @@ export default function ProjectGraphPage() {
             onPointerDown={onResizeStart}
             title="拖动调整宽度"
             style={{
-              width: 6,
+              width: 4,
               flexShrink: 0,
               cursor: 'col-resize',
-              borderRadius: 3,
               background: 'transparent',
+              transition: 'background .15s',
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}

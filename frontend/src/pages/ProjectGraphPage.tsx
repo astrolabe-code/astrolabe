@@ -133,6 +133,18 @@ export default function ProjectGraphPage() {
   // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
   const [panelWidth, setPanelWidth] = useState(340)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
+  const mainRef = useRef<HTMLDivElement>(null)
+  // ★★ 与所有者原型同口径：* 写作区最小 280、* 图谱最小 320 ——*
+  //   * 上限是**动态**的（容器宽 − 图谱最小宽 − 分隔条），* ⛔ 不是写死的 680 ⚠
+  const MIN_PANEL = 280
+  const MIN_GRAPH = 320
+  const RESIZER = 4
+
+  const clampPanel = (w: number) => {
+    const inner = mainRef.current?.clientWidth ?? window.innerWidth
+    const max = Math.max(MIN_PANEL, inner - RESIZER - MIN_GRAPH)
+    return Math.min(max, Math.max(MIN_PANEL, w))
+  }
 
   // ★ 拖拽分隔条：向左拖 ⇒ 写作区变宽（* 上下限 280 ~ 680）⚠
   const onResizeStart = (e: React.PointerEvent) => {
@@ -144,14 +156,21 @@ export default function ProjectGraphPage() {
   const onResizeMove = (e: PointerEvent) => {
     if (!resizeRef.current) return
     const next = resizeRef.current.startW - (e.clientX - resizeRef.current.startX)
-    setPanelWidth(Math.min(680, Math.max(280, next)))
+    setPanelWidth(clampPanel(next))
   }
   const onResizeEnd = () => {
     resizeRef.current = null
     window.removeEventListener('pointermove', onResizeMove)
     window.removeEventListener('pointerup', onResizeEnd)
   }
-  useEffect(() => () => onResizeEnd(), [])
+  useEffect(() => {
+    const onWin = () => setPanelWidth((w) => clampPanel(w))
+    window.addEventListener('resize', onWin)
+    return () => {
+      window.removeEventListener('resize', onWin)
+      onResizeEnd()
+    }
+  }, [])
   const [hint, setHint] = useState('')
   // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
   const [phase, setPhase] = useState('')
@@ -332,7 +351,7 @@ export default function ProjectGraphPage() {
         }}
       >
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 0 }}>
+        <div ref={mainRef} style={{ flex: 1, minHeight: 0, display: 'flex', gap: 0 }}>
         {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
         <div
           style={{

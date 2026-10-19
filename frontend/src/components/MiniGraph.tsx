@@ -103,7 +103,7 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
     if (meteor && list.length > 0) {
       // ★ 等渲染完成（位置才有效）再启动流星
       timer = window.setTimeout(() => {
-        stopRef.current = startMeteor(g, box, list, meteor)
+        stopRef.current = startMeteor(g, box, list)
       }, 120)
     }
 

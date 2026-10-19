@@ -87,7 +87,30 @@ export default function NodePanel({
   return (
     // ★★ 根要撑满父容器（* 否则右侧只到内容高度，* 下面空一大块）⚠
     <div className="flex flex-col gap-3" style={{ flex: 1, minHeight: 0 }}>
-      {/* ① 节点信息 */}
+      {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
+      {!infoOpen && (
+        <button
+          type="button"
+          className="card"
+          onClick={() => setInfoOpen(true)}
+          title="展开节点信息"
+          style={{
+            alignSelf: 'flex-start',
+            padding: '2px 10px',
+            borderRadius: 999,
+            fontSize: 11,
+            color: 'var(--text-sub)',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <ChevronDown size={11} />
+          节点信息
+        </button>
+      )}
+      {infoOpen && (
       <div className="card" style={{ padding: '12px 14px' }}>
         <div className="flex items-center gap-2 flex-wrap">
           <FileCode2 size={14} style={{ color: 'var(--text-sub)' }} />
@@ -165,6 +188,7 @@ export default function NodePanel({
         </>
         )}
       </div>
+      )}
 
       {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}
       <div

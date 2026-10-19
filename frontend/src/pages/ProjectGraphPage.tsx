@@ -76,6 +76,12 @@ function initialBatch() {
 
 const BATCH_STEP = 24
 
+// ★★★ **稳定的空数组**（`B234`/`D105`）——* `|| []` 每次渲染都是新引用 ⇒
+//   * `pathVids`/`orderVids`/`view` 全变 ⇒* `GraphCanvas` 被反复重建 ⇒
+//   * 布局、流星、阶段通知**全部被打断**（* 实测踩到）⚠
+const EMPTY_ITEMS: import('../api/types').ReadingPathItem[] = []
+const EMPTY_VIDS: number[] = []
+
 export default function ProjectGraphPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
   const graph = useFullGraph(projectRef)
@@ -95,14 +101,17 @@ export default function ProjectGraphPage() {
   const [shownCount, setShownCount] = useState<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
   const [hint, setHint] = useState('')
+  // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
+  const [phase, setPhase] = useState('')
 
   const p = project.data
   const g = graph.data
   const canWrite = !!p?.can_edit
   const meUsername = me.data?.username
 
-  const pathItems = pathQ.data?.items || []
-  const stale = pathQ.data?.stale || []
+  // ★ 用**稳定引用**，⛔ 不用 `|| []`（* 见 EMPTY_ITEMS 的说明）⚠
+  const pathItems = pathQ.data?.items ?? EMPTY_ITEMS
+  const stale = pathQ.data?.stale ?? EMPTY_VIDS
   const pathVids = useMemo(() => pathItems.map((i) => i.vid), [pathItems])
   const hasPath = pathVids.length > 0
   const ordinalOf = useMemo(() => {
@@ -316,6 +325,12 @@ export default function ProjectGraphPage() {
             </Button>
             <span className="faint" style={{ fontSize: 11.5, marginLeft: 'auto' }}>
               {g && `共 ${g.nodes.length} 节点 · ${g.edges.length} 边，已展示 ${view?.nodes.length ?? 0}`}
+              {/* ★ 构建时间：* 用来判断浏览器加载的是不是最新包（* 见 vite define）⚠ */}
+              {phase && <span style={{ color: 'var(--accent)' }}>{` · ${phase}`}</span>}
+              <span style={{ opacity: 0.5 }}>
+                {' · 构建 '}
+                {(typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '').slice(5, 16).replace('T', ' ')}
+              </span>
               {g && (g.manualNodeCount > 0 || g.manualEdgeCount > 0) && (
                 <span style={{ color: 'var(--warn)' }}>
                   {` · 其中人工补的 ${g.manualNodeCount + g.manualEdgeCount} 项`}
@@ -454,6 +469,7 @@ export default function ProjectGraphPage() {
               <GraphCanvas
                 graph={view}
                 meteors={meteors}
+                onPhase={setPhase}
                 selectedVid={selectedVid}
                 onSelect={setSelectedVid}
                 onDeselect={() => setSelectedVid(null)}

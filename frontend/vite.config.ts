@@ -20,6 +20,14 @@ export default defineConfig({
   //   ⚠ 必须与 BrowserRouter 的 basename 一致（见 src/main.tsx）
   base: '/app/',
   plugins: [react()],
+  // ★★ 构建时间戳：* 页面上显示一行小字 ——* 一眼能看出浏览器加载的哪一版 ⚠
+  //   （* 排查"改了没生效"：* 页面上的时间 ≠ dist 里 index.html 的时间 ⇒* 缓存）✅
+  define: {
+    __BUILD_TIME__: JSON.stringify(
+      // ★ 北京时间（* 服务器是 UTC，* 页面上直接显示本地时间更好认）
+      new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
+    ),
+  },
   server: {
     host: '0.0.0.0',
     allowedHosts: true,

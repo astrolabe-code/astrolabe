@@ -49,6 +49,8 @@ interface GraphCanvasProps {
   focusVid?: number | null
   /** ★★ `D104`：* 流星轨迹开关（* 默认开）⚠ */
   meteors?: boolean
+  /** ★ 当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用户据此验证效果 ⚠ */
+  onPhase?: (phase: string) => void
 }
 
 export default function GraphCanvas({
@@ -58,11 +60,14 @@ export default function GraphCanvas({
   onDeselect,
   focusVid,
   meteors = true,
+  onPhase,
 }: GraphCanvasProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   /** ★ 记住上一次选中的 id ——* 换选时先清旧态（`setElementState` 是附加的）⚠ */
   const selectedRef = useRef<number | null>(null)
+  /** ★ 布局稳定的时刻（0 = 还没稳）——* 流星要等它 ⚠ */
+  const layoutDoneRef = useRef(0)
 
   useEffect(() => {
     const box = boxRef.current
@@ -77,15 +82,23 @@ export default function GraphCanvas({
     const g = new Graph({
       container: box,
       autoResize: true,
-      animation: false,
+      // ★★★ 必须开：* `false` 会让**布局过渡**也变瞬时 ⇒ 看不出"散开" ⚠
+      animation: true,
       data: {
-        nodes: graph.nodes.map((n) => {
+        nodes: graph.nodes.map((n, idx) => {
           const manual = n.origin === 'manual'
+          // ★★★ 初始位置：* **小圆环**（半径 70）——* 视觉上还是"聚在中心"，*
+          //   但 fruchterman 能沿径向散开（* 全重叠在一个点 ⇒ 斥力方向不定 ⇒ 散不开）⚠
+          const ang = (idx / Math.max(1, graph.nodes.length)) * Math.PI * 2
+          const ring = 70
           return {
             id: String(n.vid),
             // ★ G6 v5：节点类型在 data 顶层（`NodeData.type`），⛔ 不在 style 里
             type: manual ? 'diamond' : 'circle',
             style: {
+              // ★ 小圆环初始分布（* 见上面 ang/ring 的说明）⚠
+              x: LW / 2 + Math.cos(ang) * ring,
+              y: LH / 2 + Math.sin(ang) * ring,
               size: big ? 10 : manual ? 16 : 14,
               fill: colorOf(n),
               stroke: n.patched ? '#fbbf24' : colorOf(n),
@@ -124,17 +137,13 @@ export default function GraphCanvas({
       },
       edge: { style: { endArrow: true, lineWidth: 1 } },
       layout: {
-        // ★★★ `D105`：* 用 **fruchterman**（* FR 力导向，* 内置 width/height
-        //   边界 ⇒* 布局天然被限制在画布内，* 不会飘出离群点）⚠
-        //   · · ★ d3-force 实测：* 无连线的孤岛会被斥力推到画布外 ⇒
-        //     fit 后主群挤成一团（* 已放弃）⚠
-        //   · · ★ 2.5 秒动画收敛 ——* 流星等它稳了再出来（* 见下方 effect）✅
+        // ★★★ 两段式：* 节点自带**中心初始坐标**（* 见上面 style.x/y）+ 布局算法
+        //   会把它们**散开** ——* 不再用 `preset` 再二次 `layout()`（* 实测不执行）⚠
         type: 'fruchterman',
         width: LW,
         height: LH,
         gravity: 8,
         speed: 8,
-        animate: true,
       },
       behaviors: ['zoom-canvas', 'drag-canvas', 'drag-element', 'click-select'],
     })
@@ -144,7 +153,10 @@ export default function GraphCanvas({
     //   · · ★★ 必须在 `afterlayout` 里做：* 布局是**异步**的，* 在 `render()`
     //     resolve 时就 fit ⇒* 节点还在 (0,0) ⇒* fit 到空气 ⇒* 等于没做 ⚠
     let alive = true
-    // ★ 布局稳定后适配一次视图（* 只在 `afterlayout` 做，* 不搞第二个兜底）⚠
+    // ★★★ 两段式布局（* `D105` 补充）⚠
+    //   · · ① 预设位置渲染 ⇒* 节点全在画布中心（* 一瞬间就能看到）✅
+    //   · · ② 2.5 秒内 **fruchterman 散开**（* graph 级 `animation:true` 才有过渡）✅
+    //   · · ③ 散开后 fit 一次；* 然后才让流星出场（* 见下方 effect）✅
     const fitOnce = () => {
       if (!alive) return
       void (async () => {
@@ -156,8 +168,21 @@ export default function GraphCanvas({
         }
       })()
     }
-    g.on('afterlayout', fitOnce)
+    // ★★★ 布局给 **2.5 秒**散开（* 所有者口径：「用两三秒调整布局」）——
+    //   ⛔ 不再用 `afterlayout` 去抖：* fruchterman 会持续触发该事件 ⇒
+    //   * 去抖永远等不到"稳定" ⇒* fit 与流星都不会发生（* 实测踩到）⚠
+    // ⚠★★ `animation: true` 时 **`g.render()` 的 promise 永不 resolve**
+    //   （* 实测：* 不 then 就永远卡住 ⇒* 后面 fit / 流星全不执行）⚠
+    //   ⇒ ★ 不依赖它的 promise，* 用固定时间推进阶段 ✅
+    let settleTimer: number | null = null
     void g.render()
+    onPhase?.('布局动画中…')
+    settleTimer = window.setTimeout(() => {
+      if (!alive) return
+      fitOnce()
+      layoutDoneRef.current = Date.now()
+      onPhase?.('布局完成')
+    }, 2500)
 
     g.on('node:click', (evt: unknown) => {
       const e = evt as { target?: { id?: string | number } }
@@ -169,6 +194,8 @@ export default function GraphCanvas({
     graphRef.current = g
     return () => {
       alive = false
+      if (settleTimer != null) window.clearTimeout(settleTimer)
+      layoutDoneRef.current = 0
       graphRef.current = null
       selectedRef.current = null
       g.destroy()
@@ -215,15 +242,24 @@ export default function GraphCanvas({
     //   · · ★ 布局还在动的时候，节点位置每帧都在变，* 流星会乱窜 ⚠
     //   · · ★ 延迟完全没影响：* 用户先看图散开，* 然后流星才亮起来 ✅
     let stop: (() => void) | null = null
-    const timer = window.setTimeout(() => {
+    // ★★ 等「布局稳定」信号（* `layoutDoneRef` 非 0）再启动 ——*
+    //   布局还在散的时候画流星 ⇒* 满屏糊成一团（* 实测）⚠
+    let timer: number | null = null
+    const tryStart = () => {
+      if (!layoutDoneRef.current) {
+        timer = window.setTimeout(tryStart, 150)
+        return
+      }
+      onPhase?.('流星已启动')
       stop = startMeteor(
         g,
         box,
         graph.edges.map((e) => ({ from: String(e.from), to: String(e.to) })),
       )
-    }, 2600)
+    }
+    timer = window.setTimeout(tryStart, 150)
     return () => {
-      window.clearTimeout(timer)
+      if (timer != null) window.clearTimeout(timer)
       stop?.()
     }
   }, [graph, meteors])

@@ -25,8 +25,8 @@ export interface MeteorOptions {
   speed?: number
 }
 
-const TRAIL = 0.2
-const SEGS = 6
+const TRAIL = 0.3
+const SEGS = 8
 const MAX_EDGES = 150
 
 /** ★ 读主题色 `--fx-dot`（* 旧站没有该变量，回退 #38bdf8） */
@@ -40,7 +40,8 @@ function readFxColor() {
   } catch (e) {
     console.error('read --fx-dot failed', e)
   }
-  return { r: 56, g: 189, b: 248 }
+  // ★ 鲜艳的亮青（`#22d3ee`）——* 深色背景上最醒目，* 且不跟节点蓝 / 边橙撞色 ⚠
+  return { r: 34, g: 211, b: 238 }
 }
 
 /** ★ 取一个节点的屏幕坐标（* 视口优先，* 无效则回落画布坐标）⚠ */
@@ -111,14 +112,12 @@ export function startMeteor(
   let t = opts.phase ?? 0
   let raf: number | null = null
   let frame = 0
-  let drawn = 0
 
   const draw = () => {
     if (!w || !h) return
     ctx.clearRect(0, 0, w, h)
     const n = list.length
     if (!n) return
-    let painted = 0
     for (let i = 0; i < n; i++) {
       const e = list[i]
       const p1 = posOf(graph, e.from)
@@ -126,7 +125,6 @@ export function startMeteor(
       if (!p1 || !p2) continue
       // ★ 布局还没位置（全 0）⇒ 跳过本帧
       if (p1[0] === 0 && p1[1] === 0 && p2[0] === 0 && p2[1] === 0) continue
-      painted++
 
       const tt = (t + i / n) % 1
       // 尾迹：逐段描线，透明度 / 线宽向头部渐增
@@ -135,8 +133,10 @@ export function startMeteor(
         const tb = tt - TRAIL + (TRAIL * k) / SEGS
         if (ta < 0) continue // 尾迹不越过源节点
         const f = k / SEGS
-        ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(0.15 + 0.65 * f).toFixed(2)})`
-        ctx.lineWidth = 1.5 + 2 * f
+        // ★★ 2026-10-18：* 原来太细太淡（* 用户：「是不是透明了，我看不见」）⇒
+        //   * 线宽 1.5→3.5、* 不透明度 0.15→0.45 起 ⚠
+        ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(0.45 + 0.55 * f).toFixed(2)})`
+        ctx.lineWidth = 3.5 + 4.5 * f
         ctx.beginPath()
         ctx.moveTo(p1[0] + (p2[0] - p1[0]) * ta, p1[1] + (p2[1] - p1[1]) * ta)
         ctx.lineTo(p1[0] + (p2[0] - p1[0]) * tb, p1[1] + (p2[1] - p1[1]) * tb)
@@ -145,21 +145,22 @@ export function startMeteor(
       // 头部光晕 + 白色亮核
       const hx = p1[0] + (p2[0] - p1[0]) * tt
       const hy = p1[1] + (p2[1] - p1[1]) * tt
-      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},0.7)`
+      // ★ 光晕改用径向渐变（* 中心实、* 边缘散）——* 比纯色圆点更亮更“流星”⚠
+      const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, 18)
+      glow.addColorStop(0, `rgba(${color.r},${color.g},${color.b},0.95)`)
+      glow.addColorStop(0.45, `rgba(${color.r},${color.g},${color.b},0.45)`)
+      glow.addColorStop(1, `rgba(${color.r},${color.g},${color.b},0)`)
+      ctx.fillStyle = glow
       ctx.beginPath()
-      ctx.arc(hx, hy, 6, 0, Math.PI * 2)
+      ctx.arc(hx, hy, 18, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = '#ffffff'
+      // ★ 亮核（* 白偏青，* 一眼能看到）
+      ctx.fillStyle = '#e0fbff'
       ctx.beginPath()
-      ctx.arc(hx, hy, 2, 0, Math.PI * 2)
+      ctx.arc(hx, hy, 5, 0, Math.PI * 2)
       ctx.fill()
     }
 
-    // ★ 诊断：* 前 3 帧打一次（* 若仍不显示，* F12 里能看到尺寸 / 边数 / 命中数）⚠
-    drawn++
-    if (drawn <= 3) {
-      console.debug('[meteor]', { w, h, edges: n, painted, sample: list[0] })
-    }
   }
 
   const loop = () => {

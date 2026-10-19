@@ -132,6 +132,16 @@ export function startMeteor(
       return
     }
     ctx.clearRect(0, 0, w, h)
+
+    // ★★★ **流星大小要乘当前缩放比例**（* 所有者：「我用鼠标滚轮缩小了节点，
+    //   光晕没有跟着变小」）—— 位置已由 `getViewportByCanvas` 换算，但
+    //   * 大小是像素值 ⇒* 必须自己乘 zoom ⚠
+    let zoom = 1
+    try {
+      zoom = graph.getZoom() || 1
+    } catch {
+      zoom = 1
+    }
     const n = list.length
     if (!n) return
 
@@ -163,10 +173,13 @@ export function startMeteor(
       // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/4**，
       //     **颜色 = 发出节点颜色**，* 光晕要"真实"（* 见下面的双层渐变）⚠
       const size = list[i].size || 14
-      const headD = Math.max(3, size * sizeRatio) // 直径（* 默认 14 × 0.25 = 3.5px）
-      const headR = headD / 2
-      const glowR = headR * 7 // 主光晕
-      const haloR = headR * 13 // 外层柔光（* 让扩散更自然）
+      // ★★★ **严格按发出节点大小等比**（* 所有者：「我缩小了节点，结果光晕没
+      //   跟着变小，糊在一起了」）⇒ ⛔ 不再有 `Math.max(3, …)` 这种硬下限 ⚠
+      // ★ 直径 = 节点直径 × 比例 × **当前缩放**（* 跟着滚轮一起变大变小）⚠
+      const headD = size * sizeRatio * zoom
+      const headR = Math.max(0.2, headD / 2) // 0.2 只是防 0
+      const glowR = headR * 7 // 主光晕（* 等比）
+      const haloR = headR * 13 // 外层柔光（* 等比）
       const rgb = hexRgb(list[i].color)
       const lw0 = Math.max(1.2, headR * 1.6) // 尾迹基准线宽
 
@@ -221,7 +234,7 @@ export function startMeteor(
       if (fade > 0.02) {
         ctx.fillStyle = `rgba(255,255,255,${(0.98 * fade).toFixed(3)})`
         ctx.beginPath()
-        ctx.arc(hx, hy, Math.max(1.8, headR * 0.85), 0, Math.PI * 2)
+        ctx.arc(hx, hy, Math.max(0.3, headR * 0.85), 0, Math.PI * 2)
         ctx.fill()
       }
     }

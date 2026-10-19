@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
 import { useTheme } from '../../hooks/useTheme'
@@ -44,6 +44,28 @@ const KIND_COLOR: Record<string, string> = {
 
 const colorOf = (n: GraphNode) => KIND_COLOR[n.kind] || '#94a3b8'
 
+/** ★★ 环形按钮几何（Neo4j 风格）：* 内径 24、外径 42、画布 96 ——
+ *   环绕节点一圈，分左右两段弧形扇区 ⚠ */
+const RING_GEO = { c: 48, r1: 24, r2: 42 }
+
+/** 生成一段环形扇区路径（* 角度 0 = 向右，* 正方向顺时针，* 与 SVG 一致） */
+function ringArcPath(a1: number, a2: number): string {
+  const { c, r1, r2 } = RING_GEO
+  const pt = (r: number, a: number) => [c + r * Math.cos(a), c + r * Math.sin(a)] as const
+  const [x1, y1] = pt(r2, a1)
+  const [x2, y2] = pt(r2, a2)
+  const [x3, y3] = pt(r1, a2)
+  const [x4, y4] = pt(r1, a1)
+  const large = a2 - a1 > Math.PI ? 1 : 0
+  return [
+    `M ${x1.toFixed(2)} ${y1.toFixed(2)}`,
+    `A ${r2} ${r2} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`,
+    `L ${x3.toFixed(2)} ${y3.toFixed(2)}`,
+    `A ${r1} ${r1} 0 ${large} 0 ${x4.toFixed(2)} ${y4.toFixed(2)}`,
+    'Z',
+  ].join(' ')
+}
+
 /** 初始圆环半径（px）—— 小到看起来"聚在中心"，又大到能让布局散开 */
 const RING = 70
 /** 布局散开 + 适配的时间（ms） */
@@ -68,6 +90,10 @@ interface GraphCanvasProps {
   nodeSizePx?: number
   /** 阶段回调（* 供页面显示"布局动画中 / 布局完成 / 流星已启动"） */
   onPhase?: (phase: string) => void
+  /** ★★ 环形按钮：* 展开该节点的邻居（* 形似所有者原型的 Neo4j 风格）⚠ */
+  onExpandNeighbors?: (vid: number) => void
+  /** ★★ 环形按钮：* 从视图里隐藏该节点及其邻居 ⚠ */
+  onHideNode?: (vid: number) => void
 }
 
 export default function GraphCanvas({
@@ -81,6 +107,8 @@ export default function GraphCanvas({
   meteorSizeRatio,
   nodeSizePx = 28,
   onPhase,
+  onExpandNeighbors,
+  onHideNode,
 }: GraphCanvasProps) {
   // ★★★ 节点标签颜色**跟随主题反转**（* 所有者：「深色背景就用白色，跟着反转」）⚠
   //   · · ★ 原来写死 #cbd5e1（浅灰）⇒ 深色下发灰、浅色下糊成一片 ⚠
@@ -92,6 +120,9 @@ export default function GraphCanvas({
   const selectedRef = useRef<number | null>(null)
   /** 布局是否已稳定（* 0 = 还没有；存时刻） */
   const readyRef = useRef(0)
+  // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
+  const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [ringScale, setRingScale] = useState(1)
   // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
   // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
   const nodeSize = (n: GraphNode) =>
@@ -161,9 +192,20 @@ export default function GraphCanvas({
       },
       node: {
         style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
-        state: { selected: { lineWidth: 3, stroke: '#f59e0b' } },
+        state: {
+          selected: { lineWidth: 3, stroke: '#f59e0b' },
+          // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
+          //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
+          active: { lineWidth: 4, stroke: '#ffffff', shadowColor: '#38bdf8', shadowBlur: 14 },
+        },
       },
-      edge: { style: { endArrow: true, lineWidth: 1 } },
+      edge: {
+        style: { endArrow: true, lineWidth: 1 },
+        state: {
+          // ★ 相关边变亮变粗（* 其余边保持原位，* 不做淡化以免闪烁）⚠
+          active: { stroke: '#22d3ee', lineWidth: 2.5, opacity: 1 },
+        },
+      },
       layout: {
         // ★ 从圆环出发，fruchterman 把它散开
         type: 'fruchterman',
@@ -174,7 +216,15 @@ export default function GraphCanvas({
         gravity: 4,
         speed: 10,
       },
-      behaviors: ['zoom-canvas', 'drag-canvas', 'drag-element', 'click-select'],
+      behaviors: [
+        'zoom-canvas',
+        'drag-canvas',
+        'drag-element',
+        'click-select',
+        // ★★ 悬停高亮：* 鼠标扫过节点 ⇒ 它和**直接邻居**（1 度）一起亮，
+        //    * 一眼看清「谁调谁」（* 形似所有者原型）⚠
+        { type: 'hover-activate', degree: 1, state: 'active' },
+      ],
     })
 
     let alive = true
@@ -225,9 +275,18 @@ export default function GraphCanvas({
 
     g.on('node:click', (evt: unknown) => {
       const e = evt as { target?: { id?: string | number } }
-      if (e?.target?.id != null) onSelect(Number(e.target.id))
+      if (e?.target?.id != null) {
+        const id = String(e.target.id)
+        const p = g.getViewportByCanvas(g.getElementPosition(id) as never) as ArrayLike<number>
+        setRing({ id, x: p[0], y: p[1] })
+        setRingScale(Math.max(1, Math.min(g.getZoom(), 1.6)))
+        onSelect(Number(id))
+      }
     })
-    g.on('canvas:click', () => onDeselect?.())
+    g.on('canvas:click', () => {
+      setRing(null)
+      onDeselect?.()
+    })
 
     gRef.current = g
 
@@ -250,6 +309,33 @@ export default function GraphCanvas({
     g.setOptions({ node: { style: { labelFill: labelColor } } })
     void g.draw()
   }, [labelColor])
+
+  // ============================================================ 环形按钮跟住节点
+  useEffect(() => {
+    if (!ring) return
+    let raf = 0
+    const tick = () => {
+      const g = gRef.current
+      if (g) {
+        try {
+          const p = g.getViewportByCanvas(g.getElementPosition(ring.id) as never) as ArrayLike<number>
+          const z = Math.max(1, Math.min(g.getZoom(), 1.6))
+          // ★ 只有位置真的变了才 setState（* 否则每帧都渲染，* 白烧 CPU）⚠
+          setRing((r) =>
+            r && (Math.abs(r.x - p[0]) > 0.5 || Math.abs(r.y - p[1]) > 0.5)
+              ? { ...r, x: p[0], y: p[1] }
+              : r,
+          )
+          setRingScale((s) => (Math.abs(s - z) > 0.01 ? z : s))
+        } catch {
+          /* 节点已不在 */
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [ring?.id])
 
   // ============================================================ 容器尺寸变化 ⇒ 重画
   useEffect(() => {
@@ -337,6 +423,90 @@ export default function GraphCanvas({
     }
   }, [graph, meteors, meteorSpeed, meteorSizeRatio])
 
+  // ★★ 两段弧：* 右半 = 显示邻居，* 左半 = 隐藏节点及其邻居 ⚠
+  const ringSegments = [
+    {
+      key: 'expand',
+      title: '显示邻居',
+      d: ringArcPath(-Math.PI / 2 + 0.18, Math.PI / 2 - 0.18),
+      icon: {
+        x: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.cos(0),
+        y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(0),
+        d: 'M12 5v14M5 12h14',
+      },
+      run: (id: string) => onExpandNeighbors?.(Number(id)),
+    },
+    {
+      key: 'hide',
+      title: '隐藏节点及其邻居',
+      d: ringArcPath(Math.PI / 2 + 0.18, Math.PI * 1.5 - 0.18),
+      icon: {
+        x: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.cos(Math.PI),
+        y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(Math.PI),
+        d: 'M9.88 9.88a3 3 0 1 0 4.24 4.24M2 2l20 20M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61',
+      },
+      run: (id: string) => onHideNode?.(Number(id)),
+    },
+  ]
+
   // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
-  return <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
+  return (
+    <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* ★★★ 节点环形操作按钮（* Neo4j 风格：* 左右两段弧，* 显示邻居 / 隐藏）⚠ */}
+      {ring && (
+        <svg
+          className="node-ring"
+          style={{
+            position: 'absolute',
+            left: ring.x,
+            top: ring.y,
+            width: 96,
+            height: 96,
+            transform: `translate(-50%, -50%) scale(${ringScale})`,
+            zIndex: 20,
+            overflow: 'visible',
+          }}
+          viewBox="0 0 96 96"
+        >
+          {ringSegments.map((seg) => (
+            <g key={seg.key}>
+              <path
+                d={seg.d}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  seg.run(ring.id)
+                }}
+                style={{
+                  fill: 'rgba(148,163,184,.22)',
+                  stroke: 'rgba(148,163,184,.55)',
+                  strokeWidth: 1,
+                  cursor: 'pointer',
+                  transition: 'fill .15s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.fill = 'rgba(56,189,248,.45)')}
+                onMouseLeave={(e) => (e.currentTarget.style.fill = 'rgba(148,163,184,.22)')}
+              >
+                <title>{seg.title}</title>
+              </path>
+              <g
+                transform={`translate(${seg.icon.x} ${seg.icon.y}) scale(0.55) translate(-12 -12)`}
+                style={{ pointerEvents: 'none' }}
+              >
+                <path
+                  d={seg.icon.d}
+                  style={{
+                    fill: 'none',
+                    stroke: '#e2e8f0',
+                    strokeWidth: 2,
+                    strokeLinecap: 'round',
+                    strokeLinejoin: 'round',
+                  }}
+                />
+              </g>
+            </g>
+          ))}
+        </svg>
+      )}
+    </div>
+  )
 }

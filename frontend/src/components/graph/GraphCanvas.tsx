@@ -367,9 +367,31 @@ export default function GraphCanvas({
     if (!g || !graph) return
     const cur = selectedVid ?? null
     const prev = selectedRef.current
-    if (prev != null && prev !== cur) void g.setElementState(String(prev), [])
+
+    // ★★★ **直接改节点描边**，⛔ 不用 `setElementState` ——
+    //   · · ★ G6 的默认 selected 样式会叠一层**黑色描边**（* 实测：点击后变黑圈，
+    //     颜色和标签文字一样），* 改 state 样式压不住那层 ⚠
+    //   · · ★ 直接 `updateNodeData` 最可控 ✅
+    const paint = (vid: number, stroke: string, lineWidth: number) => {
+      const n = graph.nodes.find((x) => x.vid === vid)
+      if (!n) return
+      g.updateNodeData([
+        {
+          id: String(vid),
+          style: {
+            stroke,
+            lineWidth,
+          },
+        },
+      ])
+    }
+    if (prev != null && prev !== cur) {
+      const p = graph.nodes.find((x) => x.vid === prev)
+      paint(prev, p?.patched ? '#fbbf24' : '#ffffff', p?.patched ? 2.5 : 2)
+    }
+    if (cur != null) paint(cur, '#f59e0b', 4)
     selectedRef.current = cur
-    if (cur != null) void g.setElementState(String(cur), ['selected'])
+    void g.draw()
   }, [selectedVid, graph])
 
   // ============================================================ 搜索聚焦

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
-import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
+import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
 
 /**
  * ★ 图谱画布（`D98` · AntV G6 v5）
@@ -42,12 +42,6 @@ const KIND_COLOR: Record<string, string> = {
 }
 
 const colorOf = (n: GraphNode) => KIND_COLOR[n.kind] || '#94a3b8'
-
-function edgeColor(e: GraphEdge): string {
-  if (e.type === 'calls' || e.type === 'call') return '#d97706'
-  if (e.type === 'imports' || e.type === 'import') return '#64748b'
-  return '#94a3b8'
-}
 
 /** 初始圆环半径（px）—— 小到看起来"聚在中心"，又大到能让布局散开 */
 const RING = 70
@@ -133,18 +127,25 @@ export default function GraphCanvas({
             },
           }
         }),
-        edges: graph.edges.map((e) => ({
-          id: String(e.id),
-          source: String(e.from),
-          target: String(e.to),
-          style: {
-            stroke: edgeColor(e),
-            lineWidth: 1,
-            opacity: 0.65,
-            endArrow: true,
-            lineDash: e.origin === 'manual' ? [5, 4] : undefined,
-          },
-        })),
+        edges: graph.edges.map((e) => {
+          const src = nodeById.get(String(e.from))
+          return {
+            id: String(e.id),
+            source: String(e.from),
+            target: String(e.to),
+            style: {
+              // ★★★ 连线颜色 = **发出节点的颜色**（* 所有者：「就用发出节点的颜色」）⚠
+              //   · · ★ 以后连线颜色可能承载别的含义，* 现在统一跟节点走 ✅
+              stroke: src ? colorOf(src) : '#94a3b8',
+              lineWidth: 1,
+              opacity: 0.65,
+              endArrow: true,
+              // ★★ 箭头调小（* 默认 10 左右 ⇒* 满屏都是箭头，* 密密麻麻）⚠
+              endArrowSize: 4,
+              lineDash: e.origin === 'manual' ? [5, 4] : undefined,
+            },
+          }
+        }),
       },
       node: {
         style: { labelPlacement: 'bottom', labelFill: '#cbd5e1', labelFontSize: 10 },

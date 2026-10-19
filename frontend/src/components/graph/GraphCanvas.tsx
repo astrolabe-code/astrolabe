@@ -110,42 +110,29 @@ export default function GraphCanvas({
   fullGraph,
   onGraphChanged,
 }: GraphCanvasProps) {
-  // ★★★ 节点标签颜色：**盯 `<html data-theme>` 的属性变化** ⚠
-  //   · · ★ 切主题最终都会改这个属性（* 无论点按钮、* 跟系统、* 还是别处改）⇒
-  //     * 改一次读一次 `--text-main`，* 不会出现"背景变了、字没变"⚠
-  //   · · ★★ 之前靠 `theme` 状态 / `themechange` 事件都不可靠（* 实例不同步、
-  //     * 系统切换不发事件）⇒* 现在以**渲染结果**为准 ✅
-  const [labelColor, setLabelColor] = useState('#000000')
+  // ★★★ 节点标签颜色：**读 CSS 变量 + 作为建图依赖** ⚠
+  //   · · ★ 试过 `updateNodeData` 逐节点改 ——* G6 这条增量路径对节点样式不生效
+  //     （* 改完 `getElementRenderStyle` 仍是旧值）⚠
+  //   · · ★★ 最终做法：* 颜色一变就**重建图**（* 代价是重跑一次布局，
+  //     * 但主题切换不频繁，* 正确性优先）✅
+  const labelColorRef = useRef<string>('')
+  const readLabelColor = () =>
+    getComputedStyle(document.documentElement).getPropertyValue('--text-main').trim() || '#000000'
+  if (!labelColorRef.current) labelColorRef.current = readLabelColor()
+  const [labelColor, setLabelColor] = useState<string>(labelColorRef.current)
 
   useEffect(() => {
-    const read = (why: string) => {
-      const v = getComputedStyle(document.documentElement)
-        .getPropertyValue('--text-main')
-        .trim()
-      // ★★ 诊断信号（* 所有者要求：* 看切背景时名称有没有收到信号）⚠
-      console.log('[label-color] 读取', {
-        why,
-        dataTheme: document.documentElement.getAttribute('data-theme'),
-        textMain: v,
-      })
-      if (v) setLabelColor(v)
+    const sync = () => {
+      const v = readLabelColor()
+      setLabelColor((prev) => (prev === v ? prev : v))
     }
-    read('挂载')
-    const mo = new MutationObserver((muts) => {
-      console.log(
-        '[label-color] ★ data-theme 变了',
-        muts.map((m) => `${m.oldValue} → ${document.documentElement.getAttribute('data-theme')}`),
-      )
-      read('MutationObserver')
-    })
+    const mo = new MutationObserver(sync)
     mo.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],
-      attributeOldValue: true,
     })
-    // CSS 变量可能下一帧才生效 ⇒ 再补读两次
-    const t1 = window.setTimeout(() => read('50ms 补读'), 50)
-    const t2 = window.setTimeout(() => read('200ms 补读'), 200)
+    const t1 = window.setTimeout(sync, 50)
+    const t2 = window.setTimeout(sync, 200)
     return () => {
       mo.disconnect()
       window.clearTimeout(t1)
@@ -350,86 +337,9 @@ export default function GraphCanvas({
       selectedRef.current = null
       g.destroy()
     }
+    // ★★ `labelColor` 也进依赖：* 主题切换 ⇒ 重建图 ⇒ 标签用新色 ⚠
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph])
-
-  // ============================================================ 主题切换：只改标签色
-  useEffect(() => {
-    const g = gRef.current
-    if (!g) return
-    // ★★★ **逐个节点改**（* 节点的 labelFill 是建图时写进内联 style 的，
-    //   `setOptions` 的全局样式**压不过内联** ⇒* 只改全局等于没改）⚠
-    const ids = g.getNodeData().map((n) => String(n.id))
-    console.log('[label-color] ★ 应用到节点', { color: labelColor, count: ids.length })
-    if (ids.length) {
-      g.updateNodeData(ids.map((id) => ({ id, style: { labelFill: labelColor } })))
-    }
-    // ★★ 诊断：* 看样式到底写进图数据没有（* 区分"没写进去"还是"没重绘"）⚠
-    try {
-      const first = ids[0]
-      const rs = g.getElementRenderStyle(first) as Record<string, unknown>
-      console.log('[label-color] 渲染样式检查', {
-        id: first,
-        labelFill: rs?.labelFill,
-        keys: rs ? Object.keys(rs).slice(0, 12) : null,
-      })
-    } catch (e) {
-      console.warn('[label-color] 读渲染样式失败', e)
-    }
-    void g.draw()
-  }, [labelColor])
-
-  // ============================================================ 环形按钮跟住节点
-  useEffect(() => {
-    if (!ring) return
-    let raf = 0
-    const tick = () => {
-      const g = gRef.current
-      const el = ringRef.current
-      // ★★ 照原型：* 节点不在可见集合里 ⇒ 直接收起按钮（* 先判断，* 不做异常兜底）⚠
-      if (!visibleRef.current.has(ring.id)) {
-        setRing(null)
-        return
-      }
-      if (g && el) {
-        try {
-          const p = g.getViewportByCanvas(
-            g.getElementPosition(ring.id) as never,
-          ) as ArrayLike<number>
-          const z = Math.max(1, Math.min(g.getZoom(), 1.6))
-          // ★★ 直接写 DOM style ——* 走 setState 会因为 React 排帧慢而"跟不住"⚠
-          el.style.left = `${p[0]}px`
-          el.style.top = `${p[1]}px`
-          el.style.transform = `translate(-50%, -50%) scale(${z})`
-        } catch {
-          /* 节点已不在 */
-        }
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [ring?.id])
-
-  // ============================================================ 容器尺寸变化 ⇒ 重画
-  useEffect(() => {
-    const g = gRef.current
-    const box = boxRef.current
-    if (!g || !box) return
-    // ★★ 拖动分隔条 / 写作区全屏时容器宽度会变 ——* G6 的 autoResize 不够，
-    //   * 必须显式 `resize()` 才会按新尺寸重绘（* 否则节点不动，* 看着像卡住）⚠
-    const ro = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        try {
-          g.resize()
-        } catch {
-          /* 实例已销毁 */
-        }
-      })
-    })
-    ro.observe(box)
-    return () => ro.disconnect()
-  }, [graph])
+  }, [graph, labelColor])
 
   // ============================================================ 选中态（受控）
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileCode2 } from 'lucide-react'
+import { FileCode2, ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'

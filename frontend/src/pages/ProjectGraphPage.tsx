@@ -272,7 +272,7 @@ export default function ProjectGraphPage() {
 
   if (graph.isError || pathQ.isError) {
     return (
-      <AppLayout page={false} title="图谱">
+      <AppLayout page={false}>
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>不存在或无权访问</div>
           <div className="faint" style={{ fontSize: 12.5, marginTop: 6 }}>
@@ -300,7 +300,7 @@ export default function ProjectGraphPage() {
           flexDirection: 'column',
           gap: 0,
           padding: fullscreen ? 12 : '10px 16px 0',
-          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-offset, 90px))',
+          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-h, 54px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
             ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }
@@ -604,7 +604,8 @@ export default function ProjectGraphPage() {
             整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}
         <div
           style={{
-            height: 26,
+            // ★★ 用 `flex: 0 0 26px` 而不是 height ——* flex 容器里 height 会被拉伸 ⚠
+            flex: '0 0 26px',
             marginTop: 6,
             display: 'flex',
             alignItems: 'center',
@@ -614,6 +615,10 @@ export default function ProjectGraphPage() {
             borderTop: '1px solid var(--card-border)',
             paddingLeft: 4,
             flexShrink: 0,
+            // ★ 锁死高度：* 文字不换行、不撑高（* 否则托底条被内容顶成两行）⚠
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            maxHeight: 26,
           }}
         >
           {g && (

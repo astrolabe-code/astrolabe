@@ -33,13 +33,16 @@ export default function TopNav() {
   //   · · ★ 收起后不占高度 ⇒* 图谱 / 阅读区更长 ✅ · 顶部居中留一个「顶栏」胶囊恢复 ⚠
   const [collapsed, setCollapsed] = useState(false)
 
-  // ★ 收起时把页面高度补偿量交给 CSS 变量（* 图谱页用 calc(100vh - var(--nav-offset))）
+  // ★★ 顶栏高度交给 CSS 变量（* 收起后 0）——* 页面用 `calc(100vh - var(--nav-h, 54px))`
+  //   就能精确撑满，* ⛔ 不再用 `100vh - 150px` 那种估出来的数 ⚠
   useEffect(() => {
-    document.documentElement.style.setProperty('--nav-offset', collapsed ? '0px' : '54px')
+    document.documentElement.style.setProperty('--nav-h', collapsed ? '0px' : '54px')
     return () => {
-      document.documentElement.style.removeProperty('--nav-offset')
+      document.documentElement.style.removeProperty('--nav-h')
     }
   }, [collapsed])
+
+
   const linksRef = useRef<HTMLDivElement>(null)
   const burgerRef = useRef<HTMLButtonElement>(null)
 

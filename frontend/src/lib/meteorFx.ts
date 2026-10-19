@@ -1,61 +1,58 @@
 /**
  * ★★ 流星轨迹效果（`D104`）—— 一块透明 canvas 罩在 G6 画布上
  *
- * ## ★★ 所有者口径
+ * ## ★★ 实现来源
  *
- * > 「**用 canvas 罩上就行**」
- * > 「**把流星轨迹的流星做大点，颜色做鲜艳点，我看看是不是透明了**」
- *
- * ## ★★ 用法
- *
- * ```ts
- * const stop = startMeteor(graph, container, edges)
- * // 卸载时调 stop()（⛔ 不调会泄漏 rAF）
- * ```
- *
- * ## ★★ 三条硬要求（* 都是踩过的坑）
+ * 移植自原型 `code_network/src/meteor.js`（* 所有者已确认效果的那套）：
  *
  * ```
- * ① ★ container 必须 `position: relative` —— 罩层是 absolute;inset:0，
- *    否则会相对外层已定位祖先定位，整个跑到画布外面（= 看不见）
- * ② ★ 尺寸用 ResizeObserver 盯 —— 不能只信 effect 执行那一刻的 clientHeight
- * ③ ★ 坐标：世界坐标 → getViewportByCanvas 视口坐标；两种都试，取有效的
+ * ★★ 尾迹 = **线性渐变**（尾透明 → 头 0.9）+ 两层（宽而淡 / 窄而亮）✅
+ * ★★ 光晕 = 径向渐变：* 中心**白色** → 35% 处节点色 → 边缘透明 ✅
+ * ★★ 头部 = 纯白亮点 ✅
+ * ★★ 首尾各 8% 淡入淡出 ——* 循环衔接不跳变 ✅
+ * ★★ 所有尺寸 × `scale`（= 画布 zoom）—— 滚轮缩放时同步变大变小 ✅
+ * ```
+ *
+ * ## ★★ 位置与尺寸
+ *
+ * ```
+ * ★ 位置：* `getElementPosition` → `getViewportByCanvas` ⇒ 视口坐标 ✅
+ * ★ 尺寸：* 全部乘 `graph.getZoom()`（* 视口坐标下节点也是按 zoom 缩放的）⚠
+ * ★ 起点 / 终点各留**节点半径** ⇒ 流星停在节点边界，不穿模 ✅
  * ```
  */
 
 import type { Graph } from '@antv/g6'
 
-/** 尾迹占整条边的比例 */
-const TRAIL = 0.3
-/** 尾迹分段数（越大越顺滑） */
-const SEGS = 8
-/** 最多同时飞多少条边（多了糊成一片） */
+/** 首尾各淡入/淡出的占比（占全程比例） */
+const FADE = 0.08
+/** 最多同时飞多少条边 */
 const MAX_EDGES = 120
-/** 每帧相位推进（* 默认值；* 可由用户设置覆盖）⚠ */
+/** 每帧相位推进（默认；用户设置可覆盖） */
 const DEFAULT_SPEED = 0.005
-/** 流星头部直径 = 发出节点直径 × 这个比例（* 0.25 = 1/4）⚠ */
+/** 头部半径 = 节点半径 × 这个比例（默认 1/4 直径） */
 const DEFAULT_SIZE_RATIO = 0.25
 
-/** ★ 可调项（* 来自用户设置 `graph.meteor.*`）⚠ */
+/** ★ 可调项（来自用户设置 `graph.meteor.*`） */
 export interface MeteorOptions {
-  /** 每帧相位增量：* 越小越慢 */
+  /** 每帧相位增量：越小越慢 */
   speed?: number
   /** 头部直径 / 节点直径 */
   sizeRatio?: number
 }
 
-/** 兜底颜色（* 边上的节点查不到时用） */
-const FALLBACK = { r: 148, g: 163, b: 184 }
-
-/** ★ 十六进制 → rgb（* 节点颜色是 `#4db8d6` 这种） */
+/** 十六进制 → rgb */
 function hexRgb(hex: string): { r: number; g: number; b: number } {
   const m = /^#?([0-9a-fA-F]{6})$/.exec((hex || '').trim())
-  if (!m) return FALLBACK
+  if (!m) return { r: 59, g: 130, b: 246 }
   const v = parseInt(m[1], 16)
   return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 }
 }
 
-/** ★ 取节点屏幕坐标：视口坐标优先，无效则回落到画布坐标 */
+const rgba = (c: { r: number; g: number; b: number }, a: number) =>
+  `rgba(${c.r},${c.g},${c.b},${a})`
+
+/** 取节点屏幕坐标（视口坐标优先，无效回落画布坐标） */
 function posOf(graph: Graph, id: string): [number, number] | null {
   let raw: unknown
   try {
@@ -78,12 +75,11 @@ function posOf(graph: Graph, id: string): [number, number] | null {
 /**
  * 启动流星效果。
  *
- * @param graph     G6 实例（* 已 render 过）
- * @param container 画布容器（* 必须 `position: relative`）
- * @param edges     沿哪些边飞 —— 每条边带：
- *                  * `from` 的 `size` / `color`（* 决定流星大小与颜色）+
- *                  * `to` 的 `toSize`（* 决定流星**停在哪**：* 目标节点边界）✅
- * @returns 停止函数
+ * @param graph     G6 实例（已 render 过）
+ * @param container 画布容器（必须 `position: relative`）
+ * @param edges     沿哪些边飞：`from` 的 `size`/`color` + `to` 的 `toSize`
+ * @param opts      速度 / 大小比例（来自用户设置）
+ * @returns 停止函数（卸载时必调）
  */
 export function startMeteor(
   graph: Graph,
@@ -104,7 +100,6 @@ export function startMeteor(
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
   let w = 0
   let h = 0
-
   const resize = () => {
     w = container.clientWidth || 0
     h = container.clientHeight || 0
@@ -116,7 +111,6 @@ export function startMeteor(
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
   resize()
-
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
   ro?.observe(container)
 
@@ -133,110 +127,91 @@ export function startMeteor(
     }
     ctx.clearRect(0, 0, w, h)
 
-    // ★★★ **流星大小要乘当前缩放比例**（* 所有者：「我用鼠标滚轮缩小了节点，
-    //   光晕没有跟着变小」）—— 位置已由 `getViewportByCanvas` 换算，但
-    //   * 大小是像素值 ⇒* 必须自己乘 zoom ⚠
+    // ★ 当前缩放：* 流星所有尺寸都乘它 ⇒ 滚轮缩放时同步变化 ⚠
     let zoom = 1
     try {
       zoom = graph.getZoom() || 1
     } catch {
       zoom = 1
     }
+
     const n = list.length
-    if (!n) return
-
     for (let i = 0; i < n; i++) {
-      const p1 = posOf(graph, list[i].from)
-      const p2 = posOf(graph, list[i].to)
+      const e = list[i]
+      const p1 = posOf(graph, e.from)
+      const p2 = posOf(graph, e.to)
       if (!p1 || !p2) continue
-      // 布局还没给位置（全 0）⇒ 跳过；否则会画在左上角
-      if (p1[0] === 0 && p1[1] === 0 && p2[0] === 0 && p2[1] === 0) continue
 
-      // ★★★ **终点 = 目标节点边界**（* ⛔ 不穿进节点中心）⚠
-      //   · · ★ 否则流星会"钻"进节点里才消失（* 穿模感）
-      const dxAll = p2[0] - p1[0]
-      const dyAll = p2[1] - p1[1]
-      const len = Math.hypot(dxAll, dyAll)
-      if (len < 1) continue // 两端重合（* 布局未散开）⇒ 跳过
-      const ux = dxAll / len
-      const uy = dyAll / len
-      const pad = (list[i].toSize || 14) / 2 // 目标节点半径
-      const ex = p2[0] - ux * pad
-      const ey = p2[1] - uy * pad
-      const dx = ex - p1[0]
-      const dy = ey - p1[1]
+      const dx = p2[0] - p1[0]
+      const dy = p2[1] - p1[1]
+      const dist = Math.hypot(dx, dy)
+      // ★ 起点/终点各留节点半径（* 已乘 zoom）⇒ 不穿模 ⚠
+      const padFrom = ((e.size || 14) / 2) * zoom
+      const padTo = ((e.toSize || 14) / 2) * zoom
+      if (dist <= padFrom + padTo + 2) continue
 
+      const ux = dx / dist
+      const uy = dy / dist
+
+      // ---- 进度 + 首尾淡入淡出 ----
       const tt = (t + i / n) % 1
-      // ★★ **接近节点时渐渐消失**（* 最后 25% 线性淡出到 0）⚠
-      const fade = tt > 0.75 ? 1 - (tt - 0.75) / 0.25 : 1
+      const alpha =
+        tt < FADE ? tt / FADE : tt > 1 - FADE ? (1 - tt) / FADE : 1
+      if (alpha <= 0.01) continue
 
-      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/4**，
-      //     **颜色 = 发出节点颜色**，* 光晕要"真实"（* 见下面的双层渐变）⚠
-      const size = list[i].size || 14
-      // ★★★ **严格按发出节点大小等比**（* 所有者：「我缩小了节点，结果光晕没
-      //   跟着变小，糊在一起了」）⇒ ⛔ 不再有 `Math.max(3, …)` 这种硬下限 ⚠
-      // ★ 直径 = 节点直径 × 比例 × **当前缩放**（* 跟着滚轮一起变大变小）⚠
-      const headD = size * sizeRatio * zoom
-      const headR = Math.max(0.2, headD / 2) // 0.2 只是防 0
-      const glowR = headR * 7 // 主光晕（* 等比）
-      const haloR = headR * 13 // 外层柔光（* 等比）
-      const rgb = hexRgb(list[i].color)
-      const lw0 = Math.max(1.2, headR * 1.6) // 尾迹基准线宽
+      // ---- 头部 / 尾部（视口坐标）----
+      const headD = padFrom + (dist - padFrom - padTo) * tt
+      const trailLen = Math.max(18, dist * 0.32)
+      const tailD = Math.max(headD - trailLen, padFrom)
+      const hx = p1[0] + ux * headD
+      const hy = p1[1] + uy * headD
+      const tx = p1[0] + ux * tailD
+      const ty = p1[1] + uy * tailD
 
-      // ---- 尾迹：逐段描线，越靠近头部越亮越粗 ----
-      for (let k = 1; k <= SEGS; k++) {
-        const ta = tt - TRAIL + (TRAIL * (k - 1)) / SEGS
-        const tb = tt - TRAIL + (TRAIL * k) / SEGS
-        if (ta < 0) continue
-        const f = k / SEGS
-        const x1 = p1[0] + dx * ta
-        const y1 = p1[1] + dy * ta
-        const x2 = p1[0] + dx * tb
-        const y2 = p1[1] + dy * tb
-        // ★ 只用**发出节点的颜色**，* ⛔ 不加深色描边（* 所有者：「不要加深」）⚠
-        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${((0.45 + 0.55 * f) * fade).toFixed(3)})`
-        ctx.lineWidth = lw0 * (0.7 + 1.3 * f)
-        ctx.beginPath()
-        ctx.moveTo(x1, y1)
-        ctx.lineTo(x2, y2)
-        ctx.stroke()
-      }
+      const rgb = hexRgb(e.color)
+      const dotR = Math.max(0.6, ((e.size || 14) * sizeRatio * zoom) / 2)
 
-      // ---- 头部：径向光晕 + 白色亮核 ----
-      const hx = p1[0] + dx * tt
-      const hy = p1[1] + dy * tt
-      // ★★★ 光晕（* "真实" = 两层 + 平滑衰减）⚠
-      //   · · ① 外层柔光：* 范围大、* 极淡 ——* 模拟光在空气里的散射 ✅
-      //   · · ② 主光晕：* 6 段平滑衰减 ——* 中心实、* 向外柔柔化开 ✅
-      //   · · ⛔ 都不加深色（* 所有者：「发出节点什么颜色，光晕就什么颜色」）⚠
-      const halo = ctx.createRadialGradient(hx, hy, headR, hx, hy, haloR)
-      halo.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.2 * fade).toFixed(3)})`)
-      halo.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.07 * fade).toFixed(3)})`)
-      halo.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
-      ctx.fillStyle = halo
+      // ---- 尾迹：线性渐变（尾透明 → 头 0.9），两层 ----
+      const grad = ctx.createLinearGradient(tx, ty, hx, hy)
+      grad.addColorStop(0, rgba(rgb, 0))
+      grad.addColorStop(1, rgba(rgb, 0.9))
+      ctx.strokeStyle = grad
+      ctx.lineCap = 'round'
+
+      // 外层：宽而淡
+      ctx.globalAlpha = 0.25 * alpha
+      ctx.lineWidth = dotR * 2.4
       ctx.beginPath()
-      ctx.arc(hx, hy, haloR, 0, Math.PI * 2)
-      ctx.fill()
+      ctx.moveTo(tx, ty)
+      ctx.lineTo(hx, hy)
+      ctx.stroke()
 
+      // 内层：窄而亮
+      ctx.globalAlpha = alpha
+      ctx.lineWidth = dotR * 1.2
+      ctx.beginPath()
+      ctx.moveTo(tx, ty)
+      ctx.lineTo(hx, hy)
+      ctx.stroke()
+
+      // ---- 光晕：中心白 → 节点色 → 透明 ----
+      const glowR = dotR * 4
       const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowR)
-      glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.95 * fade).toFixed(3)})`)
-      glow.addColorStop(0.16, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.78 * fade).toFixed(3)})`)
-      glow.addColorStop(0.34, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.5 * fade).toFixed(3)})`)
-      glow.addColorStop(0.55, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.26 * fade).toFixed(3)})`)
-      glow.addColorStop(0.78, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.09 * fade).toFixed(3)})`)
-      glow.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
+      glow.addColorStop(0, `rgba(255,255,255,${(0.95 * alpha).toFixed(3)})`)
+      glow.addColorStop(0.35, rgba(rgb, 0.35 * alpha))
+      glow.addColorStop(1, rgba(rgb, 0))
       ctx.fillStyle = glow
       ctx.beginPath()
       ctx.arc(hx, hy, glowR, 0, Math.PI * 2)
       ctx.fill()
 
-      // ★ 白点核（* 中心最亮的一点，* 视线焦点）
-      if (fade > 0.02) {
-        ctx.fillStyle = `rgba(255,255,255,${(0.98 * fade).toFixed(3)})`
-        ctx.beginPath()
-        ctx.arc(hx, hy, Math.max(0.3, headR * 0.85), 0, Math.PI * 2)
-        ctx.fill()
-      }
+      // ---- 头部亮点：纯白 ----
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.arc(hx, hy, dotR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
     }
   }
 

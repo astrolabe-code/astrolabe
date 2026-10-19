@@ -317,6 +317,6 @@ export default function GraphCanvas({
     }
   }, [graph, meteors, meteorSpeed, meteorSizeRatio])
 
-  // ★ ④ position:relative —— 流星罩层靠它定位
+  // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
   return <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
 }

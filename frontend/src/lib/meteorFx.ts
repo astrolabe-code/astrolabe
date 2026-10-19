@@ -132,14 +132,15 @@ export function startMeteor(
       const dx = p2[0] - p1[0]
       const dy = p2[1] - p1[1]
 
-      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/6**（* 从 1/10 调大），
-      //     **颜色 = 发出节点的颜色** ⚠
+      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/4**，
+      //     **颜色 = 发出节点颜色**，* 光晕要"真实"（* 见下面的双层渐变）⚠
       const size = list[i].size || 14
-      const headD = Math.max(2, size / 6) // 直径（* 节点 14 ⇒ ≈2.3px）
+      const headD = Math.max(3, size / 4) // 直径（* 节点 14 ⇒ 3.5px）
       const headR = headD / 2
-      const glowR = headR * 5 // 光晕比头部大 5 倍（* 小尺寸也要看得见）
+      const glowR = headR * 7 // 主光晕
+      const haloR = headR * 13 // 外层柔光（* 让扩散更自然）
       const rgb = hexRgb(list[i].color)
-      const lw0 = Math.max(0.9, headR * 1.6) // 尾迹基准线宽
+      const lw0 = Math.max(1.2, headR * 1.6) // 尾迹基准线宽
 
       // ---- 尾迹：逐段描线，越靠近头部越亮越粗 ----
       for (let k = 1; k <= SEGS; k++) {
@@ -151,18 +152,9 @@ export function startMeteor(
         const y1 = p1[1] + dy * ta
         const x2 = p1[0] + dx * tb
         const y2 = p1[1] + dy * tb
-        const lw = lw0 * (0.7 + 1.3 * f)
-        // ★★ 先描一层**深色外框** ——* 浅色主题下亮青几乎隐形，
-        //    * 有这层描边就任何背景都看得清 ⚠
-        ctx.strokeStyle = `rgba(15,23,42,${(0.3 + 0.35 * f).toFixed(2)})`
-        ctx.lineWidth = lw + 1.2
-        ctx.beginPath()
-        ctx.moveTo(x1, y1)
-        ctx.lineTo(x2, y2)
-        ctx.stroke()
-        // ★ 亮芯
+        // ★ 只用**发出节点的颜色**，* ⛔ 不加深色描边（* 所有者：「不要加深」）⚠
         ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.45 + 0.55 * f).toFixed(2)})`
-        ctx.lineWidth = lw
+        ctx.lineWidth = lw0 * (0.7 + 1.3 * f)
         ctx.beginPath()
         ctx.moveTo(x1, y1)
         ctx.lineTo(x2, y2)
@@ -172,26 +164,35 @@ export function startMeteor(
       // ---- 头部：径向光晕 + 白色亮核 ----
       const hx = p1[0] + dx * tt
       const hy = p1[1] + dy * tt
-      // ★ 深色兜底圈（* 浅色背景上亮色不显形，* 靠它勾出轮廓）⚠
-      ctx.fillStyle = 'rgba(15,23,42,0.5)'
+      // ★★★ 光晕（* "真实" = 两层 + 平滑衰减）⚠
+      //   · · ① 外层柔光：* 范围大、* 极淡 ——* 模拟光在空气里的散射 ✅
+      //   · · ② 主光晕：* 6 段平滑衰减 ——* 中心实、* 向外柔柔化开 ✅
+      //   · · ⛔ 都不加深色（* 所有者：「发出节点什么颜色，光晕就什么颜色」）⚠
+      const halo = ctx.createRadialGradient(hx, hy, headR, hx, hy, haloR)
+      halo.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.2)`)
+      halo.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},0.07)`)
+      halo.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
+      ctx.fillStyle = halo
       ctx.beginPath()
-      ctx.arc(hx, hy, glowR + 0.8, 0, Math.PI * 2)
+      ctx.arc(hx, hy, haloR, 0, Math.PI * 2)
       ctx.fill()
 
-      // ★ 光晕：**颜色 = 发出节点的颜色**
       const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowR)
       glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.95)`)
-      glow.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`)
+      glow.addColorStop(0.16, `rgba(${rgb.r},${rgb.g},${rgb.b},0.78)`)
+      glow.addColorStop(0.34, `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`)
+      glow.addColorStop(0.55, `rgba(${rgb.r},${rgb.g},${rgb.b},0.26)`)
+      glow.addColorStop(0.78, `rgba(${rgb.r},${rgb.g},${rgb.b},0.09)`)
       glow.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
       ctx.fillStyle = glow
       ctx.beginPath()
       ctx.arc(hx, hy, glowR, 0, Math.PI * 2)
       ctx.fill()
 
-      // ★ 亮核（* 同色偏白，* 保证小尺寸下也能看清）
-      ctx.fillStyle = `rgba(${Math.min(255, rgb.r + 90)},${Math.min(255, rgb.g + 90)},${Math.min(255, rgb.b + 90)},1)`
+      // ★ 白点核（* 中心最亮的一点，* 视线焦点）
+      ctx.fillStyle = 'rgba(255,255,255,0.98)'
       ctx.beginPath()
-      ctx.arc(hx, hy, Math.max(0.7, headR), 0, Math.PI * 2)
+      ctx.arc(hx, hy, Math.max(1.8, headR * 0.85), 0, Math.PI * 2)
       ctx.fill()
     }
   }

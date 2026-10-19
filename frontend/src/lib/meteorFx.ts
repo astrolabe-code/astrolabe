@@ -80,14 +80,15 @@ function posOf(graph: Graph, id: string): [number, number] | null {
  *
  * @param graph     G6 实例（* 已 render 过）
  * @param container 画布容器（* 必须 `position: relative`）
- * @param edges     沿哪些边飞 —— ★ 每条边带**发出节点**的 `size` / `color`：
- *                  * 流星大小 = 节点直径的 **1/10**，* 颜色 = 节点颜色 ✅
+ * @param edges     沿哪些边飞 —— 每条边带：
+ *                  * `from` 的 `size` / `color`（* 决定流星大小与颜色）+
+ *                  * `to` 的 `toSize`（* 决定流星**停在哪**：* 目标节点边界）✅
  * @returns 停止函数
  */
 export function startMeteor(
   graph: Graph,
   container: HTMLElement,
-  edges: { from: string; to: string; size: number; color: string }[],
+  edges: { from: string; to: string; size: number; color: string; toSize: number }[],
   opts: MeteorOptions = {},
 ): () => void {
   const canvas = document.createElement('canvas')
@@ -141,9 +142,23 @@ export function startMeteor(
       // 布局还没给位置（全 0）⇒ 跳过；否则会画在左上角
       if (p1[0] === 0 && p1[1] === 0 && p2[0] === 0 && p2[1] === 0) continue
 
+      // ★★★ **终点 = 目标节点边界**（* ⛔ 不穿进节点中心）⚠
+      //   · · ★ 否则流星会"钻"进节点里才消失（* 穿模感）
+      const dxAll = p2[0] - p1[0]
+      const dyAll = p2[1] - p1[1]
+      const len = Math.hypot(dxAll, dyAll)
+      if (len < 1) continue // 两端重合（* 布局未散开）⇒ 跳过
+      const ux = dxAll / len
+      const uy = dyAll / len
+      const pad = (list[i].toSize || 14) / 2 // 目标节点半径
+      const ex = p2[0] - ux * pad
+      const ey = p2[1] - uy * pad
+      const dx = ex - p1[0]
+      const dy = ey - p1[1]
+
       const tt = (t + i / n) % 1
-      const dx = p2[0] - p1[0]
-      const dy = p2[1] - p1[1]
+      // ★★ **接近节点时渐渐消失**（* 最后 25% 线性淡出到 0）⚠
+      const fade = tt > 0.75 ? 1 - (tt - 0.75) / 0.25 : 1
 
       // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/4**，
       //     **颜色 = 发出节点颜色**，* 光晕要"真实"（* 见下面的双层渐变）⚠
@@ -166,7 +181,7 @@ export function startMeteor(
         const x2 = p1[0] + dx * tb
         const y2 = p1[1] + dy * tb
         // ★ 只用**发出节点的颜色**，* ⛔ 不加深色描边（* 所有者：「不要加深」）⚠
-        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.45 + 0.55 * f).toFixed(2)})`
+        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${((0.45 + 0.55 * f) * fade).toFixed(3)})`
         ctx.lineWidth = lw0 * (0.7 + 1.3 * f)
         ctx.beginPath()
         ctx.moveTo(x1, y1)
@@ -182,8 +197,8 @@ export function startMeteor(
       //   · · ② 主光晕：* 6 段平滑衰减 ——* 中心实、* 向外柔柔化开 ✅
       //   · · ⛔ 都不加深色（* 所有者：「发出节点什么颜色，光晕就什么颜色」）⚠
       const halo = ctx.createRadialGradient(hx, hy, headR, hx, hy, haloR)
-      halo.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.2)`)
-      halo.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},0.07)`)
+      halo.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.2 * fade).toFixed(3)})`)
+      halo.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.07 * fade).toFixed(3)})`)
       halo.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
       ctx.fillStyle = halo
       ctx.beginPath()
@@ -191,11 +206,11 @@ export function startMeteor(
       ctx.fill()
 
       const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowR)
-      glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.95)`)
-      glow.addColorStop(0.16, `rgba(${rgb.r},${rgb.g},${rgb.b},0.78)`)
-      glow.addColorStop(0.34, `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`)
-      glow.addColorStop(0.55, `rgba(${rgb.r},${rgb.g},${rgb.b},0.26)`)
-      glow.addColorStop(0.78, `rgba(${rgb.r},${rgb.g},${rgb.b},0.09)`)
+      glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.95 * fade).toFixed(3)})`)
+      glow.addColorStop(0.16, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.78 * fade).toFixed(3)})`)
+      glow.addColorStop(0.34, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.5 * fade).toFixed(3)})`)
+      glow.addColorStop(0.55, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.26 * fade).toFixed(3)})`)
+      glow.addColorStop(0.78, `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.09 * fade).toFixed(3)})`)
       glow.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
       ctx.fillStyle = glow
       ctx.beginPath()
@@ -203,10 +218,12 @@ export function startMeteor(
       ctx.fill()
 
       // ★ 白点核（* 中心最亮的一点，* 视线焦点）
-      ctx.fillStyle = 'rgba(255,255,255,0.98)'
-      ctx.beginPath()
-      ctx.arc(hx, hy, Math.max(1.8, headR * 0.85), 0, Math.PI * 2)
-      ctx.fill()
+      if (fade > 0.02) {
+        ctx.fillStyle = `rgba(255,255,255,${(0.98 * fade).toFixed(3)})`
+        ctx.beginPath()
+        ctx.arc(hx, hy, Math.max(1.8, headR * 0.85), 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
 

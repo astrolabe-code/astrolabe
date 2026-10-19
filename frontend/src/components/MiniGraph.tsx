@@ -107,6 +107,7 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
         to: n.linkTo as string,
         size: sizeOf(n.id),
         color: colorOf(n.id),
+        toSize: sizeOf(n.linkTo as string),
       }))
     let timer: number | null = null
     if (meteor && list.length > 0) {

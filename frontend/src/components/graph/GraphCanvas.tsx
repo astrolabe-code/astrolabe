@@ -244,11 +244,13 @@ export default function GraphCanvas({
       //    * 流星大小 = 节点直径 1/10，* 颜色 = 节点颜色（* 所有者口径）⚠
       const edges = graph.edges.map((e) => {
         const src = nodeById.get(String(e.from))
+        const dst = nodeById.get(String(e.to))
         return {
           from: String(e.from),
           to: String(e.to),
           size: src ? nodeSize(src) : 14,
           color: src ? colorOf(src) : '#94a3b8',
+          toSize: dst ? nodeSize(dst) : 14,
         }
       })
       stop = startMeteor(g, box, edges, {

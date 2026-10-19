@@ -86,7 +86,10 @@ export default function NodePanel({
 
   return (
     // ★★ 根要撑满父容器（* 否则右侧只到内容高度，* 下面空一大块）⚠
-    <div className="flex flex-col gap-3" style={{ flex: 1, minHeight: 0 }}>
+    <div
+      className="flex flex-col gap-3"
+      style={{ flex: 1, minHeight: 0, position: 'relative' }}
+    >
       {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
       {!infoOpen && (
         <button
@@ -95,15 +98,22 @@ export default function NodePanel({
           onClick={() => setInfoOpen(true)}
           title="展开节点信息"
           style={{
-            alignSelf: 'flex-start',
+            // ★★ 浮在写作区之上（* 不占一行高度，* 与左上角「搜索/工具」胶囊同款）⚠
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            zIndex: 10,
             padding: '2px 10px',
             borderRadius: 999,
             fontSize: 11,
             color: 'var(--text-sub)',
+            background: 'var(--surface)',
+            border: '1px solid var(--card-border)',
             cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
+            boxShadow: '0 2px 8px rgba(15,23,42,.14)',
           }}
         >
           <ChevronDown size={11} />

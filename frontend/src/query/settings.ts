@@ -18,10 +18,17 @@ import type { SettingsData, SettingsPatchResult } from '../api/types'
  *   **同形**，区别只在 `specs` 里出现哪些键（项目档的键不出现在用户档，反之亦然）。
  */
 
-/** GET /api/me/settings/（② 型） */
-export function useUserSettings() {
+/**
+ * GET /api/me/settings/（② 型）
+ *
+ * ⚠★ `enabled` 必须由调用方传：**游客请求这个接口会 401** ⇒
+ *   * 全局未登录处理器会把用户**踢去登录页**（* 图谱页一度因此白屏）⚠
+ *   ⇒ ★ 只能登录后再请求 ✅
+ */
+export function useUserSettings(enabled = true) {
   return useQuery({
     queryKey: ['settings', 'user'],
+    enabled,
     queryFn: async (): Promise<SettingsData> =>
       unwrap(await apiGet<SettingsData>('/api/me/settings/', 'spread')),
   })

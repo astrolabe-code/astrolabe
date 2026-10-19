@@ -31,8 +31,18 @@ const TRAIL = 0.3
 const SEGS = 8
 /** 最多同时飞多少条边（多了糊成一片） */
 const MAX_EDGES = 120
-/** 每帧相位推进 */
-const SPEED = 0.01
+/** 每帧相位推进（* 默认值；* 可由用户设置覆盖）⚠ */
+const DEFAULT_SPEED = 0.005
+/** 流星头部直径 = 发出节点直径 × 这个比例（* 0.25 = 1/4）⚠ */
+const DEFAULT_SIZE_RATIO = 0.25
+
+/** ★ 可调项（* 来自用户设置 `graph.meteor.*`）⚠ */
+export interface MeteorOptions {
+  /** 每帧相位增量：* 越小越慢 */
+  speed?: number
+  /** 头部直径 / 节点直径 */
+  sizeRatio?: number
+}
 
 /** 兜底颜色（* 边上的节点查不到时用） */
 const FALLBACK = { r: 148, g: 163, b: 184 }
@@ -78,6 +88,7 @@ export function startMeteor(
   graph: Graph,
   container: HTMLElement,
   edges: { from: string; to: string; size: number; color: string }[],
+  opts: MeteorOptions = {},
 ): () => void {
   const canvas = document.createElement('canvas')
   canvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:999;'
@@ -109,6 +120,8 @@ export function startMeteor(
   ro?.observe(container)
 
   const list = edges.slice(0, MAX_EDGES)
+  const speed = opts.speed ?? DEFAULT_SPEED
+  const sizeRatio = opts.sizeRatio ?? DEFAULT_SIZE_RATIO
   let t = 0
   let raf = 0
 
@@ -135,7 +148,7 @@ export function startMeteor(
       // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/4**，
       //     **颜色 = 发出节点颜色**，* 光晕要"真实"（* 见下面的双层渐变）⚠
       const size = list[i].size || 14
-      const headD = Math.max(3, size / 4) // 直径（* 节点 14 ⇒ 3.5px）
+      const headD = Math.max(3, size * sizeRatio) // 直径（* 默认 14 × 0.25 = 3.5px）
       const headR = headD / 2
       const glowR = headR * 7 // 主光晕
       const haloR = headR * 13 // 外层柔光（* 让扩散更自然）
@@ -198,7 +211,7 @@ export function startMeteor(
   }
 
   const loop = () => {
-    t = (t + SPEED) % 1
+    t = (t + speed) % 1
     draw()
     raf = requestAnimationFrame(loop)
   }

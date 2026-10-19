@@ -95,6 +95,38 @@ SCOPED_KEYS: dict[str, ScopedKeySpec] = {
         "/ hide（不显示，数据仍在）；★ 默认 hide，因为它是唯一不猜的",
         scopes=("project",),
     ),
+    # ---------------------------------------------------------- 图谱 · 流星（D104）
+    "graph.meteor.enabled": ScopedKeySpec(
+        "graph.meteor.enabled",
+        bool,
+        True,
+        "图谱页显示流星轨迹",
+        # ★★★ 所有者原话（2026-10-19，逐字）：
+        #   「**微调的设置，你直接集成到用户设置，不就行了，让用户自己调。
+        #     我记得我设计了全局，用户，项目三级设置继承的。**」
+        # ★★ 用户档：* 每个人自己决定要不要看（* 默认开）✅
+        "★ 关掉后图谱页不再画流星层（* 性能敏感 / 嫌吵时用）；★ 用户档设置",
+        scopes=("user",),
+    ),
+    "graph.meteor.speed": ScopedKeySpec(
+        "graph.meteor.speed",
+        int,
+        5,
+        "流星速度（每帧相位增量 ×1000，越小越慢）",
+        # ★ 用整数存：* `5` = 0.005（* `_coerce` 只认 bool/int/str，* 浮点会原样透传）⚠
+        "★ 值是「每帧相位增量 × 1000」：5 = 0.005（默认，慢速）；10 = 0.01（原速）；"
+        "20 = 0.02（快）；★ 越小越慢",
+        scopes=("user",),
+    ),
+    "graph.meteor.size_pct": ScopedKeySpec(
+        "graph.meteor.size_pct",
+        int,
+        25,
+        "流星大小（占发出节点直径的百分比）",
+        # ★ 25 ⇒ * 节点 14px ⇒ 流星 3.5px（* 所有者定的 1/4）✅
+        "★ 100 = 和节点一样大；25 = 节点的 1/4（默认）；10 = 节点的 1/10（很小）",
+        scopes=("user",),
+    ),
     # ---------------------------------------------------------- 笔记 · 历史版本（B191）
     "note.revision_limit": ScopedKeySpec(
         "note.revision_limit",

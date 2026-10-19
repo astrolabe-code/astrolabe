@@ -65,6 +65,10 @@ interface GraphCanvasProps {
   focusVid?: number | null
   /** 流星开关（* 默认开） */
   meteors?: boolean
+  /** ★ 流星速度：* 每帧相位增量（* 来自用户设置，* 越小越慢）⚠ */
+  meteorSpeed?: number
+  /** ★ 流星大小：* 头部直径 / 节点直径（* 0.25 = 1/4）⚠ */
+  meteorSizeRatio?: number
   /** 阶段回调（* 供页面显示"布局动画中 / 布局完成 / 流星已启动"） */
   onPhase?: (phase: string) => void
 }
@@ -76,6 +80,8 @@ export default function GraphCanvas({
   onDeselect,
   focusVid,
   meteors = true,
+  meteorSpeed,
+  meteorSizeRatio,
   onPhase,
 }: GraphCanvasProps) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -245,7 +251,10 @@ export default function GraphCanvas({
           color: src ? colorOf(src) : '#94a3b8',
         }
       })
-      stop = startMeteor(g, box, edges)
+      stop = startMeteor(g, box, edges, {
+        speed: meteorSpeed,
+        sizeRatio: meteorSizeRatio,
+      })
       onPhase?.('流星已启动')
     }
     wait()
@@ -255,7 +264,7 @@ export default function GraphCanvas({
       if (timer != null) window.clearTimeout(timer)
       stop?.()
     }
-  }, [graph, meteors])
+  }, [graph, meteors, meteorSpeed, meteorSizeRatio])
 
   // ★ ④ position:relative —— 流星罩层靠它定位
   return <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }} />

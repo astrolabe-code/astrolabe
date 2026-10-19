@@ -36,8 +36,16 @@ export default function TopNav() {
   // ★★ 顶栏高度交给 CSS 变量（* 收起后 0）——* 页面用 `calc(100vh - var(--nav-h, 54px))`
   //   就能精确撑满，* ⛔ 不再用 `100vh - 150px` 那种估出来的数 ⚠
   useEffect(() => {
-    document.documentElement.style.setProperty('--nav-h', collapsed ? '0px' : '54px')
+    // ★★ 顶栏高度按**实际断点**给：* 移动端 48px、* 桌面 54px ——
+    //    * 写死 54 会让移动端多算 6px（* 页面底部留白 / 溢出）⚠
+    const apply = () => {
+      const h = collapsed ? 0 : window.innerWidth <= 700 ? 48 : 54
+      document.documentElement.style.setProperty('--nav-h', `${h}px`)
+    }
+    apply()
+    window.addEventListener('resize', apply)
     return () => {
+      window.removeEventListener('resize', apply)
       document.documentElement.style.removeProperty('--nav-h')
     }
   }, [collapsed])

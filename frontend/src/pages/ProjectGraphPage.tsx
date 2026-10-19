@@ -20,6 +20,7 @@ import { errorMessage } from '../api/errors'
 import { useFullGraph } from '../query/graph'
 import { useProject } from '../query/projects'
 import { useUserSettings } from '../query/settings'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import {
   useAppendToPath,
   useReadingPath,
@@ -130,6 +131,15 @@ export default function ProjectGraphPage() {
   const [fullscreen, setFullscreen] = useState(false)
   // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
   const [panelFull, setPanelFull] = useState(false)
+  // ★★★ **移动端响应式**（* 窄屏 ⇒ 单列 + 写作区抽屉）⚠
+  const isNarrow = useMediaQuery('(max-width: 900px)')
+  // ★ 窄屏下抽屉是否展开（* 点节点自动开，点画布/遮罩关）⚠
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // ★ 窄屏选中节点 ⇒ 自动拉开抽屉（* 桌面不需要）
+  useEffect(() => {
+    if (isNarrow && selectedVid != null) setDrawerOpen(true)
+  }, [isNarrow, selectedVid])
   // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
   const [panelWidth, setPanelWidth] = useState(340)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
@@ -344,7 +354,8 @@ export default function ProjectGraphPage() {
           flexDirection: 'column',
           gap: 0,
           padding: fullscreen ? 12 : '10px 16px 0',
-          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-h, 54px))',
+          // ★★ 移动端用 `dvh`（* 动态视口高，* 避开地址栏伸缩）⚠
+          height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
             ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }
@@ -352,7 +363,18 @@ export default function ProjectGraphPage() {
         }}
       >
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
-        <div ref={mainRef} style={{ flex: 1, minHeight: 0, display: 'flex', gap: 0 }}>
+        <div
+          ref={mainRef}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: isNarrow ? 'column' : 'row',
+            gap: 0,
+            position: 'relative',
+          }}
+        >
         {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
         <div
           style={{
@@ -377,8 +399,8 @@ export default function ProjectGraphPage() {
                 onClick={() => setSearchOpen((v) => !v)}
                 title="搜索节点（名字 / qname）"
                 style={{
-                  padding: '5px 12px',
-                  fontSize: 12.5,
+                  padding: isNarrow ? '4px 9px' : '5px 12px',
+                  fontSize: isNarrow ? 11.5 : 12.5,
                   borderRadius: 999,
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -394,7 +416,7 @@ export default function ProjectGraphPage() {
                 <input
                   className="input"
                   autoFocus
-                  style={{ width: 240, fontSize: 12.5 }}
+                  style={{ width: isNarrow ? 150 : 240, fontSize: 12.5 }}
                   placeholder="搜节点名 / qname，回车定位"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
@@ -416,8 +438,8 @@ export default function ProjectGraphPage() {
                 onClick={() => setBarOpen((v) => !v)}
                 title="工具"
                 style={{
-                  padding: '5px 12px',
-                  fontSize: 12.5,
+                  padding: isNarrow ? '4px 9px' : '5px 12px',
+                  fontSize: isNarrow ? 11.5 : 12.5,
                   borderRadius: 999,
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -432,7 +454,11 @@ export default function ProjectGraphPage() {
               {barOpen && (
                 <div
                   className="card flex items-center gap-2 flex-wrap"
-                  style={{ padding: 8, maxWidth: 560, boxShadow: '0 10px 28px rgba(0,0,0,.28)' }}
+                  style={{
+                    padding: 8,
+                    maxWidth: isNarrow ? 'calc(100vw - 90px)' : 560,
+                    boxShadow: '0 10px 28px rgba(0,0,0,.28)',
+                  }}
                 >
                   <Link to={`/p/${encodeURIComponent(projectRef)}`}>
                     <Button icon={<List size={13} />}>回列表</Button>
@@ -482,8 +508,8 @@ export default function ProjectGraphPage() {
               top: 10,
               right: 10,
               zIndex: 30,
-              width: 34,
-              height: 34,
+              width: isNarrow ? 30 : 34,
+              height: isNarrow ? 30 : 34,
               borderRadius: '50%',
               display: 'grid',
               placeItems: 'center',
@@ -633,7 +659,10 @@ export default function ProjectGraphPage() {
                 fullGraph={g}
                 selectedVid={selectedVid}
                 onSelect={setSelectedVid}
-                onDeselect={() => setSelectedVid(null)}
+                onDeselect={() => {
+                  setSelectedVid(null)
+                  setDrawerOpen(false)
+                }}
                 focusVid={focusVid}
               />
               </>
@@ -643,7 +672,7 @@ export default function ProjectGraphPage() {
         </div>
 
         {/* ★★ 左右拖动调整宽度（* 形似所有者原型的分隔条）⚠ */}
-        {!fullscreen && !panelFull && (
+        {!fullscreen && !panelFull && !isNarrow && (
           <div
             onPointerDown={onResizeStart}
             title="拖动调整宽度"
@@ -659,16 +688,44 @@ export default function ProjectGraphPage() {
           />
         )}
 
+        {!fullscreen && isNarrow && drawerOpen && (
+          // ★ 窄屏遮罩：点它关抽屉
+          <div
+            onClick={() => setDrawerOpen(false)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,.38)',
+              zIndex: 35,
+            }}
+          />
+        )}
         {!fullscreen && (
         <div
           style={{
-            width: panelFull ? undefined : panelWidth,
+            width: isNarrow ? '100%' : panelFull ? undefined : panelWidth,
             flex: panelFull ? 1 : undefined,
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
             position: 'relative',
+            // ★★★ 窄屏 ⇒ **覆盖式抽屉**：* 绝对定位在画布上，* 滑入滑出 ⚠
+            ...(isNarrow
+              ? {
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: 'min(88%, 380px)',
+                  zIndex: 36,
+                  background: 'var(--surface)',
+                  boxShadow: '-8px 0 24px rgba(15,23,42,.22)',
+                  transform: drawerOpen ? 'translateX(0)' : 'translateX(100%)',
+                  transition: 'transform .25s ease',
+                  display: drawerOpen || panelFull ? 'flex' : 'none',
+                }
+              : {}),
           }}
         >
           {/* ★★ 写作区全屏按钮（* 与图的右上角同款，* 两者互斥）⚠ */}
@@ -696,6 +753,30 @@ export default function ProjectGraphPage() {
           >
             {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
+          {isNarrow && (
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(false)}
+              title="收起写作区"
+              style={{
+                position: 'absolute',
+                top: 6,
+                left: 6,
+                zIndex: 14,
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                border: '1px solid var(--card-border)',
+                background: 'var(--surface)',
+                color: 'var(--text-sub)',
+                cursor: 'pointer',
+                fontSize: 14,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          )}
           <NodePanel
             projectRef={projectRef}
             node={selected}

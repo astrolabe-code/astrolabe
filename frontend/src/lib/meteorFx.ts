@@ -132,14 +132,14 @@ export function startMeteor(
       const dx = p2[0] - p1[0]
       const dy = p2[1] - p1[1]
 
-      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/10**，
+      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/6**（* 从 1/10 调大），
       //     **颜色 = 发出节点的颜色** ⚠
       const size = list[i].size || 14
-      const headD = Math.max(1.4, size * 0.1) // 直径（* 节点 14 ⇒ 1.4px）
+      const headD = Math.max(2, size / 6) // 直径（* 节点 14 ⇒ ≈2.3px）
       const headR = headD / 2
-      const glowR = headR * 4 // 光晕比头部大 4 倍 —— 否则 1.4px 看不见
+      const glowR = headR * 5 // 光晕比头部大 5 倍（* 小尺寸也要看得见）
       const rgb = hexRgb(list[i].color)
-      const lw0 = Math.max(0.6, headR * 1.1) // 尾迹基准线宽
+      const lw0 = Math.max(0.9, headR * 1.6) // 尾迹基准线宽
 
       // ---- 尾迹：逐段描线，越靠近头部越亮越粗 ----
       for (let k = 1; k <= SEGS; k++) {

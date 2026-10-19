@@ -64,6 +64,8 @@ interface GraphCanvasProps {
   meteorSpeed?: number
   /** ★ 流星大小：* 头部直径 / 节点直径（* 0.25 = 1/4）⚠ */
   meteorSizeRatio?: number
+  /** ★ 节点直径（px，* 默认 14；* 来自用户设置）⚠ */
+  nodeSizePx?: number
   /** 阶段回调（* 供页面显示"布局动画中 / 布局完成 / 流星已启动"） */
   onPhase?: (phase: string) => void
 }
@@ -77,6 +79,7 @@ export default function GraphCanvas({
   meteors = true,
   meteorSpeed,
   meteorSizeRatio,
+  nodeSizePx = 28,
   onPhase,
 }: GraphCanvasProps) {
   // ★★★ 节点标签颜色**跟随主题反转**（* 所有者：「深色背景就用白色，跟着反转」）⚠
@@ -90,7 +93,9 @@ export default function GraphCanvas({
   /** 布局是否已稳定（* 0 = 还没有；存时刻） */
   const readyRef = useRef(0)
   // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
-  const nodeSize = (n: GraphNode) => (n.origin === 'manual' ? 16 : 14)
+  // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
+  const nodeSize = (n: GraphNode) =>
+    n.origin === 'manual' ? Math.round(nodeSizePx * 1.15) : nodeSizePx
   const nodeById = useMemo(
     () => new Map((graph?.nodes ?? []).map((n) => [String(n.vid), n])),
     [graph],
@@ -123,13 +128,14 @@ export default function GraphCanvas({
               y: H / 2 + Math.sin(ang) * RING,
               size: nodeSize(n),
               fill: colorOf(n),
-              stroke: n.patched ? '#fbbf24' : colorOf(n),
-              lineWidth: n.patched ? 2 : 1,
+              // ★★ 白描边 2px ——* 深色背景上一圈白边，* 节点立刻"跳"出来（形似 code_network）⚠
+              stroke: n.patched ? '#fbbf24' : '#ffffff',
+              lineWidth: n.patched ? 2.5 : 2,
               lineDash: n.patched ? [4, 3] : undefined,
               labelText: n.name,
               labelPlacement: 'bottom',
               labelFill: labelColor,
-              labelFontSize: 10,
+              labelFontSize: 11,
             },
           }
         }),
@@ -154,17 +160,19 @@ export default function GraphCanvas({
         }),
       },
       node: {
-        style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 10 },
+        style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
         state: { selected: { lineWidth: 3, stroke: '#f59e0b' } },
       },
       edge: { style: { endArrow: true, lineWidth: 1 } },
       layout: {
         // ★ 从圆环出发，fruchterman 把它散开
         type: 'fruchterman',
-        width: W,
-        height: H,
-        gravity: 8,
-        speed: 8,
+        // ★★ 布局区域缩到画布 85% ——* 否则边缘节点会被切掉（* fit 后仍顶边）⚠
+        width: W * 0.85,
+        height: H * 0.85,
+        // ★★ 节点 28px ⇒ 向心力必须小（* 8 太聚，* 24 个圆挤成一团）⚠
+        gravity: 4,
+        speed: 10,
       },
       behaviors: ['zoom-canvas', 'drag-canvas', 'drag-element', 'click-select'],
     })
@@ -180,8 +188,33 @@ export default function GraphCanvas({
       if (!alive) return
       void (async () => {
         try {
-          await g.fitView({ when: 'always' })
-          await g.fitCenter()
+          // ★★★ **自己算缩放**：* `fitView` 会顶边（* 边缘节点被切），
+          //   * 而 `zoomTo(常数)` 在大小图上都不合适 ⇒* 算 bbox + 留白 ⚠
+          const fit = async () => {
+            const ids = graph.nodes.map((n) => String(n.vid))
+            let minX = Infinity
+            let minY = Infinity
+            let maxX = -Infinity
+            let maxY = -Infinity
+            for (const id of ids) {
+              const p = g.getElementPosition(id)
+              if (!p) continue
+              minX = Math.min(minX, p[0])
+              minY = Math.min(minY, p[1])
+              maxX = Math.max(maxX, p[0])
+              maxY = Math.max(maxY, p[1])
+            }
+            if (!isFinite(minX) || maxX - minX < 1 || maxY - minY < 1) return
+            const pad = 70 // 四周留白（* 像素）
+            const bw = maxX - minX
+            const bh = maxY - minY
+            const z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 1.6)
+            // ★★ 必须 await ——* 否则 `fitCenter` 用旧 zoom（* 实测图不放大）⚠
+            await g.zoomTo(Math.max(0.15, z))
+            await g.fitCenter()
+          }
+          void fit()
+          window.setTimeout(() => void fit(), 700)
         } catch {
           /* 适配失败不影响看图 */
         }

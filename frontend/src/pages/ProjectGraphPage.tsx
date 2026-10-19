@@ -6,6 +6,9 @@ import {
   List,
   Loader2,
   Route,
+  SlidersHorizontal,
+  Maximize2,
+  Minimize2,
   Search,
   Sparkles,
   Trash2,
@@ -71,8 +74,9 @@ const KIND_COLOR: Record<string, string> = {
 
 /** ★ `D105`：按画布面积算初始批量（* 12~24）⚠ */
 function initialBatch() {
+  // ★★ 节点直径 28 ⇒ 一屏放不下太多（* 十几个就满，* 再多必然挤）⚠
   const area = (window.innerWidth || 1280) * (window.innerHeight || 720)
-  return Math.max(12, Math.min(24, Math.round(area / 45000)))
+  return Math.max(10, Math.min(16, Math.round(area / 60000)))
 }
 
 const BATCH_STEP = 24
@@ -100,6 +104,8 @@ export default function ProjectGraphPage() {
   // ★ 后端用整数存：* speed 是「×1000」、* size_pct 是百分比 ⚠
   const meteorSpeed = Number(meteorConf['graph.meteor.speed'] ?? 5) / 1000
   const meteorSizeRatio = Number(meteorConf['graph.meteor.size_pct'] ?? 25) / 100
+  // ★ 节点直径（* 流星光晕随之等比缩放）⚠
+  const nodeSizePx = Number(meteorConf['graph.node.size'] ?? 14)
 
   const [selectedVid, setSelectedVid] = useState<number | null>(null)
   // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
@@ -116,6 +122,12 @@ export default function ProjectGraphPage() {
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
   const [shownCount, setShownCount] = useState<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
+  // ★ 悬浮工具条：* 默认收起，* 点开才展开（* 不占图谱高度）⚠
+  const [barOpen, setBarOpen] = useState(false)
+  // ★ 搜索胶囊是否展开
+  const [searchOpen, setSearchOpen] = useState(false)
+  // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
+  const [fullscreen, setFullscreen] = useState(false)
   const [hint, setHint] = useState('')
   // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
   const [phase, setPhase] = useState('')
@@ -287,73 +299,145 @@ export default function ProjectGraphPage() {
         { label: '图谱' },
       ]}
     >
-      <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 150px)', minHeight: 520 }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <div className="flex items-center gap-2 flex-wrap mb-2">
-            <div className="relative">
-              <Search
-                size={13}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2"
-                style={{ color: 'var(--text-sub)' }}
-              />
-              <input
-                className="input"
-                style={{ paddingLeft: 28, width: 220, fontSize: 12.5 }}
-                placeholder="搜节点名 / qname，回车定位"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') search()
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          height: fullscreen ? '100vh' : 'calc(100vh - 150px)',
+          minHeight: fullscreen ? undefined : 520,
+          ...(fullscreen
+            ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }
+            : {}),
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
+              压在图谱上、不占高度）⚠ */}
+          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: 6 }}>
+            {/* ---- 搜索 ---- */}
+            <div
+              onMouseLeave={() => setSearchOpen(false)}
+              style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+            >
+              <button
+                type="button"
+                className="card"
+                onClick={() => setSearchOpen((v) => !v)}
+                title="搜索节点（名字 / qname）"
+                style={{
+                  padding: '5px 12px',
+                  fontSize: 12.5,
+                  borderRadius: 999,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(15,23,42,.14)',
                 }}
-              />
-            </div>
-            <Link to={`/p/${encodeURIComponent(projectRef)}`}>
-              <Button icon={<List size={13} />}>回列表</Button>
-            </Link>
-            {/* ★★ `D104`：流星开关 */}
-            <Button
-              variant={meteors ? 'primary' : 'ghost'}
-              icon={<Sparkles size={13} />}
-              onClick={() => setMeteors((v) => !v)}
-              title="节点之间飞过的流光效果"
-            >
-              流星
-            </Button>
-            {/* ★★ `D105`：加载更多 / 显示全部 */}
-            {shownCount != null && shownCount < orderVids.length && (
-              <Button
-                icon={<ChevronDown size={13} />}
-                onClick={() => setShownCount((c) => (c ?? 0) + BATCH_STEP)}
               >
-                加载更多（还有 {orderVids.length - shownCount}）
-              </Button>
-            )}
-            {shownCount != null && shownCount < orderVids.length && (
-              <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
-            )}
-            {/* ★★ `D106`：学习路径面板 */}
-            <Button
-              variant={pathOpen ? 'primary' : 'ghost'}
-              icon={<Route size={13} />}
-              onClick={() => setPathOpen((v) => !v)}
-            >
-              学习路径（{pathItems.length}）
-            </Button>
-            <span className="faint" style={{ fontSize: 11.5, marginLeft: 'auto' }}>
-              {g && `共 ${g.nodes.length} 节点 · ${g.edges.length} 边，已展示 ${view?.nodes.length ?? 0}`}
-              {/* ★ 构建时间：* 用来判断浏览器加载的是不是最新包（* 见 vite define）⚠ */}
-              {phase && <span style={{ color: 'var(--accent)' }}>{` · ${phase}`}</span>}
-              <span style={{ opacity: 0.5 }}>
-                {' · 构建 '}
-                {(typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '').slice(5, 16).replace('T', ' ')}
-              </span>
-              {g && (g.manualNodeCount > 0 || g.manualEdgeCount > 0) && (
-                <span style={{ color: 'var(--warn)' }}>
-                  {` · 其中人工补的 ${g.manualNodeCount + g.manualEdgeCount} 项`}
-                </span>
+                <Search size={13} />
+                {!searchOpen && <span>搜索</span>}
+              </button>
+              {searchOpen && (
+                <input
+                  className="input"
+                  autoFocus
+                  style={{ width: 240, fontSize: 12.5 }}
+                  placeholder="搜节点名 / qname，回车定位"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') search()
+                  }}
+                />
               )}
-            </span>
+            </div>
+
+            {/* ---- 工具 ---- */}
+            <div
+              onMouseLeave={() => setBarOpen(false)}
+              style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}
+            >
+              <button
+                type="button"
+                className="card"
+                onClick={() => setBarOpen((v) => !v)}
+                title="工具"
+                style={{
+                  padding: '5px 12px',
+                  fontSize: 12.5,
+                  borderRadius: 999,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(15,23,42,.14)',
+                }}
+              >
+                <SlidersHorizontal size={13} />
+                {!barOpen && <span>工具</span>}
+              </button>
+              {barOpen && (
+                <div
+                  className="card flex items-center gap-2 flex-wrap"
+                  style={{ padding: 8, maxWidth: 560, boxShadow: '0 10px 28px rgba(0,0,0,.28)' }}
+                >
+                  <Link to={`/p/${encodeURIComponent(projectRef)}`}>
+                    <Button icon={<List size={13} />}>回列表</Button>
+                  </Link>
+                  <Button
+                    variant={meteors ? 'primary' : 'ghost'}
+                    icon={<Sparkles size={13} />}
+                    onClick={() => setMeteors((v) => !v)}
+                    title="节点之间飞过的流光效果"
+                  >
+                    流星
+                  </Button>
+                  {shownCount != null && shownCount < orderVids.length && (
+                    <Button
+                      icon={<ChevronDown size={13} />}
+                      onClick={() => setShownCount((c) => (c ?? 0) + BATCH_STEP)}
+                    >
+                      加载更多（{orderVids.length - shownCount}）
+                    </Button>
+                  )}
+                  {shownCount != null && shownCount < orderVids.length && (
+                    <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
+                  )}
+                  <Button
+                    variant={pathOpen ? 'primary' : 'ghost'}
+                    icon={<Route size={13} />}
+                    onClick={() => setPathOpen((v) => !v)}
+                  >
+                    学习路径（{pathItems.length}）
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* ★★★ 右上角：圆形全屏按钮（* 形似 code_network）⚠ */}
+          <button
+            type="button"
+            className="card"
+            onClick={() => setFullscreen((v) => !v)}
+            title={fullscreen ? '退出全屏' : '全屏'}
+            style={{
+              position: 'absolute',
+              top: 10,
+              right: 10,
+              zIndex: 30,
+              width: 34,
+              height: 34,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(15,23,42,.16)',
+            }}
+          >
+            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
 
           {/* ★★ `D107`：失效 vid 提示 + 一键清理（* ⛔ 不自动删）⚠ */}
           {stale.length > 0 && (
@@ -482,21 +566,39 @@ export default function ProjectGraphPage() {
                 />
               </div>
             ) : (
-              <GraphCanvas
-                graph={view}
-                meteors={meteors}
-                meteorSpeed={meteorSpeed}
-                meteorSizeRatio={meteorSizeRatio}
-                onPhase={setPhase}
-                selectedVid={selectedVid}
-                onSelect={setSelectedVid}
-                onDeselect={() => setSelectedVid(null)}
-                focusVid={focusVid}
-              />
-            )}
-          </div>
+              <>
+              {/* ★ 统计徽标：* 左下角胶囊（* 形似 code_network 的「局部视图」标）⚠ */}
+              <div
+                className="card"
+                style={{
+                  position: 'absolute',
+                  left: 10,
+                  bottom: 10,
+                  zIndex: 25,
+                  padding: '2px 10px',
+                  borderRadius: 999,
+                  fontSize: 11,
+                  pointerEvents: 'none',
+                  boxShadow: '0 2px 8px rgba(15,23,42,.12)',
+                }}
+              >
+                {g && `共 ${g.nodes.length} 节点 · ${g.edges.length} 边，已展示 ${view?.nodes.length ?? 0}`}
+                {phase && <span style={{ color: 'var(--accent)' }}>{` · ${phase}`}</span>}
+                <span style={{ opacity: 0.5 }}>
+                  {' · 构建 '}
+                  {(typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '').slice(5, 16).replace('T', ' ')}
+                </span>
+                {g && (g.manualNodeCount > 0 || g.manualEdgeCount > 0) && (
+                  <span style={{ color: 'var(--warn)' }}>
+                    {` · 人工补 ${g.manualNodeCount + g.manualEdgeCount}`}
+                  </span>
+                )}
+              </div>
 
-          <div className="flex items-center gap-3 flex-wrap" style={{ marginTop: 8, fontSize: 11 }}>
+          <div
+                className="faint"
+                style={{ position: 'absolute', left: 10, bottom: 36, zIndex: 24, fontSize: 10.5, display: 'flex', gap: 10, flexWrap: 'wrap', pointerEvents: 'none' }}
+              >
             {kinds.map(([kind, count]) => (
               <span key={kind} className="flex items-center gap-1">
                 <span
@@ -515,8 +617,26 @@ export default function ProjectGraphPage() {
             ))}
             <span className="faint">◆ 菱形 = 人工补的节点</span>
           </div>
+
+              <GraphCanvas
+                graph={view}
+                meteors={meteors}
+                meteorSpeed={meteorSpeed}
+                meteorSizeRatio={meteorSizeRatio}
+                nodeSizePx={nodeSizePx}
+                onPhase={setPhase}
+                selectedVid={selectedVid}
+                onSelect={setSelectedVid}
+                onDeselect={() => setSelectedVid(null)}
+                focusVid={focusVid}
+              />
+              </>
+            )}
+          </div>
+
         </div>
 
+        {!fullscreen && (
         <div style={{ width: 340, flexShrink: 0 }}>
           <NodePanel
             projectRef={projectRef}
@@ -529,6 +649,7 @@ export default function ProjectGraphPage() {
             onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
           />
         </div>
+        )}
       </div>
     </AppLayout>
   )

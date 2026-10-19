@@ -95,6 +95,17 @@ SCOPED_KEYS: dict[str, ScopedKeySpec] = {
         "/ hide（不显示，数据仍在）；★ 默认 hide，因为它是唯一不猜的",
         scopes=("project",),
     ),
+    # ---------------------------------------------------------- 图谱 · 节点（D104）
+    "graph.node.size": ScopedKeySpec(
+        "graph.node.size",
+        int,
+        28,
+        "图谱节点直径（px）",
+        # ★ 节点缩小 ⇒ 流星与光晕**等比缩小**（* 不再糊成一团）✅
+        "★ 节点圆的直径（像素）：28 默认（与原型一致）；调小则图更清爽，流星/光晕同步缩小；"
+        "手工补的节点自动大 15%",
+        scopes=("user",),
+    ),
     # ---------------------------------------------------------- 图谱 · 流星（D104）
     "graph.meteor.enabled": ScopedKeySpec(
         "graph.meteor.enabled",

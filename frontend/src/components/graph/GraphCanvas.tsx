@@ -194,10 +194,11 @@ export default function GraphCanvas({
       node: {
         style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
         state: {
-          selected: { lineWidth: 3, stroke: '#f59e0b' },
+          selected: { lineWidth: 3, stroke: '#f59e0b', shadowBlur: 0 },
           // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
           //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
-          active: { lineWidth: 4, stroke: '#ffffff', shadowColor: '#38bdf8', shadowBlur: 14 },
+          // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
+          active: { lineWidth: 4, stroke: '#38bdf8' },
         },
       },
       edge: {
@@ -538,7 +539,7 @@ export default function GraphCanvas({
       icon: {
         x: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.cos(Math.PI),
         y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(Math.PI),
-        d: 'M9.88 9.88a3 3 0 1 0 4.24 4.24M2 2l20 20M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61',
+        d: 'M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61M9.88 9.88a3 3 0 1 0 4.24 4.24M2 2l20 20',
       },
       run: (id: string) => void hideNodeAndNeighbors(id),
     },
@@ -564,7 +565,6 @@ export default function GraphCanvas({
             // ★★★ 关键：* 环外空白**不拦截**图的拖拽 / 缩放 ——
             //   否则 96×96 整个盖住节点，* 节点就拖不动了（* 所有者踩过的坑）⚠
             pointerEvents: 'none',
-            filter: 'drop-shadow(0 1px 3px rgba(15,23,42,.16))',
           }}
           viewBox="0 0 96 96"
         >

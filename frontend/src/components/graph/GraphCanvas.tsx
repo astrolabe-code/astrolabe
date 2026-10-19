@@ -90,10 +90,10 @@ interface GraphCanvasProps {
   nodeSizePx?: number
   /** 阶段回调（* 供页面显示"布局动画中 / 布局完成 / 流星已启动"） */
   onPhase?: (phase: string) => void
-  /** ★★ 环形按钮：* 展开该节点的邻居（* 形似所有者原型的 Neo4j 风格）⚠ */
-  onExpandNeighbors?: (vid: number) => void
-  /** ★★ 环形按钮：* 从视图里隐藏该节点及其邻居 ⚠ */
-  onHideNode?: (vid: number) => void
+  /** ★★ 完整图（* 环形按钮展开邻居时要从这里查——* `graph` 只是已展示子集）⚠ */
+  fullGraph?: EffectiveGraph
+  /** ★ 发生增删后通知页面（* 用于统计展示数）⚠ */
+  onGraphChanged?: () => void
 }
 
 export default function GraphCanvas({
@@ -107,8 +107,8 @@ export default function GraphCanvas({
   meteorSizeRatio,
   nodeSizePx = 28,
   onPhase,
-  onExpandNeighbors,
-  onHideNode,
+  fullGraph,
+  onGraphChanged,
 }: GraphCanvasProps) {
   // ★★★ 节点标签颜色**跟随主题反转**（* 所有者：「深色背景就用白色，跟着反转」）⚠
   //   · · ★ 原来写死 #cbd5e1（浅灰）⇒ 深色下发灰、浅色下糊成一片 ⚠
@@ -123,6 +123,7 @@ export default function GraphCanvas({
   // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
+  const ringRef = useRef<SVGSVGElement>(null)
   // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
   // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
   const nodeSize = (n: GraphNode) =>
@@ -316,17 +317,17 @@ export default function GraphCanvas({
     let raf = 0
     const tick = () => {
       const g = gRef.current
-      if (g) {
+      const el = ringRef.current
+      if (g && el) {
         try {
-          const p = g.getViewportByCanvas(g.getElementPosition(ring.id) as never) as ArrayLike<number>
+          const p = g.getViewportByCanvas(
+            g.getElementPosition(ring.id) as never,
+          ) as ArrayLike<number>
           const z = Math.max(1, Math.min(g.getZoom(), 1.6))
-          // ★ 只有位置真的变了才 setState（* 否则每帧都渲染，* 白烧 CPU）⚠
-          setRing((r) =>
-            r && (Math.abs(r.x - p[0]) > 0.5 || Math.abs(r.y - p[1]) > 0.5)
-              ? { ...r, x: p[0], y: p[1] }
-              : r,
-          )
-          setRingScale((s) => (Math.abs(s - z) > 0.01 ? z : s))
+          // ★★ 直接写 DOM style ——* 走 setState 会因为 React 排帧慢而"跟不住"⚠
+          el.style.left = `${p[0]}px`
+          el.style.top = `${p[1]}px`
+          el.style.transform = `translate(-50%, -50%) scale(${z})`
         } catch {
           /* 节点已不在 */
         }
@@ -423,6 +424,100 @@ export default function GraphCanvas({
     }
   }, [graph, meteors, meteorSpeed, meteorSizeRatio])
 
+  // ★★★ 展开邻居：**只把新节点摆到宿主四周 80px 处 + draw()** ——
+  //   * ⛔ 绝不 `render()` / 跑布局（* 那会整图重排，* 是所有者踩过的坑）⚠
+  const expandNeighbors = async (id: string) => {
+    const g = gRef.current
+    const src = fullGraph
+    if (!g || !src) return
+    const existing = new Set(g.getNodeData().map((n) => String(n.id)))
+    const byId = new Map(src.nodes.map((n) => [String(n.vid), n]))
+    const nbrs = new Set<string>()
+    for (const e of src.edges) {
+      if (String(e.from) === id) nbrs.add(String(e.to))
+      if (String(e.to) === id) nbrs.add(String(e.from))
+    }
+    const missing = [...nbrs].filter((v) => !existing.has(v) && byId.has(v))
+    if (missing.length === 0) return
+
+    const base = g.getElementPosition(id) as ArrayLike<number>
+    const bx = base[0]
+    const by = base[1]
+    const added = missing.map((v, i) => {
+      const n = byId.get(v) as GraphNode
+      // ★ 沿宿主四周**均匀分布**（-90° 起）
+      const ang = (Math.PI * 2 * i) / missing.length - Math.PI / 2
+      return {
+        id: v,
+        type: n.origin === 'manual' ? 'diamond' : 'circle',
+        style: {
+          x: bx + Math.cos(ang) * 90,
+          y: by + Math.sin(ang) * 90,
+          size: nodeSize(n),
+          fill: colorOf(n),
+          stroke: n.patched ? '#fbbf24' : '#ffffff',
+          lineWidth: n.patched ? 2.5 : 2,
+          labelText: n.name,
+          labelPlacement: 'bottom' as const,
+          labelFill: labelColor,
+          labelFontSize: 11,
+        },
+      }
+    })
+
+    // 只加「两端都在图里」的边（* 新节点 ↔ 已在图里的节点）
+    const addedIds = new Set(missing)
+    const addedEdges = src.edges
+      .filter((e) => {
+        const f = String(e.from)
+        const t = String(e.to)
+        const fOk = existing.has(f) || addedIds.has(f)
+        const tOk = existing.has(t) || addedIds.has(t)
+        return fOk && tOk && (addedIds.has(f) || addedIds.has(t))
+      })
+      .map((e) => ({
+        id: String(e.id),
+        source: String(e.from),
+        target: String(e.to),
+        style: {
+          stroke: colorOf(byId.get(String(e.from)) as GraphNode),
+          lineWidth: 1,
+          opacity: 0.65,
+          endArrow: true,
+          endArrowSize: 4,
+          lineDash: e.origin === 'manual' ? [5, 4] : undefined,
+        },
+      }))
+
+    g.addNodeData(added)
+    if (addedEdges.length) g.addEdgeData(addedEdges)
+    await g.draw() // ★ 只重绘，不跑布局
+    onGraphChanged?.()
+  }
+
+  // ★★★ 隐藏节点及其邻居：* 先删边、再删点、* 只 draw() ⚠
+  const hideNodeAndNeighbors = async (id: string) => {
+    const g = gRef.current
+    if (!g) return
+    const cur = g.getNodeData().map((n) => String(n.id))
+    const hide = new Set<string>([id])
+    for (const e of g.getEdgeData()) {
+      if (String(e.source) === id) hide.add(String(e.target))
+      if (String(e.target) === id) hide.add(String(e.source))
+    }
+    const ids = [...hide].filter((v) => cur.includes(v))
+    if (ids.length === 0) return
+    const edgeIds = g
+      .getEdgeData()
+      .filter((e) => ids.includes(String(e.source)) || ids.includes(String(e.target)))
+      .map((e) => String(e.id))
+    if (edgeIds.length) g.removeEdgeData(edgeIds)
+    g.removeNodeData(ids)
+    await g.draw()
+    setRing(null)
+    onGraphChanged?.()
+  }
+
   // ★★ 两段弧：* 右半 = 显示邻居，* 左半 = 隐藏节点及其邻居 ⚠
   const ringSegments = [
     {
@@ -434,7 +529,7 @@ export default function GraphCanvas({
         y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(0),
         d: 'M12 5v14M5 12h14',
       },
-      run: (id: string) => onExpandNeighbors?.(Number(id)),
+      run: (id: string) => void expandNeighbors(id),
     },
     {
       key: 'hide',
@@ -445,7 +540,7 @@ export default function GraphCanvas({
         y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(Math.PI),
         d: 'M9.88 9.88a3 3 0 1 0 4.24 4.24M2 2l20 20M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61',
       },
-      run: (id: string) => onHideNode?.(Number(id)),
+      run: (id: string) => void hideNodeAndNeighbors(id),
     },
   ]
 
@@ -455,6 +550,7 @@ export default function GraphCanvas({
       {/* ★★★ 节点环形操作按钮（* Neo4j 风格：* 左右两段弧，* 显示邻居 / 隐藏）⚠ */}
       {ring && (
         <svg
+          ref={ringRef}
           className="node-ring"
           style={{
             position: 'absolute',
@@ -477,14 +573,21 @@ export default function GraphCanvas({
                   seg.run(ring.id)
                 }}
                 style={{
-                  fill: 'rgba(148,163,184,.22)',
-                  stroke: 'rgba(148,163,184,.55)',
+                  // ★★ 照原型：* 白色实底 + 浅灰边（* 原来看不清就是底太透）⚠
+                  fill: 'var(--surface)',
+                  stroke: 'var(--card-border)',
                   strokeWidth: 1,
                   cursor: 'pointer',
-                  transition: 'fill .15s',
+                  transition: 'fill .15s, stroke .15s',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.fill = 'rgba(56,189,248,.45)')}
-                onMouseLeave={(e) => (e.currentTarget.style.fill = 'rgba(148,163,184,.22)')}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.fill = 'rgba(56,189,248,.28)'
+                  e.currentTarget.style.stroke = '#38bdf8'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.fill = 'var(--surface)'
+                  e.currentTarget.style.stroke = 'var(--card-border)'
+                }}
               >
                 <title>{seg.title}</title>
               </path>
@@ -495,9 +598,10 @@ export default function GraphCanvas({
                 <path
                   d={seg.icon.d}
                   style={{
+                    // ★ 图标用**主题前景色**（* 原来是 #e2e8f0，* 浅色底上几乎隐形）⚠
                     fill: 'none',
-                    stroke: '#e2e8f0',
-                    strokeWidth: 2,
+                    stroke: 'var(--text)',
+                    strokeWidth: 2.6,
                     strokeLinecap: 'round',
                     strokeLinejoin: 'round',
                   }}

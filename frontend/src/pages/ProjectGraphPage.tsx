@@ -121,10 +121,6 @@ export default function ProjectGraphPage() {
   const [q, setQ] = useState('')
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
   const [shownCount, setShownCount] = useState<number | null>(null)
-  // ★★ 环形按钮：* 「显示邻居」加进来的 vid（* 排在最前）⚠
-  const [extraVids, setExtraVids] = useState<Set<number>>(new Set())
-  // ★★ 环形按钮：* 「隐藏」掉的 vid（* 及其邻居，* 只在本次视图生效）⚠
-  const [hiddenVids, setHiddenVids] = useState<Set<number>>(new Set())
   const [pathOpen, setPathOpen] = useState(false)
   // ★ 悬浮工具条：* 默认收起，* 点开才展开（* 不占图谱高度）⚠
   const [barOpen, setBarOpen] = useState(false)
@@ -179,40 +175,6 @@ export default function ProjectGraphPage() {
   // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
   const [phase, setPhase] = useState('')
 
-  // ★★ 展开邻居：* 把它直接相连的节点加入视图（* 排在最前，* 立刻能看到）⚠
-  const expandNeighbors = (vid: number) => {
-    if (!g) return
-    const nbrs = new Set<number>()
-    for (const e of g.edges) {
-      if (e.from === vid) nbrs.add(e.to)
-      if (e.to === vid) nbrs.add(e.from)
-    }
-    if (nbrs.size === 0) return
-    setExtraVids((prev) => {
-      const next = new Set(prev)
-      nbrs.forEach((v) => next.add(v))
-      return next
-    })
-    // ★ 同时把可见数量顶到「能容下这些邻居」为止
-    //   （* orderVids 还是本次渲染的旧值 ⇒* 要加上新邻居的数量）⚠
-    setShownCount((c) => Math.max(c ?? initialBatch(), orderVids.length + nbrs.size))
-  }
-
-  // ★★ 隐藏节点及其邻居：* 只影响本次视图（* 不改后端、* 不删补丁）⚠
-  const hideNode = (vid: number) => {
-    if (!g) return
-    const hide = new Set<number>([vid])
-    for (const e of g.edges) {
-      if (e.from === vid) hide.add(e.to)
-      if (e.to === vid) hide.add(e.from)
-    }
-    setHiddenVids((prev) => {
-      const next = new Set(prev)
-      hide.forEach((v) => next.add(v))
-      return next
-    })
-    if (selectedVid != null && hide.has(selectedVid)) setSelectedVid(null)
-  }
 
   const p = project.data
   const g = graph.data
@@ -252,19 +214,14 @@ export default function ProjectGraphPage() {
       deg.set(e.to, (deg.get(e.to) || 0) + 1)
     }
     const inGraph = new Set(g.nodes.map((n) => n.vid))
-    // ★ 顺序：* ① 手动展开的邻居 ② 学习路径 ③ 其余按度数 ⚠
-    const extra = [...extraVids].filter((v) => inGraph.has(v) && !hiddenVids.has(v))
-    const extraSet = new Set(extra)
-    const head = hasPath
-      ? pathVids.filter((v) => inGraph.has(v) && !hiddenVids.has(v) && !extraSet.has(v))
-      : []
-    const headSet = new Set([...extra, ...head])
+    const head = hasPath ? pathVids.filter((v) => inGraph.has(v)) : []
+    const headSet = new Set(head)
     const tail = [...g.nodes]
-      .filter((n) => !headSet.has(n.vid) && !hiddenVids.has(n.vid))
+      .filter((n) => !headSet.has(n.vid))
       .sort((a, b) => (deg.get(b.vid) || 0) - (deg.get(a.vid) || 0) || a.vid - b.vid)
       .map((n) => n.vid)
-    return [...extra, ...head, ...tail]
-  }, [g, hasPath, pathVids, extraVids, hiddenVids])
+    return [...head, ...tail]
+  }, [g, hasPath, pathVids])
 
   const shownVids = useMemo(
     () => new Set(orderVids.slice(0, shownCount ?? initialBatch())),
@@ -673,8 +630,7 @@ export default function ProjectGraphPage() {
                 meteorSizeRatio={meteorSizeRatio}
                 nodeSizePx={nodeSizePx}
                 onPhase={setPhase}
-                onExpandNeighbors={expandNeighbors}
-                onHideNode={hideNode}
+                fullGraph={g}
                 selectedVid={selectedVid}
                 onSelect={setSelectedVid}
                 onDeselect={() => setSelectedVid(null)}

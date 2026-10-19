@@ -54,13 +54,18 @@ export default function NodePanel({
 }: NodePanelProps) {
   const [editing, setEditing] = useState<Note | null>(null)
   const [creating, setCreating] = useState(false)
+  // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
+  const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
   const [delErr, setDelErr] = useState('')
   const del = useDeleteNote()
 
   if (!node) {
     return (
-      <div className="card flex items-center justify-center" style={{ minHeight: 320, padding: 24 }}>
+      <div
+        className="card flex items-center justify-center"
+        style={{ flex: 1, minHeight: 320, padding: 24 }}
+      >
         <div className="faint" style={{ fontSize: 13 }}>
           从左边选一个节点，看别人在这里写了什么 —— 或者写下你自己的。
         </div>
@@ -80,7 +85,8 @@ export default function NodePanel({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    // ★★ 根要撑满父容器（* 否则右侧只到内容高度，* 下面空一大块）⚠
+    <div className="flex flex-col gap-3" style={{ flex: 1, minHeight: 0 }}>
       {/* ① 节点信息 */}
       <div className="card" style={{ padding: '12px 14px' }}>
         <div className="flex items-center gap-2 flex-wrap">
@@ -91,7 +97,28 @@ export default function NodePanel({
           <span className="tag" style={{ fontSize: 10.5 }}>
             {node.kind}
           </span>
+          {/* ★★ 收起 / 展开（* 收起后只留这一行，* 笔记区自动变大）⚠ */}
+          <button
+            type="button"
+            onClick={() => setInfoOpen((v) => !v)}
+            title={infoOpen ? '收起节点信息' : '展开节点信息'}
+            aria-label={infoOpen ? '收起节点信息' : '展开节点信息'}
+            style={{
+              marginLeft: 'auto',
+              display: 'inline-flex',
+              alignItems: 'center',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: 'var(--text-sub)',
+            }}
+          >
+            {infoOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         </div>
+        {infoOpen && (
+        <>
         {node.qname && node.qname !== node.name && (
           <div className="mono faint" style={{ fontSize: 11.5, marginTop: 4 }}>
             {node.qname}
@@ -135,10 +162,15 @@ export default function NodePanel({
             )}
           </div>
         )}
+        </>
+        )}
       </div>
 
-      {/* ② 笔记区 */}
-      <div className="card" style={{ padding: '12px 14px' }}>
+      {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}
+      <div
+        className="card"
+        style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}
+      >
         <NoteSection
           projectRef={projectRef}
           nodeId={node.vid}

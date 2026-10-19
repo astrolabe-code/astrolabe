@@ -585,7 +585,15 @@ export default function ProjectGraphPage() {
         </div>
 
         {!fullscreen && (
-        <div style={{ width: 340, flexShrink: 0 }}>
+        <div
+          style={{
+            width: 340,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+          }}
+        >
           <NodePanel
             projectRef={projectRef}
             node={selected}

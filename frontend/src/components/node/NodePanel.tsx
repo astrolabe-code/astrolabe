@@ -101,7 +101,7 @@ export default function NodePanel({
             // ★★ 浮在写作区之上（* 不占一行高度，* 与左上角「搜索/工具」胶囊同款）⚠
             position: 'absolute',
             top: 6,
-            right: 6,
+            right: 44, // ★ 避开右上角的全屏按钮
             zIndex: 10,
             padding: '2px 10px',
             borderRadius: 999,
@@ -122,7 +122,8 @@ export default function NodePanel({
       )}
       {infoOpen && (
       <div className="card" style={{ padding: '12px 14px' }}>
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* ★ 右侧留 34px 给「写作区全屏」按钮（* 否则收起按钮被它压住、按不到）⚠ */}
+        <div className="flex items-center gap-2 flex-wrap" style={{ paddingRight: 34 }}>
           <FileCode2 size={14} style={{ color: 'var(--text-sub)' }} />
           <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
             {node.name}

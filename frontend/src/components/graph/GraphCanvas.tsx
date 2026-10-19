@@ -341,6 +341,38 @@ export default function GraphCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, labelColor])
 
+  // ============================================================ 环形按钮跟住节点
+  useEffect(() => {
+    if (!ring) return
+    let raf = 0
+    const tick = () => {
+      const g = gRef.current
+      const el = ringRef.current
+      // 节点被隐藏 ⇒ 收起按钮（* 先判断数据，* 不做异常兜底）⚠
+      if (!visibleRef.current.has(ring.id)) {
+        setRing(null)
+        return
+      }
+      if (g && el) {
+        try {
+          const p = g.getViewportByCanvas(
+            g.getElementPosition(ring.id) as never,
+          ) as ArrayLike<number>
+          const z = Math.max(1, Math.min(g.getZoom(), 1.6))
+          // ★★ 直接写 DOM style ——* 走 setState 会因 React 排帧慢而「跟不住」⚠
+          el.style.left = `${p[0]}px`
+          el.style.top = `${p[1]}px`
+          el.style.transform = `translate(-50%, -50%) scale(${z})`
+        } catch {
+          /* 节点已不在 */
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [ring?.id])
+
   // ============================================================ 容器尺寸 ⇒ 重画
   useEffect(() => {
     const g = gRef.current

@@ -198,7 +198,8 @@ export default function GraphCanvas({
           // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
           //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
           // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
-          active: { lineWidth: 4, stroke: '#38bdf8' },
+          // ★ 只加粗、* 不换色、* 不加阴影 ⇒ 不会出现"多一圈"的观感 ⚠
+          active: { lineWidth: 3.5 },
         },
       },
       edge: {
@@ -222,7 +223,8 @@ export default function GraphCanvas({
         'zoom-canvas',
         'drag-canvas',
         'drag-element',
-        'click-select',
+        // ⚠ 不用 `click-select` ——* 它会给选中元素套一层 G6 默认高亮（* 那圈深色）
+        //   · * 选中态改由页面受控的 `selected` state 驱动（* 见下面的 effect）⚠
         // ★★ 悬停高亮：* 鼠标扫过节点 ⇒ 它和**直接邻居**（1 度）一起亮，
         //    * 一眼看清「谁调谁」（* 形似所有者原型）⚠
         { type: 'hover-activate', degree: 1, state: 'active' },
@@ -548,7 +550,9 @@ export default function GraphCanvas({
   // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
   return (
     <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* ★★★ 节点环形操作按钮（* Neo4j 风格：* 左右两段弧，* 显示邻居 / 隐藏）⚠ */}
+      {/* ⚠★ 2026-10-19：**临时关闭环形按钮**（* 所有者：「先把半圆形按钮注释掉，
+          我看看是什么原因」）——* 排查"点击节点出现黑色圆环"是否由它引起 ⚠
+          · · ★ 恢复时把下面的 `false &&` 删掉即可 ✅ */}
       {ring && (
         <svg
           ref={ringRef}
@@ -560,6 +564,8 @@ export default function GraphCanvas({
             width: 96,
             height: 96,
             transform: `translate(-50%, -50%) scale(${ringScale})`,
+            // ⚠ 临时隐藏（* 排查黑圈来源）：* 恢复时删掉这一行 ✅
+            display: 'none',
             zIndex: 20,
             overflow: 'visible',
             // ★★★ 关键：* 环外空白**不拦截**图的拖拽 / 缩放 ——

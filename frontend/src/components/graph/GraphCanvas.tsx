@@ -110,10 +110,48 @@ export default function GraphCanvas({
   fullGraph,
   onGraphChanged,
 }: GraphCanvasProps) {
-  // ★★★ 节点标签颜色**跟随主题反转**（* 所有者：「深色背景就用白色，跟着反转」）⚠
-  //   · · ★ 原来写死 #cbd5e1（浅灰）⇒ 深色下发灰、浅色下糊成一片 ⚠
-  const { theme } = useTheme()
-  const labelColor = theme === 'dark' ? '#ffffff' : '#000000'
+  // ★★★ 节点标签颜色：**盯 `<html data-theme>` 的属性变化** ⚠
+  //   · · ★ 切主题最终都会改这个属性（* 无论点按钮、* 跟系统、* 还是别处改）⇒
+  //     * 改一次读一次 `--text-main`，* 不会出现"背景变了、字没变"⚠
+  //   · · ★★ 之前靠 `theme` 状态 / `themechange` 事件都不可靠（* 实例不同步、
+  //     * 系统切换不发事件）⇒* 现在以**渲染结果**为准 ✅
+  const [labelColor, setLabelColor] = useState('#000000')
+
+  useEffect(() => {
+    const read = (why: string) => {
+      const v = getComputedStyle(document.documentElement)
+        .getPropertyValue('--text-main')
+        .trim()
+      // ★★ 诊断信号（* 所有者要求：* 看切背景时名称有没有收到信号）⚠
+      console.log('[label-color] 读取', {
+        why,
+        dataTheme: document.documentElement.getAttribute('data-theme'),
+        textMain: v,
+      })
+      if (v) setLabelColor(v)
+    }
+    read('挂载')
+    const mo = new MutationObserver((muts) => {
+      console.log(
+        '[label-color] ★ data-theme 变了',
+        muts.map((m) => `${m.oldValue} → ${document.documentElement.getAttribute('data-theme')}`),
+      )
+      read('MutationObserver')
+    })
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+      attributeOldValue: true,
+    })
+    // CSS 变量可能下一帧才生效 ⇒ 再补读两次
+    const t1 = window.setTimeout(() => read('50ms 补读'), 50)
+    const t2 = window.setTimeout(() => read('200ms 补读'), 200)
+    return () => {
+      mo.disconnect()
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+    }
+  }, [])
 
   const boxRef = useRef<HTMLDivElement>(null)
   const gRef = useRef<Graph | null>(null)
@@ -237,6 +275,10 @@ export default function GraphCanvas({
       ],
     })
 
+    // ★★★ **初始化可见集合**（* 之前漏了这行 ⇒ 一直是空集 ⇒
+    //   环形按钮一出现就被判"节点不存在"、* 一闪而过）⚠
+    visibleRef.current = new Set(graph.nodes.map((n) => String(n.vid)))
+
     let alive = true
 
     // ★ ② 不 await / 不 then —— `animation:true` 时 promise 永不 resolve
@@ -315,8 +357,13 @@ export default function GraphCanvas({
   useEffect(() => {
     const g = gRef.current
     if (!g) return
-    // ★ 不重建图（* 那会重跑 2.5s 布局动画）——* 只改全局节点样式再重绘 ⚠
-    g.setOptions({ node: { style: { labelFill: labelColor } } })
+    // ★★★ **逐个节点改**（* 节点的 labelFill 是建图时写进内联 style 的，
+    //   `setOptions` 的全局样式**压不过内联** ⇒* 只改全局等于没改）⚠
+    const ids = g.getNodeData().map((n) => String(n.id))
+    console.log('[label-color] ★ 应用到节点', { color: labelColor, count: ids.length })
+    if (ids.length) {
+      g.updateNodeData(ids.map((id) => ({ id, style: { labelFill: labelColor } })))
+    }
     void g.draw()
   }, [labelColor])
 

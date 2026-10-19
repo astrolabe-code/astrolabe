@@ -194,7 +194,8 @@ export default function GraphCanvas({
       node: {
         style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
         state: {
-          selected: { lineWidth: 3, stroke: '#f59e0b', shadowBlur: 0 },
+          // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗，* 无色、* 无阴影 ⚠
+          selected: { lineWidth: 5 },
           // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
           //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
           // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
@@ -389,7 +390,9 @@ export default function GraphCanvas({
       const p = graph.nodes.find((x) => x.vid === prev)
       paint(prev, p?.patched ? '#fbbf24' : '#ffffff', p?.patched ? 2.5 : 2)
     }
-    if (cur != null) paint(cur, '#f59e0b', 4)
+    // ★★ 选中 = **白色描边加粗**（* ⛔ 不换色 ——* 所有者：「不要橙色描边，
+    //   把原来的白色描边扩大一些都行」）⚠
+    if (cur != null) paint(cur, '#ffffff', 5)
     selectedRef.current = cur
     void g.draw()
   }, [selectedVid, graph])

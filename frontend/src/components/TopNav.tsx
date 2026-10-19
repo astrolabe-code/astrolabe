@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, EyeOff, Home, LogOut, Moon, Shield, Sun, Trash2, User } from 'lucide-react'
+import { ArrowLeft, EyeOff, Home, LogOut, Moon, Shield, Sun, Trash2, User, ChevronsUp, ChevronsDown } from 'lucide-react'
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { useTheme } from '../hooks/useTheme'
@@ -29,6 +29,17 @@ export default function TopNav() {
   const { theme, toggle } = useTheme()
   const logout = useLogout()
   const [open, setOpen] = useState(false)
+  // ★★ 顶栏可**向上收起**（* 所有者：「首页按钮所在的标题栏也要做一个向上收缩按钮」）⚠
+  //   · · ★ 收起后不占高度 ⇒* 图谱 / 阅读区更长 ✅ · 顶部居中留一个「顶栏」胶囊恢复 ⚠
+  const [collapsed, setCollapsed] = useState(false)
+
+  // ★ 收起时把页面高度补偿量交给 CSS 变量（* 图谱页用 calc(100vh - var(--nav-offset))）
+  useEffect(() => {
+    document.documentElement.style.setProperty('--nav-offset', collapsed ? '100px' : '150px')
+    return () => {
+      document.documentElement.style.removeProperty('--nav-offset')
+    }
+  }, [collapsed])
   const linksRef = useRef<HTMLDivElement>(null)
   const burgerRef = useRef<HTMLButtonElement>(null)
 
@@ -64,6 +75,20 @@ export default function TopNav() {
   async function handleLogout() {
     await logout.mutateAsync().catch(() => undefined)
     navigate('/', { replace: true })
+  }
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="nav-restore"
+        onClick={() => setCollapsed(false)}
+        title="展开顶栏"
+      >
+        <ChevronsDown size={11} />
+        <span>顶栏</span>
+      </button>
+    )
   }
 
   return (
@@ -113,6 +138,14 @@ export default function TopNav() {
       </div>
 
       <div className="nav-right-group">
+        <button
+          className="theme-toggle"
+          onClick={() => setCollapsed(true)}
+          aria-label="收起顶栏"
+          title="收起顶栏（内容更宽敞）"
+        >
+          <ChevronsUp size={16} />
+        </button>
         <button
           className="theme-toggle"
           onClick={toggle}

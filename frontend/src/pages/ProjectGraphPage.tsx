@@ -293,17 +293,12 @@ export default function ProjectGraphPage() {
   return (
     <AppLayout
       page={false}
-      crumbs={[
-        { label: '工作区', to: '/workspace' },
-        { label: p?.name || '项目', to: `/p/${encodeURIComponent(projectRef)}` },
-        { label: '图谱' },
-      ]}
     >
       <div
         style={{
           display: 'flex',
           gap: 12,
-          height: fullscreen ? '100vh' : 'calc(100vh - 150px)',
+          height: fullscreen ? '100vh' : 'calc(100vh - var(--nav-offset, 150px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
             ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }

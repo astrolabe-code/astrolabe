@@ -83,7 +83,12 @@ export default function TopNav() {
         )}
         <div className="nav-user-slot">
           {me.authenticated ? (
-            <span className="nav-btn ghost-btn nav-user" title="当前登录身份">
+            // ★★ 点头像 / 用户名 ⇒ **用户设置**（* 所有者：「不然很难找的」）⚠
+            <Link
+              className="nav-btn ghost-btn nav-user"
+              to="/me/settings"
+              title="用户设置（点击进入）"
+            >
               {me.avatar ? (
                 <img className="nav-avatar" src={me.avatar} alt="头像" />
               ) : (
@@ -95,7 +100,7 @@ export default function TopNav() {
               <span className={`nav-role${me.is_staff ? '' : ' user'}`}>
                 {me.is_staff ? '管理员' : '用户'}
               </span>
-            </span>
+            </Link>
           ) : (
             <Link className="nav-btn ghost-btn nav-user" to="/login" title="登录">
               <span className="nav-avatar">

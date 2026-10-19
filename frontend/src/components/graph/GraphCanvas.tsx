@@ -124,6 +124,11 @@ export default function GraphCanvas({
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
+  // ★★★ **当前可见节点集合**（* 单一数据源）——
+  //   · · ★ 增删节点时同步维护；* 一切"这个节点还在吗"都查它 ⚠
+  //   · · ★★ 照原型 `visible.some(n => n.id === id)` 的写法：
+  //     * **用数据判断**，* 而不是 try/catch 兜 G6 抛的异常 ✅
+  const visibleRef = useRef<Set<string>>(new Set())
   // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
   // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
   const nodeSize = (n: GraphNode) =>
@@ -322,6 +327,11 @@ export default function GraphCanvas({
     const tick = () => {
       const g = gRef.current
       const el = ringRef.current
+      // ★★ 照原型：* 节点不在可见集合里 ⇒ 直接收起按钮（* 先判断，* 不做异常兜底）⚠
+      if (!visibleRef.current.has(ring.id)) {
+        setRing(null)
+        return
+      }
       if (g && el) {
         try {
           const p = g.getViewportByCanvas(
@@ -378,9 +388,8 @@ export default function GraphCanvas({
     const paint = (vid: number, stroke: string, lineWidth: number, scale: number) => {
       const n = graph.nodes.find((x) => x.vid === vid)
       if (!n) return
-      // ★★★ **必须确认它还在 G6 里** —— 节点被「隐藏」移除后，
-      //   `updateNodeData` 会抛 `Node not found` ⇒* React 渲染中断 ⇒ 整页消失 ⚠
-      if (!g.getNodeData().some((x) => String(x.id) === String(vid))) return
+      // ★★ 查**可见集合**（* 已被隐藏移除的节点直接跳过，不碰 G6）⚠
+      if (!visibleRef.current.has(String(vid))) return
       g.updateNodeData([
         {
           id: String(vid),
@@ -400,11 +409,7 @@ export default function GraphCanvas({
     //   小、* 视觉上反而"缩小"，* 所以必须同时放大尺寸）⚠
     if (cur != null) paint(cur, '#ffffff', 3, 1.25)
     selectedRef.current = cur
-    try {
-      void g.draw()
-    } catch {
-      /* 图已销毁 / 节点已移除 */
-    }
+    void g.draw()
   }, [selectedVid, graph])
 
   // ============================================================ 搜索聚焦
@@ -529,6 +534,8 @@ export default function GraphCanvas({
 
     g.addNodeData(added)
     if (addedEdges.length) g.addEdgeData(addedEdges)
+    // ★ 同步可见集合
+    missing.forEach((v) => visibleRef.current.add(v))
     await g.draw() // ★ 只重绘，不跑布局
     onGraphChanged?.()
   }
@@ -572,10 +579,14 @@ export default function GraphCanvas({
       .map((e) => String(e.id))
     if (edgeIds.length) g.removeEdgeData(edgeIds)
     g.removeNodeData(ids)
+    // ★ 同步可见集合（* 之后任何判断都以它为准）⚠
+    ids.forEach((v) => visibleRef.current.delete(v))
     await g.draw()
     setRing(null)
-    // ★ 被隐藏的节点清掉选中 —— 否则 effect 还会去找它（* 找不到就崩）⚠
-    onDeselect?.()
+    // ★ 被隐藏的若是当前选中节点 ⇒ 清掉选中
+    if (selectedRef.current != null && removing.has(String(selectedRef.current))) {
+      onDeselect?.()
+    }
     onGraphChanged?.()
   }
 

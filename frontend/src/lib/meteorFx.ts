@@ -129,17 +129,37 @@ export function startMeteor(
         const tb = tt - TRAIL + (TRAIL * k) / SEGS
         if (ta < 0) continue
         const f = k / SEGS
-        ctx.strokeStyle = `rgba(${COLOR.r},${COLOR.g},${COLOR.b},${(0.45 + 0.55 * f).toFixed(2)})`
-        ctx.lineWidth = 3.5 + 4.5 * f
+        const x1 = p1[0] + dx * ta
+        const y1 = p1[1] + dy * ta
+        const x2 = p1[0] + dx * tb
+        const y2 = p1[1] + dy * tb
+        const lw = 3.5 + 4.5 * f
+        // ★★ 先描一层**深色外框** ——* 浅色主题下亮青几乎隐形，
+        //    * 有这层描边就任何背景都看得清 ⚠
+        ctx.strokeStyle = `rgba(15,23,42,${(0.35 + 0.35 * f).toFixed(2)})`
+        ctx.lineWidth = lw + 2.5
         ctx.beginPath()
-        ctx.moveTo(p1[0] + dx * ta, p1[1] + dy * ta)
-        ctx.lineTo(p1[0] + dx * tb, p1[1] + dy * tb)
+        ctx.moveTo(x1, y1)
+        ctx.lineTo(x2, y2)
+        ctx.stroke()
+        // ★ 亮芯
+        ctx.strokeStyle = `rgba(${COLOR.r},${COLOR.g},${COLOR.b},${(0.45 + 0.55 * f).toFixed(2)})`
+        ctx.lineWidth = lw
+        ctx.beginPath()
+        ctx.moveTo(x1, y1)
+        ctx.lineTo(x2, y2)
         ctx.stroke()
       }
 
       // ---- 头部：径向光晕 + 白色亮核 ----
       const hx = p1[0] + dx * tt
       const hy = p1[1] + dy * tt
+      // ★ 深色描边圈（* 浅色背景上白核不显形，* 靠它兜住）⚠
+      ctx.fillStyle = 'rgba(15,23,42,0.55)'
+      ctx.beginPath()
+      ctx.arc(hx, hy, 19, 0, Math.PI * 2)
+      ctx.fill()
+
       const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, 18)
       glow.addColorStop(0, `rgba(${COLOR.r},${COLOR.g},${COLOR.b},0.95)`)
       glow.addColorStop(0.45, `rgba(${COLOR.r},${COLOR.g},${COLOR.b},0.45)`)

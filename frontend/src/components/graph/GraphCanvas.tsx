@@ -213,10 +213,9 @@ export default function GraphCanvas({
     const g = gRef.current
     const box = boxRef.current
     if (!g || !box || !graph || !meteors) return
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      onPhase?.('已跳过流星（系统设置了减少动态效果）')
-      return
-    }
+    // ★★★ 所有者原话：「**不管什么情况，都给我加个动态效果**」⚠
+    //   ⛔ 不再因 `prefers-reduced-motion` 跳过 —— * 那会让流星彻底不出现
+    //   （* 一度就是这个原因：* 系统开了"减少动态效果" ⇒ 用户始终看不到 canvas）⚠
 
     let stop: (() => void) | null = null
     let timer: number | null = null

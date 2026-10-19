@@ -34,8 +34,16 @@ const MAX_EDGES = 120
 /** 每帧相位推进 */
 const SPEED = 0.01
 
-/** 亮青（* 深色背景最醒目，* 不与节点蓝 / 边橙撞色） */
-const COLOR = { r: 34, g: 211, b: 238 }
+/** 兜底颜色（* 边上的节点查不到时用） */
+const FALLBACK = { r: 148, g: 163, b: 184 }
+
+/** ★ 十六进制 → rgb（* 节点颜色是 `#4db8d6` 这种） */
+function hexRgb(hex: string): { r: number; g: number; b: number } {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec((hex || '').trim())
+  if (!m) return FALLBACK
+  const v = parseInt(m[1], 16)
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 }
+}
 
 /** ★ 取节点屏幕坐标：视口坐标优先，无效则回落到画布坐标 */
 function posOf(graph: Graph, id: string): [number, number] | null {
@@ -62,13 +70,14 @@ function posOf(graph: Graph, id: string): [number, number] | null {
  *
  * @param graph     G6 实例（* 已 render 过）
  * @param container 画布容器（* 必须 `position: relative`）
- * @param edges     沿哪些边飞（* `{from, to}` = 节点 id）
+ * @param edges     沿哪些边飞 —— ★ 每条边带**发出节点**的 `size` / `color`：
+ *                  * 流星大小 = 节点直径的 **1/10**，* 颜色 = 节点颜色 ✅
  * @returns 停止函数
  */
 export function startMeteor(
   graph: Graph,
   container: HTMLElement,
-  edges: { from: string; to: string }[],
+  edges: { from: string; to: string; size: number; color: string }[],
 ): () => void {
   const canvas = document.createElement('canvas')
   canvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:999;'
@@ -123,6 +132,15 @@ export function startMeteor(
       const dx = p2[0] - p1[0]
       const dy = p2[1] - p1[1]
 
+      // ★★★ 所有者口径：**流星大小 = 发出节点直径的 1/10**，
+      //     **颜色 = 发出节点的颜色** ⚠
+      const size = list[i].size || 14
+      const headD = Math.max(1.4, size * 0.1) // 直径（* 节点 14 ⇒ 1.4px）
+      const headR = headD / 2
+      const glowR = headR * 4 // 光晕比头部大 4 倍 —— 否则 1.4px 看不见
+      const rgb = hexRgb(list[i].color)
+      const lw0 = Math.max(0.6, headR * 1.1) // 尾迹基准线宽
+
       // ---- 尾迹：逐段描线，越靠近头部越亮越粗 ----
       for (let k = 1; k <= SEGS; k++) {
         const ta = tt - TRAIL + (TRAIL * (k - 1)) / SEGS
@@ -133,17 +151,17 @@ export function startMeteor(
         const y1 = p1[1] + dy * ta
         const x2 = p1[0] + dx * tb
         const y2 = p1[1] + dy * tb
-        const lw = 3.5 + 4.5 * f
+        const lw = lw0 * (0.7 + 1.3 * f)
         // ★★ 先描一层**深色外框** ——* 浅色主题下亮青几乎隐形，
         //    * 有这层描边就任何背景都看得清 ⚠
-        ctx.strokeStyle = `rgba(15,23,42,${(0.35 + 0.35 * f).toFixed(2)})`
-        ctx.lineWidth = lw + 2.5
+        ctx.strokeStyle = `rgba(15,23,42,${(0.3 + 0.35 * f).toFixed(2)})`
+        ctx.lineWidth = lw + 1.2
         ctx.beginPath()
         ctx.moveTo(x1, y1)
         ctx.lineTo(x2, y2)
         ctx.stroke()
         // ★ 亮芯
-        ctx.strokeStyle = `rgba(${COLOR.r},${COLOR.g},${COLOR.b},${(0.45 + 0.55 * f).toFixed(2)})`
+        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${(0.45 + 0.55 * f).toFixed(2)})`
         ctx.lineWidth = lw
         ctx.beginPath()
         ctx.moveTo(x1, y1)
@@ -154,24 +172,26 @@ export function startMeteor(
       // ---- 头部：径向光晕 + 白色亮核 ----
       const hx = p1[0] + dx * tt
       const hy = p1[1] + dy * tt
-      // ★ 深色描边圈（* 浅色背景上白核不显形，* 靠它兜住）⚠
-      ctx.fillStyle = 'rgba(15,23,42,0.55)'
+      // ★ 深色兜底圈（* 浅色背景上亮色不显形，* 靠它勾出轮廓）⚠
+      ctx.fillStyle = 'rgba(15,23,42,0.5)'
       ctx.beginPath()
-      ctx.arc(hx, hy, 19, 0, Math.PI * 2)
+      ctx.arc(hx, hy, glowR + 0.8, 0, Math.PI * 2)
       ctx.fill()
 
-      const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, 18)
-      glow.addColorStop(0, `rgba(${COLOR.r},${COLOR.g},${COLOR.b},0.95)`)
-      glow.addColorStop(0.45, `rgba(${COLOR.r},${COLOR.g},${COLOR.b},0.45)`)
-      glow.addColorStop(1, `rgba(${COLOR.r},${COLOR.g},${COLOR.b},0)`)
+      // ★ 光晕：**颜色 = 发出节点的颜色**
+      const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, glowR)
+      glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.95)`)
+      glow.addColorStop(0.45, `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`)
+      glow.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`)
       ctx.fillStyle = glow
       ctx.beginPath()
-      ctx.arc(hx, hy, 18, 0, Math.PI * 2)
+      ctx.arc(hx, hy, glowR, 0, Math.PI * 2)
       ctx.fill()
 
-      ctx.fillStyle = '#e0fbff'
+      // ★ 亮核（* 同色偏白，* 保证小尺寸下也能看清）
+      ctx.fillStyle = `rgba(${Math.min(255, rgb.r + 90)},${Math.min(255, rgb.g + 90)},${Math.min(255, rgb.b + 90)},1)`
       ctx.beginPath()
-      ctx.arc(hx, hy, 5, 0, Math.PI * 2)
+      ctx.arc(hx, hy, Math.max(0.7, headR), 0, Math.PI * 2)
       ctx.fill()
     }
   }

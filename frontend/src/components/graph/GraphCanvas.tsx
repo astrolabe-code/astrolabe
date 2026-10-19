@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
@@ -83,6 +83,12 @@ export default function GraphCanvas({
   const selectedRef = useRef<number | null>(null)
   /** 布局是否已稳定（* 0 = 还没有；存时刻） */
   const readyRef = useRef(0)
+  // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
+  const nodeSize = (n: GraphNode) => (n.origin === 'manual' ? 16 : 14)
+  const nodeById = useMemo(
+    () => new Map((graph?.nodes ?? []).map((n) => [String(n.vid), n])),
+    [graph],
+  )
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {
@@ -109,7 +115,7 @@ export default function GraphCanvas({
             style: {
               x: W / 2 + Math.cos(ang) * RING,
               y: H / 2 + Math.sin(ang) * RING,
-              size: manual ? 16 : 14,
+              size: nodeSize(n),
               fill: colorOf(n),
               stroke: n.patched ? '#fbbf24' : colorOf(n),
               lineWidth: n.patched ? 2 : 1,
@@ -228,11 +234,18 @@ export default function GraphCanvas({
         timer = window.setTimeout(wait, 150)
         return
       }
-      stop = startMeteor(
-        g,
-        box,
-        graph.edges.map((e) => ({ from: String(e.from), to: String(e.to) })),
-      )
+      // ★★ 每条边带上**发出节点**的 size / color ——
+      //    * 流星大小 = 节点直径 1/10，* 颜色 = 节点颜色（* 所有者口径）⚠
+      const edges = graph.edges.map((e) => {
+        const src = nodeById.get(String(e.from))
+        return {
+          from: String(e.from),
+          to: String(e.to),
+          size: src ? nodeSize(src) : 14,
+          color: src ? colorOf(src) : '#94a3b8',
+        }
+      })
+      stop = startMeteor(g, box, edges)
       onPhase?.('流星已启动')
     }
     wait()

@@ -98,7 +98,16 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
     void g.render()
     graphRef.current = g
 
-    const list = nodes.filter((n) => n.linkTo).map((n) => ({ from: n.id, to: n.linkTo as string }))
+    // ★ 与图谱页同口径：* 流星大小 = 发出节点直径 1/10、* 颜色 = 发出节点颜色 ⚠
+    const sizeOf = (id: string) => (id === 'root' ? 18 : 12)
+    const list = nodes
+      .filter((n) => n.linkTo)
+      .map((n) => ({
+        from: n.id,
+        to: n.linkTo as string,
+        size: sizeOf(n.id),
+        color: colorOf(n.id),
+      }))
     let timer: number | null = null
     if (meteor && list.length > 0) {
       // ★ 等渲染完成（位置才有效）再启动流星

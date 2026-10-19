@@ -378,6 +378,9 @@ export default function GraphCanvas({
     const paint = (vid: number, stroke: string, lineWidth: number, scale: number) => {
       const n = graph.nodes.find((x) => x.vid === vid)
       if (!n) return
+      // ★★★ **必须确认它还在 G6 里** —— 节点被「隐藏」移除后，
+      //   `updateNodeData` 会抛 `Node not found` ⇒* React 渲染中断 ⇒ 整页消失 ⚠
+      if (!g.getNodeData().some((x) => String(x.id) === String(vid))) return
       g.updateNodeData([
         {
           id: String(vid),
@@ -397,7 +400,11 @@ export default function GraphCanvas({
     //   小、* 视觉上反而"缩小"，* 所以必须同时放大尺寸）⚠
     if (cur != null) paint(cur, '#ffffff', 3, 1.25)
     selectedRef.current = cur
-    void g.draw()
+    try {
+      void g.draw()
+    } catch {
+      /* 图已销毁 / 节点已移除 */
+    }
   }, [selectedVid, graph])
 
   // ============================================================ 搜索聚焦
@@ -526,26 +533,49 @@ export default function GraphCanvas({
     onGraphChanged?.()
   }
 
-  // ★★★ 隐藏节点及其邻居：* 先删边、再删点、* 只 draw() ⚠
+  // ★★★ 隐藏节点：* **照原型 `hideNodeFromVisible` 的口径** ——
+  //   · · ① 目标节点本身移除 ✅
+  //   · · ② 只与它相连的**叶子邻居**（* 度数 1 且只连它）一并收起 ✅
+  //   · · ③ 还连着**其它节点**的邻居 ⇒* **保留**，* 只断开与目标之间的边 ⚠
+  //   · · （* 我原来把所有直接邻居都删了 ⇒ 点个枢纽节点半张图就没了）⚠
   const hideNodeAndNeighbors = async (id: string) => {
     const g = gRef.current
     if (!g) return
-    const cur = g.getNodeData().map((n) => String(n.id))
-    const hide = new Set<string>([id])
-    for (const e of g.getEdgeData()) {
-      if (String(e.source) === id) hide.add(String(e.target))
-      if (String(e.target) === id) hide.add(String(e.source))
+    const nodes = g.getNodeData()
+    const edges = g.getEdgeData()
+
+    // 当前可见图的无向邻接表
+    const adj = new Map<string, Set<string>>()
+    for (const e of edges) {
+      const a = String(e.source)
+      const b = String(e.target)
+      if (!adj.has(a)) adj.set(a, new Set())
+      if (!adj.has(b)) adj.set(b, new Set())
+      adj.get(a)!.add(b)
+      adj.get(b)!.add(a)
     }
-    const ids = [...hide].filter((v) => cur.includes(v))
+
+    const removing = new Set<string>([id])
+    for (const n of adj.get(id) ?? []) {
+      const nbrs = adj.get(n)
+      // ★ 只删「仅与它相连」的邻居（* 还连着别人的要留在图上）⚠
+      if (nbrs && nbrs.size === 1 && nbrs.has(id)) removing.add(n)
+    }
+
+    const cur = new Set(nodes.map((n) => String(n.id)))
+    const ids = [...removing].filter((v) => cur.has(v))
     if (ids.length === 0) return
-    const edgeIds = g
-      .getEdgeData()
-      .filter((e) => ids.includes(String(e.source)) || ids.includes(String(e.target)))
+
+    // 先删边（两头沾到被移除节点的边），再删点
+    const edgeIds = edges
+      .filter((e) => removing.has(String(e.source)) || removing.has(String(e.target)))
       .map((e) => String(e.id))
     if (edgeIds.length) g.removeEdgeData(edgeIds)
     g.removeNodeData(ids)
     await g.draw()
     setRing(null)
+    // ★ 被隐藏的节点清掉选中 —— 否则 effect 还会去找它（* 找不到就崩）⚠
+    onDeselect?.()
     onGraphChanged?.()
   }
 
@@ -578,9 +608,6 @@ export default function GraphCanvas({
   // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
   return (
     <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* ⚠★ 2026-10-19：**临时关闭环形按钮**（* 所有者：「先把半圆形按钮注释掉，
-          我看看是什么原因」）——* 排查"点击节点出现黑色圆环"是否由它引起 ⚠
-          · · ★ 恢复时把下面的 `false &&` 删掉即可 ✅ */}
       {ring && (
         <svg
           ref={ringRef}
@@ -592,8 +619,6 @@ export default function GraphCanvas({
             width: 96,
             height: 96,
             transform: `translate(-50%, -50%) scale(${ringScale})`,
-            // ⚠ 临时隐藏（* 排查黑圈来源）：* 恢复时删掉这一行 ✅
-            display: 'none',
             zIndex: 20,
             overflow: 'visible',
             // ★★★ 关键：* 环外空白**不拦截**图的拖拽 / 缩放 ——

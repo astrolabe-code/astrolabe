@@ -194,8 +194,8 @@ export default function GraphCanvas({
       node: {
         style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
         state: {
-          // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗，* 无色、* 无阴影 ⚠
-          selected: { lineWidth: 5 },
+          // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗 + 放大，* 无色无阴影 ⚠
+          selected: { lineWidth: 3, size: 35 },
           // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
           //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
           // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
@@ -373,7 +373,9 @@ export default function GraphCanvas({
     //   · · ★ G6 的默认 selected 样式会叠一层**黑色描边**（* 实测：点击后变黑圈，
     //     颜色和标签文字一样），* 改 state 样式压不住那层 ⚠
     //   · · ★ 直接 `updateNodeData` 最可控 ✅
-    const paint = (vid: number, stroke: string, lineWidth: number) => {
+    // ★★ `scale` = 节点直径倍数：* 选中要**把节点放大**，
+    //   * 只加粗描边会让填充区视觉上变小（* 所有者指出的问题）⚠
+    const paint = (vid: number, stroke: string, lineWidth: number, scale: number) => {
       const n = graph.nodes.find((x) => x.vid === vid)
       if (!n) return
       g.updateNodeData([
@@ -382,17 +384,18 @@ export default function GraphCanvas({
           style: {
             stroke,
             lineWidth,
+            size: nodeSize(n) * scale,
           },
         },
       ])
     }
     if (prev != null && prev !== cur) {
       const p = graph.nodes.find((x) => x.vid === prev)
-      paint(prev, p?.patched ? '#fbbf24' : '#ffffff', p?.patched ? 2.5 : 2)
+      paint(prev, p?.patched ? '#fbbf24' : '#ffffff', p?.patched ? 2.5 : 2, 1)
     }
-    // ★★ 选中 = **白色描边加粗**（* ⛔ 不换色 ——* 所有者：「不要橙色描边，
-    //   把原来的白色描边扩大一些都行」）⚠
-    if (cur != null) paint(cur, '#ffffff', 5)
+    // ★★★ 选中 = **节点放大 1.25 倍 + 白描边略加粗**（* 只加粗描边会让填充变
+    //   小、* 视觉上反而"缩小"，* 所以必须同时放大尺寸）⚠
+    if (cur != null) paint(cur, '#ffffff', 3, 1.25)
     selectedRef.current = cur
     void g.draw()
   }, [selectedVid, graph])

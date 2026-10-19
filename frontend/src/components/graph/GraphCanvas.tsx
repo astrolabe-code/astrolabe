@@ -364,6 +364,18 @@ export default function GraphCanvas({
     if (ids.length) {
       g.updateNodeData(ids.map((id) => ({ id, style: { labelFill: labelColor } })))
     }
+    // ★★ 诊断：* 看样式到底写进图数据没有（* 区分"没写进去"还是"没重绘"）⚠
+    try {
+      const first = ids[0]
+      const rs = g.getElementRenderStyle(first) as Record<string, unknown>
+      console.log('[label-color] 渲染样式检查', {
+        id: first,
+        labelFill: rs?.labelFill,
+        keys: rs ? Object.keys(rs).slice(0, 12) : null,
+      })
+    } catch (e) {
+      console.warn('[label-color] 读渲染样式失败', e)
+    }
     void g.draw()
   }, [labelColor])
 

@@ -128,6 +128,30 @@ export default function ProjectGraphPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
   const [fullscreen, setFullscreen] = useState(false)
+  // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
+  const [panelFull, setPanelFull] = useState(false)
+  // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
+  const [panelWidth, setPanelWidth] = useState(340)
+  const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
+
+  // ★ 拖拽分隔条：向左拖 ⇒ 写作区变宽（* 上下限 280 ~ 680）⚠
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault()
+    resizeRef.current = { startX: e.clientX, startW: panelWidth }
+    window.addEventListener('pointermove', onResizeMove)
+    window.addEventListener('pointerup', onResizeEnd)
+  }
+  const onResizeMove = (e: PointerEvent) => {
+    if (!resizeRef.current) return
+    const next = resizeRef.current.startW - (e.clientX - resizeRef.current.startX)
+    setPanelWidth(Math.min(680, Math.max(280, next)))
+  }
+  const onResizeEnd = () => {
+    resizeRef.current = null
+    window.removeEventListener('pointermove', onResizeMove)
+    window.removeEventListener('pointerup', onResizeEnd)
+  }
+  useEffect(() => () => onResizeEnd(), [])
   const [hint, setHint] = useState('')
   // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
   const [phase, setPhase] = useState('')
@@ -308,7 +332,16 @@ export default function ProjectGraphPage() {
         }}
       >
         <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: panelFull ? 'none' : 'flex',
+            flexDirection: 'column',
+            position: 'relative',
+          }}
+        >
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
           <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: 6 }}>
@@ -418,7 +451,10 @@ export default function ProjectGraphPage() {
           <button
             type="button"
             className="card"
-            onClick={() => setFullscreen((v) => !v)}
+            onClick={() => {
+              setFullscreen((v) => !v)
+              setPanelFull(false)
+            }}
             title={fullscreen ? '退出全屏' : '全屏'}
             style={{
               position: 'absolute',
@@ -584,16 +620,60 @@ export default function ProjectGraphPage() {
 
         </div>
 
+        {/* ★★ 左右拖动调整宽度（* 形似所有者原型的分隔条）⚠ */}
+        {!fullscreen && !panelFull && (
+          <div
+            onPointerDown={onResizeStart}
+            title="拖动调整宽度"
+            style={{
+              width: 6,
+              flexShrink: 0,
+              cursor: 'col-resize',
+              borderRadius: 3,
+              background: 'transparent',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          />
+        )}
+
         {!fullscreen && (
         <div
           style={{
-            width: 340,
+            width: panelFull ? undefined : panelWidth,
+            flex: panelFull ? 1 : undefined,
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
+            position: 'relative',
           }}
         >
+          {/* ★★ 写作区全屏按钮（* 与图的右上角同款，* 两者互斥）⚠ */}
+          <button
+            type="button"
+            className="card"
+            onClick={() => {
+              setPanelFull((v) => !v)
+              setFullscreen(false)
+            }}
+            title={panelFull ? '退出全屏' : '写作区全屏'}
+            style={{
+              position: 'absolute',
+              top: 6,
+              right: 6,
+              zIndex: 12,
+              width: 30,
+              height: 30,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(15,23,42,.16)',
+            }}
+          >
+            {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
           <NodePanel
             projectRef={projectRef}
             node={selected}

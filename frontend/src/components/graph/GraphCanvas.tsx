@@ -341,6 +341,28 @@ export default function GraphCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, labelColor])
 
+  // ============================================================ 容器尺寸 ⇒ 重画
+  useEffect(() => {
+    const g = gRef.current
+    const box = boxRef.current
+    if (!g || !box) return
+    // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* 必须显式 resize，
+    //   * 否则 G6 的 canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        try {
+          const w = box.clientWidth
+          const h = box.clientHeight
+          if (w > 0 && h > 0) g.resize(w, h)
+        } catch {
+          /* 实例已销毁 */
+        }
+      })
+    })
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [graph])
+
   // ============================================================ 选中态（受控）
   useEffect(() => {
     const g = gRef.current

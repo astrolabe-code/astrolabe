@@ -133,8 +133,48 @@ export default function ProjectGraphPage() {
   const [panelFull, setPanelFull] = useState(false)
   // ★★★ **移动端响应式**（* 窄屏 ⇒ 单列 + 写作区抽屉）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
-  // ★★★ 移动端 = **上下式**（* 照原型：图在上、* 写作区在下，* 占 62%）⚠
-  //   · · ⛔ 不做右侧抽屉 ——* 所有者：「移动点就用上下式的，不就完了」⚠
+  // ★★★ 移动端 = **上下式**（* 照原型：图在上、* 写作区在下）⚠
+  //   · · ★ 可**上下拖拽**调高度（* 抓手条 / 标题区，* 25%~85%）✅
+  //   · · ★ 可**收起**（* 高度 0 + 过渡动画）；* 选中节点自动展开 ✅
+  const [panelPct, setPanelPct] = useState(62)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [panelDragging, setPanelDragging] = useState(false)
+  const gripRef = useRef<{ startY: number; startPct: number } | null>(null)
+  // ★★ 拖拽过就不能再触发 onClick（* 否则松手瞬间被当点击 ⇒ 面板收起）⚠
+  const didDragRef = useRef(false)
+
+  const onGripDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    didDragRef.current = false
+    if (panelCollapsed) {
+      setPanelCollapsed(false)
+      gripRef.current = { startY: e.clientY, startPct: panelPct }
+    } else {
+      gripRef.current = { startY: e.clientY, startPct: panelPct }
+    }
+    setPanelDragging(true)
+    window.addEventListener('pointermove', onGripMove)
+    window.addEventListener('pointerup', onGripUp)
+  }
+  const onGripMove = (e: PointerEvent) => {
+    if (!gripRef.current) return
+    // 移动超过 3px 才算拖拽（* 避免手抖被当点击）
+    if (Math.abs(e.clientY - gripRef.current.startY) > 3) didDragRef.current = true
+    const h = mainRef.current?.clientHeight ?? window.innerHeight
+    const d = ((gripRef.current.startY - e.clientY) / h) * 100
+    setPanelPct(Math.min(85, Math.max(25, gripRef.current.startPct + d)))
+  }
+  const onGripUp = () => {
+    gripRef.current = null
+    setPanelDragging(false)
+    window.removeEventListener('pointermove', onGripMove)
+    window.removeEventListener('pointerup', onGripUp)
+  }
+
+  // ★ 窄屏选中节点 ⇒ 自动展开写作区（* 原型：点头像节点弹面板）⚠
+  useEffect(() => {
+    if (isNarrow && selectedVid != null) setPanelCollapsed(false)
+  }, [isNarrow, selectedVid])
   // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
   const [panelWidth, setPanelWidth] = useState(340)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
@@ -353,7 +393,7 @@ export default function ProjectGraphPage() {
           height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
-            ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--surface)', padding: 12 }
+            ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--card)', padding: 12 }
             : {}),
         }}
       >
@@ -375,6 +415,9 @@ export default function ProjectGraphPage() {
           style={{
             flex: 1,
             minWidth: 0,
+            // ★★★ 必须 `minHeight:0` ——* flex 列里默认 `min-height:auto`，
+            //   * 图区会被 canvas 撑住、* 挤不下去（* 写作区上提时图不缩）⚠
+            minHeight: 0,
             display: panelFull ? 'none' : 'flex',
             flexDirection: 'column',
             position: 'relative',
@@ -690,17 +733,24 @@ export default function ProjectGraphPage() {
             flexDirection: 'column',
             minHeight: 0,
             position: 'relative',
-            // ★★★ 窄屏 ⇒ **上下式**：* 占 62% 高、* 上圆角、* 压住图底边一点
-            //   （* 照原型 .code-panel 在 @media(max-width:768px) 的写法）⚠
+            // ★★★ 窄屏 ⇒ **两个平行盒子**（* 所有者：「写作区与图谱区是两个平行的
+            //   盒子。提上去使用下面写作区的盒子把上面图谱区的盒子的高度挤掉，
+            //   就像覆盖一样了」）⚠
+            //   · · ★ 写作区 `height` 变大 ⇒ 图区（flex:1）**自动被挤矮** ✅
+            //   · · ★ `marginTop:-12` + 上圆角 + 阴影 = 视觉上"浮在图上" ✅
             ...(isNarrow
               ? {
-                  height: panelFull ? undefined : '62%',
-                  marginTop: -12,
+                  // ★ 收起时只留抓手高度（* 否则抓手被裁掉、再也拉不开）⚠
+                  height: panelFull ? undefined : panelCollapsed ? 22 : `${panelPct}%`,
+                  marginTop: panelCollapsed ? 0 : -12,
                   zIndex: 5,
-                  background: 'var(--surface)',
-                  borderRadius: '14px 14px 0 0',
-                  boxShadow: '0 -8px 24px rgba(15,23,42,.18)',
+                  background: 'var(--card)',
+                  borderRadius: panelCollapsed ? 0 : '14px 14px 0 0',
+                  boxShadow: panelCollapsed ? 'none' : '0 -8px 24px rgba(15,23,42,.18)',
                   overflow: 'hidden',
+                  transition: panelDragging
+                    ? 'none'
+                    : 'height .32s cubic-bezier(.25,.8,.35,1), margin-top .32s ease',
                 }
               : {}),
           }}
@@ -730,6 +780,69 @@ export default function ProjectGraphPage() {
           >
             {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
+          {isNarrow && !panelFull && (
+            <>
+              {/* ★★ 抓手条：* 按住上下拖 = 调高度；* 点一下 = 收起/展开 ⚠ */}
+              <div
+                onPointerDown={onGripDown}
+                onClick={() => {
+                  // ★ 拖拽结束的那次 click 不算（* 否则一拖就收起）⚠
+                  if (didDragRef.current) {
+                    didDragRef.current = false
+                    return
+                  }
+                  setPanelCollapsed((v) => !v)
+                }}
+                style={{
+                  height: 22,
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'grab',
+                  touchAction: 'none',
+                  // ★ 手指友好：* 上下各留 4px 命中区
+                  padding: '4px 0',
+                  // ★ 原型 .panel-grip：* 4px 圆角横条
+                }}
+              >
+                <div
+                  style={{
+                    width: 36,
+                    height: 4,
+                    borderRadius: 2,
+                    background: 'var(--card-border)',
+                  }}
+                />
+              </div>
+              {/* ★ 收起按钮（* 原型 .code-panel-close）⚠ */}
+              <button
+                type="button"
+                onClick={() => {
+                  setPanelCollapsed(true)
+                  setSelectedVid(null)
+                }}
+                title="收起写作区"
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  zIndex: 14,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 6,
+                  border: '1px solid var(--card-border)',
+                  background: 'var(--card)',
+                  color: 'var(--text-sub)',
+                  cursor: 'pointer',
+                  fontSize: 15,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </>
+          )}
           <NodePanel
             projectRef={projectRef}
             node={selected}

@@ -739,6 +739,10 @@ export default function ProjectGraphPage() {
             //   就像覆盖一样了」）⚠
             //   · · ★ 写作区 `height` 变大 ⇒ 图区（flex:1）**自动被挤矮** ✅
             //   · · ★ `marginTop:-12` + 上圆角 + 阴影 = 视觉上"浮在图上" ✅
+            // ★★★ 桌面端：* 写作区**本身就是一整块白色面板**（* 即使没选节点）——
+            //   · · 所有者：「右边写作区没有白色内容，能看见背景，但是呢，却有全屏
+            //     按钮？全屏按钮不应该和白色面版区一起的吗？本来就是全屏白色面版区」
+            //   · · ⇒ 背景/圆角/边框**由容器统一给**，* NodePanel 不再自己画卡片 ⚠
             ...(isNarrow
               ? {
                   // ★ 收起时只留抓手高度（* 否则抓手被裁掉、再也拉不开）⚠
@@ -756,7 +760,12 @@ export default function ProjectGraphPage() {
                     ? 'none'
                     : 'height .32s cubic-bezier(.25,.8,.35,1), margin-top .32s ease',
                 }
-              : {}),
+              : {
+                  background: 'var(--card)',
+                  borderRadius: 12,
+                  border: '1px solid var(--card-border)',
+                  overflow: 'hidden',
+                }),
           }}
         >
           {/* ★★ 写作区全屏按钮（* 与图的右上角同款，* 两者互斥）⚠ */}
@@ -828,7 +837,7 @@ export default function ProjectGraphPage() {
             meUsername={meUsername}
             inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
             canEditPath={canWrite}
-            flat={isNarrow}
+            flat
             onAddToPath={selected ? () => addToPath(selected) : undefined}
             onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
           />

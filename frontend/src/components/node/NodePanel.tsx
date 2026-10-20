@@ -1,12 +1,24 @@
 import { useState } from 'react'
-import { FileCode2, ChevronUp, ChevronDown } from 'lucide-react'
+import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
+
 import { errorMessage } from '../../api/errors'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteEditor from '../notes/NoteEditor'
 import NoteSection from '../notes/NoteSection'
+
+// ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
+const KIND_COLOR: Record<string, string> = {
+  function: '#4db8d6',
+  class: '#f59e0b',
+  method: '#ec4899',
+  module: '#a78bfa',
+  file: '#22c55e',
+  package: '#a78bfa',
+  type: '#f59e0b',
+}
 
 /**
  * ★ 节点面板（`F2` · D92）——* 双栏的右栏
@@ -86,6 +98,9 @@ export default function NodePanel({
     }
   }
 
+  // ★ 节点类型色（* 圆点 / 徽章共用）⚠
+  const kc = KIND_COLOR[node.kind] || '#94a3b8'
+
   return (
     // ★★★ **整块一张卡**（* 所有者：「文件信息卡片不要与下面的写作区分离了，
     //   看起来怪怪的」）——* 照原型 `.code-panel`：* 头部 + 正文，* 中间一条分隔线 ⚠
@@ -140,13 +155,52 @@ export default function NodePanel({
           borderBottom: '1px solid var(--card-border)',
         }}
       >
-        {/* ★ 右侧留 34px 给「写作区全屏」按钮（* 否则收起按钮被它压住、按不到）⚠ */}
-        <div className="flex items-center gap-2 flex-wrap" style={{ paddingRight: 34 }}>
-          <FileCode2 size={14} style={{ color: 'var(--text-sub)' }} />
-          <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
+        {/* ★★★ 第一行：**颜色小圆点 + 名称 + 类型徽章**（* 照原型 .code-panel-header）⚠
+            · · ★ 圆点 / 徽章文字 / 徽章边框 / 徽章底色 **全部取节点类型色** ✅ */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            paddingRight: 34, // 给右上角「写作区全屏」按钮让位
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              background: kc,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            className="mono"
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {node.name}
           </span>
-          <span className="tag" style={{ fontSize: 10.5 }}>
+          <span
+            style={{
+              fontSize: 10,
+              flexShrink: 0,
+              padding: '1px 7px',
+              borderRadius: 999,
+              lineHeight: '16px',
+              // ★★ 照原型 `.code-panel-type`：* 只有文字色 + 1px 同色边框，
+              //   ⛔ **背景透明**（* 背后是什么色就透什么色，* 不要淡灰底）⚠
+              color: kc,
+              border: `1px solid ${kc}`,
+              background: 'transparent',
+            }}
+          >
             {node.kind}
           </span>
           {/* ★★ 收起 / 展开（* 收起后只留这一行，* 笔记区自动变大）⚠ */}
@@ -172,16 +226,45 @@ export default function NodePanel({
         {infoOpen && (
         <>
         {node.qname && node.qname !== node.name && (
-          <div className="mono faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+          <div
+            className="mono faint"
+            style={{
+              fontSize: 11,
+              marginTop: 6,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {node.qname}
           </div>
         )}
-        <div className="mono faint" style={{ fontSize: 11.5, marginTop: 2 }}>
-          {node.file_path}:{node.line} · {node.lang}
+        <div
+          className="mono faint"
+          style={{
+            fontSize: 11,
+            marginTop: 2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {node.file_path}:{node.line}
+          <span style={{ opacity: 0.55 }}> · {node.lang}</span>
         </div>
         {/* ★★ `D106`：学习路径入口（* 作者才能改；* 在路径里显示序号）⚠ */}
         {canEditPath && (
-          <div className="flex items-center gap-2" style={{ marginTop: 8 }}>
+          <div
+            style={{
+              marginTop: 10,
+              paddingTop: 8,
+              borderTop: '1px dashed var(--card-border)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}
+          >
             {inPathOrdinal != null ? (
               <>
                 <span className="tag" style={{ fontSize: 10.5 }}>

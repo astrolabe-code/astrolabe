@@ -8,6 +8,7 @@ import LikeButton from '../likes/LikeButton'
 import CommentComposer from './CommentComposer'
 import CommentItem from './CommentItem'
 import Modal from '../ui/Modal'
+import Markdown from '../notes/Markdown'
 import type { DeletePerm } from './perm'
 
 /**
@@ -106,43 +107,45 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
         style={{
           fontSize: 14,
           lineHeight: 1.9,
-          whiteSpace: 'pre-wrap',
-          // ★ 有气泡数字时右侧留位，* 免得文字压到数字下面 ⚠
-          paddingRight: hasComments ? 34 : 0,
+          // ★★ 正文按 **markdown 渲染**（* 所有者：「点击卡片后，要以markdown渲染，
+          //   · · 你现在还是原来的文本」）——* 标题 / 粗体 / 列表 / 代码都出来 ⚠
+          //   · · ⛔ 不再 `whiteSpace: 'pre-wrap'`（* 那会把 markdown 源码原样显示）⚠
           userSelect: 'text',
         }}
       >
-        {block.text}
+        {/* ★★★ 段评气泡作为 **trailing** 跟在段落末尾（* 所有者：「段评的气泡要
+            跟着相应段落之后呀。你现在放在最右边，自成一排了」）⚠ */}
+        <Markdown
+          text={block.text}
+          trailing={
+            hasComments ? (
+              <button
+                type="button"
+                onClick={openPanel}
+                title={`${block.comment_count} 条段评`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  padding: '0 6px',
+                  height: 17,
+                  borderRadius: 999,
+                  fontSize: 10.5,
+                  lineHeight: 1,
+                  color: 'var(--accent)',
+                  background: 'var(--accent-dim)',
+                  border: '1px solid transparent',
+                  cursor: 'pointer',
+                  verticalAlign: 'middle',
+                }}
+              >
+                <MessageCircle size={10} />
+                {block.comment_count}
+              </button>
+            ) : null
+          }
+        />
       </div>
-
-      {/* ---- 右上角气泡数字（* 有段评才出现；点击看评论）---- */}
-      {hasComments && (
-        <button
-          type="button"
-          onClick={openPanel}
-          title={`${block.comment_count} 条段评`}
-          style={{
-            position: 'absolute',
-            top: 1,
-            right: 0,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 2,
-            padding: '0 6px',
-            height: 18,
-            borderRadius: 999,
-            fontSize: 10.5,
-            lineHeight: 1,
-            color: 'var(--accent)',
-            background: 'var(--accent-dim)',
-            border: '1px solid transparent',
-            cursor: 'pointer',
-          }}
-        >
-          <MessageCircle size={10} />
-          {block.comment_count}
-        </button>
-      )}
 
       {/* ---- 右键菜单 ---- */}
       {menu && (

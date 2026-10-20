@@ -197,6 +197,8 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
         open={open}
         title="段评"
         width={520}
+        // ★ 内容区不滚 ——* 里面「列表滚动 + 输入框固定」自己控制 ⚠
+        noScroll
         onClose={() => {
           setOpen(false)
           setQuote('')
@@ -220,13 +222,58 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
           </div>
         )}
 
+
+        {/* ★★★ **评论列表 = 滚动区**（* 所有者：「段评论区应该是有滑块的」）⚠
+            · · 固定最大高度 44vh，超出就在**列表内部**滚动；
+            · · 输入框固定在下面，不跟着一起滚 ✅ */}
+        <div
+          style={{
+            maxHeight: '44vh',
+            overflowY: 'auto',
+            paddingRight: 4,
+            // ★ 滚动条样式（* 细一点，不抢眼）⚠
+            scrollbarWidth: 'thin',
+          }}
+        >
+          {comments.isError ? (
+            <div className="text-xs" style={{ color: 'var(--err)' }}>
+              {errorMessage(comments.error)}
+            </div>
+          ) : items.length === 0 ? (
+            <div className="faint" style={{ fontSize: 11.5 }}>
+              这段还没有段评 —— 在下面写第一条。
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {items.map((c) => (
+                <CommentItem
+                  key={c.id}
+                  comment={c}
+                  noteId={noteId}
+                  anchor="paragraph"
+                  perm={perm}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ★★★ **写评论 = 固定在列表下面**（* 所有者：「写窗口和发送按钮应该在
+            评论的下面」）⚠ */}
         {authed && (
-          <div style={{ marginBottom: 12 }}>
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 10,
+              borderTop: '1px solid var(--card-border)',
+              flexShrink: 0,
+            }}
+          >
             <CommentComposer
               noteId={noteId}
               anchor="paragraph"
               blockId={block.id}
-              autoFocus
+              autoFocus={false}
               placeholder="就这一段说点什么……"
               onSent={() => {
                 setQuote('')
@@ -235,28 +282,6 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
                 void qc.invalidateQueries({ queryKey: ['note', noteId] })
               }}
             />
-          </div>
-        )}
-
-        {comments.isError ? (
-          <div className="text-xs" style={{ color: 'var(--err)' }}>
-            {errorMessage(comments.error)}
-          </div>
-        ) : items.length === 0 ? (
-          <div className="faint" style={{ fontSize: 11.5 }}>
-            这段还没有段评。
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {items.map((c) => (
-              <CommentItem
-                key={c.id}
-                comment={c}
-                noteId={noteId}
-                anchor="paragraph"
-                perm={perm}
-              />
-            ))}
           </div>
         )}
       </Modal>

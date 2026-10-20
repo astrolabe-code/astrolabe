@@ -10,10 +10,23 @@ interface ModalProps {
   footer?: ReactNode
   /** 默认 min(360px, 86vw);宽表单可传更大值 */
   width?: number
+  /**
+   * ★ 内容区**不滚动**（* 由弹窗内部自己控制滚动）——
+   *   用于「列表滚动 + 底部固定输入框」的形态（* 如段评）⚠
+   */
+  noScroll?: boolean
 }
 
 /** 弹窗:沿用站点 `.dlg-mask` / `.dlg` 外观,支持 Esc 关闭与滚动锁定 */
-export default function Modal({ open, title, onClose, children, footer, width }: ModalProps) {
+export default function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  footer,
+  width,
+  noScroll,
+}: ModalProps) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -51,7 +64,9 @@ export default function Modal({ open, title, onClose, children, footer, width }:
             <X size={14} />
           </button>
         </div>
-        <div className="max-h-[68vh] overflow-y-auto mt-3">{children}</div>
+        <div className={noScroll ? 'mt-3' : 'max-h-[68vh] overflow-y-auto mt-3'}>
+          {children}
+        </div>
         {footer && <div className="dlg-actions mt-5">{footer}</div>}
       </div>
     </div>

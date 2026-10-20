@@ -22,6 +22,12 @@ export interface MiniNode {
   y: number
   size?: number
   linkTo?: string
+  /**
+   * ★★ 显式颜色（* 首页两个小图用**五种笔记盒子的颜色**：
+   *   · · 灵光 #f59e0b · 质疑 #3b82f6 · 困惑 #a855f7 · 踩坑 #ef4444 · 小结 #10b981）⚠
+   *   · · 不传则回落到目录配色（* 图谱页那种）✅
+   */
+  color?: string
 }
 
 interface Props {
@@ -80,8 +86,8 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
             x: n.x,
             y: n.y,
             size: n.size || 22,
-            fill: colorOf(n.id),
-            stroke: colorOf(n.id),
+            fill: n.color || colorOf(n.id),
+            stroke: n.color || colorOf(n.id),
             labelText: n.label,
             labelPlacement: 'bottom',
             labelFill: '#e2e8f0',

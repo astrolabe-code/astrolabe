@@ -14,14 +14,18 @@ import DemoWindow from '../components/DemoWindow'
 // D40:卡片预览图谱懒加载(进入视口才请求 vis-network 分包)
 const MiniGraph = lazy(() => import('../components/MiniGraph'))
 
-/** 卡片预览图谱:6 节点横排(固定坐标,与旧站一致) */
+/**
+ * ★★ 卡片预览小图：**6 个点**，颜色取五种笔记盒子的色 ——
+ *   灵光 #f59e0b · 质疑 #3b82f6 · 困惑 #a855f7 · 踩坑 #ef4444 · 小结 #10b981
+ *   （* 与首页卡片里的类型胶囊、笔记徽标完全同色 ⇒ 视觉统一）⚠
+ */
 const CARD_NODES = [
-  { id: 'kernel/printk.c', label: 'printk.c', x: 40, y: 50, size: 20, linkTo: 'kernel/sched.c' },
-  { id: 'kernel/sched.c', label: 'sched.c', x: 120, y: 50, size: 20, linkTo: 'fs/buffer.c' },
-  { id: 'fs/buffer.c', label: 'buffer.c', x: 200, y: 50, size: 20, linkTo: 'mm/memory.c' },
-  { id: 'mm/memory.c', label: 'memory.c', x: 280, y: 50, size: 20, linkTo: 'lib/string.c' },
-  { id: 'lib/string.c', label: 'string.c', x: 360, y: 50, size: 20, linkTo: 'init/main.c' },
-  { id: 'init/main.c', label: 'main.c', x: 440, y: 50, size: 20 },
+  { id: 'kernel/printk.c', label: 'printk.c', x: 40, y: 50, size: 20, linkTo: 'kernel/sched.c', color: '#f59e0b' },
+  { id: 'kernel/sched.c', label: 'sched.c', x: 120, y: 50, size: 20, linkTo: 'fs/buffer.c', color: '#3b82f6' },
+  { id: 'fs/buffer.c', label: 'buffer.c', x: 200, y: 50, size: 20, linkTo: 'mm/memory.c', color: '#a855f7' },
+  { id: 'mm/memory.c', label: 'memory.c', x: 280, y: 50, size: 20, linkTo: 'lib/string.c', color: '#ef4444' },
+  { id: 'lib/string.c', label: 'string.c', x: 360, y: 50, size: 20, linkTo: 'init/main.c', color: '#10b981' },
+  { id: 'init/main.c', label: 'main.c', x: 440, y: 50, size: 20, color: '#f59e0b' },
 ]
 
 export default function Home() {
@@ -71,11 +75,21 @@ export default function Home() {
   const startHref = user.authenticated ? SPA_LINKS.workspace : SPA_LINKS.login
   const startText = user.authenticated ? '进入工作区 →' : '开始使用 →'
 
+  // ★★★ 三张卡**各去各的地方**（* 所有者：「这三张卡片点击后都是进入项目工作区，
+  //   没有区别呀」）——* 取最近一个项目，分别直达：* 笔记页 / 图谱页 / 思考模式 ⚠
+  // ★ 优先取**自己的**项目（`mine`），* 否则取列表第一个（游客看公开项目）⚠
+  const recentRef = (projects?.find((x) => x.mine) ?? projects?.[0])?.project_ref
+  const notesHref = recentRef ? `/app/p/${recentRef}` : SPA_LINKS.workspace
+  const graphHref = recentRef ? `/app/p/${recentRef}/graph` : SPA_LINKS.workspace
+  const thinkHref = recentRef
+    ? `/app/p/${recentRef}?think=1`
+    : SPA_LINKS.workspace
+
   return (
     <div className="page">
       <div className="hero">
         <div className="rise">
-          <div className="kicker">Code Analysis Console</div>
+          <div className="kicker">Source Graph &amp; Notes</div>
           <h1>
             {user.authenticated ? (
               <>
@@ -96,20 +110,20 @@ export default function Home() {
                 <>
                   欢迎回来，老大。管理好站点，带大家探索源码世界吧~
                   <br />
-                  上传源码，解析结构，即刻开始。
+                  上传源码，解析结构，在节点上写下你的思考。
                 </>
               ) : (
                 <>
                   欢迎回来，{user.username}。去探索源码的世界吧~
                   <br />
-                  上传源码，解析结构，即刻开始。
+                  上传源码，解析结构，在节点上写下你的思考。
                 </>
               )
             ) : (
               <>
                 上传源码，解析结构，探索依赖图谱。
                 <br />
-                在云端控制台里，打开编辑器，即刻开始编程。
+                围绕节点记下灵光一闪、质疑与踩坑，再摊成一张思考的白布。
               </>
             )}
           </p>
@@ -166,37 +180,43 @@ export default function Home() {
         </div>
         <div className="f">
           <i />
-          <b>云端终端</b> · 随时运行代码
+          <b>节点笔记</b> · 灵光 / 质疑 / 踩坑
         </div>
       </div>
 
       <div className="grid">
-        <a className="card hoverable entry rise d1" href={SPA_LINKS.workspace}>
+        {/* ① 节点笔记 ⇒ **最近项目的项目页**（* 左列表 + 右笔记）⚠ */}
+        <a className="card hoverable entry rise d1" href={notesHref}>
           <div className="prev">
-            <div className="pre-code">
-              <span>
-                <span className="ln">1</span>
-                <span className="tk-key">def</span> <span className="tk-fn">parse</span>(src):
+            <div className="pre-notes">
+              <span className="chip" style={{ color: '#f59e0b', borderColor: '#f59e0b' }}>
+                ● 灵光一闪
               </span>
-              <span>
-                <span className="ln">2</span>    <span className="tk-key">return</span>{' '}
-                <span className="tk-str">"structure"</span>
+              <span className="chip" style={{ color: '#3b82f6', borderColor: '#3b82f6' }}>
+                ● 质疑
               </span>
-              <span>
-                <span className="ln">3</span>    <span className="tk-com"># 34 个函数 · 12 个模块</span>
+              <span className="chip" style={{ color: '#a855f7', borderColor: '#a855f7' }}>
+                ● 困惑
+              </span>
+              <span className="chip" style={{ color: '#ef4444', borderColor: '#ef4444' }}>
+                ● 踩坑
+              </span>
+              <span className="chip" style={{ color: '#10b981', borderColor: '#10b981' }}>
+                ● 小结
               </span>
             </div>
           </div>
           <div className="body">
             <h3>
-              代码分析 <span className="n">ANALYZE</span>
+              节点笔记 <span className="n">NOTES</span>
             </h3>
-            <p>上传源码，自动解析函数、变量与调用关系，生成结构化分析报告。</p>
-            <span className="go">enter analysis →</span>
+            <p>围绕每个函数、类写下灵光一闪、质疑、困惑、踩坑与小结，笔记钉在节点上。</p>
+            <span className="go">enter notes →</span>
           </div>
         </a>
 
-        <a className="card hoverable entry rise d2" href={SPA_LINKS.workspace}>
+        {/* ② 依赖图谱 ⇒ **最近项目的图谱页** ✅ */}
+        <a className="card hoverable entry rise d2" href={graphHref}>
           <div className="prev">
             <div className="pre-graph" ref={cardRef}>
               {cardInView && (
@@ -215,24 +235,22 @@ export default function Home() {
           </div>
         </a>
 
-        <a className="card hoverable entry rise d3" href={SPA_LINKS.workspace}>
+        {/* ③ 思考模式 ⇒ **最近项目 + ?think=1**（* 自动选中首个节点并打开白布）⚠ */}
+        <a className="card hoverable entry rise d3" href={thinkHref}>
           <div className="prev">
-            <div className="pre-term">
-              <span>
-                <span className="p">$ </span>make &amp;&amp; make run
-              </span>
-              <span className="ok">✓ build succeeded in 2.41s</span>
-              <span>
-                <span className="p">$ </span>./os
-              </span>
+            <div className="pre-think">
+              <div className="tc" style={{ left: 26, top: 24 }} />
+              <div className="tc" style={{ left: 96, top: 44 }} />
+              <div className="tc" style={{ left: 168, top: 18 }} />
+              <div className="tc" style={{ left: 238, top: 38 }} />
             </div>
           </div>
           <div className="body">
             <h3>
-              代码控制台 <span className="n">CONSOLE</span>
+              思考模式 <span className="n">THINK</span>
             </h3>
-            <p>内置编辑器与终端，直接在浏览器中修改、执行并观察输出。</p>
-            <span className="go">enter console →</span>
+            <p>把笔记卡片摊在白布上，随手拖动排布，理清知识之间的联系。</p>
+            <span className="go">enter thinking →</span>
           </div>
         </a>
       </div>

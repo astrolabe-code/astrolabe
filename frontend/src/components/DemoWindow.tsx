@@ -19,14 +19,18 @@ const META: Record<PaneId, [string, string]> = {
 }
 
 /** 演示窗口图谱:中心 + 6 环绕(固定坐标,与旧站一致) */
+/**
+ * ★★ 演示窗小图：7 个点，* 颜色取五种笔记盒子的色（循环）——
+ *   灵光 #f59e0b · 质疑 #3b82f6 · 困惑 #a855f7 · 踩坑 #ef4444 · 小结 #10b981 ⚠
+ */
 const DEMO_NODES = [
-  { id: 'kernel/printk.c', label: 'printk.c', x: 260, y: 150, size: 28 },
-  { id: 'kernel/sched.c', label: 'sched.c', x: 150, y: 60, size: 22, linkTo: 'kernel/printk.c' },
-  { id: 'kernel/panic.c', label: 'panic.c', x: 370, y: 60, size: 22, linkTo: 'kernel/printk.c' },
-  { id: 'fs/buffer.c', label: 'buffer.c', x: 100, y: 240, size: 22, linkTo: 'kernel/printk.c' },
-  { id: 'mm/memory.c', label: 'memory.c', x: 420, y: 240, size: 22, linkTo: 'kernel/printk.c' },
-  { id: 'lib/string.c', label: 'string.c', x: 260, y: 30, size: 20, linkTo: 'kernel/printk.c' },
-  { id: 'init/main.c', label: 'main.c', x: 260, y: 275, size: 20, linkTo: 'kernel/printk.c' },
+  { id: 'kernel/printk.c', label: 'printk.c', x: 260, y: 150, size: 28, color: '#f59e0b' },
+  { id: 'kernel/sched.c', label: 'sched.c', x: 150, y: 60, size: 22, linkTo: 'kernel/printk.c', color: '#3b82f6' },
+  { id: 'kernel/panic.c', label: 'panic.c', x: 370, y: 60, size: 22, linkTo: 'kernel/printk.c', color: '#a855f7' },
+  { id: 'fs/buffer.c', label: 'buffer.c', x: 100, y: 240, size: 22, linkTo: 'kernel/printk.c', color: '#ef4444' },
+  { id: 'mm/memory.c', label: 'memory.c', x: 420, y: 240, size: 22, linkTo: 'kernel/printk.c', color: '#10b981' },
+  { id: 'lib/string.c', label: 'string.c', x: 260, y: 30, size: 20, linkTo: 'kernel/printk.c', color: '#f59e0b' },
+  { id: 'init/main.c', label: 'main.c', x: 260, y: 275, size: 20, linkTo: 'kernel/printk.c', color: '#3b82f6' },
 ]
 
 const DEMO_INTERVAL = 4500

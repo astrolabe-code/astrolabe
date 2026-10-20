@@ -144,15 +144,18 @@ export default function NotePage() {
           </span>
         </div>
 
-        {/* ②③ 正文：按后端 blocks 逐段 */}
+        {/* ②③ 正文：按后端 blocks 逐段
+            ★★ 段落文字由 ParagraphComments 自己渲染 ——
+               * 它负责「选中文字 → 右键 → 弹窗写段评」（* 番茄小说那种）⚠ */}
         <div className="card flex flex-col gap-5" style={{ padding: '16px 18px' }}>
           {blocks.map((b) => (
-            <div key={b.id}>
-              <div style={{ fontSize: 14, lineHeight: 1.9, whiteSpace: 'pre-wrap' }}>{b.text}</div>
-              <div className="mt-1.5">
-                <ParagraphComments noteId={n.id} block={b} authed={authed} perm={perm} />
-              </div>
-            </div>
+            <ParagraphComments
+              key={b.id}
+              noteId={n.id}
+              block={b}
+              authed={authed}
+              perm={perm}
+            />
           ))}
         </div>
 

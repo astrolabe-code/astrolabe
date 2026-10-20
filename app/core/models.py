@@ -1878,56 +1878,23 @@ class NoteComment(TimeStampedModel):
 
 
 class NoteLike(TimeStampedModel):
-    """★★ **一个赞** —— ★★ **章赞与段赞【同表】**。
+    """★★ **一个章赞**（* 对整篇笔记的赞）。
 
-    ## ⚠★★ 幂等约束：**普通 UNIQUE 挡不住重复的"章赞"** ⚠
+    ## ⚠★ 2026-10-20：**段赞已删除**
 
-    ```sql
-    -- ❌ 这样写挡不住：
-    UNIQUE (note_id, user_id, block_id)
-    -- ★★ PostgreSQL 认为【两个 NULL 不相等】⇒
-    --    ★ block_id 为 NULL 的行可以插【任意多份】⚠
-    --    ★★ 于是"同一个人对同一篇笔记点了 100 次章赞" ✅ 通过 ⚠
+    ★ 所有者原话：「把章赞里的段赞字段和相关的索引和约束删掉。」
 
-    -- ✅ 正解一（* 本机 PG 17.11 支持）：
-    UNIQUE NULLS NOT DISTINCT (note_id, user_id, block_id)
-
-    -- ✅ 正解二（* 2026-10-15 采用）：**拆成两条偏唯一索引** ⚠
-    --   · ★ 各 12 字节（* 比三列合一的 20 字节省）✅
-    --   · ★★ 语义还更清楚 ✅
+    ```
+    旧：is_paragraph(bool) + block_id(FK) —— 章赞 / 段赞同表
+    新：只有 note + user —— 一表只管章赞
     ```
 
-    ⚠★ 为什么最终选"正解二"而不是 `NULLS NOT DISTINCT`：
-      ★★ 两条偏索引**每棵只装自己那类行** ⇒ ★ 体积更小、* 语义更清 ⚠
-      · ★ 而 `NULLS NOT DISTINCT` 是一棵**装全部**的索引 ⚠
+    ⇒ ★ `uniq_like_paragraph` 偏索引、`is_paragraph`、`block_id` 全部删除；
+      唯一性回到最朴素的 `UNIQUE (note_id, user_id)`（* 两列都非空，也没有
+      PG「两个 NULL 不相等」的坑）✅
     """
 
     note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="likes")
-    #: ★★ `is_paragraph`（* 取代原先的 `anchor_kind` varchar(16)）——
-    #: ★ 只有 2 种取值 ⇒ ★ bool **省 15 字节/条** ⚠
-    is_paragraph = models.BooleanField(default=False)
-    #: ★★ **段赞指着哪个段落**（* 章赞恒 NULL）⚠
-    #:
-    #: ⚠★★ 2026-10-17（`B211`①）：`SET_NULL` ⇒ **`CASCADE`** ⚠
-    #:
-    #: ★★ 为什么改（* 所有者裁定：* 段赞锚点被删 ⇒ 赞跟着没）：
-    #:   · ★ 段落被 realign 删掉时（* 改了字的段换新 id），* 赞**跟着删**、* 计数 −1 ✅
-    #:   · ★★ 而 `SET_NULL` 的后果是**静默养脏数据**：
-    #:     · · ★ ⓪ PG 里两个 NULL **互不相等** ⇒* 偏唯一索引 `(block,user)` 挡不住
-    #:       ⇒* 同一用户能在同一篇上堆**多行失锚赞**（* 赞了新段 + 旧的挂着）⚠
-    #:     · · ① 合并计数**只涨不减**（* 失锚行永远算在里面）⚠
-    #:     · · ② 取消时按 `block_id` 匹配不到 NULL 行 ⇒* `removed:false`
-    #:       ⇒* **那个赞永远取消不掉** ⚠
-    #:   · ★★ 判据（* `B212`①）：* 计数错误必须**有界且自愈** ——*
-    #:     SET_NULL 的错误随时间累积，* ❌ 系统性漂移；* CASCADE 的错误是
-    #:     「锚点没了赞没了」，* ✅ 有界、* 可解释、* 与失锚评论同一族思想 ⚠
-    block = models.ForeignKey(
-        NoteBlock,
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        related_name="likes",
-    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -1936,17 +1903,10 @@ class NoteLike(TimeStampedModel):
 
     class Meta:
         constraints = [
-            # ★★ 章赞：一人一次（* 偏唯一索引）✅
+            # ★★ 一人一章赞（* 两列都非空 ⇒* 普通唯一约束就够）✅
             models.UniqueConstraint(
                 fields=["note", "user"],
-                condition=models.Q(is_paragraph=False),
                 name="uniq_like_chapter",
-            ),
-            # ★★ 段赞：一人一次（* 偏唯一索引）✅
-            models.UniqueConstraint(
-                fields=["block", "user"],
-                condition=models.Q(is_paragraph=True),
-                name="uniq_like_paragraph",
             ),
         ]
         verbose_name = "点赞"

@@ -41,6 +41,7 @@
 from __future__ import annotations
 
 from django.db.models import F
+from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.views.decorators.http import require_http_methods
 
@@ -74,6 +75,11 @@ def collection(request: HttpRequest, note_id: int):
     if note is None or not note_readable(request, note):
         return fail("笔记不存在", 404, code="not_found")
 
+    # ★★★ 2026-10-20：**段赞已下线**（* 所有者：「把章赞里的段赞字段和相关的
+    #   索引和约束删掉」）⇒* 只要不是 chapter 一律 400，* 不再静默当章赞 ⚠
+    if _anchor_kind(request) != "chapter":
+        return fail("段赞已下线，只支持章赞", 400, code="paragraph_like_removed")
+
     # ★★ `B211`③：* GET 不需要登录（* 计数对所有人可见）✅
     if request.method == "GET":
         return _status(request, note)
@@ -93,63 +99,32 @@ def collection(request: HttpRequest, note_id: int):
 # 内部
 # ---------------------------------------------------------------------------
 
+def _anchor_kind(request: HttpRequest) -> str:
+    """★ 取 `anchor_kind`：* POST 读请求体，* GET / DELETE 读查询参数 ⚠"""
+    if request.method == "POST":
+        return str(read_json(request).get("anchor_kind") or "chapter").strip()
+    return (request.GET.get("anchor_kind") or "chapter").strip()
+
+
 def _status(request: HttpRequest, note: Note):
-    """★★ **「我赞过没有 + 合并计数」**（* `B211`③：* 初始态的服务端来源）⚠
-
-    ## ★★ 为什么必须有它（* 所有者三次纠正后的定论）
-
-    ```
-    ★★ 前端**不**本地 ±1 计数（* `B211`⑥：* 合并数不是 UI 能动的数字）⚠
-      · · ★ 那就必须有个地方回答「**合并计数里有没有含着我的赞**」✅
-    ★★ 对应 B站架构（* 2023 公开分享）：
-      · · ★ 计数 = 内存聚合一齐写（* 可滞后）· * 状态 = 每用户独立（* 要准）✅
-    ```
+    """★★ **「我赞过没有 + 计数」**（* 章赞初始态）⚠
 
     ⚠ 未登录 ⇒ `liked:false`（* 计数照样给 ——* 它对所有人可见）✅
     """
-    anchor = (request.GET.get("anchor_kind") or "chapter").strip()
-    is_paragraph, block, err = _anchor_of(
-        note, anchor, request.GET.get("block_id"), source="查询参数"
-    )
-    if err is not None:
-        return err
-
     user = current_user(request)
-    liked = False
-    if user is not None:
-        qs = NoteLike.objects.filter(note=note, user=user, is_paragraph=is_paragraph)
-        if is_paragraph:
-            qs = qs.filter(block=block)
-        liked = qs.exists()
-
+    liked = (
+        user is not None and NoteLike.objects.filter(note=note, user=user).exists()
+    )
     return ok({"liked": liked, "like_count": _like_count_of(note.pk)})
 
 
 def _like(request: HttpRequest, note: Note, user):
-    body = read_json(request)
-    anchor = str(body.get("anchor_kind") or "chapter").strip()
-    is_paragraph, block, err = _anchor_of(
-        note, anchor, body.get("block_id"), source="请求体"
-    )
-    if err is not None:
-        return err
-
-    # ★★ `B211`②：**赞行写入与计数 ±1 必须是同一个事务** ⚠
-    #   · ★ 本项目**没有** `ATOMIC_REQUESTS` ⇒* ❌ 不显式包起来就是两次独立写，
-    #     中间挂掉即漂移（* 而漂移是 `B212`① 明令不许的）⚠
+    """★ 章赞：一人一次（* `uniq_like_chapter` 唯一约束兜底）⚠"""
     from django.db import transaction
 
+    # ★★ `B211`②：**赞行写入与计数 +1 必须同一事务** ⚠
     with transaction.atomic():
-        if is_paragraph:
-            like, created = NoteLike.objects.get_or_create(
-                note=note, user=user, is_paragraph=True, block=block
-            )
-        else:
-            # ⚠ 章赞：block 恒 NULL —— * 由 `uniq_like_chapter` 偏索引保证一人一次 ✅
-            like, created = NoteLike.objects.get_or_create(
-                note=note, user=user, is_paragraph=False, block=None
-            )
-
+        _like_row, created = NoteLike.objects.get_or_create(note=note, user=user)
         if created:
             Note.objects.filter(pk=note.pk).update(like_count=F("like_count") + 1)
 
@@ -164,25 +139,15 @@ def _like(request: HttpRequest, note: Note, user):
 
 
 def _unlike(request: HttpRequest, note: Note, user):
-    # ⚠ DELETE 用**查询参数**带锚点（* 请求体对 DELETE 不礼貌，* 且容易被代理剥掉）⚠
-    anchor = (request.GET.get("anchor_kind") or "chapter").strip()
-    is_paragraph, block, err = _anchor_of(
-        note, anchor, request.GET.get("block_id"), source="查询参数"
-    )
-    if err is not None:
-        return err
-
-    qs = NoteLike.objects.filter(note=note, user=user, is_paragraph=is_paragraph)
-    if is_paragraph:
-        qs = qs.filter(block=block)
-
-    # ★★ `B211`②：**删赞行与计数 −1 同一个事务**（* 同 `_like` 的理由）⚠
+    """★ 取消章赞（* 幂等：没点过也 200）⚠"""
     from django.db import transaction
 
     with transaction.atomic():
-        removed, _ = qs.delete()
+        removed, _ = NoteLike.objects.filter(note=note, user=user).delete()
         if removed:
-            Note.objects.filter(pk=note.pk).update(like_count=F("like_count") - 1)
+            Note.objects.filter(pk=note.pk).update(
+                like_count=Greatest(F("like_count") - 1, 0)
+            )
 
     return ok(
         {
@@ -194,48 +159,6 @@ def _unlike(request: HttpRequest, note: Note, user):
     )
 
 
-def _anchor_of(note: Note, anchor: str, raw_block, *, source: str):
-    """★★ **把 `anchor_kind` + `block_id` 解析成 `(is_paragraph, block)`** ⚠
-
-    Returns:
-        `(is_paragraph, block, err)` —— * `err` 非 None 时**直接返回它** ✅
-    """
-    if anchor not in ("chapter", "paragraph"):
-        return (
-            False,
-            None,
-            fail("anchor_kind 必须是 chapter 或 paragraph", 400, code="bad_anchor"),
-        )
-    if anchor == "chapter":
-        if raw_block:
-            return (
-                False,
-                None,
-                fail("章赞不能指定段落", 400, code="block_not_allowed"),
-            )
-        return False, None, None
-
-    # ---- 段赞：必须给一个**属于这篇笔记**的段落 ----
-    if raw_block in (None, ""):
-        return (
-            True,
-            None,
-            fail(f"段赞必须指定 block_id（{source}）", 400, code="missing_block"),
-        )
-    try:
-        block_pk = int(raw_block)
-    except (TypeError, ValueError):
-        return True, None, fail("block_id 必须是数字", 400, code="bad_block")
-    block = NoteBlock.objects.filter(pk=block_pk, note=note).first()
-    if block is None:
-        return (
-            True,
-            None,
-            fail("段落不存在（或不属于这篇笔记）", 404, code="block_not_found"),
-        )
-    return True, block, None
-
-
 def _like_count_of(note_pk: int) -> int:
-    """★ 笔记级点赞总数（* 章赞 + 段赞，* 见口径 ③）✅"""
+    """★ 笔记级点赞总数（**只算章赞** —— * 段赞已下线）✅"""
     return Note.objects.filter(pk=note_pk).values_list("like_count", flat=True).first() or 0

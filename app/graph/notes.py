@@ -314,8 +314,8 @@ def recount_likes(note: "Note") -> None:
     ```
     ★★ `Note.like_count` 是**缓存**，* `core_note_like` 的**行**才是真相 ⚠
       · · ★ 同 `B146` 的纪律：* 计数必须只有一个来源 ✅
-    ★★ CASCADE 删段赞是**行数变化**，* 不是一次 ±1 能描述的 ⚠
-      · · ★ 一次 realign 可能删掉 N 个旧段 ⇒* N 条段赞一起没 ✅
+    ⚠★ 2026-10-20：* 段赞已下线（`NoteLike` 只剩章赞）——*
+      * 本函数现在等价于「重算章赞行数」✅
     ```
 
     ⚠★ 本函数同时供管理命令 `recount_note_likes` 复用

@@ -231,6 +231,9 @@ main, .wrap { position: relative; z-index: 1; margin-inline: auto; }
 /* ★ 面包屑样式已删除（* 所有者：不要路径面包屑，* 渲染逻辑也一并删了）⚠ */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
 .page-head .head-actions { display: flex; gap: 12px; align-items: center; }
+/* ★ 页头只有操作按钮（没有 title）时，* 让它靠右 —— 否则 flex space-between
+   在单子元素下会把它放在最左边 ⚠ */
+.page-head > .head-actions:only-child { margin-left: auto; }
 
 /* ===== 表格 ===== */
 .table-wrap { overflow-x: auto; }

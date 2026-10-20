@@ -234,6 +234,8 @@ urlpatterns = [
     # ⚠★ 单条【不挂笔记】—— ★ 与 `notes/<id>/` 同构：* id 自己唯一 ✅
     # ★★ **只有 DELETE**（* 评论只删不改，* B201③）—— * 且是**软删** ⚠
     path("comments/<int:comment_id>/", comments.detail, name="comment-detail"),
+    # ★★ 评论赞（* 每条评论旁边的赞按钮）⚠
+    path("comments/<int:comment_id>/like/", comments.like_comment, name="comment-like"),
     # ------------------------------------------------------------ 点赞（B203⑤）
     # ★★ 幂等：* 重复点赞返回 200 且计数不变（* ❌ 不是 409）⚠
     path(

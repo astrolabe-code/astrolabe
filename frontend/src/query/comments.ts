@@ -109,3 +109,18 @@ export function useDeleteComment(noteId?: number | null) {
     },
   })
 }
+
+/**
+ * ★★ 评论赞（* `POST /api/comments/<id>/like/`）—— 一次 +1
+ *
+ * ⚠ 后端只维护计数（* 不记录谁赞过）⇒ **无取消、无防重**；
+ *   前端做一次乐观 +1，回包校正，失败回滚 ⚠
+ */
+export function useCommentLike() {
+  return useMutation({
+    mutationFn: async (commentId: number): Promise<{ like_count: number }> =>
+      unwrap(
+        await apiPost<{ like_count: number }>(`/api/comments/${commentId}/like/`, {}, 'data'),
+      ),
+  })
+}

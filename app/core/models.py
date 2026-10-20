@@ -1791,6 +1791,10 @@ class NoteComment(TimeStampedModel):
     quote = models.CharField(max_length=500, blank=True, default="")
     #: ★ 正常 / 隐藏 / 待审
     state = models.CharField(max_length=16, default="normal")
+    #: ★★★ **评论的赞数**（* 所有者：「不要段赞了，而是段评里面每个评论旁边有个
+    #:   评论赞……只需要在评论表里加一个赞数字段就可以了」）⚠
+    #: · · ★ 简单计数：* 每次点赞 +1（* 不记录谁赞过 ⇒* 无取消、* 无防重）✅
+    like_count = models.IntegerField(default=0)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

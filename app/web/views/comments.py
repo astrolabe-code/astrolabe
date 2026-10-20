@@ -55,9 +55,10 @@ from django.views.decorators.http import require_http_methods
 
 from core import settings_table as st
 from core.models import Note, NoteBlock, NoteComment
-from web.http import fail, ok, read_json
+from web.http import fail, ok, ok_flat, read_json
 from web.permissions import (
     can_create_comment,
+    can_like,
     can_see_hidden_orphans,
     comment_deletable,
     current_user,
@@ -295,6 +296,8 @@ def _comment_json(c: NoteComment) -> dict:
         "orphaned": bool(c.is_paragraph and c.block_id is None),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
+        # ★★ 评论赞数（* 前端每条评论旁边的赞按钮）⚠
+        "like_count": c.like_count,
     }
 
 
@@ -308,3 +311,33 @@ def _clamp(raw, lo: int, hi: int, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(lo, min(hi, v))
+
+
+# ---------------------------------------------------------------------------
+# 评论赞（★ `F3` 补充 · 2026-10-20）
+# ---------------------------------------------------------------------------
+
+@require_http_methods(["POST"])
+def like_comment(request: HttpRequest, comment_id: int):
+    """`POST /api/comments/<id>/like/` —— **评论 +1 赞**。
+
+    ⚠★ 所有者口径（逐字）：「不要段赞了，而是段评里面每个评论旁边有个评论赞。
+      这样就不需要段ID了。只需要在评论表里加一个赞数字段就可以了。」
+
+    ## ★ 实现取舍（如实记）
+    - ★ 只维护 `NoteComment.like_count` 计数 ⇒* 不建关系表
+    - ⚠ 因此：* 不记录「谁赞过」⇒ **不支持取消、不防重复点击**（* 依次 +1）
+    """
+    comment = NoteComment.objects.filter(pk=comment_id).select_related("note", "note__node").first()
+    if comment is None:
+        return fail("评论不存在", 404, code="not_found")
+
+    # ★ 能读这篇笔记才能赞它的评论（* 私有 / 隐藏 / 软删同样挡住）⚠
+    if not note_readable(request, comment.note):
+        return fail("评论不存在", 404, code="not_found")
+    if not can_like(request, comment.note):
+        return fail("请先登录", 401, code="unauthenticated")
+
+    NoteComment.objects.filter(pk=comment_id).update(like_count=F("like_count") + 1)
+    fresh = NoteComment.objects.filter(pk=comment_id).values_list("like_count", flat=True).first()
+    return ok_flat(like_count=int(fresh or 0))

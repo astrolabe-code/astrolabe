@@ -4,7 +4,6 @@ import type { NoteBlock } from '../../api/types'
 import { useQueryClient } from '@tanstack/react-query'
 import { useComments } from '../../query/comments'
 import { errorMessage } from '../../api/errors'
-import LikeButton from '../likes/LikeButton'
 import CommentComposer from './CommentComposer'
 import CommentItem from './CommentItem'
 import Modal from '../ui/Modal'
@@ -220,10 +219,6 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
             {quote}
           </div>
         )}
-
-        <div style={{ marginBottom: 10 }}>
-          <LikeButton noteId={noteId} anchor="paragraph" blockId={block.id} size="sm" />
-        </div>
 
         {authed && (
           <div style={{ marginBottom: 12 }}>

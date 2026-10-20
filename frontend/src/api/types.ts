@@ -694,6 +694,8 @@ export interface Comment {
   orphaned: boolean
   created_by: string
   created_at: string
+  /** ★★ 评论赞数（* 段评 / 章评每条评论自己的赞，* 不需要 block_id）⚠ */
+  like_count: number
 }
 
 export interface CommentListData {

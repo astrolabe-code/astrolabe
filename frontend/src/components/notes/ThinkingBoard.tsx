@@ -45,8 +45,10 @@ interface Pos {
   y: number
 }
 
-const CARD_W = 220
-const CARD_H = 96
+// ★★★ 卡片**竖版**：* 高度 > 宽度（* 所有者：「横着方向的长度比竖着方向的
+//   长度长」⇒ 原来是 220×96 的横卡，改成 200×240 的竖卡）⚠
+const CARD_W = 200
+const CARD_H = 240
 const PAD = 24
 const GAP = 16
 
@@ -475,13 +477,14 @@ export default function ThinkingBoard({
                   </div>
                   <div
                     style={{
-                      fontSize: 12.5,
+                      fontSize: 13,
                       fontWeight: 600,
                       color: '#101d33',
-                      lineHeight: 1.35,
+                      lineHeight: 1.4,
                       overflow: 'hidden',
                       display: '-webkit-box',
-                      WebkitLineClamp: 2,
+                      // ★ 竖版卡片：* 标题给 3 行 ⚠
+                      WebkitLineClamp: 3,
                       WebkitBoxOrient: 'vertical',
                     }}
                   >
@@ -491,13 +494,15 @@ export default function ThinkingBoard({
                     style={{
                       fontSize: 11,
                       color: 'rgba(16,29,51,.55)',
+                      lineHeight: 1.6,
                       overflow: 'hidden',
                       display: '-webkit-box',
-                      WebkitLineClamp: 1,
+                      // ★ 竖版卡片：* 摘要给 4 行，* 把竖向空间填起来 ⚠
+                      WebkitLineClamp: 4,
                       WebkitBoxOrient: 'vertical',
                     }}
                   >
-                    {n.body.replace(/\s+/g, ' ').slice(0, 60)}
+                    {n.body.replace(/\s+/g, ' ').slice(0, 200)}
                   </div>
                 </div>
               )

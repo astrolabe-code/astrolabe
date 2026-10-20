@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { X, MousePointer2, Plus, Check } from 'lucide-react'
+import { X, MousePointer2, Plus, Check, Maximize2, Minimize2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { Note, NoteKind } from '../../api/types'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
@@ -74,6 +74,8 @@ export default function ThinkingBoard({
   const [canvas, setCanvas] = useState<Size>({ w: INIT_W, h: INIT_H })
   const [onBoard, setOnBoard] = useState<Set<number>>(new Set())
   const [openBox, setOpenBox] = useState<NoteKind | null>(null)
+  // ★★ 思考模式**自身全屏**（* 去掉外框留白，* 白布铺满整个屏幕）⚠
+  const [fullscreen, setFullscreen] = useState(false)
 
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [resizingId, setResizingId] = useState<number | null>(null)
@@ -281,15 +283,11 @@ export default function ThinkingBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, onResizeMove])
 
-  useEffect(
-    () => () => {
-      window.removeEventListener('pointermove', onPointerMove)
-      window.removeEventListener('pointerup', onPointerUp)
-      window.removeEventListener('pointermove', onResizeMove)
-      window.removeEventListener('pointerup', onResizeUp)
-    },
-    [onPointerMove, onPointerUp, onResizeMove, onResizeUp],
-  )
+  // ⚠⚠ **不要在这里做「依赖变化即清理」**：
+  //   · · `onResizeMove` 依赖 `pos` ⇒ 拖动时 pos 每帧变 ⇒ 本 effect 反复执行清理
+  //   · · ⇒ 把 window 上**正在生效**的 pointermove 监听器一并删掉 ⇒ 卡片拖不动 ⚠
+  //   · · ★ 监听器由 down 绑定、up 自行解绑；卸载时残留也不会有副作用
+  //     （回调里 `if (!dragRef.current || !boardRef.current) return`）✅
 
   // ★ Esc 关闭
   useEffect(() => {
@@ -311,10 +309,10 @@ export default function ThinkingBoard({
         position: 'fixed',
         inset: 0,
         zIndex: 90,
-        background: 'rgba(15,23,42,.45)',
+        background: fullscreen ? 'var(--card)' : 'rgba(15,23,42,.45)',
         display: 'flex',
         flexDirection: 'column',
-        padding: 12,
+        padding: fullscreen ? 0 : 12,
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
@@ -327,9 +325,9 @@ export default function ThinkingBoard({
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--card)',
-          borderRadius: 14,
+          borderRadius: fullscreen ? 0 : 14,
           overflow: 'hidden',
-          boxShadow: '0 24px 60px rgba(15,23,42,.35)',
+          boxShadow: fullscreen ? 'none' : '0 24px 60px rgba(15,23,42,.35)',
         }}
       >
         {/* ---- 顶栏 ---- */}
@@ -348,12 +346,32 @@ export default function ThinkingBoard({
           <span className="faint" style={{ fontSize: 11.5 }}>
             从下面五个盒子里挑笔记 · 拖动排布 · 右下角拖拽改大小 · 双击打开
           </span>
+          {/* ★★ 全屏切换（* 与图谱页右上角同款圆形按钮）⚠ */}
+          <button
+            type="button"
+            onClick={() => setFullscreen((v) => !v)}
+            aria-label={fullscreen ? '退出全屏' : '全屏'}
+            title={fullscreen ? '退出全屏' : '全屏（白布铺满屏幕）'}
+            style={{
+              marginLeft: 'auto',
+              display: 'grid',
+              placeItems: 'center',
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: '1px solid var(--card-border)',
+              background: 'transparent',
+              color: 'var(--text-sub)',
+              cursor: 'pointer',
+            }}
+          >
+            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
           <button
             type="button"
             onClick={onClose}
             aria-label="关闭思考模式"
             style={{
-              marginLeft: 'auto',
               display: 'grid',
               placeItems: 'center',
               width: 28,

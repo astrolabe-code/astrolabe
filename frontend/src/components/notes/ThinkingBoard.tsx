@@ -1,20 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { X, MousePointer2 } from 'lucide-react'
+import { X, MousePointer2, Plus, Check } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import type { Note } from '../../api/types'
-import { kindMeta } from './kindMeta'
+import type { Note, NoteKind } from '../../api/types'
+import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
  * ★★★ **思考模式**（`F2` 补充）—— 所有者原话：
  *
  * > 「笔记区有个思考模式按钮，可以提供一个白布，上面可以任意排布笔记卡片，
  * >   作为思考笔记之间联系的工具」
+ * > 「卡片要竖排，不要横排。还有呀，画布上面要有五个盒子，用户可以打开盒子，
+ * >   去选要放到白布区的笔记，不然，笔记一多，全部一股脑放到白布区，那就完全
+ * >   分不清了」
  *
- * ## ★ 口径
- * - ★ 一张**白布**（点阵格），卡片在上面**任意拖动**，用来摆出笔记之间的关系 ✅
- * - ★ 位置按 `thinking:<nodeId>` 存 localStorage ⇒* 关掉再开、刷新都还在 ⚠
- * - ★ 卡片保持各盒子的类型色（* 与笔记区一致）✅
- * - ★ 双击卡片 ⇒ 打开这篇笔记 ✅
+ * ## ★ 结构
+ *
+ * ```
+ * ┌ 思考模式 ─────────────────────────────────────── ✕ ┐
+ * │ [● 灵光一闪 2] [● 质疑 1] [● 困惑 0] …（五个盒子）     │ ← 点开看该盒子的笔记
+ * │   ┌ 展开的条目：点「＋」放到白板 / 已放的点「✓」移除 ┐  │
+ * ├──────────────────────────────────────────────────┤
+ * │   ·   ·   ·   ·   （白布，点阵）                     │
+ * │   ┌────────┐                                      │
+ * │   │ 卡片 1  │   ← 竖排一列，可拖动                    │
+ * │   └────────┘                                      │
+ * │   ┌────────┐                                      │
+ * │   │ 卡片 2  │                                      │
+ * │   └────────┘                                      │
+ * └──────────────────────────────────────────────────┘
+ * ```
+ *
+ * ★ 白板**默认是空的** ——* 只放用户从盒子里挑出来的笔记，* ⛔ 不是全部倒上去 ⚠
  */
 interface ThinkingBoardProps {
   open: boolean
@@ -29,11 +45,13 @@ interface Pos {
   y: number
 }
 
-const CARD_W = 190
+const CARD_W = 220
 const CARD_H = 96
 const PAD = 24
+const GAP = 16
 
-const storeKey = (nodeId: number) => `thinking:${nodeId}`
+const posKey = (nodeId: number) => `thinking:${nodeId}`
+const boardKey = (nodeId: number) => `thinking:${nodeId}:board`
 
 export default function ThinkingBoard({
   open,
@@ -44,52 +62,97 @@ export default function ThinkingBoard({
 }: ThinkingBoardProps) {
   const navigate = useNavigate()
   const [pos, setPos] = useState<Record<number, Pos>>({})
+  /** ★★ 白板上放了哪些笔记（* 默认空）⚠ */
+  const [onBoard, setOnBoard] = useState<Set<number>>(new Set())
+  /** ★ 当前展开的盒子 */
+  const [openBox, setOpenBox] = useState<NoteKind | null>(null)
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null)
   const boardRef = useRef<HTMLDivElement>(null)
 
-  // ---------------------------------------------------------- 初始化位置
+  // ---------------------------------------------------------- 读取已保存的状态
   useEffect(() => {
     if (!open) return
-    let saved: Record<number, Pos> | null = null
+    let savedPos: Record<number, Pos> | null = null
+    let savedBoard: number[] | null = null
     try {
-      const raw = localStorage.getItem(storeKey(nodeId))
-      if (raw) saved = JSON.parse(raw) as Record<number, Pos>
+      const raw = localStorage.getItem(posKey(nodeId))
+      if (raw) savedPos = JSON.parse(raw) as Record<number, Pos>
+      const rawB = localStorage.getItem(boardKey(nodeId))
+      if (rawB) savedBoard = JSON.parse(rawB) as number[]
     } catch {
-      saved = null
+      savedPos = null
+      savedBoard = null
     }
 
+    const board = new Set<number>((savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)))
+    setOnBoard(board)
+
+    // ★ 只给**在白板上的**卡片恢复位置；其余等用户加入时再摆 ⚠
     const next: Record<number, Pos> = {}
-    notes.forEach((n, i) => {
-      const s = saved?.[n.id]
-      if (s && Number.isFinite(s.x) && Number.isFinite(s.y)) {
-        next[n.id] = s
-      } else {
-        // ★ 没存过 ⇒ 按三列网格摆开（* 不重叠、* 一眼看全）
-        const perRow = 3
-        next[n.id] = {
-          x: PAD + (i % perRow) * (CARD_W + 24),
-          y: PAD + Math.floor(i / perRow) * (CARD_H + 24),
-        }
-      }
-    })
+    let y = PAD
+    for (const id of board) {
+      const s = savedPos?.[id]
+      next[id] = s && Number.isFinite(s.x) && Number.isFinite(s.y) ? s : { x: PAD, y }
+      y += CARD_H + GAP
+    }
     setPos(next)
+    setOpenBox(null)
   }, [open, nodeId, notes])
+
+  // ---------------------------------------------------------- 加入 / 移除
+  const persistBoard = (set: Set<number>) => {
+    try {
+      localStorage.setItem(boardKey(nodeId), JSON.stringify([...set]))
+    } catch {
+      /* 隐私模式忽略 */
+    }
+  }
+  const persistPos = (p: Record<number, Pos>) => {
+    try {
+      localStorage.setItem(posKey(nodeId), JSON.stringify(p))
+    } catch {
+      /* 隐私模式忽略 */
+    }
+  }
+
+  const addToBoard = (n: Note) => {
+    setOnBoard((prev) => {
+      if (prev.has(n.id)) return prev
+      const next = new Set(prev)
+      next.add(n.id)
+      persistBoard(next)
+      return next
+    })
+    setPos((prev) => {
+      if (prev[n.id]) return prev
+      // ★★ **竖排一列**：* 新卡片接在现有最下方（* 所有者：「卡片要竖排，不要横排」）⚠
+      const ys = Object.values(prev).map((p) => p.y)
+      const y = ys.length ? Math.max(...ys) + CARD_H + GAP : PAD
+      const next = { ...prev, [n.id]: { x: PAD, y } }
+      persistPos(next)
+      return next
+    })
+  }
+
+  const removeFromBoard = (id: number) => {
+    setOnBoard((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      persistBoard(next)
+      return next
+    })
+  }
 
   // ---------------------------------------------------------- 拖动
   const onPointerDown = (e: React.PointerEvent, id: number) => {
-    // 只响应主键 / 触摸
     if (e.button != null && e.button !== 0) return
     const board = boardRef.current
     if (!board) return
     e.preventDefault()
     const rect = board.getBoundingClientRect()
     const p = pos[id] ?? { x: PAD, y: PAD }
-    dragRef.current = {
-      id,
-      dx: e.clientX - rect.left - p.x,
-      dy: e.clientY - rect.top - p.y,
-    }
+    dragRef.current = { id, dx: e.clientX - rect.left - p.x, dy: e.clientY - rect.top - p.y }
     setDraggingId(id)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
@@ -114,16 +177,12 @@ export default function ThinkingBoard({
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
     if (!d) return
-    // ★ 松手才落盘（* 拖动过程不写 localStorage，避免每帧 IO）⚠
     setPos((prev) => {
-      try {
-        localStorage.setItem(storeKey(nodeId), JSON.stringify(prev))
-      } catch {
-        /* 隐私模式写不进去也无所谓 */
-      }
+      persistPos(prev)
       return prev
     })
-  }, [nodeId, onPointerMove])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPointerMove])
 
   useEffect(
     () => () => {
@@ -144,6 +203,9 @@ export default function ThinkingBoard({
   }, [open, onClose])
 
   if (!open) return null
+
+  const boardNotes = notes.filter((n) => onBoard.has(n.id))
+  const boardH = Math.max(680, PAD * 2 + Math.max(1, boardNotes.length) * (CARD_H + GAP) + 40)
 
   return (
     <div
@@ -186,7 +248,7 @@ export default function ThinkingBoard({
           <MousePointer2 size={15} style={{ color: 'var(--accent)' }} />
           <span style={{ fontSize: 13.5, fontWeight: 650 }}>思考模式</span>
           <span className="faint" style={{ fontSize: 11.5 }}>
-            拖动卡片摆出笔记之间的联系 · 双击打开 · 位置自动保存
+            从下面五个盒子里挑笔记放到白布 · 拖动排布 · 双击打开
           </span>
           <button
             type="button"
@@ -209,6 +271,107 @@ export default function ThinkingBoard({
           </button>
         </div>
 
+        {/* ---- 五个盒子（点开选笔记） ---- */}
+        <div
+          style={{
+            padding: '8px 14px 10px',
+            borderBottom: '1px solid var(--card-border)',
+            flexShrink: 0,
+            background: 'var(--bg)',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {NOTE_KINDS.map((k) => {
+              const m = kindMeta(k)
+              const items = notes.filter((n) => n.kind === k)
+              const active = openBox === k
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setOpenBox(active ? null : k)}
+                  title={`打开「${m.label}」盒子`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    fontSize: 11.5,
+                    lineHeight: '18px',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    border: `1px solid ${active ? m.color : 'var(--card-border)'}`,
+                    background: active ? `${m.color}1f` : 'var(--card)',
+                    color: active ? m.color : 'var(--text-sub)',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 4,
+                      background: m.color,
+                      opacity: active ? 1 : 0.6,
+                    }}
+                  />
+                  {m.label}
+                  <span style={{ opacity: 0.65 }}>{items.length}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* ---- 展开的盒子条目 ---- */}
+          {openBox && (
+            <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {notes.filter((n) => n.kind === openBox).length === 0 && (
+                <span className="faint" style={{ fontSize: 11.5 }}>
+                  这个盒子里还没有笔记
+                </span>
+              )}
+              {notes
+                .filter((n) => n.kind === openBox)
+                .map((n) => {
+                  const inBoard = onBoard.has(n.id)
+                  const c = kindMeta(n.kind).color
+                  return (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => (inBoard ? removeFromBoard(n.id) : addToBoard(n))}
+                      title={inBoard ? '从白布移除' : '放到白布'}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        maxWidth: 260,
+                        padding: '3px 9px',
+                        borderRadius: 8,
+                        fontSize: 11.5,
+                        lineHeight: '18px',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        border: `1px solid ${inBoard ? c : 'var(--card-border)'}`,
+                        background: inBoard ? `${c}14` : 'var(--card)',
+                        color: inBoard ? c : 'var(--text-main)',
+                      }}
+                    >
+                      {inBoard ? <Check size={12} /> : <Plus size={12} />}
+                      <span
+                        style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                      >
+                        {n.title || n.body.replace(/\s+/g, ' ').slice(0, 24)}
+                      </span>
+                    </button>
+                  )
+                })}
+            </div>
+          )}
+        </div>
+
         {/* ---- 白布（点阵） ---- */}
         <div
           ref={boardRef}
@@ -217,18 +380,29 @@ export default function ThinkingBoard({
             minHeight: 0,
             overflow: 'auto',
             position: 'relative',
-            // ★★ **白布**：* 纯白 + 点阵格（* 以后要信纸花纹就改这里）⚠
             backgroundColor: '#ffffff',
             backgroundImage:
               'radial-gradient(circle, rgba(15,23,42,.13) 1px, transparent 1px)',
             backgroundSize: '22px 22px',
-            backgroundPosition: '0 0',
             touchAction: 'none',
           }}
         >
-          {/* 撑开一个足够大的可滚动区域（* 卡片才能摆得开）⚠ */}
-          <div style={{ position: 'relative', width: 1200, height: 800 }}>
-            {notes.map((n) => {
+          <div style={{ position: 'relative', width: 1200, height: boardH }}>
+            {boardNotes.length === 0 && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: PAD,
+                  top: PAD,
+                  fontSize: 12.5,
+                  color: 'rgba(16,29,51,.45)',
+                }}
+              >
+                白布还是空的 —— 点上面的盒子，挑几篇笔记放上来
+              </div>
+            )}
+
+            {boardNotes.map((n) => {
               const m = kindMeta(n.kind)
               const p = pos[n.id] ?? { x: PAD, y: PAD }
               const active = draggingId === n.id
@@ -250,7 +424,6 @@ export default function ThinkingBoard({
                     padding: '8px 10px',
                     borderRadius: 10,
                     background: '#ffffff',
-                    // ★ 先写 border 简写，* 再写 borderLeft ——* 顺序反了色条会被覆盖 ⚠
                     border: '1px solid rgba(15,23,42,.12)',
                     borderLeft: `4px solid ${m.color}`,
                     boxShadow: active
@@ -262,7 +435,6 @@ export default function ThinkingBoard({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 3,
-                    transition: active ? 'none' : 'box-shadow .15s',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -278,6 +450,28 @@ export default function ThinkingBoard({
                     >
                       {m.label}
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeFromBoard(n.id)
+                      }}
+                      title="从白布移除"
+                      style={{
+                        marginLeft: 'auto',
+                        display: 'grid',
+                        placeItems: 'center',
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'rgba(16,29,51,.4)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <X size={11} />
+                    </button>
                   </div>
                   <div
                     style={{

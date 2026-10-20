@@ -1695,6 +1695,38 @@ class NoteBlock(TimeStampedModel):
         return f"{self.note_id}#{self.ordinal}"
 
 
+class NoteCommentLike(TimeStampedModel):
+    """★★ **评论赞（谁赞过哪条评论）** —— * `like_count` 的真相来源。
+
+    ★ 所有者要求「点一下点赞、再点一下取消」⇒ 必须知道**当前用户赞过没有**，
+      只加计数字段做不到 ⇒ 这张表就是为此存在 ⚠
+
+    · · ★ `NoteComment.like_count` 是**缓存**（同事务维护），* 真相在这张表 ✅
+    """
+
+    comment = models.ForeignKey(
+        "core.NoteComment",
+        on_delete=models.CASCADE,
+        related_name="like_rows",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comment", "user"],
+                name="uniq_comment_like",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["comment"], name="idx_commentlike_comment"),
+        ]
+
+
 class NoteComment(TimeStampedModel):
     """★★ **一条评论** —— ★★ **章评与段评【同表】**。
 

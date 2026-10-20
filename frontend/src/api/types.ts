@@ -696,6 +696,8 @@ export interface Comment {
   created_at: string
   /** ★★ 评论赞数（* 段评 / 章评每条评论自己的赞，* 不需要 block_id）⚠ */
   like_count: number
+  /** ★ 当前用户**赞过没有**（* 决定红/灰与「再点取消」）⚠ */
+  liked: boolean
 }
 
 export interface CommentListData {

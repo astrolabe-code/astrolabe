@@ -48,13 +48,15 @@
 
 from __future__ import annotations
 
+from django.db import transaction
 from django.db.models import Count, F, Q
+from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import settings_table as st
-from core.models import Note, NoteBlock, NoteComment
+from core.models import Note, NoteBlock, NoteComment, NoteCommentLike
 from web.http import fail, ok, ok_flat, read_json
 from web.permissions import (
     can_create_comment,
@@ -164,12 +166,23 @@ def _list(request: HttpRequest, note: Note):
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
+
+    # ★★ 一次查出「我赞过这页里的哪些评论」（* 逐条 exists 就是 N+1）⚠
+    liked_ids: set[int] = set()
+    me = current_user(request)
+    if me is not None and items:
+        liked_ids = set(
+            NoteCommentLike.objects.filter(
+                comment_id__in=[c.pk for c in items], user=me
+            ).values_list("comment_id", flat=True)
+        )
+
     return ok(
         {
             "total": total,
             "limit": limit,
             "offset": offset,
-            "items": [_comment_json(c) for c in items],
+            "items": [_comment_json(c, c.pk in liked_ids) for c in items],
         }
     )
 
@@ -281,7 +294,7 @@ def detail(request: HttpRequest, comment_id: int):
 # 内部
 # ---------------------------------------------------------------------------
 
-def _comment_json(c: NoteComment) -> dict:
+def _comment_json(c: NoteComment, liked: bool = False) -> dict:
     return {
         "id": c.pk,
         "note_id": c.note_id,
@@ -296,8 +309,9 @@ def _comment_json(c: NoteComment) -> dict:
         "orphaned": bool(c.is_paragraph and c.block_id is None),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
-        # ★★ 评论赞数（* 前端每条评论旁边的赞按钮）⚠
+        # ★★ 评论赞：* 计数 + **我赞过没有**（* 决定红/灰与能否取消）⚠
         "like_count": c.like_count,
+        "liked": liked,
     }
 
 
@@ -319,16 +333,21 @@ def _clamp(raw, lo: int, hi: int, default: int) -> int:
 
 @require_http_methods(["POST"])
 def like_comment(request: HttpRequest, comment_id: int):
-    """`POST /api/comments/<id>/like/` —— **评论 +1 赞**。
+    """`POST /api/comments/<id>/like/` —— **评论赞开关**（* 点一下赞、再点取消）。
 
-    ⚠★ 所有者口径（逐字）：「不要段赞了，而是段评里面每个评论旁边有个评论赞。
-      这样就不需要段ID了。只需要在评论表里加一个赞数字段就可以了。」
+    ★ 所有者原话（逐字）：「评论的点赞不是点一下表示点赞，再点一下表示取消吗？」
 
-    ## ★ 实现取舍（如实记）
-    - ★ 只维护 `NoteComment.like_count` 计数 ⇒* 不建关系表
-    - ⚠ 因此：* 不记录「谁赞过」⇒ **不支持取消、不防重复点击**（* 依次 +1）
+    ## ★★ 语义
+    - 当前用户**没赞过** ⇒ 建一行 + `like_count + 1`，返回 `{liked:true, like_count}`
+    - 当前用户**赞过** ⇒ 删那一行 + `like_count - 1`，返回 `{liked:false, like_count}`
+    - ★ 计数与赞行**同一事务**（* 否则会漂移）⚠
+    - ★ 唯一约束 `uniq_comment_like` 兜底（* 并发重复插入不会出两行）✅
     """
-    comment = NoteComment.objects.filter(pk=comment_id).select_related("note", "note__node").first()
+    comment = (
+        NoteComment.objects.filter(pk=comment_id)
+        .select_related("note", "note__node")
+        .first()
+    )
     if comment is None:
         return fail("评论不存在", 404, code="not_found")
 
@@ -338,6 +357,25 @@ def like_comment(request: HttpRequest, comment_id: int):
     if not can_like(request, comment.note):
         return fail("请先登录", 401, code="unauthenticated")
 
-    NoteComment.objects.filter(pk=comment_id).update(like_count=F("like_count") + 1)
-    fresh = NoteComment.objects.filter(pk=comment_id).values_list("like_count", flat=True).first()
-    return ok_flat(like_count=int(fresh or 0))
+    user = current_user(request)
+    with transaction.atomic():
+        row = NoteCommentLike.objects.filter(comment_id=comment_id, user=user).first()
+        if row is not None:
+            row.delete()
+            NoteComment.objects.filter(pk=comment_id).update(
+                like_count=Greatest(F("like_count") - 1, 0)
+            )
+            liked = False
+        else:
+            NoteCommentLike.objects.create(comment_id=comment_id, user=user)
+            NoteComment.objects.filter(pk=comment_id).update(
+                like_count=F("like_count") + 1
+            )
+            liked = True
+
+    fresh = (
+        NoteComment.objects.filter(pk=comment_id)
+        .values_list("like_count", flat=True)
+        .first()
+    )
+    return ok_flat(liked=liked, like_count=int(fresh or 0))

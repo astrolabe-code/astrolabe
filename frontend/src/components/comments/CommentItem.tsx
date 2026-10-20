@@ -42,16 +42,22 @@ export default function CommentItem({ comment, noteId, anchor, perm }: CommentIt
   const canDelete = commentDeletable(comment, perm)
   // ★★ 评论赞：* 每条评论自己的计数（* 不需要 block_id）⚠
   const like = useCommentLike()
+  // ★★ 点一下赞、再点一下取消（* 红 = 我赞过）⚠
+  const [liked, setLiked] = useState(!!comment.liked)
   const [likes, setLikes] = useState(comment.like_count ?? 0)
 
   const onLike = async () => {
-    // ★ 乐观 +1，回包校正；失败回滚（* 后端只有计数，* 没有可回滚的持久状态）⚠
-    setLikes((c) => c + 1)
+    const next = !liked
+    // ★ 乐观：* 图标与计数同时翻，回包校正；失败回滚 ⚠
+    setLiked(next)
+    setLikes((c) => Math.max(0, c + (next ? 1 : -1)))
     try {
       const r = await like.mutateAsync(comment.id)
+      setLiked(r.liked)
       setLikes(r.like_count)
     } catch {
-      setLikes((c) => Math.max(0, c - 1))
+      setLiked(!next)
+      setLikes((c) => Math.max(0, c + (next ? -1 : 1)))
     }
   }
 
@@ -110,11 +116,15 @@ export default function CommentItem({ comment, noteId, anchor, perm }: CommentIt
         <button
           type="button"
           className="flex items-center gap-1"
-          style={{ color: likes > 0 ? 'var(--err)' : 'var(--text-sub)', cursor: 'pointer' }}
-          title="给这条评论点赞"
+          style={{
+            // ★ 红 = **我赞过**（* 不是"有人赞过"）⚠
+            color: liked ? 'var(--err)' : 'var(--text-sub)',
+            cursor: 'pointer',
+          }}
+          title={liked ? '取消赞' : '给这条评论点赞'}
           onClick={onLike}
         >
-          <ThumbsUp size={11} fill={likes > 0 ? 'currentColor' : 'none'} />
+          <ThumbsUp size={11} fill={liked ? 'currentColor' : 'none'} />
           {likes}
         </button>
         <button

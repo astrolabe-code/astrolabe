@@ -49,6 +49,8 @@ export default function NoteSection({
   onEditNote,
 }: NoteSectionProps) {
   const [showAll, setShowAll] = useState(false)
+  // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
+  const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
   const notes = useNotes(projectRef, { limit: 200 })
 
   if (notes.isError) {
@@ -87,12 +89,81 @@ export default function NoteSection({
     )
   }
 
-  const shown = showAll ? groups : groups.slice(0, 2)
+  // ★★ 五个盒子的**各自数量**（* 0 也显示，* 一眼看出这节点哪类多）⚠
+  const counts = NOTE_KINDS.map((kind: NoteKind) => ({
+    kind,
+    n: mine.filter((x) => x.kind === kind).length,
+  }))
+
+  // ★ 当前要展示的分组：* 全部 ⇒ 原分组（可折叠）；* 某类 ⇒ 只留那一组 ⚠
+  const visibleGroups =
+    activeKind === 'all'
+      ? showAll
+        ? groups
+        : groups.slice(0, 2)
+      : groups.filter((g) => g.kind === activeKind)
+
+  const chip = (
+    key: NoteKind | 'all',
+    label: string,
+    n: number,
+    color: string,
+    active: boolean,
+  ) => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => setActiveKind(active && key !== 'all' ? 'all' : key)}
+      title={key === 'all' ? '显示全部笔记' : `只看「${label}」`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 9px',
+        borderRadius: 999,
+        fontSize: 11,
+        lineHeight: '17px',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        // ★ 选中 = 同色实线 + 12% 淡底；* 未选 = 灰边透明底 ⚠
+        border: `1px solid ${active ? color : 'var(--card-border)'}`,
+        background: active ? `${color}1f` : 'transparent',
+        color: active ? color : 'var(--text-sub)',
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          background: color,
+          flexShrink: 0,
+          opacity: active ? 1 : 0.55,
+        }}
+      />
+      {label}
+      <span style={{ opacity: 0.7 }}>{n}</span>
+    </button>
+  )
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-2.5">
-        <div className="h2" style={{ fontSize: 14 }}>
-          笔记 <span className="faint">（{mine.length}）</span>
+      <div className="flex items-center justify-between mb-2.5" style={{ gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
+          <span className="h2" style={{ fontSize: 14, flexShrink: 0 }}>
+            笔记
+          </span>
+          {/* ★★★ **五个盒子各带数量** + 「全部」——* 点谁就只看谁 ⚠ */}
+          {chip('all', '全部', mine.length, 'var(--text-sub)', activeKind === 'all')}
+          {counts.map((c) =>
+            chip(
+              c.kind,
+              KIND_META[c.kind].label,
+              c.n,
+              KIND_META[c.kind].color,
+              activeKind === c.kind,
+            ),
+          )}
         </div>
         {canWrite && (
           <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
@@ -102,10 +173,24 @@ export default function NoteSection({
       </div>
 
       <div className="flex flex-col gap-4">
-        {shown.map((g) => (
+        {visibleGroups.map((g) => (
           <div key={g.kind}>
             <div className="flex items-center gap-2 mb-1.5">
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{KIND_META[g.kind].label}</span>
+              {/* ★★ 每组一个**类型色圆点** + 同色标题（* 五个盒子一眼区分）⚠ */}
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  background: KIND_META[g.kind].color,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{ fontSize: 12.5, fontWeight: 600, color: KIND_META[g.kind].color }}
+              >
+                {KIND_META[g.kind].label}
+              </span>
               <span className="faint" style={{ fontSize: 11 }}>
                 {g.items.length}
               </span>
@@ -126,9 +211,16 @@ export default function NoteSection({
             </div>
           </div>
         ))}
+
+        {/* ★ 选了某个空盒子 ⇒ 给一句提示（* 而不是空白一片）⚠ */}
+        {visibleGroups.length === 0 && (
+          <div className="faint" style={{ fontSize: 12.5 }}>
+            这个盒子里还没有笔记
+          </div>
+        )}
       </div>
 
-      {groups.length > 2 && (
+      {activeKind === 'all' && groups.length > 2 && (
         <div className="mt-3">
           <Button block onClick={() => setShowAll((v) => !v)}>
             {showAll ? '收起分组' : `展开其余 ${groups.length - 2} 个分组`}

@@ -118,15 +118,21 @@ export function useDeleteComment(noteId?: number | null) {
  */
 export function useCommentLike() {
   return useMutation({
-    mutationFn: async (
-      commentId: number,
-    ): Promise<{ liked: boolean; like_count: number }> =>
+    mutationFn: async ({
+      id,
+      liked,
+    }: {
+      id: number
+      liked: boolean
+    }): Promise<{ liked: boolean; like_count: number }> =>
       unwrap(
         await apiPost<{ liked: boolean; like_count: number }>(
-          `/api/comments/${commentId}/like/`,
-          {},
+          `/api/comments/${id}/like/`,
+          // ★★ **设置最终状态**（⛔ 不是 toggle）——* 防抖后只发一次 ⚠
+          { liked },
           'data',
         ),
       ),
   })
 }
+

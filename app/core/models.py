@@ -1553,8 +1553,9 @@ class Note(TimeStampedModel):
         related_name="deleted_notes",
     )
 
-    # ---- 冗余计数（★ 列表免 count；* 真相在明细表，* 必须可重算）----
-    like_count = models.IntegerField(default=0)
+    # ---- 冗余计数 ----
+    # ⚠★ 2026-10-20：**like_count 已删除**（* 赞数实时 COUNT，* 所有者「把这两个
+    #   缓存去掉」）；comment_count 保留（* 暂无实时替代）✅
     comment_count = models.IntegerField(default=0)
 
     class Meta:
@@ -1823,10 +1824,8 @@ class NoteComment(TimeStampedModel):
     quote = models.CharField(max_length=500, blank=True, default="")
     #: ★ 正常 / 隐藏 / 待审
     state = models.CharField(max_length=16, default="normal")
-    #: ★★★ **评论的赞数**（* 所有者：「不要段赞了，而是段评里面每个评论旁边有个
-    #:   评论赞……只需要在评论表里加一个赞数字段就可以了」）⚠
-    #: · · ★ 简单计数：* 每次点赞 +1（* 不记录谁赞过 ⇒* 无取消、* 无防重）✅
-    like_count = models.IntegerField(default=0)
+    # ⚠★ 2026-10-20：**不再存 like_count 缓存** —— 赞数一律由
+    #   `NoteCommentLike` 实时 COUNT（* 所有者：「把这两个缓存去掉」）⚠
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

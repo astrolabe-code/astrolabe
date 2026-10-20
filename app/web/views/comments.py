@@ -162,7 +162,12 @@ def _list(request: HttpRequest, note: Note):
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：**新的在前** ✅
-    qs = NoteComment.objects.filter(q).order_by("-created_at")
+    # ★ 一次聚合出这页每条评论的赞数（* 否则 `_comment_json` 会逐条 COUNT）⚠
+    qs = (
+        NoteComment.objects.filter(q)
+        .annotate(_like_total=Count("like_rows"))
+        .order_by("-created_at")
+    )
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
@@ -309,8 +314,12 @@ def _comment_json(c: NoteComment, liked: bool = False) -> dict:
         "orphaned": bool(c.is_paragraph and c.block_id is None),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
-        # ★★ 评论赞：* 计数 + **我赞过没有**（* 决定红/灰与能否取消）⚠
-        "like_count": c.like_count,
+        # ★★ 评论赞：* 计数**实时数明细表**（* 已去掉 like_count 缓存）+ 我赞过没有 ⚠
+        "like_count": (
+            c._like_total
+            if getattr(c, "_like_total", None) is not None
+            else c.like_rows.count()
+        ),
         "liked": liked,
     }
 
@@ -333,15 +342,20 @@ def _clamp(raw, lo: int, hi: int, default: int) -> int:
 
 @require_http_methods(["POST"])
 def like_comment(request: HttpRequest, comment_id: int):
-    """`POST /api/comments/<id>/like/` —— **评论赞开关**（* 点一下赞、再点取消）。
+    """`POST /api/comments/<id>/like/` —— **设置评论赞的最终状态**。
 
-    ★ 所有者原话（逐字）：「评论的点赞不是点一下表示点赞，再点一下表示取消吗？」
+    ## ★★ 请求体
+    `{"liked": true|false}` —— ⛔ 不是 toggle，是**设成这个状态**（幂等）
 
-    ## ★★ 语义
-    - 当前用户**没赞过** ⇒ 建一行 + `like_count + 1`，返回 `{liked:true, like_count}`
-    - 当前用户**赞过** ⇒ 删那一行 + `like_count - 1`，返回 `{liked:false, like_count}`
-    - ★ 计数与赞行**同一事务**（* 否则会漂移）⚠
-    - ★ 唯一约束 `uniq_comment_like` 兜底（* 并发重复插入不会出两行）✅
+    ## ★★ 为什么用「设置」而不是「切换」
+    - 所有者要求：「连续点击，之后，应该等一秒，用户不再点点赞按钮后，再把用户的
+      行为，即是否点赞传回后端记录呀，不要点一次就传一次，疯狂改记录呀。」
+    - 前端防抖 1s 后只发**一次**，且发的是**最终状态**
+    - ⚠ 若后端做成 toggle，用户点 2 次（最终 = 原来的状态）只发一次请求就会翻反
+      ⇒ ★ 所以必须是幂等的「设成 true/false」⚠
+
+    ## ★ 计数
+    - **不再有 `like_count` 缓存字段**，赞数实时 `COUNT(core_notecommentlike)`
     """
     comment = (
         NoteComment.objects.filter(pk=comment_id)
@@ -358,24 +372,14 @@ def like_comment(request: HttpRequest, comment_id: int):
         return fail("请先登录", 401, code="unauthenticated")
 
     user = current_user(request)
-    with transaction.atomic():
-        row = NoteCommentLike.objects.filter(comment_id=comment_id, user=user).first()
-        if row is not None:
-            row.delete()
-            NoteComment.objects.filter(pk=comment_id).update(
-                like_count=Greatest(F("like_count") - 1, 0)
-            )
-            liked = False
-        else:
-            NoteCommentLike.objects.create(comment_id=comment_id, user=user)
-            NoteComment.objects.filter(pk=comment_id).update(
-                like_count=F("like_count") + 1
-            )
-            liked = True
+    body = read_json(request)
+    want = bool(body.get("liked", True))
 
-    fresh = (
-        NoteComment.objects.filter(pk=comment_id)
-        .values_list("like_count", flat=True)
-        .first()
-    )
-    return ok_flat(liked=liked, like_count=int(fresh or 0))
+    with transaction.atomic():
+        if want:
+            NoteCommentLike.objects.get_or_create(comment_id=comment_id, user=user)
+        else:
+            NoteCommentLike.objects.filter(comment_id=comment_id, user=user).delete()
+
+    count = NoteCommentLike.objects.filter(comment_id=comment_id).count()
+    return ok_flat(liked=want, like_count=count)

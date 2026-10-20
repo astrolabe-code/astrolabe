@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageSquare, ThumbsUp, Trash2 } from 'lucide-react'
 import type { AnchorKind, Comment } from '../../api/types'
 import { useCommentLike, useDeleteComment } from '../../query/comments'
@@ -46,20 +46,49 @@ export default function CommentItem({ comment, noteId, anchor, perm }: CommentIt
   const [liked, setLiked] = useState(!!comment.liked)
   const [likes, setLikes] = useState(comment.like_count ?? 0)
 
-  const onLike = async () => {
-    const next = !liked
-    // ★ 乐观：* 图标与计数同时翻，回包校正；失败回滚 ⚠
-    setLiked(next)
-    setLikes((c) => Math.max(0, c + (next ? 1 : -1)))
+  // ★★★ **连续点击防抖 1 秒**（* 所有者：「连续点击，之后，应该等一秒，用户不再
+  //   点点赞按钮后，再把用户的行为，即是否点赞传回后端记录呀，不要点一次就传一次，
+  //   疯狂改记录呀」）⚠
+  //   · · ★ 只记**最终状态**（`pending`），到点才发一次 ⚠
+  const pending = useRef<boolean | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flush = useRef(async () => {
+    const want = pending.current
+    if (want == null) return
+    pending.current = null
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
     try {
-      const r = await like.mutateAsync(comment.id)
+      const r = await like.mutateAsync({ id: comment.id, liked: want })
       setLiked(r.liked)
       setLikes(r.like_count)
     } catch {
-      setLiked(!next)
-      setLikes((c) => Math.max(0, c + (next ? -1 : 1)))
+      // ★ 失败回滚到相反状态（* 后端没记住，* 本地也要退回来）⚠
+      setLiked(!want)
+      setLikes((c) => Math.max(0, c + (want ? -1 : 1)))
     }
+  }).current
+
+  const onLike = () => {
+    const next = !liked
+    // ★ 乐观：* 图标与计数同时翻，到点由回包校正 ⚠
+    setLiked(next)
+    setLikes((c) => Math.max(0, c + (next ? 1 : -1)))
+    pending.current = next
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => void flush(), 1000)
   }
+
+  // ★ 卸载时把待发的那一次补发（* 别让用户点的赞白点）⚠
+  useEffect(
+    () => () => {
+      if (pending.current != null) void flush()
+    },
+    [flush],
+  )
 
   const isReply = comment.kind === 'reply' || comment.kind === 'both'
   const highlight = comment.kind === 'mention' || comment.kind === 'both'

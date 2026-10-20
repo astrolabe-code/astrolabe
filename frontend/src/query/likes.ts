@@ -37,8 +37,8 @@ import type { AnchorKind, LikeResult, LikeStatus } from '../api/types'
  *   ❌ 不许只涨不减、重复计（后端 `B211`①② 已修）。
  */
 
-/** ⚠ 防抖时长（`D83`：1–2 秒，取中间值；`D91`：省写库，不是延迟优化） */
-const DEBOUNCE_MS = 1200
+/** ⚠ 防抖时长（`D83`：1 秒（所有者：「等一秒」）；`D91`：省写库，不是延迟优化） */
+const DEBOUNCE_MS = 1000
 
 /**
  * GET /api/notes/<id>/likes/?anchor_kind=&block_id=（① 型）
@@ -61,15 +61,39 @@ export function useLikeStatus(
   })
 }
 
-/** POST/DELETE /api/notes/<id>/likes/（① 型）—— 裸 mutation，不做防抖 */
-export function useLikeMutation(noteId?: number | null, anchor: AnchorKind = 'chapter') {
+/**
+ * POST/DELETE /api/notes/<id>/likes/（① 型）—— 裸 mutation，不做防抖
+ *
+ * ⚠★★ **段赞必须带 `block_id`，而且两个方法放的位置不同**（后端如此实现）：
+ *   · · ★ `POST` 读**请求体**：`{anchor_kind, block_id}`
+ *   · · ★ `DELETE` 读**查询参数**：`?anchor_kind=&block_id=`
+ *   · · ⛔ 之前两边都只传了 `anchor_kind` ⇒ 段赞被当成章赞
+ *     （* 表现为：点段赞图标变了、计数不动，取消也是 `removed:false`）⚠
+ */
+export function useLikeMutation(
+  noteId?: number | null,
+  anchor: AnchorKind = 'chapter',
+  blockId?: number | null,
+) {
   return useMutation({
     mutationFn: async (liked: boolean): Promise<LikeResult> => {
       const path = `/api/notes/${noteId!}/likes/`
+      const params = new URLSearchParams({ anchor_kind: anchor })
+      if (anchor === 'paragraph' && blockId != null) params.set('block_id', String(blockId))
+
       return unwrap(
         liked
-          ? await apiPost<LikeResult>(path, { anchor_kind: anchor }, 'data')
-          : await apiDelete<LikeResult>(path, { anchor_kind: anchor }, 'data'),
+          ? // POST：请求体
+            await apiPost<LikeResult>(
+              `${path}?${params.toString()}`,
+              {
+                anchor_kind: anchor,
+                ...(anchor === 'paragraph' && blockId != null ? { block_id: blockId } : {}),
+              },
+              'data',
+            )
+          : // DELETE：查询参数（⛔ body 后端不读）
+            await apiDelete<LikeResult>(`${path}?${params.toString()}`, undefined, 'data'),
       )
     },
   })
@@ -94,6 +118,8 @@ export function useLikeToggle(
   noteId: number | null | undefined,
   anchor: AnchorKind = 'chapter',
   initial: LikeToggleState = { liked: false, like_count: 0 },
+  /** ★★ 段赞必传（* 否则后端当成章赞）⚠ */
+  blockId?: number | null,
 ) {
   const [state, setState] = useState<LikeToggleState>(initial)
   const desired = useRef(state.liked)
@@ -120,7 +146,7 @@ export function useLikeToggle(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initKey])
 
-  const mutation = useLikeMutation(noteId, anchor)
+  const mutation = useLikeMutation(noteId, anchor, blockId)
 
   /** ★ 把「最终态」发出去（⛔ 不判断要不要发——`D83④(b)`：照发，靠服务端幂等） */
   const flush = useCallback(() => {

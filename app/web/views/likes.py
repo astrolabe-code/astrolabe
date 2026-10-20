@@ -40,8 +40,6 @@
 
 from __future__ import annotations
 
-from django.db.models import F
-from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.views.decorators.http import require_http_methods
 
@@ -122,11 +120,9 @@ def _like(request: HttpRequest, note: Note, user):
     """★ 章赞：一人一次（* `uniq_like_chapter` 唯一约束兜底）⚠"""
     from django.db import transaction
 
-    # ★★ `B211`②：**赞行写入与计数 +1 必须同一事务** ⚠
+    # ★★ 只写赞行 —— **不再维护 like_count 缓存**（* 所有者：「把这两个缓存去掉」）⚠
     with transaction.atomic():
         _like_row, created = NoteLike.objects.get_or_create(note=note, user=user)
-        if created:
-            Note.objects.filter(pk=note.pk).update(like_count=F("like_count") + 1)
 
     return ok(
         {
@@ -142,12 +138,9 @@ def _unlike(request: HttpRequest, note: Note, user):
     """★ 取消章赞（* 幂等：没点过也 200）⚠"""
     from django.db import transaction
 
+    # ★★ 只删赞行 —— 计数实时 `COUNT`，⛔ 不再 ±1 ⚠
     with transaction.atomic():
         removed, _ = NoteLike.objects.filter(note=note, user=user).delete()
-        if removed:
-            Note.objects.filter(pk=note.pk).update(
-                like_count=Greatest(F("like_count") - 1, 0)
-            )
 
     return ok(
         {
@@ -160,5 +153,5 @@ def _unlike(request: HttpRequest, note: Note, user):
 
 
 def _like_count_of(note_pk: int) -> int:
-    """★ 笔记级点赞总数（**只算章赞** —— * 段赞已下线）✅"""
-    return Note.objects.filter(pk=note_pk).values_list("like_count", flat=True).first() or 0
+    """★ 笔记的章赞数 —— **实时数 `core_notelike` 的行**（* 无缓存字段）⚠"""
+    return NoteLike.objects.filter(note_id=note_pk).count()

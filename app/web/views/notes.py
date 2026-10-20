@@ -136,7 +136,13 @@ def _list(request: HttpRequest, project):
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     total = qs.count()
-    items = [_note_json(n) for n in qs.order_by("-created_at")[offset:offset + limit]]
+    # ★ 一次聚合出这页每篇的章赞数（* 否则 `_note_json` 会逐篇 COUNT）⚠
+    from django.db.models import Count
+
+    page = list(
+        qs.annotate(_like_total=Count("likes")).order_by("-created_at")[offset:offset + limit]
+    )
+    items = [_note_json(n) for n in page]
     return ok_flat(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -544,7 +550,13 @@ def _note_json(n: Note) -> dict:
         #   （* 正常笔记两项都是空串）✅
         "deleted_at": n.deleted_at.isoformat() if n.deleted_at else "",
         "deleted_by": n.deleted_by.get_username() if n.deleted_by_id else "",
-        "like_count": n.like_count,
+        # ★★ **不再读缓存字段** —— 章赞数实时数 `core_notelike` 的行
+        #   （* 列表查询会 annotate 成 `_like_total`，避免 N+1）⚠
+        "like_count": (
+            n._like_total
+            if getattr(n, "_like_total", None) is not None
+            else n.likes.count()
+        ),
         "comment_count": n.comment_count,
         "created_by": n.created_by.get_username() if n.created_by_id else "",
         "created_at": n.created_at.isoformat(),

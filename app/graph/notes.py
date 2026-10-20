@@ -240,11 +240,8 @@ def realign(note: "Note") -> "QuerySet[NoteBlock]":
     with transaction.atomic():
         for old in stale:
             old.delete()
-        # ★★ `B211`①：* 旧段没了 ⇒* 其上的段赞 **CASCADE 跟着没** ⇒* **就地重算** ⚠
-        #   · · ★ 为什么重算而不是 −N：* 删的是**行**，* 真相在明细表 ⇒*
-        #     按行数重写计数列才是**单一真相**（* 同 `B146` 纪律）✅
-        #   · · ★ 一次 realign 可能删掉 N 个旧段 ⇒* N 条段赞一起没，* ±1 描述不了 ✅
-        recount_likes(note)
+        # ⚠★ 2026-10-20：* 段赞已下线、赞数改为**实时 COUNT** ⇒
+        #   * 这里不再需要重算任何计数列（* 原来的 recount_likes 已删）✅
 
     if to_create:
         NoteBlock.objects.bulk_create(to_create)
@@ -304,28 +301,6 @@ def _handle_orphans(
             # ★ 新段比旧段少（* 用户删了段）⇒ ★ 无处可钉 ⇒ ★ 保持失锚 ✅
             continue
         NoteComment.objects.filter(pk__in=cids).update(block=target)
-
-
-def recount_likes(note: "Note") -> None:
-    """★★ **按明细表重写这篇笔记的点赞计数**（* `B211`② · `B212`①）⚠
-
-    ## ★★ 为什么是「重算」而不是「±1」
-
-    ```
-    ★★ `Note.like_count` 是**缓存**，* `core_note_like` 的**行**才是真相 ⚠
-      · · ★ 同 `B146` 的纪律：* 计数必须只有一个来源 ✅
-    ⚠★ 2026-10-20：* 段赞已下线（`NoteLike` 只剩章赞）——*
-      * 本函数现在等价于「重算章赞行数」✅
-    ```
-
-    ⚠★ 本函数同时供管理命令 `recount_note_likes` 复用
-      （* 自我纠错入口，* `B211`②；* 对应 B站架构的「程序拥有自我纠错的能力」）✅
-    """
-    from core.models import Note, NoteLike
-
-    Note.objects.filter(pk=note.pk).update(
-        like_count=NoteLike.objects.filter(note=note).count()
-    )
 
 
 def orphan_blocks(note: "Note") -> "QuerySet[NoteBlock]":

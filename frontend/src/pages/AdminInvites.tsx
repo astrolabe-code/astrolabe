@@ -267,7 +267,6 @@ export default function AdminInvites() {
   return (
     <AppLayout
       title="管理与邀请"
-      crumbs={[{ label: '工作区', to: '/workspace' }, { label: '管理' }]}
       actions={
         <Button
           variant="ghost"

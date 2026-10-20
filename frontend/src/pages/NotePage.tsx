@@ -91,11 +91,6 @@ export default function NotePage() {
   return (
     <AppLayout
       title={n.title || '（无标题）'}
-      crumbs={[
-        { label: '工作区', to: '/workspace' },
-        { label: '项目', to: `/p/${encodeURIComponent(projectRef)}` },
-        { label: n.title || '笔记' },
-      ]}
       actions={
         <div className="flex items-center gap-2">
           {/* ① 章赞 */}

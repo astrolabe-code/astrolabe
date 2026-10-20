@@ -34,7 +34,7 @@ export default function UserSettingsPage() {
   }
 
   return (
-    <AppLayout title="我的设置" crumbs={[{ label: '工作区', to: '/workspace' }, { label: '我的设置' }]}>
+    <AppLayout title="我的设置">
       {settings.isError ? (
         <div className="card" style={{ padding: 24 }}>
           <div className="faint" style={{ fontSize: 12.5 }}>

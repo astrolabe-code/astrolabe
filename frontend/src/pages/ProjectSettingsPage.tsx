@@ -47,11 +47,6 @@ export default function ProjectSettingsPage() {
   return (
     <AppLayout
       title="项目设置"
-      crumbs={[
-        { label: '工作区', to: '/workspace' },
-        { label: '项目', to: `/p/${encodeURIComponent(projectRef)}` },
-        { label: '设置' },
-      ]}
     >
       {settings.isError ? (
         <div className="card" style={{ padding: 24 }}>

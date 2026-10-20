@@ -51,7 +51,6 @@ export default function AdminModeratedPage() {
   return (
     <AppLayout
       title="已处置"
-      crumbs={[{ label: '工作区', to: '/workspace' }, { label: '已处置' }]}
     >
       <div className="faint" style={{ fontSize: 12.5, marginBottom: 14 }}>
         被管理员隐藏的内容 —— 点「恢复」解除隐藏、所有人重新可见。

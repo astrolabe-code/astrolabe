@@ -131,7 +131,7 @@ export default function RecycleBinPage() {
   }
 
   return (
-    <AppLayout title="回收站" crumbs={[{ label: '工作区', to: '/workspace' }, { label: '回收站' }]}>
+    <AppLayout title="回收站">
       <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 14 }}>
         <div className="faint" style={{ fontSize: 12.5, flex: 1, minWidth: 260 }}>
           被删的笔记按项目归在这里 —— 可恢复、可整份导出备份。⚠ 管理员下架的内容不在这里（彻底删除，不可恢复）。

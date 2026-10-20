@@ -71,10 +71,6 @@ export default function ProjectPage() {
   return (
     <AppLayout
       page={false}
-      crumbs={[
-        { label: '工作区', to: '/workspace' },
-        { label: p.name || '项目' },
-      ]}
       title={
         <span className="flex items-center gap-2">
           {p.name || '未命名项目'}

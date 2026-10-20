@@ -12,25 +12,20 @@ import { NOTE_KINDS, kindMeta } from './kindMeta'
  * > 「卡片要竖排，不要横排。还有呀，画布上面要有五个盒子，用户可以打开盒子，
  * >   去选要放到白布区的笔记，不然，笔记一多，全部一股脑放到白布区，那就完全
  * >   分不清了」
+ * > 「笔记卡片要可以拖拽来改变卡片大小形状，画布也不要有界限」
  *
  * ## ★ 结构
  *
  * ```
  * ┌ 思考模式 ─────────────────────────────────────── ✕ ┐
- * │ [● 灵光一闪 2] [● 质疑 1] [● 困惑 0] …（五个盒子）     │ ← 点开看该盒子的笔记
- * │   ┌ 展开的条目：点「＋」放到白板 / 已放的点「✓」移除 ┐  │
+ * │ [● 灵光一闪 2] [● 质疑 1] …（五个盒子，点开挑笔记）      │
  * ├──────────────────────────────────────────────────┤
- * │   ·   ·   ·   ·   （白布，点阵）                     │
+ * │   ·   ·   ·   ·   （白布：**无边界**，拖到哪扩到哪）     │
  * │   ┌────────┐                                      │
- * │   │ 卡片 1  │   ← 竖排一列，可拖动                    │
- * │   └────────┘                                      │
- * │   ┌────────┐                                      │
- * │   │ 卡片 2  │                                      │
+ * │   │ 竖版卡片│◢  ← 右下角拖拽改大小                   │
  * │   └────────┘                                      │
  * └──────────────────────────────────────────────────┘
  * ```
- *
- * ★ 白板**默认是空的** ——* 只放用户从盒子里挑出来的笔记，* ⛔ 不是全部倒上去 ⚠
  */
 interface ThinkingBoardProps {
   open: boolean
@@ -44,16 +39,27 @@ interface Pos {
   x: number
   y: number
 }
+interface Size {
+  w: number
+  h: number
+}
 
-// ★★★ 卡片**竖版**：* 高度 > 宽度（* 所有者：「横着方向的长度比竖着方向的
-//   长度长」⇒ 原来是 220×96 的横卡，改成 200×240 的竖卡）⚠
-const CARD_W = 200
-const CARD_H = 240
+const DEF_W = 200
+const DEF_H = 240
+const MIN_W = 140
+const MIN_H = 120
 const PAD = 24
 const GAP = 16
+/** ★ 画布初始尺寸（* 之后按卡片位置自动扩，* 不设上限）⚠ */
+const INIT_W = 1600
+const INIT_H = 1200
+/** ★ 卡片拖到边缘时，画布一次扩多少 */
+const GROW_STEP = 400
 
 const posKey = (nodeId: number) => `thinking:${nodeId}`
 const boardKey = (nodeId: number) => `thinking:${nodeId}:board`
+const sizeKey = (nodeId: number) => `thinking:${nodeId}:size`
+const canvasKey = (nodeId: number) => `thinking:${nodeId}:canvas`
 
 export default function ThinkingBoard({
   open,
@@ -64,89 +70,127 @@ export default function ThinkingBoard({
 }: ThinkingBoardProps) {
   const navigate = useNavigate()
   const [pos, setPos] = useState<Record<number, Pos>>({})
-  /** ★★ 白板上放了哪些笔记（* 默认空）⚠ */
+  const [sizes, setSizes] = useState<Record<number, Size>>({})
+  const [canvas, setCanvas] = useState<Size>({ w: INIT_W, h: INIT_H })
   const [onBoard, setOnBoard] = useState<Set<number>>(new Set())
-  /** ★ 当前展开的盒子 */
   const [openBox, setOpenBox] = useState<NoteKind | null>(null)
+
   const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [resizingId, setResizingId] = useState<number | null>(null)
   const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null)
+  const resizeRef = useRef<{
+    id: number
+    startX: number
+    startY: number
+    startW: number
+    startH: number
+  } | null>(null)
   const boardRef = useRef<HTMLDivElement>(null)
 
-  // ---------------------------------------------------------- 读取已保存的状态
+  const sizeOf = (id: number): Size => sizes[id] ?? { w: DEF_W, h: DEF_H }
+
+  // ---------------------------------------------------------- 读取已保存状态
   useEffect(() => {
     if (!open) return
     let savedPos: Record<number, Pos> | null = null
+    let savedSize: Record<number, Size> | null = null
     let savedBoard: number[] | null = null
+    let savedCanvas: Size | null = null
     try {
-      const raw = localStorage.getItem(posKey(nodeId))
-      if (raw) savedPos = JSON.parse(raw) as Record<number, Pos>
-      const rawB = localStorage.getItem(boardKey(nodeId))
-      if (rawB) savedBoard = JSON.parse(rawB) as number[]
+      const rp = localStorage.getItem(posKey(nodeId))
+      if (rp) savedPos = JSON.parse(rp)
+      const rs = localStorage.getItem(sizeKey(nodeId))
+      if (rs) savedSize = JSON.parse(rs)
+      const rb = localStorage.getItem(boardKey(nodeId))
+      if (rb) savedBoard = JSON.parse(rb)
+      const rc = localStorage.getItem(canvasKey(nodeId))
+      if (rc) savedCanvas = JSON.parse(rc)
     } catch {
-      savedPos = null
-      savedBoard = null
+      /* 坏数据当没有 */
     }
 
-    const board = new Set<number>((savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)))
+    const board = new Set<number>(
+      (savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)),
+    )
     setOnBoard(board)
+    setSizes(savedSize ?? {})
 
-    // ★ 只给**在白板上的**卡片恢复位置；其余等用户加入时再摆 ⚠
     const next: Record<number, Pos> = {}
     let y = PAD
     for (const id of board) {
       const s = savedPos?.[id]
+      const h = (savedSize?.[id] ?? { w: DEF_W, h: DEF_H }).h
       next[id] = s && Number.isFinite(s.x) && Number.isFinite(s.y) ? s : { x: PAD, y }
-      y += CARD_H + GAP
+      y += h + GAP
     }
     setPos(next)
+
+    // ★ 画布至少能装下所有卡片（* 老数据用默认尺寸兜底）⚠
+    const maxX = Math.max(0, ...Object.values(next).map((p) => p.x))
+    const maxY = Math.max(0, ...Object.values(next).map((p) => p.y))
+    setCanvas({
+      w: Math.max(INIT_W, savedCanvas?.w ?? 0, maxX + DEF_W + GROW_STEP),
+      h: Math.max(INIT_H, savedCanvas?.h ?? 0, maxY + DEF_H + GROW_STEP),
+    })
     setOpenBox(null)
   }, [open, nodeId, notes])
 
-  // ---------------------------------------------------------- 加入 / 移除
-  const persistBoard = (set: Set<number>) => {
+  // ---------------------------------------------------------- 持久化
+  const save = (key: string, v: unknown) => {
     try {
-      localStorage.setItem(boardKey(nodeId), JSON.stringify([...set]))
-    } catch {
-      /* 隐私模式忽略 */
-    }
-  }
-  const persistPos = (p: Record<number, Pos>) => {
-    try {
-      localStorage.setItem(posKey(nodeId), JSON.stringify(p))
+      localStorage.setItem(key, JSON.stringify(v))
     } catch {
       /* 隐私模式忽略 */
     }
   }
 
+  /** ★★ 画布**无边界**：卡片拖/缩到超出范围 ⇒ 自动扩（* 只增不减）⚠ */
+  const growCanvas = useCallback((x: number, y: number, w: number, h: number) => {
+    setCanvas((prev) => {
+      const needW = x + w + GROW_STEP
+      const needH = y + h + GROW_STEP
+      if (needW <= prev.w && needH <= prev.h) return prev
+      const next = { w: Math.max(prev.w, needW), h: Math.max(prev.h, needH) }
+      save(canvasKey(nodeId), next)
+      return next
+    })
+  }, [nodeId])
+
+  // ---------------------------------------------------------- 加入 / 移除
   const addToBoard = (n: Note) => {
     setOnBoard((prev) => {
       if (prev.has(n.id)) return prev
       const next = new Set(prev)
       next.add(n.id)
-      persistBoard(next)
+      save(boardKey(nodeId), [...next])
       return next
     })
     setPos((prev) => {
       if (prev[n.id]) return prev
-      // ★★ **竖排一列**：* 新卡片接在现有最下方（* 所有者：「卡片要竖排，不要横排」）⚠
-      const ys = Object.values(prev).map((p) => p.y)
-      const y = ys.length ? Math.max(...ys) + CARD_H + GAP : PAD
+      // ★ 竖排一列：* 接在现有最低点下面（* 用各卡片真实高度算）⚠
+      let maxBottom = PAD
+      for (const [id, p] of Object.entries(prev)) {
+        maxBottom = Math.max(maxBottom, p.y + sizeOf(Number(id)).h)
+      }
+      const y = Object.keys(prev).length ? maxBottom + GAP : PAD
       const next = { ...prev, [n.id]: { x: PAD, y } }
-      persistPos(next)
+      save(posKey(nodeId), next)
+      growCanvas(PAD, y, DEF_W, DEF_H)
       return next
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }
 
   const removeFromBoard = (id: number) => {
     setOnBoard((prev) => {
       const next = new Set(prev)
       next.delete(id)
-      persistBoard(next)
+      save(boardKey(nodeId), [...next])
       return next
     })
   }
 
-  // ---------------------------------------------------------- 拖动
+  // ---------------------------------------------------------- 拖动（位置）
   const onPointerDown = (e: React.PointerEvent, id: number) => {
     if (e.button != null && e.button !== 0) return
     const board = boardRef.current
@@ -160,17 +204,21 @@ export default function ThinkingBoard({
     window.addEventListener('pointerup', onPointerUp)
   }
 
-  const onPointerMove = useCallback((e: PointerEvent) => {
-    const d = dragRef.current
-    const board = boardRef.current
-    if (!d || !board) return
-    const rect = board.getBoundingClientRect()
-    const maxX = Math.max(0, board.scrollWidth - CARD_W - 8)
-    const maxY = Math.max(0, board.scrollHeight - CARD_H - 8)
-    const x = Math.min(maxX, Math.max(0, e.clientX - rect.left - d.dx))
-    const y = Math.min(maxY, Math.max(0, e.clientY - rect.top - d.dy))
-    setPos((prev) => ({ ...prev, [d.id]: { x, y } }))
-  }, [])
+  const onPointerMove = useCallback(
+    (e: PointerEvent) => {
+      const d = dragRef.current
+      const board = boardRef.current
+      if (!d || !board) return
+      const rect = board.getBoundingClientRect()
+      // ★ 位置**不 clamp 上限**（* 只保留 0 下限）⇒* 拖到边缘会自动扩画布 ⚠
+      const x = Math.max(0, e.clientX - rect.left - d.dx)
+      const y = Math.max(0, e.clientY - rect.top - d.dy)
+      setPos((prev) => ({ ...prev, [d.id]: { x, y } }))
+      // ★★ **拖动过程中就扩**（* 不能等松手，* 否则拖出边界时卡片被裁、看不到）⚠
+      growCanvas(x, y, DEF_W, DEF_H)
+    },
+    [growCanvas],
+  )
 
   const onPointerUp = useCallback(() => {
     const d = dragRef.current
@@ -180,18 +228,67 @@ export default function ThinkingBoard({
     window.removeEventListener('pointerup', onPointerUp)
     if (!d) return
     setPos((prev) => {
-      persistPos(prev)
+      save(posKey(nodeId), prev)
+      const p = prev[d.id]
+      if (p) growCanvas(p.x, p.y, DEF_W, DEF_H)
       return prev
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onPointerMove])
+  }, [nodeId, onPointerMove, growCanvas])
+
+  // ---------------------------------------------------------- 拖拽改大小
+  const onResizeDown = (e: React.PointerEvent, id: number) => {
+    if (e.button != null && e.button !== 0) return
+    e.stopPropagation()
+    e.preventDefault()
+    const s = sizeOf(id)
+    resizeRef.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: s.w,
+      startH: s.h,
+    }
+    setResizingId(id)
+    window.addEventListener('pointermove', onResizeMove)
+    window.addEventListener('pointerup', onResizeUp)
+  }
+
+  const onResizeMove = useCallback(
+    (e: PointerEvent) => {
+      const r = resizeRef.current
+      if (!r) return
+      const w = Math.max(MIN_W, r.startW + (e.clientX - r.startX))
+      const h = Math.max(MIN_H, r.startH + (e.clientY - r.startY))
+      setSizes((prev) => ({ ...prev, [r.id]: { w, h } }))
+      const p = pos[r.id]
+      if (p) growCanvas(p.x, p.y, w, h)
+    },
+    [pos, growCanvas],
+  )
+
+  const onResizeUp = useCallback(() => {
+    const r = resizeRef.current
+    resizeRef.current = null
+    setResizingId(null)
+    window.removeEventListener('pointermove', onResizeMove)
+    window.removeEventListener('pointerup', onResizeUp)
+    if (!r) return
+    setSizes((prev) => {
+      save(sizeKey(nodeId), prev)
+      return prev
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId, onResizeMove])
 
   useEffect(
     () => () => {
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointermove', onResizeMove)
+      window.removeEventListener('pointerup', onResizeUp)
     },
-    [onPointerMove, onPointerUp],
+    [onPointerMove, onPointerUp, onResizeMove, onResizeUp],
   )
 
   // ★ Esc 关闭
@@ -207,7 +304,6 @@ export default function ThinkingBoard({
   if (!open) return null
 
   const boardNotes = notes.filter((n) => onBoard.has(n.id))
-  const boardH = Math.max(680, PAD * 2 + Math.max(1, boardNotes.length) * (CARD_H + GAP) + 40)
 
   return (
     <div
@@ -250,7 +346,7 @@ export default function ThinkingBoard({
           <MousePointer2 size={15} style={{ color: 'var(--accent)' }} />
           <span style={{ fontSize: 13.5, fontWeight: 650 }}>思考模式</span>
           <span className="faint" style={{ fontSize: 11.5 }}>
-            从下面五个盒子里挑笔记放到白布 · 拖动排布 · 双击打开
+            从下面五个盒子里挑笔记 · 拖动排布 · 右下角拖拽改大小 · 双击打开
           </span>
           <button
             type="button"
@@ -324,7 +420,6 @@ export default function ThinkingBoard({
             })}
           </div>
 
-          {/* ---- 展开的盒子条目 ---- */}
           {openBox && (
             <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {notes.filter((n) => n.kind === openBox).length === 0 && (
@@ -362,9 +457,7 @@ export default function ThinkingBoard({
                       }}
                     >
                       {inBoard ? <Check size={12} /> : <Plus size={12} />}
-                      <span
-                        style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {n.title || n.body.replace(/\s+/g, ' ').slice(0, 24)}
                       </span>
                     </button>
@@ -374,7 +467,7 @@ export default function ThinkingBoard({
           )}
         </div>
 
-        {/* ---- 白布（点阵） ---- */}
+        {/* ---- 白布（点阵，**无边界**） ---- */}
         <div
           ref={boardRef}
           style={{
@@ -389,7 +482,7 @@ export default function ThinkingBoard({
             touchAction: 'none',
           }}
         >
-          <div style={{ position: 'relative', width: 1200, height: boardH }}>
+          <div style={{ position: 'relative', width: canvas.w, height: canvas.h }}>
             {boardNotes.length === 0 && (
               <div
                 style={{
@@ -407,7 +500,8 @@ export default function ThinkingBoard({
             {boardNotes.map((n) => {
               const m = kindMeta(n.kind)
               const p = pos[n.id] ?? { x: PAD, y: PAD }
-              const active = draggingId === n.id
+              const s = sizeOf(n.id)
+              const active = draggingId === n.id || resizingId === n.id
               return (
                 <div
                   key={n.id}
@@ -415,13 +509,13 @@ export default function ThinkingBoard({
                   onDoubleClick={() =>
                     navigate(`/p/${encodeURIComponent(projectRef)}/notes/${n.id}`)
                   }
-                  title="拖动排布 · 双击打开"
+                  title="拖动排布 · 右下角改大小 · 双击打开"
                   style={{
                     position: 'absolute',
                     left: p.x,
                     top: p.y,
-                    width: CARD_W,
-                    height: CARD_H,
+                    width: s.w,
+                    height: s.h,
                     boxSizing: 'border-box',
                     padding: '8px 10px',
                     borderRadius: 10,
@@ -437,6 +531,7 @@ export default function ThinkingBoard({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 3,
+                    overflow: 'hidden',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -483,7 +578,6 @@ export default function ThinkingBoard({
                       lineHeight: 1.4,
                       overflow: 'hidden',
                       display: '-webkit-box',
-                      // ★ 竖版卡片：* 标题给 3 行 ⚠
                       WebkitLineClamp: 3,
                       WebkitBoxOrient: 'vertical',
                     }}
@@ -497,13 +591,30 @@ export default function ThinkingBoard({
                       lineHeight: 1.6,
                       overflow: 'hidden',
                       display: '-webkit-box',
-                      // ★ 竖版卡片：* 摘要给 4 行，* 把竖向空间填起来 ⚠
                       WebkitLineClamp: 4,
                       WebkitBoxOrient: 'vertical',
                     }}
                   >
                     {n.body.replace(/\s+/g, ' ').slice(0, 200)}
                   </div>
+
+                  {/* ★★★ 右下角**改大小**手柄（* 拖它改宽高，* 形状随意）⚠ */}
+                  <div
+                    onPointerDown={(e) => onResizeDown(e, n.id)}
+                    title="拖动改变大小"
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      bottom: 0,
+                      width: 16,
+                      height: 16,
+                      cursor: 'nwse-resize',
+                      touchAction: 'none',
+                      // ★ 两条斜线（* 一眼看出可拖）⚠
+                      backgroundImage:
+                        'linear-gradient(135deg, transparent 45%, rgba(16,29,51,.30) 45%, rgba(16,29,51,.30) 55%, transparent 55%), linear-gradient(135deg, transparent 68%, rgba(16,29,51,.22) 68%, rgba(16,29,51,.22) 78%, transparent 78%)',
+                    }}
+                  />
                 </div>
               )
             })}

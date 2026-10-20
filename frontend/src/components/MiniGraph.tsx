@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../lib/meteorFx'
+import { useTheme } from '../hooks/useTheme'
 
 /**
  * ★ 首页 / 演示窗的小图（`D98` · AntV G6 版）
@@ -56,6 +57,9 @@ const DIR: Record<string, string> = {
 const colorOf = (id: string) => DIR[id.split('/')[0]] || '#f59e0b'
 
 export default function MiniGraph({ nodes, className, meteor, active = true }: Props) {
+  // ★★ 节点名称颜色必须跟主题：* 浅色底 ⇒ 深字，深色底 ⇒ 浅字 ⚠
+  const { theme } = useTheme()
+  const labelColor = theme === 'dark' ? '#e2e8f0' : '#101d33'
   const boxRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   const stopRef = useRef<(() => void) | null>(null)
@@ -70,7 +74,14 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
         id: `e${i}`,
         source: n.id,
         target: n.linkTo as string,
-        style: { stroke: '#d97706', opacity: 0.9, lineWidth: 1, endArrow: true },
+        // ★★ 连线颜色 = **发出节点**的颜色（* 所有者：「发出节点是什么颜色，
+        //    连线就是什么颜色」）⚠
+        style: {
+          stroke: n.color || colorOf(n.id),
+          opacity: 0.55,
+          lineWidth: 1.2,
+          endArrow: true,
+        },
       }))
 
     const g = new Graph({
@@ -90,13 +101,13 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
             stroke: n.color || colorOf(n.id),
             labelText: n.label,
             labelPlacement: 'bottom',
-            labelFill: '#e2e8f0',
+            labelFill: labelColor,
             labelFontSize: 9,
           },
         })),
         edges,
       },
-      node: { style: { labelPlacement: 'bottom', labelFill: '#e2e8f0', labelFontSize: 9 } },
+      node: { style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 9 } },
       edge: { style: { endArrow: true, lineWidth: 1 } },
       // ★ 纯装饰：* 不给交互（避免用户拖动卡片里的图）
       behaviors: [],
@@ -112,7 +123,8 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
         from: n.id,
         to: n.linkTo as string,
         size: sizeOf(n.id),
-        color: colorOf(n.id),
+        // ★★ 光晕 / 尾迹颜色 = **发出节点**的颜色（* 显式 color 优先）⚠
+        color: n.color || colorOf(n.id),
         toSize: sizeOf(n.linkTo as string),
       }))
     let timer: number | null = null
@@ -132,7 +144,7 @@ export default function MiniGraph({ nodes, className, meteor, active = true }: P
     }
     // nodes 为静态演示数据,只在挂载时构建一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [theme])
 
   // 从隐藏切到可见时,容器尺寸才有效 → 重算画布
   useEffect(() => {

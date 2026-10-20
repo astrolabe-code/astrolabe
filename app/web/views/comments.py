@@ -55,6 +55,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
+from core import like_cache
 from core import settings_table as st
 from core.models import Note, NoteBlock, NoteComment, NoteCommentLike
 from web.http import fail, ok, ok_flat, read_json
@@ -162,15 +163,25 @@ def _list(request: HttpRequest, note: Note):
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：**新的在前** ✅
-    # ★ 一次聚合出这页每条评论的赞数（* 否则 `_comment_json` 会逐条 COUNT）⚠
-    qs = (
-        NoteComment.objects.filter(q)
-        .annotate(_like_total=Count("like_rows"))
-        .order_by("-created_at")
-    )
+    qs = NoteComment.objects.filter(q).order_by("-created_at")
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
+
+    # ★★ 赞数走 Redis 批量（* miss 的才 COUNT，* 一次 GROUP BY 回源）⚠
+    ids = [c.pk for c in items]
+    if ids:
+        def _db_counts(missing: list[int]) -> dict[int, int]:
+            rows = (
+                NoteCommentLike.objects.filter(comment_id__in=missing)
+                .values("comment_id")
+                .annotate(c=Count("id"))
+            )
+            return {r["comment_id"]: r["c"] for r in rows}
+
+        counts = like_cache.comment_counts(ids, _db_counts)
+        for c in items:
+            c._like_total = counts.get(c.pk, 0)
 
     # ★★ 一次查出「我赞过这页里的哪些评论」（* 逐条 exists 就是 N+1）⚠
     liked_ids: set[int] = set()
@@ -318,7 +329,7 @@ def _comment_json(c: NoteComment, liked: bool = False) -> dict:
         "like_count": (
             c._like_total
             if getattr(c, "_like_total", None) is not None
-            else c.like_rows.count()
+            else like_cache.comment_count(c.pk, lambda: c.like_rows.count())
         ),
         "liked": liked,
     }
@@ -375,11 +386,21 @@ def like_comment(request: HttpRequest, comment_id: int):
     body = read_json(request)
     want = bool(body.get("liked", True))
 
+    was = NoteCommentLike.objects.filter(comment_id=comment_id, user=user).exists()
+
     with transaction.atomic():
         if want:
             NoteCommentLike.objects.get_or_create(comment_id=comment_id, user=user)
         else:
             NoteCommentLike.objects.filter(comment_id=comment_id, user=user).delete()
 
-    count = NoteCommentLike.objects.filter(comment_id=comment_id).count()
+    # ★ 只在状态**真的变了**时动缓存（* 幂等重复请求不该让数字跳）⚠
+    if want and not was:
+        like_cache.bump_comment(comment_id, 1)
+    elif not want and was:
+        like_cache.bump_comment(comment_id, -1)
+
+    count = like_cache.comment_count(
+        comment_id, lambda: NoteCommentLike.objects.filter(comment_id=comment_id).count()
+    )
     return ok_flat(liked=want, like_count=count)

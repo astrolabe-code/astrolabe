@@ -43,7 +43,8 @@ from django.http import HttpResponse, HttpRequest
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from core.models import Note
+from core import like_cache
+from core.models import Note, NoteLike
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
 from graph import scope
@@ -136,12 +137,25 @@ def _list(request: HttpRequest, project):
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     total = qs.count()
-    # ★ 一次聚合出这页每篇的章赞数（* 否则 `_note_json` 会逐篇 COUNT）⚠
-    from django.db.models import Count
+    page = list(qs.order_by("-created_at")[offset:offset + limit])
 
-    page = list(
-        qs.annotate(_like_total=Count("likes")).order_by("-created_at")[offset:offset + limit]
-    )
+    # ★★ 章赞数走 Redis 批量（* miss 的才 COUNT，* 一次 GROUP BY 回源）⚠
+    ids = [n.pk for n in page]
+    if ids:
+        from django.db.models import Count
+
+        def _db_counts(missing: list[int]) -> dict[int, int]:
+            rows = (
+                NoteLike.objects.filter(note_id__in=missing)
+                .values("note_id")
+                .annotate(c=Count("id"))
+            )
+            return {r["note_id"]: r["c"] for r in rows}
+
+        counts = like_cache.note_counts(ids, _db_counts)
+        for n in page:
+            n._like_total = counts.get(n.pk, 0)
+
     items = [_note_json(n) for n in page]
     return ok_flat(total=total, limit=limit, offset=offset, items=items)
 
@@ -550,12 +564,11 @@ def _note_json(n: Note) -> dict:
         #   （* 正常笔记两项都是空串）✅
         "deleted_at": n.deleted_at.isoformat() if n.deleted_at else "",
         "deleted_by": n.deleted_by.get_username() if n.deleted_by_id else "",
-        # ★★ **不再读缓存字段** —— 章赞数实时数 `core_notelike` 的行
-        #   （* 列表查询会 annotate 成 `_like_total`，避免 N+1）⚠
+        # ★★ 章赞数：* 列表已批量查好（`_like_total`）；* 单篇走 Redis 缓存 ⚠
         "like_count": (
             n._like_total
             if getattr(n, "_like_total", None) is not None
-            else n.likes.count()
+            else like_cache.note_count(n.pk, lambda: n.likes.count())
         ),
         "comment_count": n.comment_count,
         "created_by": n.created_by.get_username() if n.created_by_id else "",

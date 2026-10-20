@@ -43,6 +43,7 @@ from __future__ import annotations
 from django.http import HttpRequest
 from django.views.decorators.http import require_http_methods
 
+from core import like_cache
 from core.models import Note, NoteBlock, NoteLike
 from web.http import fail, ok, read_json
 from web.permissions import can_like, current_user, note_readable
@@ -124,6 +125,10 @@ def _like(request: HttpRequest, note: Note, user):
     with transaction.atomic():
         _like_row, created = NoteLike.objects.get_or_create(note=note, user=user)
 
+    # ★ 事务提交后再调缓存（* 只改已存在的 key，* 不存在就不管）⚠
+    if created:
+        like_cache.bump_note(note.pk, 1)
+
     return ok(
         {
             "liked": True,
@@ -138,9 +143,12 @@ def _unlike(request: HttpRequest, note: Note, user):
     """★ 取消章赞（* 幂等：没点过也 200）⚠"""
     from django.db import transaction
 
-    # ★★ 只删赞行 —— 计数实时 `COUNT`，⛔ 不再 ±1 ⚠
+    # ★★ 只删赞行 —— 计数的**真相**在数据库；缓存随后同步 ⚠
     with transaction.atomic():
         removed, _ = NoteLike.objects.filter(note=note, user=user).delete()
+
+    if removed:
+        like_cache.bump_note(note.pk, -1)
 
     return ok(
         {
@@ -153,5 +161,7 @@ def _unlike(request: HttpRequest, note: Note, user):
 
 
 def _like_count_of(note_pk: int) -> int:
-    """★ 笔记的章赞数 —— **实时数 `core_notelike` 的行**（* 无缓存字段）⚠"""
-    return NoteLike.objects.filter(note_id=note_pk).count()
+    """★ 笔记的章赞数 —— **Redis 缓存优先，miss 才 COUNT** ⚠"""
+    return like_cache.note_count(
+        note_pk, lambda: NoteLike.objects.filter(note_id=note_pk).count()
+    )

@@ -536,7 +536,6 @@ export default function ProjectGraphPage() {
           {/* ★★★ 右上角：圆形全屏按钮（* 形似 code_network）⚠ */}
           <button
             type="button"
-            className="card"
             onClick={() => {
               setFullscreen((v) => !v)
               setPanelFull(false)
@@ -553,7 +552,13 @@ export default function ProjectGraphPage() {
               display: 'grid',
               placeItems: 'center',
               cursor: 'pointer',
-              boxShadow: '0 2px 10px rgba(15,23,42,.16)',
+              // ★★ 所有者：「两个全屏按钮不要整阴影之类的装饰，看着怪怪的」⚠
+              //   ⇒ ⛔ 不用 `.card`（它带 box-shadow: --shadow-card）、⛔ 无任何阴影
+              //   ⇒ 只留**白底 + 1px 细边框** ✅
+              background: 'var(--card)',
+              border: '1px solid var(--card-border)',
+              color: 'var(--text-sub)',
+              boxShadow: 'none',
             }}
           >
             {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -771,7 +776,6 @@ export default function ProjectGraphPage() {
           {/* ★★ 写作区全屏按钮（* 与图的右上角同款，* 两者互斥）⚠ */}
           <button
             type="button"
-            className="card"
             onClick={() => {
               setPanelFull((v) => !v)
               setFullscreen(false)
@@ -788,7 +792,11 @@ export default function ProjectGraphPage() {
               display: 'grid',
               placeItems: 'center',
               cursor: 'pointer',
-              boxShadow: '0 2px 10px rgba(15,23,42,.16)',
+              // ★★ 同图全屏：⛔ 无阴影、⛔ 不用 .card ⚠
+              background: 'var(--card)',
+              border: '1px solid var(--card-border)',
+              color: 'var(--text-sub)',
+              boxShadow: 'none',
             }}
           >
             {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import {
-  ArrowLeft,
   EyeOff,
   Home,
   LogOut,
@@ -43,7 +42,7 @@ import { useLogout } from '../query/auth'
  * │  (头像)          ⌃           ☰   │  左头像 · 中向上箭头 · 右汉堡
  * └──────────────────────────────────┘
  *
- * 点 ☰ ⇒ 横条下方拉出菜单（主题 / 管理 / 已处置 / 回收站 / 退出 / 首页 / 返回）
+ * 点 ☰ ⇒ 横条下方拉出菜单（主题 / 管理 / 已处置 / 回收站 / 退出 / 首页）
  * 点 ⌃ ⇒ 整个横条消失，顶部居中留「⌄⌄ 顶栏」胶囊（与电脑端一致）
  * ```
  *
@@ -78,23 +77,28 @@ export default function TopNav() {
   const linksRef = useRef<HTMLDivElement>(null)
   const burgerRef = useRef<HTMLButtonElement>(null)
 
-  const { pathname, key: locKey } = useLocation()
+  const { pathname } = useLocation()
   const navigate = useNavigate()
   const isHome = pathname === '/'
-  // ★ react-router 首个 entry 的 key 为 "default"，此时没有可回的站内历史 → 回首页
-  const goBack = () => (locKey !== 'default' ? navigate(-1) : navigate('/'))
+  // ★ 所有者：「去掉导航栏的返回按钮」⇒ 不再提供「返回上一页」入口 ⚠
+  //   （* 需要回退时用浏览器 / 手势即可）
 
   const { data } = useMe()
   const me = data ?? ({ authenticated: false } as Me)
 
-  // ★ 点外部收起移动端菜单
+  // ★★★ 点外部收起移动端菜单
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       const menu = linksRef.current
       const burger = burgerRef.current
       if (!menu || !burger || !open) return
-      const t = e.target as Node
-      if (!menu.contains(t) && !burger.contains(t)) setOpen(false)
+      // ★★★ **必须用 `composedPath()`**（* 不能用 `contains(e.target)`）⚠
+      //   · · ★ 点汉堡时图标 `Menu` → `X` 切换 ⇒ React **卸载了被点的那个 SVG**
+      //   · ·   ⇒ `e.target` 脱离 DOM（parentElement = null）⇒ `contains` 返回 false
+      //   · ·   ⇒ 误判「点在外面」⇒ 菜单刚打开就被关掉（* 实测：点中间没反应）⚠
+      //   · · ★ `composedPath()` 是**事件派发时**算好的完整路径，* 不受 DOM 替换影响 ✅
+      const path = e.composedPath()
+      if (!path.includes(menu) && !path.includes(burger)) setOpen(false)
     }
     document.addEventListener('click', onDoc)
     return () => document.removeEventListener('click', onDoc)
@@ -127,6 +131,26 @@ export default function TopNav() {
     )
   }
 
+  // ★★ 移动端下拉菜单里的按钮样式（* ⛔ 不能用 `.ghost-btn` ——
+  //   · · 它的完整样式在 `.nav-links .ghost-btn` 作用域里，* 菜单不在该作用域，
+  //   · · 结果按钮没背景没边框、文字还竖排（* 实测就是这个样子）⚠）
+  const menuBtn: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    height: 32,
+    padding: '0 13px',
+    borderRadius: 999,
+    border: '1px solid var(--card-border)',
+    background: 'var(--card)',
+    color: 'var(--text-main)',
+    fontSize: 12.5,
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+    textDecoration: 'none',
+  }
+
   // ============================================================ 移动端：横条（左头像 / 中上箭头 / 右汉堡）
   if (isNarrow) {
     return (
@@ -134,8 +158,11 @@ export default function TopNav() {
         <nav
           className="topnav"
           style={{
-            // ★★★ **与背景同色的横条**（* 所有者：「初始状态就是一个青色的横长条，
-            //   跟背景颜色一样」）——* 占布局高度、不加边框、不透明浮层 ⚠
+            // ★★★ 移动端横条：* 背景 / 渐变 / 下边框**都交给 `.topnav` 类** ⚠
+            //   · · ★ 所有者：「电脑端的导航栏的背景色，移动端的不一样，应该是一样的」
+            //   · · ⛔ 这里**不要**再覆盖 background / borderBottom ——
+            //     * 桌面是 `linear-gradient(180deg, --nav-bg-a, --nav-bg-b)` + `--nav-border` ⚠
+            //   · · 只覆盖**布局**（占一行、三段排布）✅
             position: 'relative',
             zIndex: 30,
             height: 48,
@@ -144,9 +171,6 @@ export default function TopNav() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: 'var(--bg)',
-            borderBottom: 'none',
-            boxShadow: 'none',
           }}
         >
           {/* ---- 左：用户头像（点进用户设置） ---- */}
@@ -267,50 +291,46 @@ export default function TopNav() {
               }}
             >
               {/* ★ 主题（* 手机上也要能切）⚠ */}
-              <button className="nav-btn ghost-btn" onClick={toggle}>
+              <button type="button" style={menuBtn} onClick={toggle}>
                 {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
                 {theme === 'dark' ? '浅色' : '夜穹'}
               </button>
               {me.is_staff && (
-                <Link className="nav-btn ghost-btn" to="/admin">
+                <Link style={menuBtn} to="/admin">
                   <Shield size={15} />
                   管理
                 </Link>
               )}
               {me.is_staff && (
-                <Link className="nav-btn ghost-btn" to="/admin/moderated">
+                <Link style={menuBtn} to="/admin/moderated">
                   <EyeOff size={15} />
                   已处置
                 </Link>
               )}
               {me.authenticated && (
-                <Link className="nav-btn ghost-btn" to="/me/deleted" title="回收站">
+                <Link style={menuBtn} to="/me/deleted" title="回收站">
                   <Trash2 size={15} />
                   回收站
                 </Link>
               )}
               {me.authenticated ? (
-                <button className="nav-btn ghost-btn logout" onClick={handleLogout}>
+                <button type="button" style={menuBtn} onClick={handleLogout}>
                   <LogOut size={15} />
                   退出
                 </button>
               ) : (
-                <Link className="nav-btn ghost-btn" to="/login">
+                <Link style={menuBtn} to="/login">
+                  <User size={15} />
                   登录
                 </Link>
               )}
               {!isHome && (
-                <button className="nav-btn ghost-btn" onClick={() => navigate('/')}>
+                <button type="button" style={menuBtn} onClick={() => navigate('/')}>
                   <Home size={15} />
                   首页
                 </button>
               )}
-              {!isHome && (
-                <button className="nav-btn ghost-btn" onClick={goBack}>
-                  <ArrowLeft size={15} />
-                  返回
-                </button>
-              )}
+
             </div>
           )}
         </nav>
@@ -337,18 +357,6 @@ export default function TopNav() {
     <>
       <nav className="topnav">
         <div className="nav-left">
-          {!isHome && (
-            <button
-              type="button"
-              className="nav-quick-btn"
-              onClick={goBack}
-              title="返回上一页"
-              aria-label="返回上一页"
-            >
-              <ArrowLeft size={15} />
-              <span className="nav-quick-label">返回</span>
-            </button>
-          )}
           <div className="nav-user-slot">
             {me.authenticated ? (
               // ★★ 点头像 / 用户名 ⇒ **用户设置**（* 所有者：「不然很难找的」）⚠

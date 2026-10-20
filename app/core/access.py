@@ -212,17 +212,21 @@ def project_of(note: Any) -> Any:
       · · ★★ 后果：* 失锚策略 / 删除权限可能读到【别的项目】的设置
         （* 不报错，* 只是错）⚠
     """
-    node = note.node
+    # ★★★ **优先用笔记自己的 `project` 真外键** ⚠
+    #   · · ★ `Note.project` 是 `B183`/`B197` 之后补上的真外键，* 一定准；
+    #   · · ★ 之前绕节点推项目，* 而 `Node` 早已改成 `repo` / `project` 两个归属 ——
+    #     * `node.base_graph_id` / `node.project_ref` **字段都不存在** ⇒
+    #     * `AttributeError` ⇒ 笔记详情 / 评论 / 点赞全部 500 ⚠⚠
+    if getattr(note, "project_id", None) is not None:
+        return note.project
+
+    node = getattr(note, "node", None)
     if node is None:
         return None
-    if node.project_id is not None:
+    # ★ 节点挂项目 ⇒ 直接用它
+    if getattr(node, "project_id", None) is not None:
         return node.project
-    from core.models import Project
-
-    if node.base_graph_id is not None:
-        return Project.objects.filter(base_graph_id=node.base_graph_id).first()
-    if node.project_ref:
-        return Project.objects.filter(project_ref=node.project_ref).first()
+    # ★ 池化节点（只挂 `repo`）⇒ 无法唯一确定项目 ⇒ 返回 None（* 上层用代码默认值）⚠
     return None
 
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Lightbulb, Plus } from 'lucide-react'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
@@ -7,6 +7,7 @@ import Button from '../ui/Button'
 import EmptyState from '../ui/EmptyState'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
+import ThinkingBoard from './ThinkingBoard'
 
 /**
  * ★ 一个节点的笔记区（`F2` · D92）
@@ -51,6 +52,8 @@ export default function NoteSection({
   const [showAll, setShowAll] = useState(false)
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
   const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
+  // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
+  const [thinkingOpen, setThinkingOpen] = useState(false)
   const notes = useNotes(projectRef, { limit: 200 })
 
   if (notes.isError) {
@@ -165,11 +168,21 @@ export default function NoteSection({
             ),
           )}
         </div>
-        {canWrite && (
-          <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
-            写笔记
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {/* ★★★ 思考模式入口（* 任何人都能用，* 只读用户也能摆着看）⚠ */}
+          <Button
+            icon={<Lightbulb size={14} />}
+            onClick={() => setThinkingOpen(true)}
+            title="在白布上自由排布笔记卡片，理清它们之间的联系"
+          >
+            思考模式
           </Button>
-        )}
+          {canWrite && (
+            <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
+              写笔记
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -219,6 +232,15 @@ export default function NoteSection({
           </div>
         )}
       </div>
+
+      {/* ★★★ 思考模式白板（* fixed 覆盖层，* 位置按节点存 localStorage）⚠ */}
+      <ThinkingBoard
+        open={thinkingOpen}
+        projectRef={projectRef}
+        nodeId={nodeId}
+        notes={mine}
+        onClose={() => setThinkingOpen(false)}
+      />
 
       {activeKind === 'all' && groups.length > 2 && (
         <div className="mt-3">

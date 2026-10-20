@@ -119,33 +119,41 @@ export default function NodePanel({
     >
       {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
       {!infoOpen && (
-        <button
-          type="button"
-          className="card"
-          onClick={() => setInfoOpen(true)}
-          title="展开节点信息"
+        // ★★★ 折叠后**单独占一行工具条**（* 左侧「节点信息」胶囊、* 右侧留给全屏按钮）——
+        //   · · 所有者：「折叠后，写作按钮，全屏按钮，以及折叠的胶囊按钮全部挤在一起了，
+        //     不好点击了」⚠
+        //   · · ⛔ 不再 absolute 浮在笔记区标题上 ⇒* 三者互不重叠 ✅
+        <div
           style={{
-            // ★★ 浮在写作区之上（* 不占一行高度，* 与左上角「搜索/工具」胶囊同款）⚠
-            position: 'absolute',
-            top: 6,
-            right: 44, // ★ 避开右上角的全屏按钮
-            zIndex: 10,
-            padding: '2px 10px',
-            borderRadius: 999,
-            fontSize: 11,
-            color: 'var(--text-sub)',
-            background: 'var(--surface)',
-            border: '1px solid var(--card-border)',
-            cursor: 'pointer',
-            display: 'inline-flex',
+            height: 40,
+            flexShrink: 0,
+            display: 'flex',
             alignItems: 'center',
-            gap: 4,
-            boxShadow: '0 2px 8px rgba(15,23,42,.14)',
+            paddingRight: 42, // 给右上角全屏按钮（30×30 + 6 边距）留位
+            paddingLeft: 2,
           }}
         >
-          <ChevronDown size={11} />
-          节点信息
-        </button>
+          <button
+            type="button"
+            onClick={() => setInfoOpen(true)}
+            title="展开节点信息"
+            style={{
+              padding: '3px 11px',
+              borderRadius: 999,
+              fontSize: 11.5,
+              color: 'var(--text-sub)',
+              background: 'var(--card)',
+              border: '1px solid var(--card-border)',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <ChevronDown size={12} />
+            节点信息
+          </button>
+        </div>
       )}
       {infoOpen && (
       <div
@@ -315,6 +323,7 @@ export default function NodePanel({
           }}
           onCreateNote={() => setCreating(true)}
           onEditNote={setEditing}
+          onDeleteNote={setPendingDelete}
         />
       </div>
 
@@ -324,7 +333,16 @@ export default function NodePanel({
         note={editing}
         projectRef={projectRef}
         nodeId={node.vid}
-        onDelete={editing ? () => setPendingDelete(editing) : undefined}
+        // ★★★ 点弹窗里的「删除」⇒ **先关弹窗**，再弹确认框（* 所有者：
+        //   「按了弹窗里的删除按钮删除了笔记，结果这个弹窗还不消失」）⚠
+        onDelete={
+          editing
+            ? () => {
+                setPendingDelete(editing)
+                setEditing(null)
+              }
+            : undefined
+        }
         onClose={() => {
           setCreating(false)
           setEditing(null)

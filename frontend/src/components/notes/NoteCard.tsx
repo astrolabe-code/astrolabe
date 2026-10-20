@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
-import { EyeOff, MessageSquare, Pencil, ThumbsUp } from 'lucide-react'
+import { EyeOff, Lock, LockOpen, MessageSquare, Pencil, ThumbsUp, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
+import { useUpdateNote } from '../../query/notes'
 import { kindMeta } from './kindMeta'
 
 /**
@@ -30,6 +31,8 @@ interface NoteCardProps {
   /** 当前用户能不能改它（作者 ∨ owner ∨ 协作者）—— 决定显不显示「编辑」 */
   canWrite: boolean
   onEdit: (note: Note) => void
+  /** ★★ 删除（* 与编辑弹窗里的「删除」联动：* 同一个确认框、同一条软删路径）⚠ */
+  onDelete?: (note: Note) => void
 }
 
 /** ★ 摘要：取前两行非空内容，超过 160 字截断 */
@@ -42,10 +45,18 @@ function preview(body: string): string {
   return text.length > 160 ? `${text.slice(0, 160)}…` : text
 }
 
-export default function NoteCard({ note, projectRef, canWrite, onEdit }: NoteCardProps) {
+export default function NoteCard({
+  note,
+  projectRef,
+  canWrite,
+  onEdit,
+  onDelete,
+}: NoteCardProps) {
   const navigate = useNavigate()
   const meta = kindMeta(note.kind)
   const Icon = meta.icon
+  // ★★ 「公开 / 私有」开关：* 与编辑弹窗里的同一个字段（`is_public`）联动 ⚠
+  const update = useUpdateNote(note.id)
   return (
     <div
       className="card w-full text-left"
@@ -53,8 +64,22 @@ export default function NoteCard({ note, projectRef, canWrite, onEdit }: NoteCar
       onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.id}`)}
     >
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="tag" style={{ fontSize: 10.5 }}>
-          <Icon size={11} style={{ marginRight: 3, verticalAlign: -1 }} />
+        {/* ★★ 类型标签用**该 kind 的专属色**（* 文字 / 边框 / 淡底同色系）⚠ */}
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 3,
+            fontSize: 10.5,
+            lineHeight: '16px',
+            padding: '1px 8px',
+            borderRadius: 999,
+            color: meta.color,
+            border: `1px solid ${meta.color}66`,
+            background: `${meta.color}1a`,
+          }}
+        >
+          <Icon size={11} />
           {meta.label}
         </span>
         {!note.is_public && (
@@ -86,19 +111,56 @@ export default function NoteCard({ note, projectRef, canWrite, onEdit }: NoteCar
           <MessageSquare size={11} /> {note.comment_count}
         </span>
         {canWrite && (
-          <button
-            type="button"
-            className="flex items-center gap-1"
-            style={{ marginLeft: 'auto', color: 'var(--text-sub)', cursor: 'pointer' }}
-            onClick={(e) => {
-              // ⚠ 必须阻止冒泡 —— 否则会先跳阅读页 ⚠
-              e.stopPropagation()
-              onEdit(note)
-            }}
+          <div
+            className="flex items-center gap-3"
+            style={{ marginLeft: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <Pencil size={11} />
-            编辑
-          </button>
+            {/* ★★ 公开 / 私有开关（* 与弹窗里的同一字段联动）⚠
+                · · ⛔ 不跳阅读页 —— 这个容器统一 stopPropagation ✅ */}
+            <button
+              type="button"
+              className="flex items-center gap-1"
+              disabled={update.isPending}
+              title={note.is_public ? '当前公开，点击改为私有' : '当前私有，点击改为公开'}
+              style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+              onClick={() => {
+                // ★ 整份 PATCH（* 后端按字段更新；带上其余字段避免误清空）⚠
+                update.mutate({
+                  kind: note.kind,
+                  title: note.title,
+                  body: note.body,
+                  is_public: !note.is_public,
+                })
+              }}
+            >
+              {note.is_public ? <LockOpen size={11} /> : <Lock size={11} />}
+              {note.is_public ? '公开' : '私有'}
+            </button>
+
+            <button
+              type="button"
+              className="flex items-center gap-1"
+              style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+              onClick={() => {
+                // ★★ 与弹窗里的删除**同一条路径**（* 父组件的确认框 + 软删）⚠
+                onDelete?.(note)
+              }}
+            >
+              <Trash2 size={11} />
+              删除
+            </button>
+
+            <button
+              type="button"
+              className="flex items-center gap-1"
+              style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+              onClick={() => onEdit(note)}
+            >
+              <Pencil size={11} />
+              编辑
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -38,6 +38,8 @@ interface NoteSectionProps {
   onCreateNote: () => void
   /** ★★ `F3`：编辑某篇（打开编辑器） */
   onEditNote: (note: Note) => void
+  /** ★★ 删除某篇（* 卡片上的「删除」与弹窗里的删除共用同一个确认框）⚠ */
+  onDeleteNote?: (note: Note) => void
 }
 
 export default function NoteSection({
@@ -48,6 +50,7 @@ export default function NoteSection({
   onOpenNote,
   onCreateNote,
   onEditNote,
+  onDeleteNote,
 }: NoteSectionProps) {
   const [showAll, setShowAll] = useState(false)
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
@@ -219,6 +222,7 @@ export default function NoteSection({
                   projectRef={projectRef}
                   canWrite={canWrite || n.created_by === meUsername}
                   onEdit={onEditNote}
+                  onDelete={onDeleteNote}
                 />
               ))}
             </div>

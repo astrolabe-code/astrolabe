@@ -122,3 +122,12 @@ docs/MODEL-REFACTOR-DRAFT.md
 # ★ 它是**过程材料**：★ 推送规则 · 提交命令格式 · 工作流约定 ✅
 #   ⇒ ★ 对读代码的人没有价值，* 且会暴露协作方式 ⚠
 docs/AI-CONVENTIONS.md
+
+# ★★ `docs/markdown-renderer-discussion.md` —— Markdown 渲染器改造的讨论记录
+#
+# ★ 所有者裁定（2026-10-21）：「/markdown-renderer-discussion.md不要进git」
+#
+# ★ 它是**过程材料**：★ 原话 + 时间戳，* 供挑选用
+#   ⇒ ★ 结论已誊进 `docs/frontend-decisions.md`(D108) / `docs/backend-decisions.md`(B235) ✅
+#   ⇒ ★ 过程材料对读代码的人没有价值 ⚠
+docs/markdown-renderer-discussion.md

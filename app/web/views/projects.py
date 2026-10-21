@@ -101,10 +101,12 @@ def purge_project(project_ref: str, *, by=None) -> int:
         Edge.objects.filter(project=project).delete()
     Job.objects.filter(project_ref=project_ref).delete()
     Project.objects.filter(project_ref=project_ref).delete()
-    # ★ 项目（连同基图）没了 ⇒ 消掉 `astrolabe:basegraph:<graph_key>` 死映射 ⚠
-    from graph.binding import forget_base_graph
-
-    forget_base_graph(bg)
+    # ⚠★★ 2026-10-21（所有者裁定）：**基图是宝贵数据，只能管理员在后台删** ⚠
+    #   · · ★ 本项目**绝不碰基图**（* 包括它的 Redis 映射）——
+    #     * 删项目 ≠ 删基图：* 同一个基图被多个项目 / 多个版本共用，
+    #     * 在这里清映射只会让下次绑定白跑一次，* 没有任何好处 ⚠
+    #   · · ★★ 映射只允许在「基图行本身被管理员删掉」时清
+    #     （* `graph.binding.forget_base_graph`，* 目前只由管理命令调用）✅
     return freed
 
 

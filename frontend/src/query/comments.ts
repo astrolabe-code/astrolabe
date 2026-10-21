@@ -27,8 +27,8 @@ import type {
 
 export interface CommentsQuery {
   anchor_kind: AnchorKind
-  /** 段评必填；章评不传 */
-  block_id?: number
+  /** 段评必填（段落指纹）；章评不传 */
+  fingerprint?: string
   /** 楼中楼：拉某条的回复 */
   parent?: number
   /** 失锚且被策略隐藏的段评也列出来（仅有权者有效） */
@@ -42,17 +42,30 @@ export interface CommentsQuery {
   enabled?: boolean
   limit?: number
   offset?: number
+  /** ★★ 排序：`time`（最新在前，默认）/ `hot`（赞多在前）⚠ */
+  order?: 'time' | 'hot'
 }
 
 /** GET /api/notes/<id>/comments/（① 型） */
 export function useComments(noteId?: number | null, q: CommentsQuery = { anchor_kind: 'chapter' }) {
   const params = new URLSearchParams({ anchor_kind: q.anchor_kind })
-  if (q.block_id != null) params.set('block_id', String(q.block_id))
+  if (q.fingerprint) params.set('fingerprint', q.fingerprint)
   if (q.parent != null) params.set('parent', String(q.parent))
   if (q.include_hidden) params.set('include_hidden', '1')
   if (q.limit != null) params.set('limit', String(q.limit))
   if (q.offset != null) params.set('offset', String(q.offset))
-  const key = ['comments', noteId, q.anchor_kind, q.block_id ?? null, q.parent ?? null, !!q.include_hidden]
+  // ★ 排序进参数与 queryKey（* 切换时自动重新拉）⚠
+  const order = q.order ?? 'time'
+  if (order !== 'time') params.set('order', order)
+  const key = [
+    'comments',
+    noteId,
+    q.anchor_kind,
+    q.fingerprint ?? null,
+    q.parent ?? null,
+    !!q.include_hidden,
+    order,
+  ]
   return useQuery({
     queryKey: key,
     // ⚠★ `enabled` 默认 true ——* 显式传 false 时**永不自动取**（* 展开后 refetch）✅
@@ -69,14 +82,20 @@ export function useComments(noteId?: number | null, q: CommentsQuery = { anchor_
 export interface CreateCommentBody {
   body: string
   anchor_kind: AnchorKind
-  /** 段评必填（且必须属于这篇笔记）；章评带了 ⇒ 400 */
-  block_id?: number
+  /** 段评必填（段落指纹，且必须属于这篇笔记的当前正文）；章评带了 ⇒ 400 */
+  fingerprint?: string
   /**
    * ★★ `B214`：评论类型 —— `comment`（默认）/ `reply` / `mention` / `both` ⚠
    *   · · ★ 非 `comment` 时正文**必须带 @**（后端 400 `missing_mention`）✅
    *   · · ★★ 「回复谁」就在正文的 @ 里（* ⛔ 不再有 `parent_id`）⚠
    */
   kind?: CommentKind
+  /**
+   * ★★ 回复某条评论（* 2026-10-20）——
+   *   · · 有它 ⇒ 后端把 `quote` 记为**那条评论的正文**（* 不再是整段原文）⚠
+   *   · · 有它时 `kind` 会被后端强制设为 `reply`，且**不要求正文带 @** ✅
+   */
+  reply_to_comment_id?: number
 }
 
 /** POST /api/notes/<id>/comments/（① 型）⇒ {comment, note_comment_count, block_comment_count} */

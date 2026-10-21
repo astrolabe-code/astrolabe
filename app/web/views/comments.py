@@ -57,7 +57,8 @@ from django.views.decorators.http import require_http_methods
 
 from core import like_cache
 from core import settings_table as st
-from core.models import Note, NoteBlock, NoteComment, NoteCommentLike
+from graph import notes as note_alg
+from core.models import Note, NoteComment, NoteCommentLike
 from web.http import fail, ok, ok_flat, read_json
 from web.permissions import (
     can_create_comment,
@@ -74,6 +75,10 @@ PAGE_MAX = 100
 
 #: ★ `quote` 快照最长（★ 与模型 `varchar(500)` 一致）
 QUOTE_MAX = 500
+
+#: ★★★ **一条评论最多多少字**（* 所有者：「评论的字数要有限制，比如300字，
+#:   超出限制，前端不允许发送，而且要有提示，后端也不接受，丢掉」）⚠
+BODY_MAX = 300
 
 #: ★★ **@ 提及的识别规则**（* `B214`④）⚠
 #:   · · ★ `@` + Django 用户名允许的字符（* 字母数字 `. _ - +`）✅
@@ -130,25 +135,17 @@ def _list(request: HttpRequest, note: Note):
     #   · · ★ 「回复谁」在正文的 @ 里，* `kind` 只决定视觉 ⚠
     q = Q(note=note, deleted_at__isnull=True)
 
-    block = None
     if anchor == "paragraph":
-        raw = (request.GET.get("block_id") or "").strip()
-        if not raw:
-            return fail("段评列表必须指定 block_id", 400, code="missing_block")
-        try:
-            block_pk = int(raw)
-        except ValueError:
-            return fail("block_id 必须是数字", 400, code="bad_block")
-        block = NoteBlock.objects.filter(pk=block_pk, note=note).first()
-        if block is None:
-            return fail("段落不存在（或不属于这篇笔记）", 404, code="block_not_found")
-        q &= Q(is_paragraph=True, block=block)
+        # ★★ 锚点 = **段落指纹**（* `B235`：段落不再是表里的行）⚠
+        fp = (request.GET.get("fingerprint") or "").strip()
+        if not fp:
+            return fail("段评列表必须指定 fingerprint", 400, code="missing_block")
+        q &= Q(is_paragraph=True, fingerprint=fp)
     else:
         q &= Q(is_paragraph=False)
         # ---- 失锚段评：按项目策略决定是否并入章评区（B189）----
-        # ⚠★ `B214`：* 评论已**平铺无链** ⇒* 不再有「顶层 / 楼中楼」之分，
-        #   失锚段评（* 段评但 block 空了）直接按策略并入章评区 ✅
-        orphans = Q(is_paragraph=True, block__isnull=True)
+        # ⚠★ `B235`：失锚 = `fingerprint` 空串（* 原 `block_id IS NULL`）⚠
+        orphans = Q(is_paragraph=True, fingerprint="")
         policy = st.get("note.orphan_comment_policy", project=project_of(note))
         if policy == "move_to_chapter":
             q |= orphans
@@ -159,11 +156,38 @@ def _list(request: HttpRequest, note: Note):
         ):
             q |= orphans
 
+    # ★★★ **楼中楼（最多两层）**（* 所有者：「回复一个用户后，会成楼，不过最多
+    #   只有这一层楼」）⚠
+    #   · · 默认只列**顶层**评论（parent IS NULL）
+    #   · · `?parent=<id>` ⇒ 拉这条评论的子回复 ⚠
+    raw_parent = (request.GET.get("parent") or "").strip()
+    if raw_parent:
+        try:
+            q &= Q(parent_id=int(raw_parent))
+        except ValueError:
+            return fail("parent 必须是数字", 400, code="bad_parent")
+    else:
+        q &= Q(parent__isnull=True)
+
     limit = _clamp(request.GET.get("limit"), 1, PAGE_MAX, 50)
     offset = _clamp(request.GET.get("offset"), 0, 10**9, 0)
 
     # ⚠ 排序口径（* 与两棵偏索引的方向一致，* 免得回表排序）：**新的在前** ✅
-    qs = NoteComment.objects.filter(q).order_by("-created_at")
+    # ★★★ 排序（* 所有者：「评论要能按时间和热度排序」）⚠
+    #   · · `time` = 最新在前（默认）；* `hot` = 赞多在前，同赞再按时间 ⚠
+    order = (request.GET.get("order") or "time").strip().lower()
+    if order == "hot":
+        qs = (
+            NoteComment.objects.filter(q)
+            .annotate(_like_total=Count("like_rows", distinct=True), _reply_count=Count("replies"))
+            .order_by("-_like_total", "-created_at")
+        )
+    else:
+        qs = (
+            NoteComment.objects.filter(q)
+            .annotate(_reply_count=Count("replies"))
+            .order_by("-created_at")
+        )
 
     total = qs.count()
     items = list(qs[offset:offset + limit])
@@ -181,7 +205,9 @@ def _list(request: HttpRequest, note: Note):
 
         counts = like_cache.comment_counts(ids, _db_counts)
         for c in items:
-            c._like_total = counts.get(c.pk, 0)
+            # ★ hot 排序时对象已带 annotate 的 `_like_total` ⇒* 以数据库为准 ⚠
+            if getattr(c, "_like_total", None) is None:
+                c._like_total = counts.get(c.pk, 0)
 
     # ★★ 一次查出「我赞过这页里的哪些评论」（* 逐条 exists 就是 N+1）⚠
     liked_ids: set[int] = set()
@@ -209,26 +235,66 @@ def _create(request: HttpRequest, note: Note, user):
     text = str(body.get("body") or "").strip()
     if not text:
         return fail("评论不能为空", 400, code="empty_body")
+    # ★★★ 后端也**硬拒绝**超长（* 不只是靠前端拦）⇒ 超一个字都不收 ⚠
+    if len(text) > BODY_MAX:
+        return fail(
+            f"评论最多 {BODY_MAX} 字（当前 {len(text)} 字）",
+            400,
+            code="comment_too_long",
+        )
 
     anchor = str(body.get("anchor_kind") or "chapter").strip()
     if anchor not in ("chapter", "paragraph"):
         return fail("anchor_kind 必须是 chapter 或 paragraph", 400, code="bad_anchor")
 
-    block = None
+    # ★★ 段评锚点 = **段落指纹**（* `B235`）⚠
+    #   · · ★ 指纹必须**真的存在**于这篇笔记的当前正文里（* 现算，* 不查表）
+    #   · · ★ 段文本从切分结果里取 ⇒ 顺便当 `quote` 快照 ✅
+    seg_fp = ""
+    seg_ordinal = -1
+    seg_text = ""
     if anchor == "paragraph":
-        try:
-            block_pk = int(body.get("block_id"))
-        except (TypeError, ValueError):
-            return fail("段评必须指定 block_id", 400, code="missing_block")
-        block = NoteBlock.objects.filter(pk=block_pk, note=note).first()
-        if block is None:
-            return fail("段落不存在（或不属于这篇笔记）", 404, code="block_not_found")
-    elif body.get("block_id"):
-        # ★ 章评带 block_id ⇒ ★ 前端口径乱了 ⇒ 明说，* ❌ 不静默忽略 ⚠
+        seg_fp = str(body.get("fingerprint") or "").strip()
+        if not seg_fp:
+            return fail("段评必须指定 fingerprint", 400, code="missing_block")
+        for seg in note_alg.realign(note):
+            if seg["fingerprint"] == seg_fp:
+                seg_ordinal = seg["ordinal"]
+                seg_text = seg["text"]
+                break
+        if seg_ordinal < 0:
+            return fail("段落不存在（正文已变）", 404, code="block_not_found")
+    elif body.get("fingerprint") or body.get("block_id"):
+        # ★ 章评带了段落锚点 ⇒ ★ 前端口径乱了 ⇒ 明说，* ❌ 不静默忽略 ⚠
         return fail("章评不能指定段落", 400, code="block_not_allowed")
 
+    # ★★★ **回复某条评论**（2026-10-20 新增）——
+    #   · · 所有者反馈：「评论 是是是 本来是回复 试一下气泡位置 这条评论的，结果上面
+    #     却显示 # 火红色…，应该显示 试一下气泡位置 的」
+    #   · · ⇒ 回复时 `quote` 必须取**被回复评论的正文**，⛔ 不再是整段原文 ⚠
+    # ★★ 楼中楼（最多两层）：`parent_id`（或旧的 `reply_to_comment_id`）⚠
+    #   · · 回复「顶层评论」⇒ parent=它
+    #   · · 回复「某条回复」⇒ parent=它的**顶层父评论**（⛔ 不往下叠第三层）✅
+    reply_to_id = body.get("parent_id") or body.get("reply_to_comment_id")
+    parent = None
+    quoted = None
+    if reply_to_id not in (None, "", 0):
+        try:
+            target = NoteComment.objects.filter(
+                pk=int(reply_to_id), note=note, deleted_at__isnull=True
+            ).first()
+        except (TypeError, ValueError):
+            target = None
+        if target is None:
+            return fail("被回复的评论不存在", 404, code="reply_target_not_found")
+        quoted = target.body  # ★ 引用**被回复那条**的正文
+        parent = target.parent or target  # ★ 最多一层 ⚠
+
     # ★★ `B214`：**类型一列**替代 `parent_id`（* 回复谁在正文的 @ 里）⚠
+    #   · · 2026-10-20：* 有 `reply_to_comment_id` ⇒ 直接判为 reply（* 不再依赖 @）✅
     kind = str(body.get("kind") or NoteComment.KIND_COMMENT).strip()
+    if parent is not None:
+        kind = NoteComment.KIND_REPLY
     if kind not in dict(NoteComment.KIND_CHOICES):
         return fail(
             f"kind 必须是 {list(dict(NoteComment.KIND_CHOICES))} 之一",
@@ -236,28 +302,39 @@ def _create(request: HttpRequest, note: Note, user):
             code="bad_kind",
         )
     # ★★ 非普通类型必须带 @（* 否则「回复 @?」渲染不出来）⚠
-    if kind in NoteComment.KIND_NEEDS_AT and not MENTION_RE.search(text):
+    if (
+        parent is None
+        and kind in NoteComment.KIND_NEEDS_AT
+        and not MENTION_RE.search(text)
+    ):
         return fail("回复 / @ 的评论正文里必须带上 @某个用户", 400, code="missing_mention")
 
     comment = NoteComment.objects.create(
         note=note,
         is_paragraph=(anchor == "paragraph"),
-        block=block,
+        fingerprint=seg_fp,
+        ordinal=seg_ordinal,
         kind=kind,
         body=text,
-        # ★★ quote 由后端填（* B203④）—— * 前端传了也不算 ⚠
-        quote=(block.text[:QUOTE_MAX] if block is not None else ""),
+        # ★★ quote：
+        #   · 回复某条评论 ⇒ **那条评论的正文**
+        #   · 否则（新开一条）⇒ 该段原文快照
+        parent=parent,
+        quote=(
+            quoted[:QUOTE_MAX]
+            if quoted is not None
+            else (seg_text[:QUOTE_MAX] if seg_text else "")
+        ),
         created_by=user,
     )
 
-    # ---- 计数（* F() 原子增减）----
+    # ---- 计数（* `B235`：段落计数**不再存**，现数）----
     Note.objects.filter(pk=note.pk).update(comment_count=F("comment_count") + 1)
     block_comment_count = None
-    if block is not None:
-        NoteBlock.objects.filter(pk=block.pk).update(comment_count=F("comment_count") + 1)
-        block_comment_count = NoteBlock.objects.filter(pk=block.pk).values_list(
-            "comment_count", flat=True
-        ).first()
+    if seg_fp:
+        block_comment_count = NoteComment.objects.filter(
+            note=note, is_paragraph=True, fingerprint=seg_fp, deleted_at__isnull=True
+        ).count()
     note_comment_count = Note.objects.filter(pk=note.pk).values_list(
         "comment_count", flat=True
     ).first()
@@ -299,10 +376,7 @@ def detail(request: HttpRequest, comment_id: int):
         Note.objects.filter(pk=comment.note_id).update(
             comment_count=F("comment_count") - 1
         )
-        if comment.block_id is not None:
-            NoteBlock.objects.filter(pk=comment.block_id).update(
-                comment_count=F("comment_count") - 1
-            )
+        # ★ `B235`：段落计数不再存（* 现数），* 这里无需再改任何计数列 ⚠
     return ok({"deleted": True})
 
 
@@ -315,14 +389,23 @@ def _comment_json(c: NoteComment, liked: bool = False) -> dict:
         "id": c.pk,
         "note_id": c.note_id,
         "anchor_kind": c.anchor_kind,
-        "block_id": c.block_id,
+        # ★★ 段评锚点 = **段落指纹**（* `B235`；* 空串 = 失锚）⚠
+        "fingerprint": c.fingerprint or "",
+        "ordinal": c.ordinal,
         # ★★ `B214`：* 类型（决定视觉）——* `parent_id` / `reply_count` 已下线 ⚠
         "kind": c.kind,
         "body": c.body,
         "quote": c.quote,
-        # ★★ 失锚标记（* `is_paragraph=True` 且 `block_id=None`）——
+        # ★★ 失锚标记（* `is_paragraph=True` 且指纹为空）——
         #   · ★ 前端显示"原段落已变更或已删除" ✅
-        "orphaned": bool(c.is_paragraph and c.block_id is None),
+        "orphaned": bool(c.is_paragraph and not (c.fingerprint or "")),
+        # ★★ 楼中楼：* 父评论 id（顶层为 null）+ 子回复数 ⚠
+        "parent_id": c.parent_id,
+        "reply_count": (
+            c._reply_count
+            if getattr(c, "_reply_count", None) is not None
+            else c.replies.count()
+        ),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
         # ★★ 评论赞：* 计数**实时数明细表**（* 已去掉 like_count 缓存）+ 我赞过没有 ⚠

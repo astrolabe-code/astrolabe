@@ -227,7 +227,7 @@ def _create(request: HttpRequest, project):
     blocks = note_alg.realign(note)
     # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
     search_cache.invalidate(search_cache.NS_NOTES)
-    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
+    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in _blocks_with_counts(note, blocks)])
 
 
 # ---------------------------------------------------------------------------
@@ -431,8 +431,11 @@ def detail(request: HttpRequest, note_id: int):
             return fail("没有权限修改这篇笔记", 403, code="forbidden")
         return _patch(request, note)
 
-    return ok_flat(note=_note_json(note),
-                   blocks=[_block_json(b) for b in note.blocks.order_by("ordinal")])
+    # ★★ 段落**现算**（* 2026-10-21 `B235`：段落不再是表里的行）⚠
+    return ok_flat(
+        note=_note_json(note),
+        blocks=[_block_json(b) for b in _blocks_with_counts(note, note_alg.realign(note))],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +530,7 @@ def undelete(request: HttpRequest, note_id: int):
     blocks = note_alg.realign(note)
     # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
     search_cache.invalidate(search_cache.NS_NOTES)
-    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
+    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in _blocks_with_counts(note, blocks)])
 
 
 def _patch(request: HttpRequest, note: Note):
@@ -571,13 +574,10 @@ def _patch(request: HttpRequest, note: Note):
     note.save()
     search_cache.invalidate(search_cache.NS_NOTES)
 
-    # ★★ 改了正文 ⇒ ★ 重算段落 ✅
-    if "body" in changed:
-        blocks = note_alg.realign(note)
-    else:
-        blocks = note.blocks.order_by("ordinal")
+    # ★★ 段落现算（* 段评的 ordinal 在这里跟着新正文对齐）✅
+    blocks = note_alg.realign(note)
 
-    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
+    return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in _blocks_with_counts(note, blocks)])
 
 
 # ---------------------------------------------------------------------------
@@ -758,13 +758,53 @@ def _note_json(n: Note, with_counts: bool = True) -> dict:
     }
 
 
+def _blocks_with_counts(note, blocks: list[dict]) -> list[dict]:
+    """★★ **给现算的段落配上评论数**（* `B235`：段落不再有 `comment_count` 列）⚠
+
+    ```
+    重复段合并到第一次出现（* 所有者：「内容一样就都挂第一个」）
+      ⇒ 第一个带真实计数，* 后面的重复段计数恒 0
+        （* 前端只要「计数 > 0 就画气泡」，* 不用自己判断是不是第一次）✅
+    ```
+    """
+    from django.db.models import Count
+
+    from core.models import NoteComment
+
+    if not blocks:
+        return []
+
+    counts = {
+        r["fingerprint"]: r["c"]
+        for r in NoteComment.objects.filter(
+            note=note, is_paragraph=True, deleted_at__isnull=True
+        )
+        .exclude(fingerprint="")
+        .values("fingerprint")
+        .annotate(c=Count("id"))
+    }
+
+    seen: set[str] = set()
+    out = []
+    for b in blocks:
+        fp = b["fingerprint"]
+        first = fp not in seen
+        seen.add(fp)
+        out.append({**b, "comment_count": counts.get(fp, 0) if first else 0})
+    return out
+
+
 def _block_json(b) -> dict:
+    """★★ 一个段落（* `realign()` 现算的 dict，* 不是数据库行）⚠
+
+    ⚠ 2026-10-21（`B235`）：* `id` 没了 —— 段评改用 `fingerprint` 当锚点；
+      * `comment_count` 由调用方按指纹 `GROUP BY` 后填进来 ✅
+    """
     return {
-        "id": b.pk,
-        "ordinal": b.ordinal,
-        "text": b.text,
-        "fingerprint": b.fingerprint,
-        "comment_count": b.comment_count,
+        "ordinal": b["ordinal"],
+        "fingerprint": b["fingerprint"],
+        "text": b["text"],
+        "comment_count": b.get("comment_count", 0),
     }
 
 

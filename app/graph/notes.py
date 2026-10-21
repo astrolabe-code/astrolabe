@@ -9,7 +9,7 @@
 # ★★★ 为什么必须单独一个模块
 
 ```
-★★ 段评的锚点是 `NoteBlock.id`，* 而段落会随正文编辑**增删改** ⚠
+★★ 段评的锚点是**段落指纹**（`B235`），* 而段落会随正文编辑**增删改** ⚠
    ⇒ ★★ 若不认真对齐，* 段评会【静默地】挂到别的段落上 ⚠
      （* 没人会发现，* 评论就这么错位了）⚠
    ⇒ ★ 所以对齐算法**只在这里实现一次**，* ❌ 不让每个视图各写一遍 ⚠
@@ -51,7 +51,7 @@ from core.access import project_of
 if TYPE_CHECKING:  # pragma: no cover
     from django.db.models import QuerySet
 
-    from core.models import Note, NoteBlock
+    from core.models import Note
 
 # ===========================================================================
 # ① 切段
@@ -80,239 +80,117 @@ def split_blocks(body: str) -> list[str]:
 # ===========================================================================
 
 def fingerprint(text: str) -> str:
-    """★★ **一段文本的指纹**（★ 据此判断"完全相同"）⚠
+    """★★ **一段文本的指纹**（★ `B235` · 2026-10-21 重新定义）⚠
 
-    ## ★★ 规范化（★ 三件事，* 缺一件就会"看着一样却对不上"）
+    ## ★★★ 所有者原话（逐字）
+
+    > 「**分段不要改小写，但分段后的文本还要去掉两端的空白字符，比如\n \t空格之类的字符。**」
+    > 「**不要区压内部空白，多一步处理，还没啥收益。**」
+
+    ## ★ 现在只做一件事
+
+    ```python
+    段文本 = text.strip()        # 去两端 \n / \t / 空格
+    指纹   = blake2b(段文本, 8 字节).hex()[:16]
+    ```
+
+    ⚠★ 与原实现的差别（* 两步被**有意去掉**）：
+    ```
+    ① ⛔ 不压缩内部连续空白 —— 「多一步处理，还没啥收益」
+    ② ⛔ 不转小写        —— 「分段不要改小写」
+    ```
+
+    ## ⚠ 由此产生的取舍（如实记，`B235`④）
 
     ```
-    ① ★★ **压缩所有连续空白为一个空格** ⚠
-       · · ★ 为什么：* 用户在行尾多打一个空格、* 或把两个空格改成一个 ⇒ ★★ 视觉上没变 ⚠
-    ② ★ **去掉首尾空白** ✅
-    ③ ★ **不区分大小写** ⚠
-       · · ★ 为什么：* 英文笔记里改一个字母大小写 ⇒ ★ 语义没变 ⚠
-       · · ⚠★ 但这是**有意的让步**：* 它会让"只改大小写"也被判为相同 ⇒
-         · · ★ 而那正是"完全相同"想要的（* 段评不该因为大小写掉锚）✅
-    ```
-
-    ## ⚠★ 为什么是 16 个字符（* 而不是 64）
-
-    ```
-    ★★ `B199` 定的：* 64 bit 哈希 ⇒ ★ 一篇笔记的段落只有几十个 ⚠
-       ⇒ ★★ 碰撞概率可忽略 ✅
-    · · ★ 而它**进索引** ⇒ ★ 缩到 16 字符 **省 48 字节/条** ⚠
-    · · ★（* 模型里那一列就是 `varchar(16)` ✅）
+    · ★ 只改大小写（Hello → hello）      ⇒ 指纹变化 ⇒ 走失锚策略 ⚠
+    · ★ 行内多打一个空格（a  b → a b）  ⇒ 指纹变化 ⇒ 走失锚策略 ⚠
     ```
     """
-    norm = re.sub(r"\s+", " ", (text or "")).strip().lower()
-    return hashlib.blake2b(norm.encode("utf-8"), digest_size=8).hexdigest()
+    return hashlib.blake2b((text or "").strip().encode("utf-8"), digest_size=8).hexdigest()
 
 
 # ===========================================================================
 # ③ 对齐（★★ 本模块的核心）
 # ===========================================================================
 
-def realign(note: "Note") -> "QuerySet[NoteBlock]":
-    """★★★ **按新正文重算段落，* 并按项目策略处置失锚评论** ⚠
+def realign(note: "Note") -> list[dict]:
+    """★★★ **按新正文重算段落，并按项目策略处置失锚评论**（* `B235` 重写）⚠
 
-    ## ★★ 算法（★ `B188` 定的判据：**完全相同**）
+    ## ★★★ 所有者原话（逐字）
 
-    ```
-    ① ★ 按新正文切段 ⇒ 新段列表 + 各自的指纹
-    ② ★★ 指纹【完全相同】的旧行 ⇒ ★★ **续用原 id** ✅
-    ③ ★ 匹配不上的新段 ⇒ **建新行**
-    ④ ★ 没被续上的旧行 ⇒ **按项目策略处置它上面的评论**（★ 见下）⚠
-    ```
+    > 「**代码块里也是一样，只要是两个\n之间的内容，就是一段，就可以计算指纹，
+    > 挂段评。就这样简单处理，这样，渲染后，视觉上分段的内容，就都可以挂段评了，
+    > 分割算法还简单。**」
 
-    ## ★★★ 第 ④ 步的三个选项（★ `B189` · 所有者原话 A5）
-
-    > 「**修改段落了，评论默认不再显示，但要给作者三个选项，挂在新写的段落上，
-    > 放底部评论区里，默认的不显示。嗯，这个不要每次修改都跳，记录到项目设置里。**」
-
-    | 策略（* `note.orphan_comment_policy`）| 落法 |
-    |---|---|
-    | ★★ `attach_to_new` | ★ 把失锚评论**重钉**到同 `ordinal` 的新段 ✅ |
-    | ★ `move_to_chapter` | ★ `block_id` 置 NULL，* 章评区**可见**（* 标注"原段落已变更"）✅ |
-    | ★★ `hide`（默认）| ★ `block_id` 置 NULL，* 默认列表**不显示** ✅ |
-
-    ⚠★★ **`move_to_chapter` 与 `hide` 的数据形态完全相同** ⚠
-      · · ★ 都是「`block_id IS NULL` 且 `is_paragraph=True`」⚠
-      · · ★★ 差别只在【展示位置】⇒ ★ 策略改了**一条数据都不用搬** ✅
-      · · ★（* 这正是"**数据不因策略分裂**"的意思 ⚠）
-
-    ⚠★ 而 `anchor_kind` **创建时定死、不随锚点失效而变** ✅
-      · · ★ 否则"失锚的段评"会被误判成"章评" ⚠
-
-    ## ★★ 为什么"续用"而不是"按位置对上"
+    ## ★★ 数据形态（2026-10-21 起）
 
     ```
-    ★ 按位置（* 第 N 段对第 N 段）看起来更省事 —— ★★ 而那是错的** ⚠
-      · · ★ 在最前面插一段 ⇒ ★ 后面所有段**整体错位** ⚠
-      · · ★★ 而段评会【静默地】挂到别的段落上 ⚠
+    ⛔ 不再有 `core_noteblock` 行 —— 段落是**算出来的**，不是存出来的 ✅
+    段评的锚点 = `NoteComment.fingerprint`（+ `ordinal` 记位置）✅
     ```
 
-    ## ⚠★ 幂等
+    ## ★★ 算法
 
-    ```
-    ★★ 同一份正文连续调两次 ⇒ ★ 第二次**一个都不动** ✅
-      · · ★（* 因为指纹没变 ⇒ * 全部续用）⚠
+    ```python
+    ① 按空行切段 ⇒ texts / fps
+    ② 重复段**合并到第一次出现**（* 内容一样，* 所有者裁定都挂第一个）✅
+    ③ 段评的指纹还在 ⇒ 把 ordinal 更新到新位置（* 段落挪了位置，* 评论跟着走）✅
+    ④ 指纹没了（段被改 / 被删）⇒ 按项目策略：
+         attach_to_new   ⇒ 重钉到**同 ordinal 的新段**
+         move_to_chapter ⇒ 失锚（fingerprint=""），章评区可见
+         hide（默认）     ⇒ 失锚（fingerprint=""），默认列表不显示
+    ⑤ **已经失锚的**（fingerprint=""）⛔ 不再二次重钉 —— 否则它们会被
+        "复活"到后写入的任意段上（* 旧的 realign 也只处理**本次**失效的）⚠
     ```
 
     Returns:
-        ★ 重算后的 `NoteBlock` QuerySet（* 调用方可以直接序列化发给前端）✅
+        ★ 段落列表 `[{ordinal, fingerprint, text}]`（* 调用方直接序列化发前端）✅
     """
-    from core.models import NoteBlock, NoteComment
-
-    new_texts = split_blocks(note.body or "")
-    new_fps = [fingerprint(t) for t in new_texts]
-
-    # ---- ② 旧行按指纹归组（* 一篇笔记内指纹**可能重复** ⇒ ★ 用列表）----
-    old_by_fp: dict[str, list[NoteBlock]] = {}
-    for b in NoteBlock.objects.filter(note=note).order_by("ordinal"):
-        old_by_fp.setdefault(b.fingerprint, []).append(b)
-
-    used: set[int] = set()           # ★ 被续用的旧行 id
-    to_create: list[NoteBlock] = []   # 要新建的
-
-    for ordinal, (text, fp) in enumerate(zip(new_texts, new_fps)):
-        pool = old_by_fp.get(fp)
-        # ★★ 找一个还没被用过的旧行续用 ✅
-        reused = None
-        if pool:
-            for cand in pool:
-                if cand.pk not in used:
-                    reused = cand
-                    break
-        if reused is not None:
-            used.add(reused.pk)
-            if reused.ordinal != ordinal or reused.text != text:
-                # ★ ordinal 可能因插段/删段而变 ⇒ ★ 要更新（* text 冗余存一份）
-                NoteBlock.objects.filter(pk=reused.pk).update(
-                    ordinal=ordinal, text=text
-                )
-        else:
-            to_create.append(
-                NoteBlock(note=note, ordinal=ordinal, text=text, fingerprint=fp)
-            )
-
-    # ---- ④ 收集没被续上的旧行 ----
-    stale = list(NoteBlock.objects.filter(note=note).exclude(pk__in=used))
-    if not stale and not to_create:
-        return NoteBlock.objects.filter(note=note).order_by("ordinal")
-
-    # ⚠★★ 顺序很要紧（* 两个坑都是实测踩出来的）⚠
-    #
-    # ```
-    # ⓪ ★★ 先记下"哪条评论挂在哪个旧段上" ⚠
-    #     · · ★ 因为下一步就要删旧段，* 而删了就对不上号了 ✅
-    # ① ★★ 再删旧行 ⚠
-    #     · · ★ 必须在 bulk_create 【之前】⓪ ⇒ ★ 否则新行的 ordinal 会
-    #       与还没删的旧行相撞（* `uniq_note_block`  violation）⚠
-    #     · · ★ 而删旧行会让 `block_id` 自动 SET_NULL ⇒ ★ 那正是
-    #       hide / move_to_chapter 想要的形态 ✅
-    # ② ★ 再建新行 ✅
-    # ③ ★ 最后按策略重钉（* 只有 attach_to_new 需要）✅
-    # ```
-    orphan_map: dict[int, list[int]] = {}
-    # ⚠★★ 必须在 delete() 【之前】记下 ordinal ⚠
-    #
-    # ★★ 为什么（★ 实测踩过，* 而它是**静默的**）：
-    #   · ★ Django 的 `Model.delete()` **会把内存对象的 `pk` 置成 None** ⚠
-    #   · · ★ 而我原先在删完之后才用 `old.pk` 去查 orphan_map ✅
-    #     ⇒ ★★ `orphan_map.get(None)` ⇒ `[]` ⇒ **一条都没重钉** ⚠
-    #   · · ★ 表现：* 策略明明是 attach_to_new，* 评论却还是失锚 ⚠
-    #   · · ★★ 而它**不报错** ⚠
-    #   ⇒ ★★ 所以这里先拍一张「旧 pk ⇒ ordinal」的快照 ✅
-    ordinal_of: dict[int, int] = {}
-    for old in stale:
-        cids = list(
-            NoteComment.objects.filter(note=note, block=old, is_paragraph=True)
-            .values_list("pk", flat=True)
-        )
-        if cids:
-            orphan_map[old.pk] = cids
-        ordinal_of[old.pk] = old.ordinal
-
-    # ⚠★★ `B211`②：**删旧段 + 重算计数必须是同一个事务** ⚠
-    #   · ★ 本项目**没有** `ATOMIC_REQUESTS` ⇒* ❌ 不显式包起来就是两次独立写，
-    #     中间挂掉即漂移（* 而漂移是 `B212`① 明令不许的）⚠
     from django.db import transaction
 
-    with transaction.atomic():
-        for old in stale:
-            old.delete()
-        # ⚠★ 2026-10-20：* 段赞已下线、赞数改为**实时 COUNT** ⇒
-        #   * 这里不再需要重算任何计数列（* 原来的 recount_likes 已删）✅
-
-    if to_create:
-        NoteBlock.objects.bulk_create(to_create)
-        # ⚠★★ 必须【从库里重新取】⓪ —— ★ 不能接着用 `to_create` 里的对象 ⚠
-        #   · ★ `bulk_create()` 不保证把自增 id 写回内存对象 ⚠
-        #   · ★★ 而 `attach_to_new` 要拿它当重钉目标 ⇒ ★ pk 为 None 会又置一次 NULL ⚠
-        fresh = list(NoteBlock.objects.filter(note=note).order_by("ordinal"))
-    else:
-        fresh = list(NoteBlock.objects.filter(note=note).order_by("ordinal"))
-
-    if orphan_map:
-        _handle_orphans(note, ordinal_of, fresh, orphan_map)
-
-    return NoteBlock.objects.filter(note=note).order_by("ordinal")
-
-
-def _handle_orphans(
-    note: "Note",
-    ordinal_of: dict[int, int],
-    fresh: list["NoteBlock"],
-    orphan_map: dict[int, list[int]],
-) -> None:
-    """★★ **按项目策略处置失锚评论**（★ `B189` 的三个选项）⚠
-
-    ⚠★ 调用时机：* 旧段**已删**（* 其上的评论 `block_id` 已自动变 NULL）·
-      * 新段**已建好**（* 所以能重钉）✅
-
-    ## ★ 三个策略（* `note.orphan_comment_policy`，* 项目级）
-
-    ```
-    attach_to_new   ⇒ ★ 把失锚评论【重钉】到同 ordinal 的新段 ✅
-    move_to_chapter ⇒ ★ block_id 保持 NULL，* 章评区可见 ✅
-    hide（默认）    ⇒ ★ block_id 保持 NULL，* 默认列表不显示 ✅
-    ```
-
-    ⚠★★ **后两者的数据形态完全相同** ⚠
-      · · ★ 都是「`block_id IS NULL` 且 `is_paragraph=True`」⚠
-      · · ★★ 差别只在【展示位置】⇒ ★ 策略改了**一条数据都不用搬** ✅
-      · · ★（* 这正是"**数据不因策略分裂**"的意思 ⚠）
-    """
     from core import settings_table as st
     from core.models import NoteComment
 
+    texts = split_blocks(note.body or "")
+    fps = [fingerprint(t) for t in texts]
+
+    # ② 重复段合并到第一次出现
+    first_at: dict[str, int] = {}
+    for i, fp in enumerate(fps):
+        first_at.setdefault(fp, i)
+
     policy = st.get("note.orphan_comment_policy", project=project_of(note))
 
-    if policy != "attach_to_new":
-        # ★★ hide / move_to_chapter ⇒ ★ 删旧段时已经 SET_NULL 了 ✅
-        #   · · ★ 所以这里【什么都不做】—— ★ 数据形态两者相同 ✅
-        return
+    dirty: list[NoteComment] = []
+    for c in NoteComment.objects.filter(note=note, is_paragraph=True):
+        fp = c.fingerprint or ""
 
-    # ---- attach_to_new：* 按 ordinal 重钉到新段 ----
-    by_ordinal = {b.ordinal: b for b in fresh}
-    # ★★ 遍历 orphan_map（* 它的键是**删除前**拍下的真 pk）✅
-    for old_pk, cids in orphan_map.items():
-        target = by_ordinal.get(ordinal_of.get(old_pk))
-        if target is None:
-            # ★ 新段比旧段少（* 用户删了段）⇒ ★ 无处可钉 ⇒ ★ 保持失锚 ✅
+        if fp and fp in first_at:
+            # ③ 指纹还在 ⇒ 位置可能变了
+            new_ord = first_at[fp]
+            if c.ordinal != new_ord:
+                c.ordinal = new_ord
+                dirty.append(c)
             continue
-        NoteComment.objects.filter(pk__in=cids).update(block=target)
 
+        if not fp:
+            # ⑤ 早就失锚了 ⇒ 不复活
+            continue
 
-def orphan_blocks(note: "Note") -> "QuerySet[NoteBlock]":
-    """★★ **这个笔记里"失锚"的段**（★ 被删了、* 但评论还指着它）⚠
+        # ④ 本次才失锚
+        if policy == "attach_to_new" and 0 <= c.ordinal < len(fps):
+            c.fingerprint = fps[c.ordinal]
+            c.ordinal = first_at[c.fingerprint]
+        else:
+            c.fingerprint = ""
+        dirty.append(c)
 
-    ★ 其实它们**已经不在 `NoteBlock` 表里了**（* `realign` 第 ④ 步删掉了）⚠
-    ★ 所谓"失锚"指的是 **`NoteComment.block_id IS NULL` 但 `is_paragraph=True`** 的那些评论 ✅
+    if dirty:
+        with transaction.atomic():
+            NoteComment.objects.bulk_update(dirty, ["fingerprint", "ordinal"])
 
-    ⚠★ 所以本函数名不副实 —— ★ 真正的查询在 `web/views/comments.py` 里 ⚠
-      （* 留着它是为了把这件事说清，* ❌ 不是为了让调用方用错）⚠
-    """
-    raise NotImplementedError(
-        "失锚评论请直接查 NoteComment.objects.filter("
-        "note=note, is_paragraph=True, block=None)"
-    )
+    return [
+        {"ordinal": i, "fingerprint": fp, "text": text}
+        for i, (text, fp) in enumerate(zip(texts, fps))
+    ]

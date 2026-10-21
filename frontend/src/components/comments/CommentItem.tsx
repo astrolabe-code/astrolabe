@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { MessageSquare, ThumbsUp, Trash2 } from 'lucide-react'
 import type { AnchorKind, Comment } from '../../api/types'
-import { useCommentLike, useDeleteComment } from '../../query/comments'
+import { useCommentLike, useComments, useDeleteComment } from '../../query/comments'
 import { errorMessage } from '../../api/errors'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import CommentComposer from './CommentComposer'
@@ -32,12 +33,34 @@ interface CommentItemProps {
   anchor: AnchorKind
   /** 删除判据上下文（逐条判：评论作者本人 / 项目成员 / 管理员） */
   perm: DeletePerm
+  /** ★ 是不是「楼中楼里的回复」（* 子项不再显示 N 条回复）⚠ */
+  isChild?: boolean
 }
 
-export default function CommentItem({ comment, noteId, anchor, perm }: CommentItemProps) {
+export default function CommentItem({
+  comment,
+  noteId,
+  anchor,
+  perm,
+  isChild,
+}: CommentItemProps) {
   const [replying, setReplying] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [delErr, setDelErr] = useState('')
+  // ★★★ **楼中楼（最多两层）**：* 拉这条评论的子回复 ⚠
+  //   · · 默认不拉（`enabled:false`），点「N 条回复」才 refetch ✅
+  const [repliesOpen, setRepliesOpen] = useState(false)
+  const replies = useComments(noteId, {
+    anchor_kind: anchor,
+    ...(anchor === 'paragraph' && comment.fingerprint
+      ? { fingerprint: comment.fingerprint }
+      : {}),
+    parent: comment.id,
+    limit: 100,
+    enabled: false,
+  })
+
+  const qc = useQueryClient()
   const del = useDeleteComment(noteId)
   const canDelete = commentDeletable(comment, perm)
   // ★★ 评论赞：* 每条评论自己的计数（* 不需要 block_id）⚠
@@ -91,7 +114,10 @@ export default function CommentItem({ comment, noteId, anchor, perm }: CommentIt
   )
 
   const isReply = comment.kind === 'reply' || comment.kind === 'both'
-  const highlight = comment.kind === 'mention' || comment.kind === 'both'
+  // ⚠★ 2026-10-20：**@ 高亮先注释掉**（* 同上：@ 提及暂不启用）——
+  //   · · 正文一律按纯文本渲染（* 恢复时改回下面的表达式即可）⚠
+  // const highlight = comment.kind === 'mention' || comment.kind === 'both'
+  const highlight = false
   const replyTarget = isReply ? firstMention(comment.body) : null
   // ★ `reply` 的那个 @ 已经进头部 ⇒ 正文去掉它（B站口径）；`both` 同理，只去第一个
   const shown = isReply ? bodyAfterReplyHead(comment.body) : comment.body
@@ -178,17 +204,80 @@ export default function CommentItem({ comment, noteId, anchor, perm }: CommentIt
         )}
       </div>
 
+      {/* ★★★ 子回复列表（* 缩进一层，⛔ 不再嵌套第三层）⚠ */}
+      {!isChild && comment.reply_count > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            const next = !repliesOpen
+            setRepliesOpen(next)
+            if (next && !replies.data) void replies.refetch()
+          }}
+          style={{
+            marginTop: 6,
+            fontSize: 11.5,
+            color: 'var(--accent)',
+            cursor: 'pointer',
+            background: 'none',
+            border: 'none',
+            padding: 0,
+          }}
+        >
+          {repliesOpen ? '收起回复' : `${comment.reply_count} 条回复`}
+        </button>
+      )}
+
+      {repliesOpen && (
+        <div
+          style={{
+            marginTop: 8,
+            marginLeft: 10,
+            paddingLeft: 10,
+            borderLeft: '2px solid var(--card-border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          {(replies.data?.items || []).map((r) => (
+            <CommentItem
+              key={r.id}
+              comment={r}
+              noteId={noteId}
+              anchor={anchor}
+              perm={perm}
+              // ★ 子项不再显示「N 条回复」（* 只有两层）⚠
+              isChild
+            />
+          ))}
+          {replies.isLoading && (
+            <span className="faint" style={{ fontSize: 11.5 }}>
+              加载中…
+            </span>
+          )}
+        </div>
+      )}
+
       {replying && (
         <div className="mt-2">
           <CommentComposer
             noteId={noteId}
             anchor={anchor}
-            blockId={comment.block_id}
-            replyTo={comment.created_by}
+            fingerprint={comment.fingerprint}
+            // ⚠★ 2026-10-20：**@ 提及先注释掉**（* 所有者：「回复里不要 @ 的功能，
+            //   先注释掉」）⇒ 回复不再自动预填 `@某人 `，恢复时取消注释即可 ⚠
+            // replyTo={comment.created_by}
+            // ★★ 用 id 告诉后端「回复的是哪条」⇒ 引用显示它的正文（* 不是整段原文）⚠
+            replyToCommentId={comment.id}
             autoFocus
             placeholder={`回复 @${comment.created_by || '某人'}……`}
             onCancelReply={() => setReplying(false)}
-            onSent={() => setReplying(false)}
+            onSent={() => {
+              setReplying(false)
+              // ★★ 让父评论的「N 条回复」立刻更新（* 否则数字不动）⚠
+              void qc.invalidateQueries({ queryKey: ['comments', noteId] })
+              if (repliesOpen) void replies.refetch()
+            }}
           />
         </div>
       )}

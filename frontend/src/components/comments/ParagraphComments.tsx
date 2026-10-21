@@ -54,10 +54,14 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
   const [quote, setQuote] = useState('')
 
   const qc = useQueryClient()
+  // ★★ 排序：最新 / 最热（* 段评也要能按热度看）⚠
+  const [order, setOrder] = useState<'time' | 'hot'>('time')
+
   const comments = useComments(noteId, {
     anchor_kind: 'paragraph',
-    block_id: block.id,
+    fingerprint: block.fingerprint,
     limit: 50,
+    order,
     // ⚠ 折叠态不拉（口径①）
     enabled: false,
   })
@@ -223,6 +227,46 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
         )}
 
 
+        {/* ★ 排序切换（* 最新 / 最热）⚠ */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            marginBottom: 8,
+          }}
+        >
+          <div
+            style={{
+              display: 'inline-flex',
+              gap: 2,
+              padding: 2,
+              borderRadius: 999,
+              background: 'var(--bg-deep)',
+            }}
+          >
+            {(['time', 'hot'] as const).map((o) => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setOrder(o)}
+                style={{
+                  padding: '2px 10px',
+                  borderRadius: 999,
+                  fontSize: 11,
+                  lineHeight: '17px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: order === o ? 'var(--card)' : 'transparent',
+                  color: order === o ? 'var(--text-main)' : 'var(--text-sub)',
+                  boxShadow: order === o ? '0 1px 3px rgba(15,23,42,.12)' : 'none',
+                }}
+              >
+                {o === 'time' ? '最新' : '最热'}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* ★★★ **评论列表 = 滚动区**（* 所有者：「段评论区应该是有滑块的」）⚠
             · · 固定最大高度 44vh，超出就在**列表内部**滚动；
             · · 输入框固定在下面，不跟着一起滚 ✅ */}
@@ -272,7 +316,7 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
             <CommentComposer
               noteId={noteId}
               anchor="paragraph"
-              blockId={block.id}
+              fingerprint={block.fingerprint}
               autoFocus={false}
               placeholder="就这一段说点什么……"
               onSent={() => {

@@ -603,8 +603,15 @@ export interface SettingsPatchResult {
 /** ★ kind 固定 5 种（B201）——❌ 不是用户自定义字段 */
 export type NoteKind = 'flash' | 'question' | 'confuse' | 'pitfall' | 'summary'
 
+/**
+ * ★★ 一个段落（`B235`：**现算的，不是数据库行**）⚠
+ *
+ * ``` 
+ * 段 = 两个空行之间的内容（* 代码块内也一样）
+ * 锚点 = fingerprint（* 原来的 `id` 已下线）⚠
+ * ```
+ */
 export interface NoteBlock {
-  id: number
   ordinal: number
   text: string
   fingerprint: string
@@ -684,7 +691,10 @@ export interface Comment {
   id: number
   note_id: number
   anchor_kind: AnchorKind
-  block_id: number | null
+  /** ★★ 段评锚点 = 段落指纹（* 空串 = 失锚）⚠ */
+  fingerprint: string
+  /** ★ 该段评最后一次所在的段序号 */
+  ordinal: number
   /** ★ 类型：comment 普通 / reply 回复头 / mention @高亮 / both 两者 */
   kind: CommentKind
   body: string
@@ -698,6 +708,19 @@ export interface Comment {
   like_count: number
   /** ★ 当前用户**赞过没有**（* 决定红/灰与「再点取消」）⚠ */
   liked: boolean
+  /** ★★ 楼中楼：父评论 id（顶层为 null）⚠ */
+  parent_id: number | null
+  /** ★ 子回复条数 */
+  reply_count: number
+}
+
+/** ★★ 全局笔记搜索命中项（* 带项目三件套，* 用于链回项目）⚠ */
+export interface NoteSearchItem extends Note {
+  project: {
+    project_ref: string
+    project_name: string
+    version_label: string
+  }
 }
 
 export interface CommentListData {

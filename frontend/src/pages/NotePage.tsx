@@ -129,13 +129,40 @@ export default function NotePage() {
 
         {/* 头部信息 */}
         <div className="flex items-center gap-2 flex-wrap mb-3">
-          <span className="tag" style={{ fontSize: 10.5 }}>
-            <Icon size={11} style={{ marginRight: 3, verticalAlign: -1 }} />
+          {/* ★★★ 类型徽标：* **用该类型的专属色**（* 所有者：「这些还要有颜色呀，
+              困惑这些有对应颜色的」）+ 图标文字同一行 ⚠
+              · · ⛔ 不再套 .tag（* 中性灰边）——* 文字 / 边框取类型色，背景透明 ✅ */}
+          <span
+            style={{
+              fontSize: 10.5,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              whiteSpace: 'nowrap',
+              padding: '1px 8px',
+              borderRadius: 999,
+              lineHeight: '16px',
+              color: meta.color,
+              border: `1px solid ${meta.color}`,
+              background: 'transparent',
+            }}
+          >
+            <Icon size={11} />
             {meta.label}
           </span>
           {!n.is_public && (
-            <span className="tag" style={{ fontSize: 10.5 }} title="只有作者可见">
-              <Lock size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
+            <span
+              className="tag"
+              style={{
+                fontSize: 10.5,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                whiteSpace: 'nowrap',
+              }}
+              title="只有作者可见"
+            >
+              <Lock size={10} />
               私有
             </span>
           )}
@@ -150,7 +177,7 @@ export default function NotePage() {
         <div className="card flex flex-col gap-5" style={{ padding: '16px 18px' }}>
           {blocks.map((b) => (
             <ParagraphComments
-              key={b.id}
+              key={b.fingerprint}
               noteId={n.id}
               block={b}
               authed={authed}

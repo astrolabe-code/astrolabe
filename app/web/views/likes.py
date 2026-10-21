@@ -44,7 +44,7 @@ from django.http import HttpRequest
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
-from core.models import Note, NoteBlock, NoteLike
+from core.models import Note, NoteLike
 from web.http import fail, ok, read_json
 from web.permissions import can_like, current_user, note_readable
 

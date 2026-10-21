@@ -1664,72 +1664,6 @@ class NoteLink(TimeStampedModel):
         return f"{self.from_note_id} -{self.relation}-> {self.to_note_id}"
 
 
-class NoteBlock(TimeStampedModel):
-    """★★★ **笔记的一个段落** —— ★★ **段评的锚点**（★ 全案最关键的一张）。
-
-    ## ★★ 为什么必须有稳定 id（* 而不是"第几段"）
-
-    ```
-    ❌ 用"第几段"当锚点 ⇒ ★ 上面插一段 ⇒ ★★ 所有段评【整体错位】⚠
-       · ★ 而那是静默的**（★ 没人会发现，* 评论就这么挂到了别的段落上）⚠
-    ❌ 用"引用文本"当锚点 ⇒ ★ 那段话一被改，* 锚点就断了 ⚠
-    ✅ 给每段一个**稳定 id** ⇒ ★ 编辑不影响锚点 ✅
-    ```
-
-    ## ★★ 保存时怎么续用旧 id（* `B188` 定的判据：**完全相同**）
-
-    ```
-    1. 解析新正文 ⇒ 新段落列表（★ 按【空行】分隔 —— ★ 与渲染无关）
-    2. 每段算 fingerprint
-    3. ★★ 指纹【完全相同】的旧行 ⇒ **续用原 id** ✅
-    4. 匹配不上的新段 ⇒ 建新行；* 没被续上的旧行 ⇒ 删
-       ⇒ ★ 它上面的评论 `block_id` 变 NULL（★ 即"失锚"）⚠
-    ```
-
-    ## ★★★ 所有者原话（2026-10-14，逐字）
-
-    > 「**还有评论有问题，我想的是如果作者没有删除这段话，那评论就一直挂在这段话上，
-    > 不知道这个实现容易吗？有没有引出更大的问题？**」
-
-    > 「**嗯，看来是不容易的。那如果这个段不改，其他端改了，不影响这个段的评论，
-    > 更容易实现吗？**」
-
-    > 「**不用，我查了番茄小说的机制，他也是哪怕改一个字，段评就没了的。**」
-
-    ⚠★ 代价（* 如实记）：* 改一个字 ⇒ 该段评论**掉锚** ⇒ 降级到章评区 + 标注 ⚠
-      · ★ 而"降级怎么办"由 `note.orphan_comment_policy`（* 项目级策略）决定 ✅
-    """
-
-    note = models.ForeignKey(Note, on_delete=models.CASCADE, related_name="blocks")
-    #: ★★ **只用于排序显示 —— ★❌ 绝不当锚点** ⚠
-    ordinal = models.IntegerField(default=0)
-    #: ★ 该段当前文本
-    text = models.TextField(blank=True, default="")
-    #: ★★ **规范化文本的哈希**（★ 保存时据此续用原 id）——
-    #: ⚠★ 2026-10-15（`B199`）：**从 `varchar(64)` 缩到 16** ⚠
-    #   · ★ 64 bit 哈希 ⇒ ★ 一篇笔记的段落只有几十个 ⇒ ★ 碰撞概率可忽略 ✅
-    #   · ★★ 而它进索引 ⇒ ★ 缩一次 **省 48 字节/条** ⚠
-    fingerprint = models.CharField(max_length=16, blank=True, default="")
-    #: ★ 冗余计数（* 可重算）
-    comment_count = models.IntegerField(default=0)
-
-    class Meta:
-        constraints = [
-            # ★★ 一篇笔记内 ordinal 不重复 ✅
-            models.UniqueConstraint(fields=["note", "ordinal"], name="uniq_note_block"),
-        ]
-        indexes = [
-            # ★★ 对齐就查它（* `note_id + fingerprint`）✅
-            models.Index(fields=["note", "fingerprint"]),
-            # ⚠★ 2026-10-15（`B199`）：**`(note_id, ordinal)` 那一棵已删** ⚠
-            #   · ★ 它被上面那条唯一索引【完全覆盖】⚠
-        ]
-        verbose_name = "笔记段落"
-
-    def __str__(self) -> str:
-        return f"{self.note_id}#{self.ordinal}"
-
-
 class NoteCommentLike(TimeStampedModel):
     """★★ **评论赞（谁赞过哪条评论）** —— * `like_count` 的真相来源。
 
@@ -1808,16 +1742,22 @@ class NoteComment(TimeStampedModel):
     #:   · ★ 于是**反过来**：* 列存 bool，* `anchor_kind` 变成属性 ✅
     #:     （* 存两份必然打架 —— * 那是被批过的毛病）⚠
     is_paragraph = models.BooleanField(default=False)
-    #: ★★ 段评的锚点。★ `SET_NULL`（* ❌ 不是 CASCADE）——
-    #: ★★ **引用历史的东西，绝不能被被引用行的删除静默带走** ⚠
-    #:   （* `GraphPatch` 的 CASCADE 已经实测闯过一次祸；* 同一类错误不许第二次）⚠
-    block = models.ForeignKey(
-        NoteBlock,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="comments",
-    )
+    #: ⚠★★ 2026-10-21（`B235`）：**段评锚点从 `block_id` 改成【段落指纹】** ⚠
+    #:
+    #: ★★★ 所有者原话（逐字）：「**代码块里也是一样，只要是两个\n之间的内容，就是一段，
+    #:   就可以计算指纹，挂段评。就这样简单处理……分割算法还简单。**」
+    #:
+    #: ```
+    #: 段 = 两个空行之间的内容（* 代码块内也一样，* 不设例外）
+    #: 指纹 = blake2b(段文本.strip())   ⇒ 不转小写、* 不压内部空白（`B235`）
+    #: ```
+    #:
+    #: ⚠ 空串 = **失锚**（* 段落被改掉 / 被删），* 与原来的 `block_id IS NULL` 同义 ✅
+    fingerprint = models.CharField(max_length=16, blank=True, default="", db_index=True)
+    #: ★ 该段评**最后一次**所在的段序号（* `attach_to_new` 策略靠它重钉）⚠
+    #:   · · ★ `-1` = 未知（* 老数据没迁过 / 章评不用）
+    ordinal = models.IntegerField(default=-1)
+
     #: ★★ **这条评论的类型**（* `B214` · 2026-10-17）⚠
     #:
     #: ★★★ 所有者原话（* 逐字）：「**回复和@是两种不同的东西，嗯，视觉效果不一样，
@@ -1894,8 +1834,10 @@ class NoteComment(TimeStampedModel):
                 name="ix_comment_chapter",
             ),
             # ① 段评（* 锚在某一段）—— ★★ 这棵树【只装段评】⚠
+            #   · · ★ 2026-10-21（`B235`）：锚点从 `block_id` 改成 **表格指纹**
+            #     ⇒ 索引跟着换成 `fingerprint`（* 查「这段有哪些段评」走它）✅
             models.Index(
-                fields=["block", "-created_at"],
+                fields=["fingerprint", "-created_at"],
                 condition=models.Q(is_paragraph=True),
                 name="ix_comment_paragraph",
             ),

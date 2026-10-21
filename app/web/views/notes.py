@@ -251,24 +251,62 @@ def _verify_note_cache(cached: list):
     """
     ids = [it["id"] for it in cached if it.get("id")]
     if not cached:
-        return []
+        return [], {}
 
     rows = (
         Note.objects.filter(pk__in=ids)
-        .values("pk", "updated_at", "deleted_at", "created_by__username", "is_public", "state")
+        .values(
+            "pk",
+            "updated_at",
+            "deleted_at",
+            "created_by__username",
+            "is_public",
+            "state",
+            # ★ 评论数**不缓存**，* 命中时从这一行顺手带回去（* 同一行，零额外往返）⚠
+            "comment_count",
+        )
     )
     by_id = {r["pk"]: r for r in rows}
 
-    me = None  # 可见性由调用方判过；这里只做"行级"核对
     for it in cached:
         r = by_id.get(it["id"])
         if r is None or r["deleted_at"] is not None:
-            return None
+            return None, {}
         if r["updated_at"].isoformat() != it.get("updated_at"):
-            return None
+            return None, {}
         if (r["created_by__username"] or "") != (it.get("created_by") or ""):
-            return None
-    return cached
+            return None, {}
+    return cached, {pk: r["comment_count"] for pk, r in by_id.items()}
+
+
+def _attach_counts(items: list, comment_counts: dict | None = None) -> list:
+    """★★ **给搜索结果现取两个计数**（* 2026-10-21）⚠
+
+    ## ★ 为什么单独一个函数
+    - 所有者：「comment_count / like_count 已经有缓存了，为什么还在搜索里缓存一次？」
+    - ⇒ 搜索缓存**只存搜索结果本身**（正文 / 标题 / 项目…），* 计数一律现取：
+      · · ★ `like_count` ⇒ 走 `like_cache`（* 它自己的 Redis 缓存，* 批量 MGET）✅
+      · · ★ `comment_count` ⇒ 库里的计数列；* 命中路径由校验查询顺手带回，
+        * 回源路径直接用已加载的模型属性（* 都不额外打库）✅
+    """
+    if not items:
+        return items
+    ids = [it["id"] for it in items]
+
+    # ① 赞数：* 批量走 like_cache（miss 的才 COUNT）
+    def _db(missing: list[int]) -> dict[int, int]:
+        from django.db.models import Count
+
+        rows = NoteLike.objects.filter(note_id__in=missing).values("note_id").annotate(c=Count("id"))
+        return {r["note_id"]: r["c"] for r in rows}
+
+    likes = like_cache.note_counts(ids, _db)
+
+    for it in items:
+        it["like_count"] = likes.get(it["id"], 0)
+        if comment_counts is not None:
+            it["comment_count"] = comment_counts.get(it["id"], 0)
+    return items
 
 
 @require_http_methods(["GET"])
@@ -306,9 +344,12 @@ def search(request: HttpRequest):
     #       · · 否则用户点了缓存里的结果，* 跳过去发现是别的内容 / 已消失 ⚠
     cached = search_cache.get(search_cache.NS_NOTES, uid, kw)
     if cached is not None:
-        checked = _verify_note_cache(cached)
+        checked, comment_counts = _verify_note_cache(cached)
         if checked is not None:
-            return ok_flat(total=len(checked), items=checked)
+            # ★★ 命中：* 两个计数**现取**（* 缓存里不存，* 不会是 5 分钟前的旧数字）⚠
+            return ok_flat(
+                total=len(checked), items=_attach_counts(checked, comment_counts)
+            )
         # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
 
     qs = Note.objects.filter(deleted_at__isnull=True, state=Note.STATE_ACTIVE)
@@ -329,15 +370,20 @@ def search(request: HttpRequest):
     limit = _clamp(request.GET.get("limit"), 1, 50, 20)
     items = list(qs[:limit])
 
+    # ★★ 序列化时**不带计数** ⇒ 缓存里只存「搜索结果本身」
+    #   （* like_count 有 like_cache，* comment_count 是计数列，* 不在这重复存）⚠
     out = []
+    comment_counts = {}
     for n in items:
-        d = _note_json(n)
+        d = _note_json(n, with_counts=False)
         d["project"] = _project_label(n)
         out.append(d)
+        comment_counts[n.pk] = n.comment_count
 
     # ★ 回源后写缓存（* TTL 兜底 + 写入时主动失效）⚠
     search_cache.put(search_cache.NS_NOTES, uid, kw, out)
-    return ok_flat(total=len(out), items=out)
+    # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
+    return ok_flat(total=len(out), items=_attach_counts(out, comment_counts))
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])
@@ -663,7 +709,14 @@ def _slug(text: str) -> str:
     return slug or "note"
 
 
-def _note_json(n: Note) -> dict:
+def _note_json(n: Note, with_counts: bool = True) -> dict:
+    """★ 笔记序列化。
+
+    ⚠ `with_counts=False` 时**不输出** `like_count` / `comment_count` ——
+      · · ★ 这两个数各有各的缓存（* 赞数在 `like_cache`，* 评论数是库里的计数列），
+      · · ★★ 搜索缓存里**不再存它们**（* 所有者：「已经有缓存了，为什么还在搜索里
+        缓存一次？」）⇒ 命中时现取，* 不会把旧数字冻 5 分钟 ✅
+    """
     return {
         "id": n.pk,
         # ★★ `B219`：* 对外发 stable_vid（* 内部主键不出门）；* 节点没了仍可从快照读 ✅
@@ -692,12 +745,13 @@ def _note_json(n: Note) -> dict:
         "deleted_at": n.deleted_at.isoformat() if n.deleted_at else "",
         "deleted_by": n.deleted_by.get_username() if n.deleted_by_id else "",
         # ★★ 章赞数：* 列表已批量查好（`_like_total`）；* 单篇走 Redis 缓存 ⚠
-        "like_count": (
+        # ★★ 计数**按需输出**（* 搜索缓存不存，* 命中时现取）⚠
+        **({"like_count": (
             n._like_total
             if getattr(n, "_like_total", None) is not None
             else like_cache.note_count(n.pk, lambda: n.likes.count())
-        ),
-        "comment_count": n.comment_count,
+        )} if with_counts else {}),
+        **({"comment_count": n.comment_count} if with_counts else {}),
         "created_by": n.created_by.get_username() if n.created_by_id else "",
         "created_at": n.created_at.isoformat(),
         "updated_at": n.updated_at.isoformat(),

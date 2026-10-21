@@ -88,13 +88,19 @@ def purge_project(project_ref: str, *, by=None) -> int:
         Note.objects.filter(project=project).update(
             project_ref=project.project_ref,
             project_name=project.name[:200],
+            # ★ 快照回写也是一次"改动" ⇒ 刷 updated_at（* 搜索缓存据此作废）⚠
+            updated_at=timezone.now(),
             version_label=(
                 f"{bg.provider}:{bg.repo_full_name}@{bg.sha}" if bg is not None else ""
             ),
         )
         # ★★ `B228`：还没删的 ⇒ 软删进回收站（* 上面的 update 已覆盖它们）
         Note.objects.filter(project=project, deleted_at__isnull=True).update(
-            deleted_at=timezone.now(), deleted_by=by
+            # ★★ 批量软删**不走 `save()`** ⇒ 必须显式带上 updated_at，
+            #   * 否则搜索缓存看不出来（项目都删了，笔记还挂在搜索结果里）⚠
+            deleted_at=timezone.now(),
+            deleted_by=by,
+            updated_at=timezone.now(),
         )
         GraphPatch.objects.filter(project=project).delete()
         Node.objects.filter(project=project).delete()
@@ -390,18 +396,16 @@ def _verify_project_cache(cached: list):
         r = by_ref.get(it.get("project_ref"))
         if r is None:
             return None
-        # ① 主判据：* 更新时间对不上 ⇒ 改过（* 改名 / 改简介 / 改公开性 / 换作者…）
+        # ★★ **唯一判据：`updated_at`**（* 2026-10-21 实测确认足够）
+        #   · · 实测（core_project 的写路径）：
+        #     · 改名 / 改简介 / 改公开性 ⇒ 走 `Project.save()` ⇒ 刷新 ✅
+        #     · 管理员隐藏 / 恢复       ⇒ 同上（* 模型层 `save()` 补了 updated_at）✅
+        #     · 换绑基图               ⇒ `.update(..., updated_at=now())` ✅
+        #   · · ⛔ 原「老缓存没有 updated_at 时按业务字段比」的兜底已删 ——
+        #     * `_project_json` 现在必带 `updated_at` ⇒ 那个分支**永远不执行**；
+        #     * 万一读到老缓存（无该字段），这里会直接判为不一致 ⇒ 重查重写 ✅
         if r["updated_at"].isoformat() != it.get("updated_at"):
             return None
-        # ② 兜底：* 老缓存没有 updated_at 时按业务字段比
-        if not it.get("updated_at"):
-            if (
-                r["name"] != it.get("name")
-                or (r["desc"] or "") != (it.get("desc") or "")
-                or (r["state"] or "") != (it.get("state") or "")
-                or bool(r["is_public"]) != bool(it.get("is_public"))
-            ):
-                return None
     return cached
 
 

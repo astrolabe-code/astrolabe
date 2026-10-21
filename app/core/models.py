@@ -1592,6 +1592,30 @@ class Note(TimeStampedModel):
     #   缓存去掉」）；comment_count 保留（* 暂无实时替代）✅
     comment_count = models.IntegerField(default=0)
 
+    def save(self, *args, update_fields=None, **kwargs):
+        """★★ `update_fields` 一律补上 `updated_at`（* 2026-10-21）⚠
+
+        ## ★★★ 所有者原话（逐字）
+
+        > 「**deleted_at 和 state 的改变都要改变 updated_at 字段，把修改这两处的地方，
+        > 字段上都加上 updated_at 字段。这样就不用在 redis 里判断这两个了。**」
+
+        ## ★★ 为什么放在模型层（⛔ 不是逐处手写）
+
+        ``` 
+        · 软删 / 恢复  ⇒ `save(update_fields=["deleted_at","deleted_by"])`
+        · 审核隐藏     ⇒ `save(update_fields=["state","moderation_*"])`
+        两处都是 update_fields 写法定，* 而 `auto_now` **故意**不自动进 update_fields
+        ⇒ ★ 在这里统一补，* 以后新增任何 `save(update_fields=[...])` 都不会漏 ✅
+        ```
+
+        ⚠★ 与 `Project.save()` 同一套路（* 所有者当时就说过：
+          「不用每条写路径都去加上更新时间，万一写多了，漏了一条路径，那就糟了」）⚠
+        """
+        if update_fields is not None and "updated_at" not in update_fields:
+            update_fields = set(update_fields) | {"updated_at"}
+        super().save(*args, update_fields=update_fields, **kwargs)
+
     class Meta:
         indexes = [
             # ★★ **只留一棵**（★ `B199`：能少加一个字段进索引就少加一个）⚠

@@ -241,15 +241,15 @@ def _verify_note_cache(cached: list):
         - `None` ⇒ 有条目被删除或被改动 ⇒ 调用方**重新全查**并重写缓存
         - `list` ⇒ 全部核对无误，* 可以直接发
 
-    ⚠★ 比什么（三条）：
+    ⚠★ 比什么（**只剩一条**）：
     ```
-    ① 行还在吗                ⇒ 被物理删 / 软删的都要剔掉
-    ② updated_at 变了吗       ⇒ 内容改过（标题 / 正文 / 类型）
-    ③ state / is_public 变了吗 ⇒ 管理员隐藏、公开↔私有
+    ① 行还在吗            ⇒ 物理删 / 作者被 CASCADE
+    ② updated_at 变了吗   ⇒ 一切改动（内容 / 公开性 / 软删 / 恢复 / 审核隐藏）
     ```
-    ⚠★ **作者不比**（* 所有者：「一篇笔记一旦创建，就不可改变作者。没有笔记文章还可以
-      赠送，还可以改作者这件事」）；* 作者被删时笔记整行 CASCADE 没了
-      ⇒ 由第 ① 条「行还在吗」兜住 ✅
+    ⚠★ 为什么 `deleted_at` / `state` 不用再比：* 模型 `Note.save()` 已收口，
+      它们的改动**必然**刷新 `updated_at`（* 所有者：「这样就不用在 redis 里判断
+      这两个了」）✅
+    ⚠★ 作者也不比（作者创建后不可变；作者被删 ⇒ 笔记整行 CASCADE，由 ① 兜住）✅
     """
     ids = [it["id"] for it in cached if it.get("id")]
     if not cached:
@@ -259,14 +259,11 @@ def _verify_note_cache(cached: list):
         Note.objects.filter(pk__in=ids)
         .values(
             "pk",
+            # ★★★ **唯一判据**（* 所有者：「deleted_at 和 state 的改变都要改变
+            #   updated_at……这样就不用在 redis 里判断这两个了」）⚠
+            #   · · 模型的 `Note.save()` 已收口：`update_fields` 一律补 updated_at
+            #     ⇒ 软删 / 恢复 / 审核隐藏 / PATCH 全都会刷新它 ✅
             "updated_at",
-            "deleted_at",
-            # ⚠★ 2026-10-21：**不查作者** —— 一篇笔记创建后作者不可变
-            #   （* 所有者：「作者不要比较了，一篇笔记一旦创建，就不可改变作者。
-            #     没有笔记文章还可以赠送，还可以改作者这件事」）
-            #   ⇒ 省掉一次 `auth_user` JOIN（* 实测约占校验耗时 19%）✅
-            "is_public",
-            "state",
             # ★ 评论数**不缓存**，* 命中时从这一行顺手带回去（* 同一行，零额外往返）⚠
             "comment_count",
         )
@@ -275,18 +272,11 @@ def _verify_note_cache(cached: list):
 
     for it in cached:
         r = by_id.get(it["id"])
-        if r is None or r["deleted_at"] is not None:
+        # ① 行没了（物理删 / 作者被 CASCADE）⇒ 作废
+        if r is None:
             return None, {}
+        # ② 更新时间对不上 ⇒ 改过（* 含软删 / 隐藏，见上方说明）
         if r["updated_at"].isoformat() != it.get("updated_at"):
-            return None, {}
-        # ★★★ 2026-10-21 补：**可见性字段必须比对** ⚠
-        #   · · 实测漏洞：* 管理员隐藏一篇笔记后，* 搜索缓存**照样返回它**
-        #     （* `state` 查出来了却从没比过，* `moderate` 也没清缓存）⚠
-        #   · · ★ 这里不比「我能不能看」（* 那要看请求者），* 只比「它变了没有」：
-        #     变了 ⇒ 作废整条缓存，* 让下面的全量查询按当前可见性重算 ✅
-        if (r["state"] or "") != (it.get("state") or ""):
-            return None, {}
-        if bool(r["is_public"]) != bool(it.get("is_public")):
             return None, {}
     return cached, {pk: r["comment_count"] for pk, r in by_id.items()}
 

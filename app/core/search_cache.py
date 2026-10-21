@@ -85,14 +85,19 @@ def get(ns: str, uid: int, kw: str):
 
 
 def put(ns: str, uid: int, kw: str, payload) -> None:
-    """写缓存（带 TTL），并把 key 记进 registry 便于整体失效。"""
+    """写缓存（带 TTL），并把 key 记进 registry 便于整体失效。
+
+    ⚠★ **只存非空结果**（* 调用方保证；空结果没有条目可校验，
+      容易变成"5 分钟内一直搜不到"）⚠
+    """
     client = _redis()
     if client is None:
         return
     key = _key(ns, uid, kw)
+    ttl = TTL_SECONDS
     try:
         pipe = client.pipeline()
-        pipe.set(key, json.dumps(payload, ensure_ascii=False), ex=TTL_SECONDS)
+        pipe.set(key, json.dumps(payload, ensure_ascii=False), ex=ttl)
         # ★ registry：* 失效时按它清；* 给个略长的 TTL 防无限增长 ⚠
         pipe.sadd(f"{ns}:__keys__", key)
         pipe.expire(f"{ns}:__keys__", TTL_SECONDS * REGISTRY_TTL_FACTOR)

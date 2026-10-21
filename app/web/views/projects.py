@@ -116,6 +116,52 @@ def purge_project(project_ref: str, *, by=None) -> int:
     return freed
 
 
+def _cascade_private(project) -> int:
+    """★★★ **项目转私有 ⇒ 它下面的笔记全部转私有**（* 2026-10-21）⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「项目变为私有，那其下的笔记和图谱之类的全部内容都要变成私有的，这是一个级联，
+    >   隐藏也一样。**改为公开或没有隐藏时，就不用级联修改了，笔记这些，原来是什么样，
+    >   就什么样。**」
+
+    ## ★★ 口径
+
+    ```
+    私有 / 隐藏  ⇒ ★ **单向级联**：把项目下的笔记改成私有 / 隐藏 ✅
+    改回公开     ⇒ ⛔ **不回滚**：笔记保持当前状态（避免"记住原来是什么"）⚠
+    ```
+
+    ⚠★ 为什么要级联：* 笔记是**独立可查**的（详情页 / 我参与的笔记 / 将来的列表），
+      * 光把项目设私有，笔记自己的 `is_public=True` 还留着 ⇒ 谁都能直接看 ⚠
+    """
+    from django.utils import timezone
+
+    from core.models import Note
+
+    n = Note.objects.filter(project=project, deleted_at__isnull=True).update(
+        is_public=False,
+        # ★ 必须是 `.update()` 里显式带 —— 批量更新不走 `save()` ⚠
+        updated_at=timezone.now(),
+    )
+    return n
+
+
+def _cascade_hidden(project) -> int:
+    """★★★ **项目被隐藏 ⇒ 它下面的笔记也隐藏**（* 同上，单向）⚠
+
+    · · `state=hidden` 是比私有更严的一档：* 只有作者本人看得到 ✅
+    """
+    from django.utils import timezone
+
+    from core.models import Note
+
+    return Note.objects.filter(project=project, deleted_at__isnull=True).update(
+        state=Note.STATE_HIDDEN,
+        updated_at=timezone.now(),
+    )
+
+
 def _body(request: HttpRequest) -> dict:
     """⚠ 解析失败一律返回**错误响应**而不是抛异常（契约 §12：`400 bad_json`）。"""
     if not request.body:
@@ -322,7 +368,7 @@ def collection(request: HttpRequest) -> JsonResponse:
         # ★★★ 首页搜索**只搜公开项目**（* 所有者：「不要让私有项目或者笔记能被搜索，
         #   不管对哪个用户都一样」）⚠
         #   · · `mine=1` 那条路（工作区）不受影响 —— 那本来就是"我的项目"
-        if not mine:
+        if request.GET.get("mine") != "1":
             qs = qs.filter(is_public=True, state=Project.STATE_ACTIVE)
 
         qs = qs.filter(
@@ -495,14 +541,24 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
             if getattr(project, field) != v:
                 setattr(project, field, v)
                 dirty.append(field)
+    cascaded = 0
     if "is_public" in body and project.is_public != bool(body["is_public"]):
+        was_public = project.is_public
         project.is_public = bool(body["is_public"])
         dirty.append("is_public")
+        # ★★★ 公开 → 私有：**级联**把项目下的笔记也转私有（⛔ 反向不级联）⚠
+        if was_public and not project.is_public:
+            cascaded = _cascade_private(project)
 
     # ★★ 只有**真的改了**才 save ⇒ `Project.save()` 会自动补上 `updated_at`；
     #   · · 什么都没改就不要戳时间（* 所有者：「具体改了项目的什么，就更新时间」）⚠
     if dirty:
         project.save(update_fields=dirty)
+        # ★★★ 2026-10-21 补：**项目改名 / 改公开性 ⇒ 两个缓存都要清** ⚠
+        #   · · 改公开性：* 私有 ⇒ 公开后，项目里的公开笔记**立刻可搜**；
+        #     而搜索缓存里的"空结果"没有条目可校验 ⇒ ⛔ 不清就搜不到 ⚠
+        #   · · 改名：* 笔记搜索结果里带着 `project_name` 快照 ⇒ 也要清 ✅
+        search_cache.invalidate_all()
     nodes, edges = _counts([project_ref])
     return ok(_project_json(project, request, nodes.get(project_ref, 0), edges.get(project_ref, 0)))
 

@@ -146,6 +146,19 @@ def _set_project_state(request: HttpRequest, project: Project, action: str, reas
     project.moderated_at = timezone.now()
     project.save(update_fields=["state", "moderation_reason", "moderated_by", "moderated_at"])
 
+    # ★★★ 2026-10-21（所有者）：「项目变为私有，那其下的笔记和图谱之类的全部内容都要
+    #   变成私有的，这是一个级联，隐藏也一样。改为公开或没有隐藏时，就不用级联修改了」
+    #   ⇒ * 隐藏**单向级联**：把项目下的笔记也置为 hidden（⛔ 恢复时不回滚）⚠
+    if action == "hide":
+        from web.views.projects import _cascade_hidden
+
+        n = _cascade_hidden(project)
+        _audit(request, f"project.cascade_hide", project_ref=project.project_ref,
+               name=project.name, reason=f"级联隐藏 {n} 篇笔记")
+
+    # ★★ 两个命名空间都清（* 笔记与项目都受影响）⚠
+    search_cache.invalidate_all()
+
     _audit(request, f"project.{action}", project_ref=project.project_ref,
            name=project.name, reason=reason)
 

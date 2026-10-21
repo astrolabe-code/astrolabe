@@ -45,7 +45,7 @@ from django.views.decorators.http import require_http_methods
 
 from core import like_cache
 from core import search_cache
-from core.models import Note, NoteLike
+from core.models import Note, NoteLike, Project
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
 from graph import scope
@@ -369,7 +369,11 @@ def search(request: HttpRequest):
         deleted_at__isnull=True,
         state=Note.STATE_ACTIVE,
         is_public=True,
-    ).filter(Q(project__isnull=True) | Q(project__is_public=True))
+    ).filter(
+        # ★ 项目必须**公开且生效中**（* 被管理员隐藏 / 下架的项目，其笔记也不该搜到）⚠
+        Q(project__isnull=True)
+        | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE))
+    )
 
     # ⚠ LIKE 通配符转义（* 用户输入 % / _ 不该当通配符用）⚠
     like = kw.replace("%", "").replace("_", "")
@@ -389,12 +393,14 @@ def search(request: HttpRequest):
         out.append(d)
         comment_counts[n.pk] = n.comment_count
 
-    # ★★ 空结果**也缓存**（* 2026-10-21 恢复）⚠
-    #   · · 结果已与用户无关 ⇒ 空结果对所有人生效，* 共享 ✅
-    #   · · 所有可能让它变非空的写路径都会 `invalidate`（新建 / PATCH / 删除 /
-    #     恢复 / 审核）⇒ 不存在"某篇转公开后搜不到"的窗口 ✅
-    #   · · ★★ 收益：* 搜不到的词不再每次都全表扫（* 实测 3000 条时 45ms/次）⚠
-    search_cache.put(search_cache.NS_NOTES, uid, kw, out)
+    # ★★★ **空结果一律不缓存**（* 所有者：「不要兜底，直接不存空缓存就完了，
+    #   正常人谁会一直不停搜索空结果？」）⚠
+    #   · · 空数组没有条目可供 `_verify_note_cache` 比对
+    #     ⇒ 一旦某篇笔记/项目变成公开，* 这条空缓存要等 TTL 才失效，
+    #     * 期间搜索一直返回 0（* 这正是刚才担心的那个窗口）⚠
+    #   · · 代价可接受：* 空查询本来就少，* 且真正常搜的还是那几个有结果的词 ✅
+    if out:
+        search_cache.put(search_cache.NS_NOTES, uid, kw, out)
     # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
     return ok_flat(total=len(out), items=_attach_counts(out, comment_counts))
 

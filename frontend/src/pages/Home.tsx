@@ -156,11 +156,10 @@ export default function Home() {
           </form>
 
           <div className="hero-actions">
+            {/* ★ 只留一个入口：* 已登录时它本身就是「进入工作区」，
+                * 未登录时是「开始使用」⇒ ⛔ 不再重复放第二个工作区按钮 ⚠ */}
             <a href={startHref} className="btn primary">
               {startText}
-            </a>
-            <a href={SPA_LINKS.workspace} className="btn ghost">
-              进入工作区
             </a>
             <span className="hint">无需安装 · 浏览器即开即用</span>
           </div>

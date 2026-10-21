@@ -319,6 +319,12 @@ def collection(request: HttpRequest) -> JsonResponse:
     if kw:
         from django.db.models import Q
 
+        # ★★★ 首页搜索**只搜公开项目**（* 所有者：「不要让私有项目或者笔记能被搜索，
+        #   不管对哪个用户都一样」）⚠
+        #   · · `mine=1` 那条路（工作区）不受影响 —— 那本来就是"我的项目"
+        if not mine:
+            qs = qs.filter(is_public=True, state=Project.STATE_ACTIVE)
+
         qs = qs.filter(
             Q(name__icontains=kw)
             | Q(desc__icontains=kw)

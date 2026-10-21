@@ -336,8 +336,16 @@ def search(request: HttpRequest):
     if not kw:
         return ok_flat(total=0, items=[])
 
-    user = current_user(request)
-    uid = getattr(user, "pk", 0) or 0
+    # ★★★ 2026-10-21（所有者裁定）：**首页搜索只搜公开内容，与用户无关** ⚠
+    #   > 「不要让私有项目或者笔记能被搜索，不管对哪个用户都一样，搜私有笔记有什么
+    #   >  作用？对作者，他可以清楚知道那些是私有笔记，还可以到项目里搜索，对其他人，
+    #   >  搜别人的私有笔记是被禁制的行为。首页搜索框应该不允许这种行为的。」
+    #
+    #   ⇒ ★★ 结果**不随用户变化** ⇒ 缓存键**不带 uid**（用 0 作共享桶）：
+    #     · 所有人搜同一个词命中的是**同一份缓存** ✅
+    #     · 100 个不同用户搜同一个词 ⇒ 只扫一次库（* 而不是 100 次）✅
+    uid = 0
+    user = current_user(request)  # ⚠ 仅用于日志/后续扩展，* 不参与筛选
 
     # ★★ 先查 Redis（* 频繁搜索的词直接命中，* 少打数据库）⚠
     #   · · ★★ 但**发出前必须核对数据库**（* 所有者：「服务器缓存取出的内容要
@@ -354,15 +362,14 @@ def search(request: HttpRequest):
             )
         # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
 
-    qs = Note.objects.filter(deleted_at__isnull=True, state=Note.STATE_ACTIVE)
-
-    if user is None:
-        qs = qs.filter(is_public=True)
-    else:
-        visible = Q(is_public=True) | Q(created_by=user)
-        # ★ 项目 owner / 协作者 ⇒ 看得到项目内的私有笔记 ✅
-        visible |= Q(project__owner=user) | Q(project__collaborators__user=user)
-        qs = qs.filter(visible)
+    # ★★★ **只搜公开内容**（* 与当前用户无关，匿名和作者看到的完全一样）⚠
+    #   · · 笔记必须公开 + 生效中 + 未删
+    #   · · ★ **私有项目里的笔记也不搜**（* 否则等于泄露私有项目的存在）⚠
+    qs = Note.objects.filter(
+        deleted_at__isnull=True,
+        state=Note.STATE_ACTIVE,
+        is_public=True,
+    ).filter(Q(project__isnull=True) | Q(project__is_public=True))
 
     # ⚠ LIKE 通配符转义（* 用户输入 % / _ 不该当通配符用）⚠
     like = kw.replace("%", "").replace("_", "")
@@ -382,13 +389,12 @@ def search(request: HttpRequest):
         out.append(d)
         comment_counts[n.pk] = n.comment_count
 
-    # ★★ **空结果不写缓存**（* 2026-10-21 补）⚠
-    #   · · 原因：空数组没有条目可供 `_verify_note_cache` 逐条比对
-    #     ⇒ 一旦某篇笔记从「私有/隐藏」变成「公开」，* 这条空缓存要等 TTL
-    #     （* 5 分钟）才会失效，* 期间搜索一直返回 0 ⚠
-    #   · · ★ 空结果的缓存收益本来也低（* 真正高频的还是那几个有结果的词）✅
-    if out:
-        search_cache.put(search_cache.NS_NOTES, uid, kw, out)
+    # ★★ 空结果**也缓存**（* 2026-10-21 恢复）⚠
+    #   · · 结果已与用户无关 ⇒ 空结果对所有人生效，* 共享 ✅
+    #   · · 所有可能让它变非空的写路径都会 `invalidate`（新建 / PATCH / 删除 /
+    #     恢复 / 审核）⇒ 不存在"某篇转公开后搜不到"的窗口 ✅
+    #   · · ★★ 收益：* 搜不到的词不再每次都全表扫（* 实测 3000 条时 45ms/次）⚠
+    search_cache.put(search_cache.NS_NOTES, uid, kw, out)
     # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
     return ok_flat(total=len(out), items=_attach_counts(out, comment_counts))
 

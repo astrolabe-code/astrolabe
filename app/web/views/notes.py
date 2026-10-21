@@ -311,6 +311,67 @@ def _attach_counts(items: list, comment_counts: dict | None = None) -> list:
     return items
 
 
+@require_http_methods(["POST"])
+def batch_visibility(request: HttpRequest, project_ref: str):
+    """`POST /api/projects/<ref>/notes/batch-visibility/` —— **批量改公开/私有**。
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「不用，加一个批量改公开或私有的功能就可以了，用户选择排除那些笔记，其他批量改，
+    >   不用加个字段。以后，用户想批量修改也方便。」
+
+    ## ★★ 请求体
+
+    ```json
+    {"is_public": true, "exclude_ids": [12, 15]}
+    ```
+
+    ```
+    作用于：本项目里**未删除**的全部笔记
+    排除：  exclude_ids 里那些**不动**    ← 前端让用户勾"排除"
+    ```
+
+    ## ★ 权限
+
+    · 必须是项目的**可写成员**（owner ∨ 协作者）——* 批量是项目级操作 ✅
+    · 只动**这个项目**的笔记（* 不跨项目）⚠
+    """
+    from django.utils import timezone
+
+    from core import access
+
+    project = Project.objects.filter(project_ref=project_ref).first()
+    if project is None:
+        return fail("项目不存在", 404, code="not_found")
+
+    user = current_user(request)
+    if not access.can_edit_project(user, project):
+        return fail("需要项目所有者或协作者权限", 403, code="forbidden")
+
+    body = read_json(request)
+    if "is_public" not in body:
+        return fail("缺少 is_public", 400, code="missing_field")
+    want = bool(body["is_public"])
+
+    raw = body.get("exclude_ids") or []
+    try:
+        exclude = {int(x) for x in raw}
+    except (TypeError, ValueError):
+        return fail("exclude_ids 必须是数字数组", 400, code="bad_exclude")
+
+    qs = Note.objects.filter(project=project, deleted_at__isnull=True)
+    if exclude:
+        qs = qs.exclude(pk__in=exclude)
+
+    n = qs.update(
+        is_public=want,
+        # ⚠ 批量更新不走 `save()` ⇒ 必须显式带 updated_at（* 搜索缓存据此作废）⚠
+        updated_at=timezone.now(),
+    )
+    search_cache.invalidate(search_cache.NS_NOTES)
+    return ok_flat(updated=n, is_public=want, excluded=len(exclude))
+
+
 @require_http_methods(["GET"])
 def search(request: HttpRequest):
     """`GET /api/notes/search/?q=` —— **全局笔记搜索**（首页搜索框用）。

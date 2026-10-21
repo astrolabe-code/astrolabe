@@ -9,6 +9,7 @@ import type {
   NoteDetailData,
   NoteKind,
   NoteListData,
+  NoteSearchItem,
 } from '../api/types'
 
 /**
@@ -102,6 +103,31 @@ export interface UpdateNoteBody {
  *   （`hide` 默认不进章评区 / `move_to_chapter` 进且标 `orphaned:true`）——
  *   ★★ 调用方**必须**用返回的 `blocks` 刷新锚点，❌ 不能继续用旧 block_id ⚠
  */
+/**
+ * ★★★ **批量改公开 / 私有**（* 2026-10-21 · 所有者）⚠
+ *
+ * `POST /api/projects/<ref>/notes/batch-visibility/`
+ * body: `{is_public, exclude_ids}` —— 勾上的那些**不动**，其余全改
+ */
+export function useBatchVisibility(projectRef: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (payload: { is_public: boolean; exclude_ids: number[] }) =>
+      unwrap(
+        await apiPost<{ updated: number; is_public: boolean; excluded: number }>(
+          `/api/projects/${encodeURIComponent(projectRef)}/notes/batch-visibility/`,
+          payload,
+          'spread',
+        ),
+      ),
+    onSuccess: () => {
+      // ★ 列表 / 搜索都要重拉（* 可见性变了，搜索结果也会变）⚠
+      void qc.invalidateQueries({ queryKey: ['notes'] })
+      void qc.invalidateQueries({ queryKey: ['notes-search'] })
+    },
+  })
+}
+
 export function useUpdateNote(noteId?: number | null) {
   const qc = useQueryClient()
   return useMutation({
@@ -260,6 +286,30 @@ export function useImportNotes() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['notes'] })
+    },
+  })
+}
+
+/**
+ * ★★ 全局笔记搜索（`GET /api/notes/search/?q=`）—— 首页搜索框用
+ *
+ * ⚠ 匹配**标题 + 正文**（后端 `icontains`）✅
+ * ⚠ 每篇带 `project` 三件套 ⇒ 前端能链回项目 ✅
+ */
+export function useNoteSearch(q: string) {
+  const kw = q.trim()
+  return useQuery({
+    queryKey: ['notes-search', kw],
+    enabled: kw.length > 0,
+    staleTime: 30_000,
+    queryFn: async (): Promise<NoteSearchItem[]> => {
+      const data = unwrap(
+        await apiGet<{ total: number; items: NoteSearchItem[] }>(
+          `/api/notes/search/?q=${encodeURIComponent(kw)}`,
+          'spread',
+        ),
+      )
+      return data.items || []
     },
   })
 }

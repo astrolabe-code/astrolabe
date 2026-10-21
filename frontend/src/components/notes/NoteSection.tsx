@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Lightbulb, Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Layers, Lightbulb, Plus } from 'lucide-react'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
@@ -8,6 +8,7 @@ import EmptyState from '../ui/EmptyState'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
 import ThinkingBoard from './ThinkingBoard'
+import BatchVisibility from './BatchVisibility'
 
 /**
  * ★ 一个节点的笔记区（`F2` · D92）
@@ -40,6 +41,8 @@ interface NoteSectionProps {
   onEditNote: (note: Note) => void
   /** ★★ 删除某篇（* 卡片上的「删除」与弹窗里的删除共用同一个确认框）⚠ */
   onDeleteNote?: (note: Note) => void
+  /** ★ `?think=1`：* 进入后自动打开思考白板（* 只自动开一次）⚠ */
+  autoThink?: boolean
 }
 
 export default function NoteSection({
@@ -51,13 +54,25 @@ export default function NoteSection({
   onCreateNote,
   onEditNote,
   onDeleteNote,
+  autoThink,
 }: NoteSectionProps) {
   const [showAll, setShowAll] = useState(false)
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
   const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
   // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
   const [thinkingOpen, setThinkingOpen] = useState(false)
+  // ★ 批量改公开 / 私有（* 所有者：勾选排除，其余批量改）⚠
+  const [batchOpen, setBatchOpen] = useState(false)
   const notes = useNotes(projectRef, { limit: 200 })
+
+  // ★★ 首页「思考模式」卡片直达：* 数据就绪后自动开一次白板 ⚠
+  const autoOpened = useRef(false)
+  useEffect(() => {
+    if (!autoThink || autoOpened.current) return
+    if (notes.isLoading) return
+    autoOpened.current = true
+    setThinkingOpen(true)
+  }, [autoThink, notes.isLoading])
 
   if (notes.isError) {
     return (
@@ -81,17 +96,36 @@ export default function NoteSection({
 
   if (groups.length === 0) {
     return (
-      <EmptyState
-        title="这个节点还没有笔记"
-        hint={canWrite ? '做第一个写笔记的人 —— 你的一闪念，可能正好解开别人的困惑' : '登录后可撰写笔记'}
-        action={
-          canWrite ? (
-            <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
-              写笔记
-            </Button>
-          ) : undefined
-        }
-      />
+      <>
+        <EmptyState
+          title="这个节点还没有笔记"
+          hint={
+            canWrite
+              ? '做第一个写笔记的人 —— 你的一闪念，可能正好解开别人的困惑'
+              : '登录后可撰写笔记'
+          }
+          action={
+            canWrite ? (
+              <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
+                写笔记
+              </Button>
+            ) : undefined
+          }
+        />
+        {/* ★★ 空节点也要能开白板（* 首页「思考模式」卡片直达到空节点时）⚠ */}
+        <ThinkingBoard
+          open={thinkingOpen}
+          projectRef={projectRef}
+          nodeId={nodeId}
+          notes={mine}
+          onClose={() => setThinkingOpen(false)}
+        />
+        <BatchVisibility
+          open={batchOpen}
+          projectRef={projectRef}
+          onClose={() => setBatchOpen(false)}
+        />
+      </>
     )
   }
 
@@ -172,6 +206,16 @@ export default function NoteSection({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {/* ★★★ 批量改可见性（* 只有可写的人能看到）⚠ */}
+          {canWrite && (
+            <Button
+              icon={<Layers size={14} />}
+              onClick={() => setBatchOpen(true)}
+              title="批量把本项目的笔记设为公开或私有（可勾选排除）"
+            >
+              批量
+            </Button>
+          )}
           {/* ★★★ 思考模式入口（* 任何人都能用，* 只读用户也能摆着看）⚠ */}
           <Button
             icon={<Lightbulb size={14} />}
@@ -244,6 +288,12 @@ export default function NoteSection({
         nodeId={nodeId}
         notes={mine}
         onClose={() => setThinkingOpen(false)}
+      />
+      {/* ★ 批量改可见性（* 正常分支也要渲染，否则有笔记时点「批量」没反应）⚠ */}
+      <BatchVisibility
+        open={batchOpen}
+        projectRef={projectRef}
+        onClose={() => setBatchOpen(false)}
       />
 
       {activeKind === 'all' && groups.length > 2 && (

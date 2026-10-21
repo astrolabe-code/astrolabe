@@ -217,11 +217,19 @@ urlpatterns = [
         notes.collection,
         name="note-list",
     ),
+    # ★★ 批量改公开 / 私有（* 所有者：用户排除若干篇，其余批量改）⚠
+    path(
+        "projects/<project_ref:project_ref>/notes/batch-visibility/",
+        notes.batch_visibility,
+        name="note-batch-visibility",
+    ),
     # ⚠★ 单篇【不挂项目】—— ★ 笔记自己有 id，* 且权限在视图里判 ✅
     #   · · ★ 挂在项目下会逼着 URL 里带 ref ⇒ ★ 而 ref 与笔记是**多对一** ⚠
     #     （* 一篇笔记只属于一个项目，* 但 URL 不必 redundant 地再写一遍）⚠
     # ★★ `B231`：**从导出包恢复笔记**（* 先验签再解包）⚠
     path("notes/import/", notes.import_notes, name="note-import"),
+    # ★★ 全局笔记搜索（* 首页搜索框：* 标题 + 正文）⚠
+    path("notes/search/", notes.search, name="note-search"),
     path("notes/<int:note_id>/", notes.detail, name="note-detail"),
     # ------------------------------------------------------------ 评论（B201/B203）
     # ★★ 章评 + 段评【同表】；* `anchor_kind` **创建时定死**（* B203④）⚠

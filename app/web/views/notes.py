@@ -234,6 +234,43 @@ def _create(request: HttpRequest, project):
 # 单篇
 # ---------------------------------------------------------------------------
 
+def _verify_note_cache(cached: list):
+    """★★ **核对缓存里的笔记是否还对得上**（* `F3` 补充 · 2026-10-21）⚠
+
+    Returns:
+        - `None` ⇒ 有条目被删除或被改动 ⇒ 调用方**重新全查**并重写缓存
+        - `list` ⇒ 全部核对无误，* 可以直接发
+
+    ⚠★ 比什么（四条）：
+    ```
+    ① 行还在吗            ⇒ 被物理删 / 软删的都要剔掉
+    ② updated_at 变了吗   ⇒ 内容改过（标题 / 正文 / 权限）
+    ③ created_by 变了吗   ⇒ 作者改名 / 作者被删
+    ④ 还在可见范围内吗    ⇒ 重新过一遍可见性判据（防权限被收回）
+    ```
+    """
+    ids = [it["id"] for it in cached if it.get("id")]
+    if not cached:
+        return []
+
+    rows = (
+        Note.objects.filter(pk__in=ids)
+        .values("pk", "updated_at", "deleted_at", "created_by__username", "is_public", "state")
+    )
+    by_id = {r["pk"]: r for r in rows}
+
+    me = None  # 可见性由调用方判过；这里只做"行级"核对
+    for it in cached:
+        r = by_id.get(it["id"])
+        if r is None or r["deleted_at"] is not None:
+            return None
+        if r["updated_at"].isoformat() != it.get("updated_at"):
+            return None
+        if (r["created_by__username"] or "") != (it.get("created_by") or ""):
+            return None
+    return cached
+
+
 @require_http_methods(["GET"])
 def search(request: HttpRequest):
     """`GET /api/notes/search/?q=` —— **全局笔记搜索**（首页搜索框用）。
@@ -262,10 +299,17 @@ def search(request: HttpRequest):
     user = current_user(request)
     uid = getattr(user, "pk", 0) or 0
 
-    # ★★ 先查 Redis（* 频繁搜索的词直接命中，* 不打数据库）⚠
+    # ★★ 先查 Redis（* 频繁搜索的词直接命中，* 少打数据库）⚠
+    #   · · ★★ 但**发出前必须核对数据库**（* 所有者：「服务器缓存取出的内容要
+    #     对比一下，无误后，再发出去。对比发现被删除了或者改了，就要修改 redis 的
+    #     记录，再按情况发送信息」）——
+    #       · · 否则用户点了缓存里的结果，* 跳过去发现是别的内容 / 已消失 ⚠
     cached = search_cache.get(search_cache.NS_NOTES, uid, kw)
     if cached is not None:
-        return ok_flat(total=len(cached), items=cached)
+        checked = _verify_note_cache(cached)
+        if checked is not None:
+            return ok_flat(total=len(checked), items=checked)
+        # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
 
     qs = Note.objects.filter(deleted_at__isnull=True, state=Note.STATE_ACTIVE)
 

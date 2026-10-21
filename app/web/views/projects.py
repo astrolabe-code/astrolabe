@@ -319,7 +319,10 @@ def collection(request: HttpRequest) -> JsonResponse:
     if kw:
         cached = search_cache.get(search_cache.NS_PROJECTS, uid, kw)
         if cached is not None:
-            return ok_flat(projects=cached)
+            # ★★ 发出前核对数据库（* 项目被删 / 改名 / 换作者都要发现）⚠
+            checked = _verify_project_cache(cached)
+            if checked is not None:
+                return ok_flat(projects=checked)
 
     nodes, edges = _counts([p.project_ref for p in projects])
     # ⚠★ 2026-10-14（`B197`）：**同一趟把「有没有图」也查出来** ⚠
@@ -342,6 +345,40 @@ def collection(request: HttpRequest) -> JsonResponse:
         search_cache.put(search_cache.NS_PROJECTS, uid, kw, payload)
 
     return ok_flat(projects=payload)
+
+
+def _verify_project_cache(cached: list):
+    """★★ **核对缓存里的项目是否还对得上**（* 2026-10-21）⚠
+
+    Returns:
+        - `None` ⇒ 有项目被删 / 被改 ⇒ 调用方重新全查并重写缓存
+        - `list` ⇒ 全部核对无误，* 可以直接发
+
+    ⚠★ 比什么：**行还在吗** + **名称 / 简介 / 作者 / 公开性 / 状态**变了吗
+      （* `_project_json` 没有 updated_at，* 所以按这些业务字段逐项比）⚠
+    """
+    if not cached:
+        return []
+
+    refs = [it["project_ref"] for it in cached if it.get("project_ref")]
+    rows = Project.objects.filter(project_ref__in=refs).values(
+        "project_ref", "name", "desc", "state", "is_public", "owner__username"
+    )
+    by_ref = {r["project_ref"]: r for r in rows}
+
+    for it in cached:
+        r = by_ref.get(it.get("project_ref"))
+        if r is None:
+            return None
+        if (
+            r["name"] != it.get("name")
+            or (r["desc"] or "") != (it.get("desc") or "")
+            or (r["state"] or "") != (it.get("state") or "")
+            or bool(r["is_public"]) != bool(it.get("is_public"))
+            or (r["owner__username"] or "") != (it.get("owner") or "")
+        ):
+            return None
+    return cached
 
 
 def _create(request: HttpRequest) -> JsonResponse:

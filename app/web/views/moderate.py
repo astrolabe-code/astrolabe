@@ -41,6 +41,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import access
+from core import search_cache
 from core.models import AuditLog, Note, Project, ProjectReview
 from web.http import fail, ok, read_json
 from web.permissions import staff_only
@@ -202,6 +203,10 @@ def moderate_note(request: HttpRequest, note_id: int):
     note.moderated_by = request.user
     note.moderated_at = timezone.now()
     note.save(update_fields=["state", "moderation_reason", "moderated_by", "moderated_at"])
+    # ★★★ 审核改了 `state` ⇒ **搜索缓存立刻作废**
+    #   · · `save(update_fields=...)` 不刷新 `updated_at`（* Django 有意如此），
+    #     * 光靠时间戳判不出来 ⇒ * 必须在这里主动清 ⚠
+    search_cache.invalidate(search_cache.NS_NOTES)
 
     _audit(request, f"note.{action}", note_id=note.pk, name=note.title, reason=reason)
 

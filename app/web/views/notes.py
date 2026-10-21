@@ -276,6 +276,15 @@ def _verify_note_cache(cached: list):
             return None, {}
         if (r["created_by__username"] or "") != (it.get("created_by") or ""):
             return None, {}
+        # ★★★ 2026-10-21 补：**可见性字段必须比对** ⚠
+        #   · · 实测漏洞：* 管理员隐藏一篇笔记后，* 搜索缓存**照样返回它**
+        #     （* `state` 查出来了却从没比过，* `moderate` 也没清缓存）⚠
+        #   · · ★ 这里不比「我能不能看」（* 那要看请求者），* 只比「它变了没有」：
+        #     变了 ⇒ 作废整条缓存，* 让下面的全量查询按当前可见性重算 ✅
+        if (r["state"] or "") != (it.get("state") or ""):
+            return None, {}
+        if bool(r["is_public"]) != bool(it.get("is_public")):
+            return None, {}
     return cached, {pk: r["comment_count"] for pk, r in by_id.items()}
 
 
@@ -380,8 +389,13 @@ def search(request: HttpRequest):
         out.append(d)
         comment_counts[n.pk] = n.comment_count
 
-    # ★ 回源后写缓存（* TTL 兜底 + 写入时主动失效）⚠
-    search_cache.put(search_cache.NS_NOTES, uid, kw, out)
+    # ★★ **空结果不写缓存**（* 2026-10-21 补）⚠
+    #   · · 原因：空数组没有条目可供 `_verify_note_cache` 逐条比对
+    #     ⇒ 一旦某篇笔记从「私有/隐藏」变成「公开」，* 这条空缓存要等 TTL
+    #     （* 5 分钟）才会失效，* 期间搜索一直返回 0 ⚠
+    #   · · ★ 空结果的缓存收益本来也低（* 真正高频的还是那几个有结果的词）✅
+    if out:
+        search_cache.put(search_cache.NS_NOTES, uid, kw, out)
     # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
     return ok_flat(total=len(out), items=_attach_counts(out, comment_counts))
 

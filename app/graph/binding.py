@@ -324,9 +324,7 @@ def bind(
                 "要看别的版本，请新建一个项目"
             )
         if project.base_graph_id is None:
-            Project.objects.filter(pk=project.pk).update(
-                base_graph=base_graph, updated_at=timezone.now()
-            )
+            Project.objects.filter(pk=project.pk).update(base_graph=base_graph)
 
         # ⚠★★ 2026-10-13：**必须重新读一次 `built_at`**（★ 别信传进来那个对象的属性）⚠
         #

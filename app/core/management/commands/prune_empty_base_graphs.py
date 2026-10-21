@@ -99,9 +99,7 @@ class Command(BaseCommand):
         unbound = 0
         for bg in rows:
             with transaction.atomic():
-                unbound += Project.objects.filter(base_graph=bg).update(
-                    base_graph=None, updated_at=timezone.now()
-                )
+                unbound += Project.objects.filter(base_graph=bg).update(base_graph=None)
                 bg.delete()
             deleted += 1
 

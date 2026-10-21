@@ -143,9 +143,7 @@ def _set_project_state(request: HttpRequest, project: Project, action: str, reas
     project.moderation_reason = reason
     project.moderated_by = request.user
     project.moderated_at = timezone.now()
-    project.save(
-        update_fields=["state", "moderation_reason", "moderated_by", "moderated_at", "updated_at"]
-    )
+    project.save(update_fields=["state", "moderation_reason", "moderated_by", "moderated_at"])
 
     _audit(request, f"project.{action}", project_ref=project.project_ref,
            name=project.name, reason=reason)

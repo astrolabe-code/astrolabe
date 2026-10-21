@@ -481,10 +481,10 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         project.is_public = bool(body["is_public"])
         dirty.append("is_public")
 
-    # ★★ 只有**真的改了**才 save ⇒ `updated_at`（auto_now）随之刷新；
+    # ★★ 只有**真的改了**才 save ⇒ `Project.save()` 会自动补上 `updated_at`；
     #   · · 什么都没改就不要戳时间（* 所有者：「具体改了项目的什么，就更新时间」）⚠
     if dirty:
-        project.save(update_fields=[*dirty, "updated_at"])
+        project.save(update_fields=dirty)
     nodes, edges = _counts([project_ref])
     return ok(_project_json(project, request, nodes.get(project_ref, 0), edges.get(project_ref, 0)))
 

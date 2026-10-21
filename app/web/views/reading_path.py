@@ -91,9 +91,7 @@ def _validate(project: Project, vids) -> tuple[list[int] | None, str | None]:
 
 def _save(project: Project, vids: list[int]) -> None:
     """★ 整列替换（* 单行更新，* 没有删插竞争）✅"""
-    Project.objects.filter(pk=project.pk).update(
-            reading_path=vids, updated_at=timezone.now()
-        )
+    Project.objects.filter(pk=project.pk).update(reading_path=vids)
     project.reading_path = vids
 
 

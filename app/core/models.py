@@ -16,6 +16,7 @@
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.utils import timezone
 
 from core.refs import new_project_ref
 
@@ -59,6 +60,27 @@ class UidMixin(models.Model):
         abstract = True
 
 
+class ProjectQuerySet(models.QuerySet):
+    """★★ **项目的 QuerySet**（* 2026-10-21）⚠
+
+    ## ★ 为什么要有它
+    - 所有者原话：「django缺失不会自动刷新auto_now，那是其作者故意设置的。你只要
+      显示加入update_time字段就可以了，**不用每条写路径都去加上更新时间，万一写多了，
+      漏了一条路径，那就糟了**。」
+
+    ## ★★ 收口点：`update()` 一律补 `updated_at`
+    - Django 的 `auto_now` **故意**不在 `update_fields` / `.update()` 里刷新
+      （* `update_fields` 的意义就是「精确控制写哪些列」）⚠
+    - ⛔ 若在每条业务路径里手写 `updated_at=timezone.now()`，* 迟早漏一条
+      ⇒ ★ 在这里**统一补**，* 从此任何 `Project.objects...update(...)` 都不会漏 ✅
+    """
+
+    def update(self, **kwargs):
+        if "updated_at" not in kwargs:
+            kwargs["updated_at"] = timezone.now()
+        return super().update(**kwargs)
+
+
 class Project(TimeStampedModel):
     """项目 —— ★ 图 / 作业 / UGC **全部挂在它上面**。
 
@@ -79,6 +101,8 @@ class Project(TimeStampedModel):
     #   ★★ 因为它进了**联合唯一索引** `UNIQUE (owner, name)` ——
     #     ★ 索引的体积**直接由这里决定** ⚠
     #   ★ 实测：★ 现有的名字**最长 19 字**、★ 平均 **4 字** ⇒ ★ **缩了碰不到任何数据** ✅
+    objects = ProjectQuerySet.as_manager()
+
     name = models.CharField(max_length=120)
     desc = models.TextField(blank=True, default="")
 
@@ -275,6 +299,16 @@ class Project(TimeStampedModel):
             and self.base_graph is not None
             and self.base_graph.built_at is not None
         )
+
+    def save(self, *args, update_fields=None, **kwargs):
+        """★★ `update_fields` 一律补上 `updated_at` ⚠
+
+        - 同 `ProjectQuerySet.update` 的理由：* 收口在模型层，* 不让调用方惦记 ✅
+        - ⚠ `auto_now` 不会自己进 `update_fields`（* Django 有意如此）⇒ 这里补 ✅
+        """
+        if update_fields is not None and "updated_at" not in update_fields:
+            update_fields = set(update_fields) | {"updated_at"}
+        super().save(*args, update_fields=update_fields, **kwargs)
 
     class Meta:
         constraints = [
@@ -1822,6 +1856,18 @@ class NoteComment(TimeStampedModel):
     #: ★★ **引用时的原文快照** —— ★ 即便那段后来改了，* 也能显示"当时是这句" ✅
     #:   （* 番茄小说就是这么做的）⚠
     quote = models.CharField(max_length=500, blank=True, default="")
+    #: ★★★ **父评论**（* 2026-10-20 恢复「楼中楼」）——
+    #:   · · 所有者原话：「章评应该像这样，回复一个用户后，会城楼，不过最多只有这一层楼」
+    #:   · · ★ 只有**两层**：顶层 `parent=None`；回复 `parent=顶层评论`
+    #:   · · ★★ 回复「回复」时，`parent` 仍然指向**顶层评论**（⛔ 不往下叠）⚠
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="replies",
+    )
+
     #: ★ 正常 / 隐藏 / 待审
     state = models.CharField(max_length=16, default="normal")
     # ⚠★ 2026-10-20：**不再存 like_count 缓存** —— 赞数一律由

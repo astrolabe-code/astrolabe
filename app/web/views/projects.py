@@ -376,7 +376,10 @@ def _verify_project_cache(cached: list):
         "desc",
         "state",
         "is_public",
-        "owner__username",
+        # ⚠★ 2026-10-21：**不查 owner** —— 项目创建后 owner 不可变
+        #   （* 所有者：「项目缓存比作者也去掉，同事检查网站前后端有没有改作者的代码，
+        #     有就去掉。作者只能后台，我这个管理员改。」）
+        #   ⇒ 省掉一次 `auth_user` JOIN ✅
         # ★★ `updated_at` 是主判据（* 所有者：「redis 也可以根据更新时间确定
         #   数据是否改过没了」）——* 任何写路径都会刷新它 ⚠
         "updated_at",
@@ -397,7 +400,6 @@ def _verify_project_cache(cached: list):
                 or (r["desc"] or "") != (it.get("desc") or "")
                 or (r["state"] or "") != (it.get("state") or "")
                 or bool(r["is_public"]) != bool(it.get("is_public"))
-                or (r["owner__username"] or "") != (it.get("owner") or "")
             ):
                 return None
     return cached

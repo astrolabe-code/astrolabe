@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 from django.http import HttpRequest
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core.models import Project
@@ -90,7 +91,9 @@ def _validate(project: Project, vids) -> tuple[list[int] | None, str | None]:
 
 def _save(project: Project, vids: list[int]) -> None:
     """★ 整列替换（* 单行更新，* 没有删插竞争）✅"""
-    Project.objects.filter(pk=project.pk).update(reading_path=vids)
+    Project.objects.filter(pk=project.pk).update(
+            reading_path=vids, updated_at=timezone.now()
+        )
     project.reading_path = vids
 
 

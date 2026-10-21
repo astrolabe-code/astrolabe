@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from core.models import Project
 from graph.models import BaseGraph
@@ -98,7 +99,9 @@ class Command(BaseCommand):
         unbound = 0
         for bg in rows:
             with transaction.atomic():
-                unbound += Project.objects.filter(base_graph=bg).update(base_graph=None)
+                unbound += Project.objects.filter(base_graph=bg).update(
+                    base_graph=None, updated_at=timezone.now()
+                )
                 bg.delete()
             deleted += 1
 

@@ -252,6 +252,9 @@ def _project_json(
         "node_count": node_n,
         "edge_count": edge_n,
         "created_at": project.created_at.isoformat(),
+        # ★★ `updated_at`（* 所有者：「项目也加上updated_at 字段，具体改了项目的
+        #   什么，就更新时间」）——* Redis 搜索缓存靠它判断数据是否改过 ⚠
+        "updated_at": project.updated_at.isoformat(),
     }
 
 
@@ -362,7 +365,15 @@ def _verify_project_cache(cached: list):
 
     refs = [it["project_ref"] for it in cached if it.get("project_ref")]
     rows = Project.objects.filter(project_ref__in=refs).values(
-        "project_ref", "name", "desc", "state", "is_public", "owner__username"
+        "project_ref",
+        "name",
+        "desc",
+        "state",
+        "is_public",
+        "owner__username",
+        # ★★ `updated_at` 是主判据（* 所有者：「redis 也可以根据更新时间确定
+        #   数据是否改过没了」）——* 任何写路径都会刷新它 ⚠
+        "updated_at",
     )
     by_ref = {r["project_ref"]: r for r in rows}
 
@@ -370,14 +381,19 @@ def _verify_project_cache(cached: list):
         r = by_ref.get(it.get("project_ref"))
         if r is None:
             return None
-        if (
-            r["name"] != it.get("name")
-            or (r["desc"] or "") != (it.get("desc") or "")
-            or (r["state"] or "") != (it.get("state") or "")
-            or bool(r["is_public"]) != bool(it.get("is_public"))
-            or (r["owner__username"] or "") != (it.get("owner") or "")
-        ):
+        # ① 主判据：* 更新时间对不上 ⇒ 改过（* 改名 / 改简介 / 改公开性 / 换作者…）
+        if r["updated_at"].isoformat() != it.get("updated_at"):
             return None
+        # ② 兜底：* 老缓存没有 updated_at 时按业务字段比
+        if not it.get("updated_at"):
+            if (
+                r["name"] != it.get("name")
+                or (r["desc"] or "") != (it.get("desc") or "")
+                or (r["state"] or "") != (it.get("state") or "")
+                or bool(r["is_public"]) != bool(it.get("is_public"))
+                or (r["owner__username"] or "") != (it.get("owner") or "")
+            ):
+                return None
     return cached
 
 
@@ -454,12 +470,21 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
     #   · ★★ 所以这里**不再收这三个字段** —— ★ 收也写不进去
     #     （★ 没有 setter ⇒ `AttributeError`）⚠
     #   · ★ 要改源码地址 ⇒ ★ 重新拉一份（★ 那是建一条新绑定，★ 不是改这一行）✅
+    dirty: list[str] = []
     for field in ("name", "desc"):
         if field in body:
-            setattr(project, field, str(body[field] or "")[:2000])
-    if "is_public" in body:
+            v = str(body[field] or "")[:2000]
+            if getattr(project, field) != v:
+                setattr(project, field, v)
+                dirty.append(field)
+    if "is_public" in body and project.is_public != bool(body["is_public"]):
         project.is_public = bool(body["is_public"])
-    project.save()
+        dirty.append("is_public")
+
+    # ★★ 只有**真的改了**才 save ⇒ `updated_at`（auto_now）随之刷新；
+    #   · · 什么都没改就不要戳时间（* 所有者：「具体改了项目的什么，就更新时间」）⚠
+    if dirty:
+        project.save(update_fields=[*dirty, "updated_at"])
     nodes, edges = _counts([project_ref])
     return ok(_project_json(project, request, nodes.get(project_ref, 0), edges.get(project_ref, 0)))
 

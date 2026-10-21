@@ -18,6 +18,7 @@ from django.db.models import Count
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
+from core import search_cache
 from core import fetch, oauth, storage
 from core import publish as publish_core
 # ★★ `F2`：* `_project_json` 要现算 `can_edit` / `can_manage` ⇒* 直接调内核 ⚠
@@ -298,26 +299,49 @@ def collection(request: HttpRequest) -> JsonResponse:
             Q(is_public=True, state=Project.STATE_ACTIVE) | Q(owner=user)
         )
 
+    # ★★ `?q=` 关键词（* 名称 / 简介 / 作者名）⇒ 命中 pg_trgm 表达式索引 ⚠
+    kw = (request.GET.get("q") or "").strip()
+    if kw:
+        from django.db.models import Q
+
+        qs = qs.filter(
+            Q(name__icontains=kw)
+            | Q(desc__icontains=kw)
+            | Q(owner__username__icontains=kw)
+        )
+
     qs = qs.order_by("-created_at")[:200]
     projects = list(qs)
+
+    # ★★ 带关键词 ⇒ 走 Redis 缓存（* 结果含 per-user 字段 ⇒ key 带 uid）⚠
+    me = getattr(request, "user", None)
+    uid = getattr(me, "pk", 0) or 0
+    if kw:
+        cached = search_cache.get(search_cache.NS_PROJECTS, uid, kw)
+        if cached is not None:
+            return ok_flat(projects=cached)
+
     nodes, edges = _counts([p.project_ref for p in projects])
     # ⚠★ 2026-10-14（`B197`）：**同一趟把「有没有图」也查出来** ⚠
     #   ★★ 否则 `is_graph_built` 会对每个项目各查一次绑定表 ⇒ **N+1** ⚠
     built = _built_flags([p.project_ref for p in projects])
 
     # ② 型（契约 §2：项目列表 = `{projects:[...]}`）
-    return ok_flat(
-        projects=[
-            _project_json(
-                p,
-                request,
-                nodes.get(p.project_ref, 0),
-                edges.get(p.project_ref, 0),
-                graph_built=built.get(p.project_ref, False),
-            )
-            for p in projects
-        ]
-    )
+    payload = [
+        _project_json(
+            p,
+            request,
+            nodes.get(p.project_ref, 0),
+            edges.get(p.project_ref, 0),
+            graph_built=built.get(p.project_ref, False),
+        )
+        for p in projects
+    ]
+
+    if kw:
+        search_cache.put(search_cache.NS_PROJECTS, uid, kw, payload)
+
+    return ok_flat(projects=payload)
 
 
 def _create(request: HttpRequest) -> JsonResponse:
@@ -351,6 +375,7 @@ def _create(request: HttpRequest) -> JsonResponse:
         owner=user,
         is_public=bool(body.get("is_public", False)),
     )
+    search_cache.invalidate(search_cache.NS_PROJECTS)
     return ok(
         {"project_ref": project.project_ref, "name": project.name},
         status=201,

@@ -44,6 +44,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
+from core import search_cache
 from core.models import Note, NoteLike
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
@@ -117,17 +118,30 @@ def _list(request: HttpRequest, project):
     #   · · ★ 这也顺带保证「**不跨版本**」—— * 项目不可换绑（`B227`）✅
     # ★★ `B210`：* 软删的笔记不进任何列表（* 它在回收站里）⚠
     qs = Note.objects.filter(project=project, deleted_at__isnull=True)
-    # ⚠★ 私有笔记只有作者能看 ✅
-    # ★★ `B208`⑧：* **被隐藏的笔记**（* state=hidden）对**非作者**一律不列 ✅
-    #   （* 隐藏 = 只有作者能看到，* 比私有更严：* 协作者也不可）⚠
+    # ⚠★ 私有笔记的可见范围（* 与 `can_read_note` **保持一致**）：
+    #   · · ★ 公开且在生效中 ⇒ 所有人可见 ✅
+    #   · · ★ 作者本人 ⇒ 自己的笔记（* 含私有 / 隐藏）✅
+    #   · · ★★ 项目 owner / 协作者 ⇒ 项目内**所有非隐藏**笔记（* 含别人写的私有）⚠
+    #   · · ★ 隐藏（`state=hidden`）⇒ **只有作者**（* 比私有更严）✅
+    # ⚠ 2026-10-20 修：* 之前只写了「公开 | 作者」⇒* 项目 owner 把自己项目里
+    #   别人写的笔记设为私有后，* 自己在列表里也看不见它了 ⚠
     if user is None:
         qs = qs.filter(is_public=True, state=Note.STATE_ACTIVE)
     else:
         from django.db.models import Q
 
-        qs = qs.filter(
-            Q(is_public=True, state=Note.STATE_ACTIVE) | Q(created_by=user)
-        )
+        from core.models import Collaborator
+
+        visible = Q(is_public=True, state=Note.STATE_ACTIVE) | Q(created_by=user)
+
+        is_manager = project.owner_id == user.pk or Collaborator.objects.filter(
+            project=project, user=user
+        ).exists()
+        if is_manager:
+            # ★ 管理员/协作者：* 看得到私有，* 但隐藏的仍只有作者 ✅
+            visible |= Q(state=Note.STATE_ACTIVE)
+
+        qs = qs.filter(visible)
 
     kind = (request.GET.get("kind") or "").strip()
     if kind:
@@ -211,12 +225,76 @@ def _create(request: HttpRequest, project):
         created_by=request.user,
     )
     blocks = note_alg.realign(note)
+    # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
+    search_cache.invalidate(search_cache.NS_NOTES)
     return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
 
 
 # ---------------------------------------------------------------------------
 # 单篇
 # ---------------------------------------------------------------------------
+
+@require_http_methods(["GET"])
+def search(request: HttpRequest):
+    """`GET /api/notes/search/?q=` —— **全局笔记搜索**（首页搜索框用）。
+
+    ⚠ 所有者原话：「你这现在只能搜索项目名称。无法搜索用户和笔记标题吗？」
+
+    ## ★★ 匹配范围
+    - 标题（`title`）+ 正文（`body`）⇒ `icontains`（大小写不敏感）✅
+
+    ## ★★ 可见范围（与项目内笔记列表同一套判据）
+    ```
+    游客              ⇒ 公开且生效中的笔记
+    登录用户          ⇒ 公开 ∨ 自己写的 ∨ 项目 owner / 协作者可见的（含私有）
+    ```
+
+    ## ★ 返回
+    `{total, items:[note…]}`，每篇额外带 `project` 三件套
+    （`project_ref` / `project_name` / `version_label`）⇒ 前端能链回项目 ✅
+    """
+    from django.db.models import Q
+
+    kw = (request.GET.get("q") or "").strip()
+    if not kw:
+        return ok_flat(total=0, items=[])
+
+    user = current_user(request)
+    uid = getattr(user, "pk", 0) or 0
+
+    # ★★ 先查 Redis（* 频繁搜索的词直接命中，* 不打数据库）⚠
+    cached = search_cache.get(search_cache.NS_NOTES, uid, kw)
+    if cached is not None:
+        return ok_flat(total=len(cached), items=cached)
+
+    qs = Note.objects.filter(deleted_at__isnull=True, state=Note.STATE_ACTIVE)
+
+    if user is None:
+        qs = qs.filter(is_public=True)
+    else:
+        visible = Q(is_public=True) | Q(created_by=user)
+        # ★ 项目 owner / 协作者 ⇒ 看得到项目内的私有笔记 ✅
+        visible |= Q(project__owner=user) | Q(project__collaborators__user=user)
+        qs = qs.filter(visible)
+
+    # ⚠ LIKE 通配符转义（* 用户输入 % / _ 不该当通配符用）⚠
+    like = kw.replace("%", "").replace("_", "")
+    qs = qs.filter(Q(title__icontains=like) | Q(body__icontains=like)).distinct()
+    qs = qs.order_by("-created_at")
+
+    limit = _clamp(request.GET.get("limit"), 1, 50, 20)
+    items = list(qs[:limit])
+
+    out = []
+    for n in items:
+        d = _note_json(n)
+        d["project"] = _project_label(n)
+        out.append(d)
+
+    # ★ 回源后写缓存（* TTL 兜底 + 写入时主动失效）⚠
+    search_cache.put(search_cache.NS_NOTES, uid, kw, out)
+    return ok_flat(total=len(out), items=out)
+
 
 @require_http_methods(["GET", "PATCH", "DELETE"])
 def detail(request: HttpRequest, note_id: int):
@@ -255,6 +333,7 @@ def detail(request: HttpRequest, note_id: int):
         note.deleted_at = timezone.now()
         note.deleted_by = current_user(request)
         note.save(update_fields=["deleted_at", "deleted_by"])
+        search_cache.invalidate(search_cache.NS_NOTES)
         return ok_flat(deleted=True)
 
     if request.method == "PATCH":
@@ -353,8 +432,11 @@ def undelete(request: HttpRequest, note_id: int):
 
     note.deleted_at = None
     note.deleted_by = None
+    search_cache.invalidate(search_cache.NS_NOTES)
     note.save(update_fields=["deleted_at", "deleted_by"])
     blocks = note_alg.realign(note)
+    # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
+    search_cache.invalidate(search_cache.NS_NOTES)
     return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in blocks])
 
 
@@ -397,6 +479,7 @@ def _patch(request: HttpRequest, note: Note):
         return fail("没有要改的字段", 400, code="nothing_to_change")
 
     note.save()
+    search_cache.invalidate(search_cache.NS_NOTES)
 
     # ★★ 改了正文 ⇒ ★ 重算段落 ✅
     if "body" in changed:

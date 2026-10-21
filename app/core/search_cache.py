@@ -36,9 +36,12 @@ logger = logging.getLogger(__name__)
 
 #: 缓存多久（秒）—— ★ 所有者要求「注意更新时间限制」
 TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL", "300"))
+#: registry 集合的 TTL 倍数（* 必须 ≥ 1，* 否则集合比数据先死，* 失效会漏键）⚠
+REGISTRY_TTL_FACTOR = 2
 
-NS_NOTES = "search:notes"
-NS_PROJECTS = "search:projects"
+#: ★ 统一走 `astrolabe:` 命名空间（* 与 jobs / basegraph / neigh / hot 一致）⚠
+NS_NOTES = "astrolabe:search:notes"
+NS_PROJECTS = "astrolabe:search:projects"
 
 _client = None
 
@@ -92,7 +95,7 @@ def put(ns: str, uid: int, kw: str, payload) -> None:
         pipe.set(key, json.dumps(payload, ensure_ascii=False), ex=TTL_SECONDS)
         # ★ registry：* 失效时按它清；* 给个略长的 TTL 防无限增长 ⚠
         pipe.sadd(f"{ns}:__keys__", key)
-        pipe.expire(f"{ns}:__keys__", TTL_SECONDS * 4)
+        pipe.expire(f"{ns}:__keys__", TTL_SECONDS * REGISTRY_TTL_FACTOR)
         pipe.execute()
     except Exception:
         logger.debug("search_cache: 写失败（忽略）", exc_info=True)
@@ -105,9 +108,15 @@ def invalidate(ns: str) -> None:
         return
     registry = f"{ns}:__keys__"
     try:
-        keys = client.smembers(registry)
+        keys = list(client.smembers(registry))
         if keys:
-            client.delete(*keys)
+            # ★ 先验活再删：* 已自然过期的键不必 DEL（* 省掉一批无效命令）⚠
+            pipe = client.pipeline()
+            for k in keys:
+                pipe.exists(k)
+            alive = [k for k, ok in zip(keys, pipe.execute()) if ok]
+            if alive:
+                client.delete(*alive)
         client.delete(registry)
     except Exception:
         logger.debug("search_cache: 失效失败（忽略）", exc_info=True)

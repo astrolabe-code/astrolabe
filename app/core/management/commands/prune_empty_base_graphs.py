@@ -40,6 +40,9 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
+from graph.binding import forget_base_graph
+from django.utils import timezone
+
 from core.models import Project
 from graph.models import BaseGraph
 
@@ -64,8 +67,12 @@ class Command(BaseCommand):
         delete = bool(opts["delete"])
         limit = max(int(opts["limit"]), 0)
 
-        # ★ 0 节点：* 用反向外键的 IS NULL（LEFT JOIN）判，* 不逐条 count ✅
-        qs = BaseGraph.objects.filter(nodes__isnull=True).order_by("pk")
+        # ★ 0 节点：* **直接用 `node_count` 列判**（* 2026-10-21 修）⚠
+        #   ⚠ 旧写法 `filter(nodes__isnull=True)` 直接崩 —— BaseGraph 上
+        #     **没有** `nodes` 这个反向外键（* 节点挂在 repo/base_graph 上，* 关系名不是它）
+        #     ⇒ 命令从来没跑起来过 ⚠
+        #   ★ 而且 `node_count` 就是解析结束时写好的列，* 比 LEFT JOIN 还省 ✅
+        qs = BaseGraph.objects.filter(node_count__lte=0).order_by("pk")
         total = qs.count()
 
         if total == 0:
@@ -101,6 +108,9 @@ class Command(BaseCommand):
             with transaction.atomic():
                 unbound += Project.objects.filter(base_graph=bg).update(base_graph=None)
                 bg.delete()
+            # ★ 基图没了 ⇒ 消掉 `astrolabe:basegraph:<graph_key>` 映射，
+            #   * 否则下次同地址建项目会命中一条指向不存在行的死键 ⚠
+            forget_base_graph(bg)
             deleted += 1
 
         self.stdout.write(f"已删除 {deleted} 张基图；解绑 {unbound} 个项目（它们回到「可重新拉取」）")

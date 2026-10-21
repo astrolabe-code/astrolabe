@@ -146,6 +146,18 @@ def _cache_drop(graph_key: str) -> None:
         pass
 
 
+def forget_base_graph(base_graph) -> None:
+    """★★ **基图没了 ⇒ 消掉它的 Redis 映射**（* 2026-10-21 补）⚠
+
+    ⚠ 旧问题：* `prune_empty_base_graphs` / 项目 purge 会删掉基图行，
+      * 但 Redis 里 `astrolabe:basegraph:<graph_key>` 还在 ⇒
+      * 下次同地址建项目命中后回库查不到，* 白跑一次（* 且键躺到 TTL 到期）⚠
+    """
+    if base_graph is None:
+        return
+    _cache_drop(getattr(base_graph, "graph_key", "") or "")
+
+
 def find(provider: str, repo_full_name: str, sha: str) -> BaseGraph | None:
     """★★ **按【请求地址】找现成的基图** —— ★ 这就是"有没有同样的"那句。
 

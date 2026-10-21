@@ -30,12 +30,14 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-#: 章赞：`like:note:<note_id>` → int
-NOTE_KEY = "like:note:{id}"
-#: 评论赞：`like:comment:<comment_id>` → int
-COMMENT_KEY = "like:comment:{id}"
-#: ★ 缓存 7 天；到期后下次读会重新 COUNT 一次（* 纠错机会）⚠
-TTL_SECONDS = 7 * 86400
+#: 章赞：`astrolabe:like:note:<note_id>` → int
+NOTE_KEY = "astrolabe:like:note:{id}"
+#: 评论赞：`astrolabe:like:comment:<comment_id>` → int
+COMMENT_KEY = "astrolabe:like:comment:{id}"
+#: ★ 缓存 1 天；到期后下次读会重新 COUNT 一次（* 纠错机会）⚠
+#:   ⚠ 从 7 天降到 1 天：* 这类「谁读谁留一个键」的缓存会随阅读量线性增长，
+#:     * 短 TTL 才能把键数量压住（* 2026-10-21 审查结论）⚠
+TTL_SECONDS = 1 * 86400
 #: ★ Redis 必须**毫秒级失败**（* 不能让它拖住请求）⚠
 SOCKET_TIMEOUT = 0.3
 

@@ -101,6 +101,10 @@ def purge_project(project_ref: str, *, by=None) -> int:
         Edge.objects.filter(project=project).delete()
     Job.objects.filter(project_ref=project_ref).delete()
     Project.objects.filter(project_ref=project_ref).delete()
+    # ★ 项目（连同基图）没了 ⇒ 消掉 `astrolabe:basegraph:<graph_key>` 死映射 ⚠
+    from graph.binding import forget_base_graph
+
+    forget_base_graph(bg)
     return freed
 
 

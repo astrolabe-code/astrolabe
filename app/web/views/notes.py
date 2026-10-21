@@ -241,13 +241,15 @@ def _verify_note_cache(cached: list):
         - `None` ⇒ 有条目被删除或被改动 ⇒ 调用方**重新全查**并重写缓存
         - `list` ⇒ 全部核对无误，* 可以直接发
 
-    ⚠★ 比什么（四条）：
+    ⚠★ 比什么（三条）：
     ```
-    ① 行还在吗            ⇒ 被物理删 / 软删的都要剔掉
-    ② updated_at 变了吗   ⇒ 内容改过（标题 / 正文 / 权限）
-    ③ created_by 变了吗   ⇒ 作者改名 / 作者被删
-    ④ 还在可见范围内吗    ⇒ 重新过一遍可见性判据（防权限被收回）
+    ① 行还在吗                ⇒ 被物理删 / 软删的都要剔掉
+    ② updated_at 变了吗       ⇒ 内容改过（标题 / 正文 / 类型）
+    ③ state / is_public 变了吗 ⇒ 管理员隐藏、公开↔私有
     ```
+    ⚠★ **作者不比**（* 所有者：「一篇笔记一旦创建，就不可改变作者。没有笔记文章还可以
+      赠送，还可以改作者这件事」）；* 作者被删时笔记整行 CASCADE 没了
+      ⇒ 由第 ① 条「行还在吗」兜住 ✅
     """
     ids = [it["id"] for it in cached if it.get("id")]
     if not cached:
@@ -259,7 +261,10 @@ def _verify_note_cache(cached: list):
             "pk",
             "updated_at",
             "deleted_at",
-            "created_by__username",
+            # ⚠★ 2026-10-21：**不查作者** —— 一篇笔记创建后作者不可变
+            #   （* 所有者：「作者不要比较了，一篇笔记一旦创建，就不可改变作者。
+            #     没有笔记文章还可以赠送，还可以改作者这件事」）
+            #   ⇒ 省掉一次 `auth_user` JOIN（* 实测约占校验耗时 19%）✅
             "is_public",
             "state",
             # ★ 评论数**不缓存**，* 命中时从这一行顺手带回去（* 同一行，零额外往返）⚠
@@ -273,8 +278,6 @@ def _verify_note_cache(cached: list):
         if r is None or r["deleted_at"] is not None:
             return None, {}
         if r["updated_at"].isoformat() != it.get("updated_at"):
-            return None, {}
-        if (r["created_by__username"] or "") != (it.get("created_by") or ""):
             return None, {}
         # ★★★ 2026-10-21 补：**可见性字段必须比对** ⚠
         #   · · 实测漏洞：* 管理员隐藏一篇笔记后，* 搜索缓存**照样返回它**

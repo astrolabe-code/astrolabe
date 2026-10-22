@@ -57,12 +57,20 @@ DECAY_BASE = float(__import__("os").environ.get("SEARCH_TERM_DECAY_BASE", "0.995
 #: ★ 分数衰减到低于这个值 ⇒ 直接删行（* 不让表无限长）⚠
 MIN_COUNT = 1
 
-#: ★★ **回灌周期**（秒）—— 半天 = 43200 ⚠
-#:   * 所有者：「每隔半天，定时回灌 postgresql，并取分数最高的前 2000 条数据载入 redis 缓存」
-FLUSH_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_FLUSH_SECONDS", "43200"))
+#: ★★ **维护周期**（秒）—— 一天 = 86400 ⚠
+#:   * 所有者：「补上种子命令，**改为一天自动执行一次**」
+#:   * 一次维护 = 合并 → 衰减 → 清理 → 回灌（+ 每天一次的种子）✅
+FLUSH_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_FLUSH_SECONDS", "86400"))
 
 #: 上次回灌的时间戳（* 存 Redis，* 进程重启也不会丢掉周期）⚠
 LAST_FLUSH_KEY = "astrolabe:search:terms:last_flush"
+
+#: ★★ 种子任务的时间戳与周期（* 所有者：「改为一天自动执行一次」）⚠
+LAST_SEED_KEY = "astrolabe:search:terms:last_seed"
+#: 种子任务多久跑一次（秒）—— 一天
+SEED_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_SEED_SECONDS", "86400"))
+#: 种子最多取多少条（* 笔记标题 + 项目名，合并后按更新时间取前 N）⚠
+SEED_LIMIT = 2000
 
 
 def _redis():
@@ -185,7 +193,21 @@ def flush_and_decay(decay: bool = True) -> dict:
 
     result["decayed"] = SearchTerm.objects.count()
 
-    # ---- ⑤ Top 2000 回灌（* 用衰减后的分数重建）----
+    # ---- ⑤ Top 2000 回灌（* 用衰减后的分数重建；* 两侧词集合保持一致）----
+    result["loaded"] = reload_redis()
+
+    return result
+
+
+def reload_redis() -> int:
+    """★★ **按 PG 的 Top N 重建 Redis**（* 两侧永久保持一致）⚠
+
+    ⚠★ 每次都是「删旧键 → 重新 ZADD」：
+      · · 保证 Redis 里**没有残留的旧词**（* 衰减/清理后才不会出现"Redis 有、PG 没有"）
+      · · ⇒ **Redis 与 PG 的词集合始终相同**（* 所有者要求的"不能有重复词"）✅
+    """
+    from core.models import SearchTerm
+
     top = list(
         SearchTerm.objects.order_by("-count").values_list("term", "count")[:TERMS_MAX]
     )
@@ -197,11 +219,116 @@ def flush_and_decay(decay: bool = True) -> dict:
             pipe.zadd(TERMS_KEY, {term: round(count, 3) for term, count in top})
         pipe.set(LAST_FLUSH_KEY, int(time.time()))
         pipe.execute()
-        result["loaded"] = len(top)
     except Exception:
         logger.warning("热词回灌 Redis 失败", exc_info=True)
+    return len(top)
 
-    return result
+
+def seed_from_recent(limit: int = SEED_LIMIT) -> dict:
+    """★★★ **种子任务：把「最近更新的笔记标题 + 项目名」灌进热词表** ⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「补上种子命令，改为一天自动执行一次。具体步骤是，取今天更新日期最新的前 2000 条
+    >   笔记和项目名称，给他们赋值 postgresql 里热词表分数的中位数。再逐条添加，
+    >   注意不要产生重复的词，在 redis 和 redis 回灌过程也一样。redis 缓存和
+    >   postgresql 里的热词表不能有重复词。」
+
+    ## ★★ 规则
+
+    ```
+    ① 取数：公开可见的笔记标题 + 项目名，按 updated_at 倒序，合并后取前 2000 条
+    ② 分值：热词表的**中位数**（表空 ⇒ 1.0，* 至少能被联想）
+    ③ 去重：① batch 内部去重 ② 已存在的词**跳过**（不覆盖已有分数）
+    ④ 回灌：PG Top2000 重建 Redis ⇒ 两侧词集合完全一致
+    ```
+
+    ⚠★ 为什么只插入、不覆盖：* 已经热起来的词不能被种子的中位数**拉低** ⚠
+    """
+    import statistics
+
+    from django.db.models import Q
+
+    from core.models import Note, Project, SearchTerm
+
+    # ---- ① 取数（* 只取公开内容，* 免得把私有标题灌进公共联想）⚠
+    note_rows = list(
+        Note.objects.filter(
+            deleted_at__isnull=True,
+            state=Note.STATE_ACTIVE,
+            is_public=True,
+        )
+        .filter(
+            Q(project__isnull=True)
+            | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE))
+        )
+        .order_by("-updated_at")
+        .values_list("title", "updated_at")[:limit]
+    )
+    project_rows = list(
+        Project.objects.filter(is_public=True, state=Project.STATE_ACTIVE)
+        .order_by("-updated_at")
+        .values_list("name", "updated_at")[:limit]
+    )
+
+    merged = sorted(
+        [(t, ts) for t, ts in note_rows + project_rows if t and t.strip()],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    # ---- ② 中位数 ----
+    vals = list(SearchTerm.objects.values_list("count", flat=True))
+    median = max(statistics.median(vals) if vals else 1.0, 1.0)
+
+    # ---- ③ 去重（batch 内 + 表内已存在）----
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for text, _ in merged:
+        term = text.strip()
+        if len(term) < 2 or term in seen:
+            continue
+        seen.add(term)
+        candidates.append(term)
+
+    existing = set(
+        SearchTerm.objects.filter(term__in=candidates).values_list("term", flat=True)
+    )
+    to_create = [
+        SearchTerm(term=t, count=median) for t in candidates if t not in existing
+    ]
+    if to_create:
+        # ★ `ignore_conflicts` 兜住并发写进来的同名词（* DB 是唯一约束）⚠
+        SearchTerm.objects.bulk_create(to_create, batch_size=500, ignore_conflicts=True)
+
+    # ---- ④ 回灌（* 两侧词集合保持一致）----
+    loaded = reload_redis()
+    try:
+        _redis().set(LAST_SEED_KEY, int(time.time()))
+    except Exception:
+        pass
+
+    return {
+        "candidates": len(candidates),
+        "created": len(to_create),
+        "skipped": len(candidates) - len(to_create),
+        "median": round(median, 3),
+        "loaded": loaded,
+    }
+
+
+def seed_due() -> bool:
+    """★ 距离上次种子是否已满一天 ⚠"""
+    try:
+        raw = _redis().get(LAST_SEED_KEY)
+    except Exception:
+        return False
+    if not raw:
+        return True
+    try:
+        return time.time() - float(raw) >= SEED_INTERVAL
+    except (TypeError, ValueError):
+        return True
 
 
 def hours_since_flush() -> float:

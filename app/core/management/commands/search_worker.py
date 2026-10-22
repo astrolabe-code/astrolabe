@@ -55,6 +55,18 @@ class Command(BaseCommand):
             # ★ 每 60 秒探一次「到点没有」（* 只是一次 Redis GET）⚠
             if now - last_check >= 60:
                 last_check = now
+                # ★★ 种子：每天一次，把最近更新的笔记标题/项目名补进热词表 ⚠
+                try:
+                    if terms.seed_due():
+                        sr = terms.seed_from_recent()
+                        if sr["created"]:
+                            self.stdout.write(
+                                f"热词种子：候选 {sr['candidates']} · 新增 {sr['created']} "
+                                f"· 中位数 {sr['median']}"
+                            )
+                except Exception:
+                    self.stderr.write(self.style.WARNING("热词种子失败"))
+
                 try:
                     if terms.due():
                         r = terms.flush_and_decay()

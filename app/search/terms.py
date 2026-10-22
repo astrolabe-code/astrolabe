@@ -42,10 +42,17 @@ TERMS_MAX = 2000
 #: 回灌标记多久失效（秒）
 LOAD_MARK_TTL = 600
 
-#: ★★★ **衰减系数**（每次回灌乘一次）—— * 所有者：「分数要有定期衰减，不能只增不减」⚠
-#:   · · 0.8 ⇒ 每半天 ×0.8，一天 ×0.64，一周约 ×0.03 ✅
-#:   · · ⚠ 调小 = 热点换得更快（旧词很快消失）；调大 = 更稳定 ⚠
-DECAY = float(__import__("os").environ.get("SEARCH_TERM_DECAY", "0.8"))
+#: ★★★ **每小时的衰减底数**（* 所有者 2026-10-22：「代表每一个小时衰减一次」
+#:   「不要用 0.8 这个底数，这样的指数衰减太陡峭了，要换一个平和一点的」）⚠
+#:
+#:   ```
+#:   半天倍率 = r ^ 12
+#:     r = 0.99  ⇒ 半天 0.886 · 半衰期 ~3 天   （偏快）
+#:     r = 0.995 ⇒ 半天 0.942 · 半衰期 ~6 天   ← 默认
+#:     r = 0.998 ⇒ 半天 0.976 · 半衰期 ~14 天  （偏慢）
+#:   ⚠ 注意：* `0.8 ^ 12 = 0.069` ⇒ 半天掉 93%，* 那是"每天全部重来" ⚠
+#:   ```
+DECAY_BASE = float(__import__("os").environ.get("SEARCH_TERM_DECAY_BASE", "0.995"))
 
 #: ★ 分数衰减到低于这个值 ⇒ 直接删行（* 不让表无限长）⚠
 MIN_COUNT = 1
@@ -161,12 +168,23 @@ def flush_and_decay(decay: bool = True) -> dict:
         result["merged"] = len(to_create) + len(to_update)
 
         if decay:
-            # ---- ② 衰减 ----
-            SearchTerm.objects.update(count=F("count") * DECAY, updated_at=timezone.now())
+            # ---- ② 衰减：* 按**真实经过的小时数**，不是"跑一次乘一次" ⚠
+            #   倍率 = DECAY_BASE ^ 经过小时数
+            #   · · 定时任务晚了 / 进程重启 / 手动跑多次 ⇒ 衰减量都对得上 ✅
+            from search import terms as _self
+
+            hours = _self.hours_since_flush()
+            factor = DECAY_BASE ** hours if hours > 0 else 1.0
+
+            if factor < 1.0:
+                SearchTerm.objects.update(
+                    count=F("count") * factor, updated_at=timezone.now()
+                )
 
             # ---- ③ 清理低于阈值的 ----
             pruned, _ = SearchTerm.objects.filter(count__lt=MIN_COUNT).delete()
             result["pruned"] = pruned
+            result["factor"] = round(factor, 4)
         result["decayed"] = SearchTerm.objects.count()
 
     # ---- ④ 回灌 Top N ----
@@ -186,6 +204,20 @@ def flush_and_decay(decay: bool = True) -> dict:
         logger.warning("热词回灌 Redis 失败", exc_info=True)
 
     return result
+
+
+def hours_since_flush() -> float:
+    """★ 距上次回灌过了多少**小时**（* 没有记录 ⇒ 0，* 首次部署不衰减）⚠"""
+    try:
+        raw = _redis().get(LAST_FLUSH_KEY)
+    except Exception:
+        return 0.0
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, (time.time() - float(raw)) / 3600.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def due() -> bool:

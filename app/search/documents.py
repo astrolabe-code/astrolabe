@@ -78,6 +78,19 @@ def build_document(note: Note) -> dict:
     }
 
 
+#: ★★★ **项目上会出现在笔记文档里的字段**（改这些 ⇒ 该项目下的笔记要重建索引）⚠
+#:
+#: | 字段 | 在笔记文档里是 | 怎么同步 |
+#: |---|---|---|
+#: | `name` | `project_name` | ★ **本集合负责**（* 改完要把该项目的笔记重新入队）⚠ |
+#: | `is_public` / `state` | 决定笔记**是否该在索引里** | 级联改笔记（`Note.objects...update`）⇒ 已自动入队 ✅ |
+#: | `desc` / `provider` / `repo_url` | ⛔ 不在笔记文档里 | 无需处理 |
+#: | `project_ref` | `project_ref` | ★ 创建后不可变 ⚠ |
+#:
+#: ⚠ 将来往 `build_document` 里加项目字段，**必须同步加到这里**，否则改名类操作会留下旧快照。
+PROJECT_FIELDS_IN_DOC = {"name"}
+
+
 #: 索引设置（* `search_reindex` 与 `ensure_settings` 共用）⚠
 INDEX_SETTINGS = {
     # ★ 越靠前权重越高：* 标题 > 正文 > 项目名 > 节点名 ⚠

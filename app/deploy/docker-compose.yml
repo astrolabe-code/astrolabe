@@ -171,6 +171,26 @@ services:
       db:    { condition: service_healthy }
       redis: { condition: service_healthy }
 
+  # ============================ 搜索索引同步 ============================
+  #
+  # ★★ `B238`：笔记写库后 → Redis 队列 → **本进程**把变更推给 Meilisearch
+  #
+  # ⚠★ 为什么独立、不塞 web / 不塞 worker：
+  #   · web 里同步做 ⇒ * 笔记保存被搜索引擎的延迟拖住（* 它挂了就卡写）⚠
+  #   · 塞进 run_worker ⇒ * 解析任务一跑几分钟，* 索引跟着堵 ⚠
+  #   · 独立 + `restart: unless-stopped` ⇒ * 崩了自动拉起 ✅
+  searchsync:
+    image: astrolabe-web                  # ★ 复用 web 的镜像（见上方纪律）
+    restart: unless-stopped
+    command: python manage.py search_worker
+    env_file: [.env]
+    volumes:
+      - /home/ma/astrolabe/app:/app
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
+      meilisearch: { condition: service_healthy }
+
   # ============================ 维护调度（热度合并）============================
   #
   # ★ 依据 GRAPH-STORAGE.md G5 / B129：Redis 里的热度是【热数据，重启会丢】

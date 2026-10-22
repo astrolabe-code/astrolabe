@@ -310,6 +310,20 @@ class Project(TimeStampedModel):
             update_fields = set(update_fields) | {"updated_at"}
         super().save(*args, update_fields=update_fields, **kwargs)
 
+        # ★★ 项目里**进笔记文档**的字段变了 ⇒ 该项目下的笔记重建索引（`B238`）⚠
+        #   · · 典型：改名后，笔记文档里的 `project_name` 快照会变旧 ⚠
+        #   · · `is_public` / `state` 不用管：它们会级联改笔记，笔记自己会入队 ✅
+        from search.documents import PROJECT_FIELDS_IN_DOC
+
+        if update_fields is None or set(update_fields) & PROJECT_FIELDS_IN_DOC:
+            from django.db import transaction
+
+            from search import sync
+
+            transaction.on_commit(
+                lambda ref=self.project_ref: sync.enqueue_project_notes(ref)
+            )
+
     class Meta:
         constraints = [
             # ⚠★★ 2026-10-14（`B192`）：**同一用户下不许建同名项目** ⚠
@@ -1413,6 +1427,40 @@ class ProjectSetting(TimeStampedModel):
 #     （* `graph_node` 一个字段都不动 ✅）
 
 
+def _enqueue_index(note_ids) -> None:
+    """★ 把笔记 id 投给索引队列（* `B238` 写后通知；⛔ 失败不许影响写操作）⚠"""
+    try:
+        from search import sync
+
+        sync.enqueue_many(note_ids)
+    except Exception:
+        import logging
+
+        logging.getLogger("astrolabe.models").warning(
+            "索引投递失败（忽略）", exc_info=True
+        )
+
+
+class NoteQuerySet(models.QuerySet):
+    """★★ 批量更新也要投递索引（`B238`）⚠
+
+    ⚠★ 为什么单独一个类：`QuerySet.update()` **不走 `save()`** ——
+      · 项目级联私有 / 隐藏、批量改可见性、purge 全是批量 `.update()` ⚠
+      · ⛔ 不覆盖的话，这些路径改了笔记，索引不会被通知 ✅
+    """
+
+    def update(self, **kwargs):
+        # ★ 只改 comment_count / updated_at 不用重建文档（* 索引里没有计数字段）⚠
+        interesting = set(kwargs) - {"comment_count", "updated_at"}
+        ids = list(self.values_list("pk", flat=True)) if interesting else []
+        rows = super().update(**kwargs)
+        if ids:
+            from django.db import transaction
+
+            transaction.on_commit(lambda ids=ids: _enqueue_index(ids))
+        return rows
+
+
 class Note(TimeStampedModel):
     """★★ **一篇笔记** —— ★ 用户记下的一段 markdown 想法。
 
@@ -1592,6 +1640,9 @@ class Note(TimeStampedModel):
     #   缓存去掉」）；comment_count 保留（* 暂无实时替代）✅
     comment_count = models.IntegerField(default=0)
 
+    #: ★★ `B238`：* 批量 `.update()` 也要投递索引 ⚠
+    objects = NoteQuerySet.as_manager()
+
     def save(self, *args, update_fields=None, **kwargs):
         """★★ `update_fields` 一律补上 `updated_at`（* 2026-10-21）⚠
 
@@ -1615,6 +1666,12 @@ class Note(TimeStampedModel):
         if update_fields is not None and "updated_at" not in update_fields:
             update_fields = set(update_fields) | {"updated_at"}
         super().save(*args, update_fields=update_fields, **kwargs)
+
+        # ★★ 写后通知搜索索引（`B238`）——
+        #   ⚠ 必须**提交后**投递：* 事务回滚了，索引不该动 ⚠
+        from django.db import transaction
+
+        transaction.on_commit(lambda: _enqueue_index([self.pk]))
 
     class Meta:
         indexes = [

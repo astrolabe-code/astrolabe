@@ -37,6 +37,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from urllib.parse import quote
 
 from django.http import HttpResponse, HttpRequest
@@ -50,6 +52,8 @@ from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径�
 from graph import notes as note_alg
 from graph import scope
 from web.http import fail, ok_flat, read_json
+
+logger = logging.getLogger("astrolabe.search.views")
 from web.permissions import (
     can_edit,
     can_view,
@@ -372,8 +376,88 @@ def batch_visibility(request: HttpRequest, project_ref: str):
     return ok_flat(updated=n, is_public=want, excluded=len(exclude))
 
 
+#: ★★ 搜索后端开关（`B238`）：`meili`（默认）· `pg`（回退 / 对照）
+def _search_backend() -> str:
+    return (os.environ.get("SEARCH_BACKEND") or "meili").strip().lower()
+
+
+def _search_meili(kw: str, limit: int):
+    """★★ **用 Meilisearch 检索**（`B238` 第 3 步）⚠
+
+    ```
+    Meili 负责「哪些笔记命中 + 相关度排序」→ 返回 id
+    PostgreSQL 负责「按 id 取整行」        → 保证返回体与 PG 路径**完全一致**
+    ```
+
+    ⚠★ 为什么还要回库取一次：
+      · 索引里只存了搜索需要的字段（* 标题 / 正文 / 项目 / 作者…）
+      · 而接口返回的是完整 `_note_json`（* 节点、卡片皮肤、审核字段…）
+      ⇒ ★ 取 20 行主键是**毫秒级**（* 且只按 id 查），* 真正贵的全表扫没了 ✅
+    """
+    from search import client, documents
+
+    res = client.search(client.NOTES_INDEX, kw, limit=limit)
+    hits = res.get("hits") or []
+    ids = [h["id"] for h in hits if h.get("id")]
+
+    if not ids:
+        return ok_flat(total=0, items=[])
+
+    rows = {
+        n.pk: n
+        for n in Note.objects.filter(pk__in=ids).select_related("project", "created_by")
+    }
+
+    out = []
+    counts = {}
+    for pk in ids:
+        n = rows.get(pk)
+        if n is None:
+            # ⚠ 索引比库慢半拍（* 文档已删但还没同步完）⇒ 跳过，* 不报错 ⚠
+            continue
+        if not documents.is_searchable(n):
+            # ★★ **二次把关**：同步有秒级延迟，* 刚转私有的那条可能还在索引里
+            #   ⇒ 这里按库里的**当前状态**再筛一遍，* 宁可少给，⛔ 不漏给 ⚠
+            continue
+        d = _note_json(n, with_counts=False)
+        d["project"] = _project_label(n)
+        out.append(d)
+        counts[n.pk] = n.comment_count
+
+    return ok_flat(
+        total=int(res.get("estimatedTotalHits") or len(out)),
+        items=_attach_counts(out, counts),
+    )
+
+
 @require_http_methods(["GET"])
 def search(request: HttpRequest):
+    """`GET /api/notes/search/?q=` —— **公共搜索**（`B238`：Meili 优先，PG 回退）⚠
+
+    ```
+    SEARCH_BACKEND=meili（默认） → Meilisearch；出错自动回落 PG
+    SEARCH_BACKEND=pg            → 走原路径（* 带 Redis 结果缓存）
+    ```
+    """
+    kw = (request.GET.get("q") or "").strip()
+    if not kw:
+        return ok_flat(total=0, items=[])
+
+    if _search_backend() != "pg":
+        try:
+            from search import client
+
+            if client.enabled():
+                limit = _clamp(request.GET.get("limit"), 1, 50, 20)
+                return _search_meili(kw, limit)
+        except Exception:
+            # ⚠ 搜索引擎不可用 ⇒ **静默降级**（* 用户不该看到 500）⚠
+            logger.warning("Meilisearch 查询失败，回退 PostgreSQL", exc_info=True)
+
+    return _search_pg(request)
+
+
+def _search_pg(request: HttpRequest):
     """`GET /api/notes/search/?q=` —— **全局笔记搜索**（首页搜索框用）。
 
     ⚠ 所有者原话：「你这现在只能搜索项目名称。无法搜索用户和笔记标题吗？」

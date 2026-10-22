@@ -10,7 +10,7 @@
 ```
 key   = search:<ns>:<uid>:<sha1(关键词)>      # ns = notes / projects
 value = JSON（序列化好的结果列表）
-TTL   = SEARCH_CACHE_TTL（默认 300 秒）
+TTL   = SEARCH_CACHE_TTL（默认 600 秒 = 10 分钟，* 到期即删，⛔ 无任何续期机制）
 ```
 
 ## ⚠★ 四条纪律
@@ -35,13 +35,15 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 #: 缓存多久（秒）—— ★ 所有者要求「注意更新时间限制」
-TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL", "300"))
+TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL", "600"))
 #: registry 集合的 TTL 倍数（* 必须 ≥ 1，* 否则集合比数据先死，* 失效会漏键）⚠
 REGISTRY_TTL_FACTOR = 2
 
 #: ★ 统一走 `astrolabe:` 命名空间（* 与 jobs / basegraph / neigh / hot 一致）⚠
 NS_NOTES = "astrolabe:search:notes"
 NS_PROJECTS = "astrolabe:search:projects"
+#: ★ 关键词联想（* 单独一个桶，* TTL 由调用方给 20 分钟）⚠
+NS_SUGGEST = "astrolabe:search:suggest"
 
 _client = None
 
@@ -84,7 +86,7 @@ def get(ns: str, uid: int, kw: str):
         return None
 
 
-def put(ns: str, uid: int, kw: str, payload) -> None:
+def put(ns: str, uid: int, kw: str, payload, ttl: int | None = None) -> None:
     """写缓存（带 TTL），并把 key 记进 registry 便于整体失效。
 
     ⚠★ **只存非空结果**（* 调用方保证；空结果没有条目可校验，
@@ -94,7 +96,7 @@ def put(ns: str, uid: int, kw: str, payload) -> None:
     if client is None:
         return
     key = _key(ns, uid, kw)
-    ttl = TTL_SECONDS
+    ttl = ttl or TTL_SECONDS
     try:
         pipe = client.pipeline()
         pipe.set(key, json.dumps(payload, ensure_ascii=False), ex=ttl)
@@ -106,6 +108,48 @@ def put(ns: str, uid: int, kw: str, payload) -> None:
         logger.debug("search_cache: 写失败（忽略）", exc_info=True)
 
 
+def _version_key(ns: str) -> str:
+    return f"astrolabe:search:{ns}:__ver__"
+
+
+def version(ns: str) -> int:
+    """★★ **这个命名空间的写入版本号**（* 2026-10-22）⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「**搜索不要把旧快照写回缓存**，旧缓存可以存十分钟，但是时间到期后，就删掉，
+    > 不存在任何机制能给他延长存在时间。」
+
+    ## ★ 用途（**只在写缓存前**用一次）
+
+    ```
+    回源前：ver = version(ns)
+    查完库：if version(ns) != ver:  ⛔ 不写缓存（这期间有人改过，* 结果是旧快照）
+    ```
+
+    ⚠★ 读路径**不查版本号**（* 命中就直接发）—— * 因为过期快照压根不会被写进去 ✅
+    """
+    client = _redis()
+    if client is None:
+        return 0
+    try:
+        return int(client.get(_version_key(ns)) or 0)
+    except Exception:
+        logger.debug("search_cache: 读版本失败（当 0）", exc_info=True)
+        return 0
+
+
+def bump_version(ns: str) -> None:
+    """写操作提交后调用：* 版本号 +1（* 让"正在查库"的搜索放弃写缓存）⚠"""
+    client = _redis()
+    if client is None:
+        return
+    try:
+        client.incr(_version_key(ns))
+    except Exception:
+        logger.debug("search_cache: 版本 +1 失败（忽略）", exc_info=True)
+
+
 def invalidate(ns: str) -> None:
     """清掉这个命名空间下的**所有**搜索结果（任何写入后调用）。"""
     client = _redis()
@@ -115,19 +159,22 @@ def invalidate(ns: str) -> None:
     try:
         keys = list(client.smembers(registry))
         if keys:
-            # ★ 先验活再删：* 已自然过期的键不必 DEL（* 省掉一批无效命令）⚠
+            # ★★ 一次 pipeline 删完（* 2026-10-22：* 本函数现在在**每次笔记写**的
+            #   路径上，⛔ 不能再做 N 次 EXISTS 往返）⚠
+            #   · · DEL 不存在的 key 是正常操作（* 返回 0），* 不必先验活 ✅
             pipe = client.pipeline()
             for k in keys:
-                pipe.exists(k)
-            alive = [k for k, ok in zip(keys, pipe.execute()) if ok]
-            if alive:
-                client.delete(*alive)
-        client.delete(registry)
+                pipe.delete(k)
+            pipe.delete(registry)
+            pipe.execute()
+        else:
+            client.delete(registry)
     except Exception:
         logger.debug("search_cache: 失效失败（忽略）", exc_info=True)
 
 
 def invalidate_all() -> None:
-    """笔记 / 项目两路一起清（项目改名等场景用）。"""
+    """笔记 / 项目 / 联想三路一起清（项目改名等场景用）。"""
     invalidate(NS_NOTES)
     invalidate(NS_PROJECTS)
+    invalidate(NS_SUGGEST)

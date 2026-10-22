@@ -54,6 +54,10 @@ from graph import scope
 from web.http import fail, ok_flat, read_json
 
 logger = logging.getLogger("astrolabe.search.views")
+
+#: ★ 联想缓存的命名空间与 TTL（* 所有者要求 20 分钟）⚠
+SUGGEST_NS = search_cache.NS_SUGGEST
+SUGGEST_TTL = 1200
 from web.permissions import (
     can_edit,
     can_view,
@@ -591,6 +595,14 @@ def suggest(request: HttpRequest):
     if not kw:
         return ok_flat(items=[])
 
+    # ★★★ **联想结果进 Redis**（* 所有者：「做redis缓存搜过的词，时间弄长一点20分钟」）⚠
+    #   · · key = `astrolabe:search:suggest:0:<sha1(前缀)>`
+    #   · · TTL = **20 分钟**（* 比搜索结果的 10 分钟长 —— 联想只是提示，* 旧一点无妨）✅
+    #   · · ★ 空结果**也缓存**：* 乱敲的前缀最费扫描，* 缓存空数组正好挡住它 ⚠
+    cached = search_cache.get(SUGGEST_NS, 0, kw)
+    if cached is not None:
+        return ok_flat(items=cached)
+
     # ★ 与搜索同一套可见性（* 只公开内容）⚠
     notes = (
         Note.objects.filter(
@@ -619,7 +631,9 @@ def suggest(request: HttpRequest):
         seen.add(t)
         items.append({"text": t, "type": kind})
     items.sort(key=lambda x: len(x["text"]))
-    return ok_flat(items=items[:8])
+    out = items[:8]
+    search_cache.put(SUGGEST_NS, 0, kw, out, ttl=SUGGEST_TTL)
+    return ok_flat(items=out)
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])

@@ -165,10 +165,11 @@ export default function Home() {
                       navigate(`/search?q=${encodeURIComponent(it.text)}`)
                     }}
                   >
-                    <span>
-                      {it.type === 'project' ? '📦' : it.type === 'term' ? '🔥' : '📝'} {it.text}
-                    </span>
-                    <span className="s-desc">{it.type === 'term' ? '热门搜索' : '搜索这个关键词'}</span>
+                    {/* ★★★ 所有者 2026-10-22：「联想词前不要有火焰图标，后面不要不要有
+                        热门搜索这几个字。你这是假的提示，中位数就注定其不是热门搜索，
+                        直接给出联想词就可以了，不要整这些花里胡哨的」
+                        ⇒ * 只给词本身，⛔ 不加图标、不加后缀 ⚠ */}
+                    <span>{it.text}</span>
                   </button>
                 ))}
               </div>

@@ -166,9 +166,9 @@ export default function Home() {
                     }}
                   >
                     <span>
-                      {it.type === 'project' ? '📦' : '📝'} {it.text}
+                      {it.type === 'project' ? '📦' : it.type === 'term' ? '🔥' : '📝'} {it.text}
                     </span>
-                    <span className="s-desc">搜索这个关键词</span>
+                    <span className="s-desc">{it.type === 'term' ? '热门搜索' : '搜索这个关键词'}</span>
                   </button>
                 ))}
               </div>

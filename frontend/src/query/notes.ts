@@ -311,9 +311,9 @@ export function useSearchSuggest(q: string) {
     queryKey: ['search-suggest', kw],
     enabled: kw.length > 0,
     staleTime: 30_000,
-    queryFn: async (): Promise<{ text: string; type: 'note' | 'project' }[]> => {
+    queryFn: async (): Promise<{ text: string; type: 'note' | 'project' | 'term' }[]> => {
       const data = unwrap(
-        await apiGet<{ items: { text: string; type: 'note' | 'project' }[] }>(
+        await apiGet<{ items: { text: string; type: 'note' | 'project' | 'term' }[] }>(
           `/api/search/suggest/?q=${encodeURIComponent(kw)}`,
           'spread',
         ),

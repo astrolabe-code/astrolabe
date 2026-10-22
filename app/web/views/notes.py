@@ -52,12 +52,6 @@ from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径�
 from graph import notes as note_alg
 from graph import scope
 from web.http import fail, ok_flat, read_json
-
-logger = logging.getLogger("astrolabe.search.views")
-
-#: ★ 联想缓存的命名空间与 TTL（* 所有者要求 20 分钟）⚠
-SUGGEST_NS = search_cache.NS_SUGGEST
-SUGGEST_TTL = 1200
 from web.permissions import (
     can_edit,
     can_view,
@@ -67,6 +61,56 @@ from web.permissions import (
     note_writable,
     project_of,
 )
+
+logger = logging.getLogger("astrolabe.search.views")
+
+#: ★ 联想缓存的命名空间与 TTL（* 所有者要求 20 分钟）⚠
+SUGGEST_NS = search_cache.NS_SUGGEST
+SUGGEST_TTL = 1200
+
+#: ★★★ **别人搜过的词**（`B238` / `D109`）——
+#:
+#: > 「只要有一个人搜了 内核这个词，下一个人搜索就能联想了呀，不用20分钟」
+#:
+#: ⚠★ 与「标题联想」是**两套数据**：
+#:   · 标题联想：查 PG（慢），* 结果缓存 20 分钟
+#:   · 热搜词  ：Redis ZSET（快），* **不缓存、实时**，搜完立刻能被联想 ✅
+TERMS_KEY = "astrolabe:search:terms"
+#: 最多保留多少个热词（* 超出按分数淘汰，* 防止 ZSET 无限长）⚠
+TERMS_MAX = 2000
+
+
+def _terms_redis():
+    import redis
+    from django.conf import settings
+
+    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _record_term(kw: str) -> None:
+    """★ 记一次搜索词（* 失败只记日志，⛔ 不能影响搜索）⚠"""
+    if len(kw) < 2:
+        return
+    try:
+        r = _terms_redis()
+        r.zincrby(TERMS_KEY, 1, kw)
+        n = r.zcard(TERMS_KEY)
+        if n > TERMS_MAX:
+            r.zremrangebyrank(TERMS_KEY, 0, n - TERMS_MAX - 1)
+    except Exception:
+        logger.debug("热搜词记录失败（忽略）", exc_info=True)
+
+
+def _hot_matches(kw: str, limit: int = 4) -> list[str]:
+    """★ 从热搜词里挑**包含** kw 的（* 前缀优先，* 短的优先）⚠"""
+    try:
+        members = _terms_redis().zrevrange(TERMS_KEY, 0, 499)
+    except Exception:
+        return []
+
+    hits = [m for m in members if kw in m and m != kw]
+    hits.sort(key=lambda t: (not t.startswith(kw), len(t)))
+    return hits[:limit]
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
@@ -449,6 +493,10 @@ def search(request: HttpRequest):
     if not kw:
         return ok_flat(total=0, items=[])
 
+    # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
+    if (request.GET.get("offset") or "0").strip() in ("", "0"):
+        _record_term(kw)
+
     if _search_backend() != "pg":
         try:
             from search import client
@@ -600,10 +648,22 @@ def suggest(request: HttpRequest):
     #   · · TTL = **20 分钟**（* 比搜索结果的 10 分钟长 —— 联想只是提示，* 旧一点无妨）✅
     #   · · ★ 空结果**也缓存**：* 乱敲的前缀最费扫描，* 缓存空数组正好挡住它 ⚠
     cached = search_cache.get(SUGGEST_NS, 0, kw)
-    if cached is not None:
-        return ok_flat(items=cached)
 
-    # ★ 与搜索同一套可见性（* 只公开内容）⚠
+    if cached is None:
+        cached = _suggest_titles(kw)
+        search_cache.put(SUGGEST_NS, 0, kw, cached, ttl=SUGGEST_TTL)
+
+    # ★★★ 热词**不进缓存**（* 别人刚搜过的词要立刻能被联想）⚠
+    hot = _hot_matches(kw)
+    seen = {it["text"] for it in cached}
+    items = [{"text": t, "type": "term"} for t in hot if t not in seen] + list(cached)
+    return ok_flat(items=items[:8])
+
+
+def _suggest_titles(kw: str) -> list[dict]:
+    """★ 标题 / 项目名联想（* 查 PG，* 结果会被缓存 20 分钟）⚠"""
+    from django.db.models import Q
+
     notes = (
         Note.objects.filter(
             deleted_at__isnull=True,
@@ -631,9 +691,7 @@ def suggest(request: HttpRequest):
         seen.add(t)
         items.append({"text": t, "type": kind})
     items.sort(key=lambda x: len(x["text"]))
-    out = items[:8]
-    search_cache.put(SUGGEST_NS, 0, kw, out, ttl=SUGGEST_TTL)
-    return ok_flat(items=out)
+    return items[:8]
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])

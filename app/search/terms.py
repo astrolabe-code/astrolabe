@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 
@@ -55,7 +56,9 @@ LOAD_MARK_TTL = 600
 DECAY_BASE = float(__import__("os").environ.get("SEARCH_TERM_DECAY_BASE", "0.995"))
 
 #: ★ 分数衰减到低于这个值 ⇒ 直接删行（* 不让表无限长）⚠
-MIN_COUNT = 1
+#:   · · 2026-10-22 所有者定 **0.5**：
+#:     * 只被搜过一次的词（1.0）能撑 ~5 个周期再消失，* 不会第二天就没了 ✅
+MIN_COUNT = 0.5
 
 #: ★★ **维护周期**（秒）—— 一天 = 86400 ⚠
 #:   * 所有者：「补上种子命令，**改为一天自动执行一次**」
@@ -72,6 +75,9 @@ SEED_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_SEED_SECONDS", "86
 #: 种子最多取多少条（* 笔记标题 + 项目名，合并后按更新时间取前 N）⚠
 SEED_LIMIT = 2000
 
+#: ★ 同人同词的去重窗口（秒）—— 15 分钟 ⚠
+DEDUP_TTL = int(__import__("os").environ.get("SEARCH_TERM_DEDUP_SECONDS", "900"))
+
 
 def _redis():
     import redis
@@ -84,12 +90,22 @@ def _redis():
 # 写：记一次搜索
 # ---------------------------------------------------------------------------
 
-def record(kw: str) -> None:
-    """★ 记一次搜索词（* 失败只记日志，⛔ 不能影响搜索）⚠"""
+def record(kw: str, who: str = "") -> None:
+    """★ 记一次搜索词（* 失败只记日志，⛔ 不能影响搜索）⚠
+
+    ⚠★★ **同一人 + 同一词，15 分钟内只记一次**（* 所有者 2026-10-22 定）：
+      · · 目的是挡掉「刷新页面 / 来回切页 / 反复搜索」把热度刷高 ⚠
+      · · 去重键 15 分钟后自然过期，* 不占存储 ✅
+    """
     if len(kw) < 2:
         return
     try:
         r = _redis()
+        if who:
+            dedup = f"astrolabe:search:terms:seen:{hashlib.sha1(f'{who}|{kw.lower()}'.encode()).hexdigest()[:20]}"
+            # ★ SET NX：第一次成功 ⇒ 记账；已存在 ⇒ 15 分钟内重复，跳过 ⚠
+            if not r.set(dedup, 1, nx=True, ex=DEDUP_TTL):
+                return
         r.zincrby(TERMS_KEY, 1, kw)
         n = r.zcard(TERMS_KEY)
         if n > TERMS_MAX:
@@ -109,9 +125,12 @@ def matches(kw: str, limit: int = 8) -> list[str]:
     except Exception:
         return []
 
-    hits = [(m, s) for m, s in pairs if kw in m and m != kw]
+    # ★★ 大小写不敏感（* 所有者：「大小写敏感就匹配时统一小写」）⚠
+    #   · · 只在**比较时**转小写，* 返回的仍是原始写法（* 展示不失真）✅
+    low = kw.lower()
+    hits = [(m, s) for m, s in pairs if low in m.lower() and m.lower() != low]
     # ★ 前缀优先 → 热度高的优先 → 短的优先 ⚠
-    hits.sort(key=lambda ms: (not ms[0].startswith(kw), -ms[1], len(ms[0])))
+    hits.sort(key=lambda ms: (not ms[0].lower().startswith(low), -ms[1], len(ms[0])))
     return [m for m, _ in hits[:limit]]
 
 
@@ -195,6 +214,10 @@ def flush_and_decay(decay: bool = True) -> dict:
 
     # ---- ⑤ Top 2000 回灌（* 用衰减后的分数重建；* 两侧词集合保持一致）----
     result["loaded"] = reload_redis()
+    try:
+        _redis().set(LAST_FLUSH_KEY, int(time.time()))
+    except Exception:
+        pass
 
     return result
 
@@ -217,7 +240,9 @@ def reload_redis() -> int:
         pipe.delete(TERMS_KEY)
         if top:
             pipe.zadd(TERMS_KEY, {term: round(count, 3) for term, count in top})
-        pipe.set(LAST_FLUSH_KEY, int(time.time()))
+        # ⚠★ 这里**不写** `LAST_FLUSH_KEY` —— 那是"上次衰减时间"，
+        #   · 种子也会调本函数 ⇒ 若在这里写，* 种子每天把衰减时钟重置一次，
+        #     * 结果**衰减永远不触发**（实测证实）⚠
         pipe.execute()
     except Exception:
         logger.warning("热词回灌 Redis 失败", exc_info=True)
@@ -275,7 +300,7 @@ def seed_from_recent(limit: int = SEED_LIMIT) -> dict:
         [(t, ts) for t, ts in note_rows + project_rows if t and t.strip()],
         key=lambda x: x[1],
         reverse=True,
-    )
+    )[:limit]
 
     # ---- ② 中位数 ----
     vals = list(SearchTerm.objects.values_list("count", flat=True))

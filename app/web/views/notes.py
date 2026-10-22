@@ -378,6 +378,23 @@ def batch_visibility(request: HttpRequest, project_ref: str):
 
 
 #: ★★ 搜索后端开关（`B238`）：`meili`（默认）· `pg`（回退 / 对照）
+def _search_who(request: HttpRequest) -> str:
+    """★ 热搜词的「谁搜的」标识（* 仅用于 15 分钟去重，* 不落库）⚠
+
+    ```
+    登录用户 ⇒ u<id>（* 最准）
+    游客     ⇒ ip<地址>（* 取 X-Forwarded-For 第一跳，* nginx 已设置）
+    ```
+    """
+    user = current_user(request)
+    if user is not None and getattr(user, "pk", None):
+        return f"u{user.pk}"
+
+    xff = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
+    ip = xff or request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR") or ""
+    return f"ip{ip}" if ip else ""
+
+
 def _search_backend() -> str:
     return (os.environ.get("SEARCH_BACKEND") or "meili").strip().lower()
 
@@ -448,7 +465,7 @@ def search(request: HttpRequest):
 
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
-        term_store.record(kw)
+        term_store.record(kw, who=_search_who(request))
 
     if _search_backend() != "pg":
         try:

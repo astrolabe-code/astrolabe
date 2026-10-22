@@ -86,6 +86,43 @@ services:
       retries: 10
     # ★ 不暴露端口 —— 队列/缓存不需要外部访问
 
+  # ======================= 搜索引擎（Meilisearch）=======================
+  #
+  # ★★★ 2026-10-22（B238）：**搜索改走 Meilisearch**，不再往 Redis 结果缓存上打补丁
+  #
+  # ⚠★ 为什么是它、不是 ES：
+  #   · ★ 单二进制 · 无 JVM · 无集群规划 · 内置 CJK 处理 · 内存约 100–200MB
+  #   · ★★ ES 的运维成本是它的**十倍量级**（堆内存调优 / 分片 / 监控 / JVM 升级）
+  #   · ★ **社区版 = 开源版**（MIT），⛔ 不用付费的企业版 / 云托管
+  #
+  # ⚠★★ **版本必须钉住**（v1.55.0，❌ 不是 latest）——
+  #   本仓库已经因为「tag 没钉住」出过一次事故（Redis 7.x 静默滚到 SSPL）。
+  #
+  # ★★ 定位：**PostgreSQL 仍是唯一真相**，这里只是**可随时重建的索引**
+  #   ⇒ 数据卷丢了不算事故，跑一次全量 reindex 即可 ✅
+  meilisearch:
+    image: getmeili/meilisearch:v1.55.0
+    restart: unless-stopped
+    environment:
+      # ⚠ 生产模式强制要求 master key（≥16 字节）
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY 未设置（见 .env）}
+      MEILI_ENV: production
+      # ★ 关闭匿名统计上报
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_DB_PATH: /meili_data/data.ms
+      MEILI_DUMP_DIR: /meili_data/dumps
+      MEILI_SNAPSHOT_DIR: /meili_data/snapshots
+    volumes:
+      - meilidata:/meili_data            # ○ 可重建（见上方说明）
+    ports:
+      # ★ 只绑 127.0.0.1 —— 本机 curl 调试用；⛔ 不暴露公网
+      - "127.0.0.1:${MEILI_HOST_PORT:-17700}:7700"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:7700/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   # ============================ ① Web 层 ============================
   #
   # ★★ 镜像归属纪律（血泪教训，见 B132）：
@@ -183,3 +220,4 @@ services:
 volumes:
   pgdata:      # ★ PG 数据（不挂宿主机 —— 用 Navicat 查看，见 DEPLOYMENT.md D5）
   redisdata:   # ○ 可重建
+  meilidata:   # ○ 可重建（★ 只是索引，丢了跑 reindex）

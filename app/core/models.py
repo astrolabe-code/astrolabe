@@ -2018,8 +2018,9 @@ class SearchTerm(TimeStampedModel):
 
     #: ★ 搜索词（* 唯一；* 超长截断，* 但不影响匹配）⚠
     term = models.CharField(max_length=200, unique=True)
-    #: ★ 累计被搜次数（* 合并时取 max(redis, db)）⚠
-    count = models.BigIntegerField(default=0)
+    #: ★★ 累计热度（* 合并取 max；**每半天 ×DECAY**）⚠
+    #:   ⚠ 必须是**浮点**：整数列会把 `2 × 0.8 = 1.6` 舍回 2 ⇒ 永远衰减不下去 ⚠
+    count = models.FloatField(default=0)
 
     class Meta:
         indexes = [

@@ -29,6 +29,9 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--stats", action="store_true", help="只打印条数，不写入")
+        parser.add_argument(
+            "--no-decay", action="store_true", help="合并但**不衰减**（* 调试用）"
+        )
 
     def handle(self, *args, **options):
         if options["stats"]:
@@ -36,10 +39,11 @@ class Command(BaseCommand):
             self.stdout.write(f"Redis {s['redis']} 条 · PostgreSQL {s['db']} 条")
             return
 
-        n = terms.flush()
+        r = terms.flush_and_decay(decay=not options["no_decay"])
         s = terms.stats()
         self.stdout.write(
             self.style.SUCCESS(
-                f"合并 {n} 条；Redis {s['redis']} 条 · PostgreSQL {s['db']} 条"
+                f"合并 {r['merged']} · 表内 {r['decayed']} 条 · 清理 {r['pruned']} · "
+                f"回灌 {r['loaded']}；Redis {s['redis']} 条"
             )
         )

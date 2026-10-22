@@ -42,6 +42,21 @@ TERMS_MAX = 2000
 #: 回灌标记多久失效（秒）
 LOAD_MARK_TTL = 600
 
+#: ★★★ **衰减系数**（每次回灌乘一次）—— * 所有者：「分数要有定期衰减，不能只增不减」⚠
+#:   · · 0.8 ⇒ 每半天 ×0.8，一天 ×0.64，一周约 ×0.03 ✅
+#:   · · ⚠ 调小 = 热点换得更快（旧词很快消失）；调大 = 更稳定 ⚠
+DECAY = float(__import__("os").environ.get("SEARCH_TERM_DECAY", "0.8"))
+
+#: ★ 分数衰减到低于这个值 ⇒ 直接删行（* 不让表无限长）⚠
+MIN_COUNT = 1
+
+#: ★★ **回灌周期**（秒）—— 半天 = 43200 ⚠
+#:   * 所有者：「每隔半天，定时回灌 postgresql，并取分数最高的前 2000 条数据载入 redis 缓存」
+FLUSH_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_FLUSH_SECONDS", "43200"))
+
+#: 上次回灌的时间戳（* 存 Redis，* 进程重启也不会丢掉周期）⚠
+LAST_FLUSH_KEY = "astrolabe:search:terms:last_flush"
+
 
 def _redis():
     import redis
@@ -89,37 +104,102 @@ def matches(kw: str, limit: int = 8) -> list[str]:
 # 持久化：Redis ⇄ PostgreSQL
 # ---------------------------------------------------------------------------
 
-def flush() -> int:
-    """★★ **把 Redis 的热词合并进 PG**（* 取最大值，* 幂等，* 可反复跑）⚠"""
+def flush_and_decay(decay: bool = True) -> dict:
+    """★★★ **半天一次的维护**（* 所有者 2026-10-22 定）⚠
+
+    > 「热词的分数要有定期衰减，不能只增不减。这个 redis 表里的数据半天回填一次
+    >   postgresql 数据库也没关系，就是要按条目修改，有这个热词的就修改分数，
+    >   没有的，就加一个条目。……postgresql 里的热词条目的分数也要定时衰减。
+    >   每隔半天，定时回灌 postgresql，并取分数最高的前 2000 条数据载入 redis 缓存。」
+
+    ## ★★ 四步（顺序不能换）
+
+    ```
+    ① 合并：Redis → PG，* 取最大值（幂等，* 重复跑不会算重）⚠
+    ② 衰减：PG 所有 count × DECAY
+    ③ 清理：count < 1 的行删掉（* 表不会无限长）✅
+    ④ 回灌：PG 取 Top 2000 ⇒ **重建** Redis ZSET（旧键先删）✅
+    ```
+
+    ⚠★ 为什么先合并再衰减：* 衰减要作用在「含本轮增量」的分数上；
+      * 反过来会少算一轮增量 ⚠
+    """
+    from django.db.models import F
+    from django.utils import timezone
+
     from core.models import SearchTerm
 
+    result = {"merged": 0, "decayed": 0, "pruned": 0, "loaded": 0}
+
+    # ---- ① 合并（取 max）----
     try:
         pairs = _redis().zrange(TERMS_KEY, 0, -1, withscores=True)
     except Exception:
         logger.warning("热词落库：读不到 Redis，跳过", exc_info=True)
-        return 0
-    if not pairs:
-        return 0
+        return result
 
-    remote = {term: int(score) for term, score in pairs}
-    existing = {t.term: t for t in SearchTerm.objects.filter(term__in=remote.keys())}
+    if pairs:
+        remote = {term: round(float(score), 3) for term, score in pairs}
+        existing = {t.term: t for t in SearchTerm.objects.filter(term__in=remote.keys())}
 
-    to_create = []
-    to_update = []
-    for term, count in remote.items():
-        row = existing.get(term)
-        if row is None:
-            to_create.append(SearchTerm(term=term, count=count))
-        elif count > row.count:
-            row.count = count
-            to_update.append(row)
+        to_create = []
+        to_update = []
+        now = timezone.now()
+        for term, count in remote.items():
+            row = existing.get(term)
+            if row is None:
+                to_create.append(SearchTerm(term=term, count=count))
+            elif count > row.count:
+                row.count = count
+                row.updated_at = now
+                to_update.append(row)
 
-    if to_create:
-        SearchTerm.objects.bulk_create(to_create, batch_size=500, ignore_conflicts=True)
-    if to_update:
-        SearchTerm.objects.bulk_update(to_update, ["count"], batch_size=500)
+        if to_create:
+            SearchTerm.objects.bulk_create(to_create, batch_size=500, ignore_conflicts=True)
+        if to_update:
+            SearchTerm.objects.bulk_update(to_update, ["count", "updated_at"], batch_size=500)
+        result["merged"] = len(to_create) + len(to_update)
 
-    return len(to_create) + len(to_update)
+        if decay:
+            # ---- ② 衰减 ----
+            SearchTerm.objects.update(count=F("count") * DECAY, updated_at=timezone.now())
+
+            # ---- ③ 清理低于阈值的 ----
+            pruned, _ = SearchTerm.objects.filter(count__lt=MIN_COUNT).delete()
+            result["pruned"] = pruned
+        result["decayed"] = SearchTerm.objects.count()
+
+    # ---- ④ 回灌 Top N ----
+    top = list(
+        SearchTerm.objects.order_by("-count").values_list("term", "count")[:TERMS_MAX]
+    )
+    try:
+        r = _redis()
+        pipe = r.pipeline()
+        pipe.delete(TERMS_KEY)
+        if top:
+            pipe.zadd(TERMS_KEY, {term: round(count, 3) for term, count in top})
+        pipe.set(LAST_FLUSH_KEY, int(time.time()))
+        pipe.execute()
+        result["loaded"] = len(top)
+    except Exception:
+        logger.warning("热词回灌 Redis 失败", exc_info=True)
+
+    return result
+
+
+def due() -> bool:
+    """★ 距离上次回灌是否已满 `FLUSH_INTERVAL`（* 时间戳存 Redis，* 重启不重置）⚠"""
+    try:
+        raw = _redis().get(LAST_FLUSH_KEY)
+    except Exception:
+        return False
+    if not raw:
+        return True
+    try:
+        return time.time() - float(raw) >= FLUSH_INTERVAL
+    except (TypeError, ValueError):
+        return True
 
 
 def ensure_loaded() -> None:

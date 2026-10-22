@@ -43,21 +43,28 @@ class Command(BaseCommand):
 
         self.stdout.write(f"索引同步启动（{client.base_url()}）")
 
-        # ★★ 热词落库：每 5 分钟把 Redis 的分数合并进 `core_searchterm` ⚠
-        #   （* 断电/重启后，`terms.ensure_loaded()` 从这里回灌）✅
-        last_flush = 0.0
-        FLUSH_EVERY = 300
+        # ★★★ 热词维护：**每半天一次**（* 所有者 2026-10-22 定）⚠
+        #   ```
+        #   ① Redis → PG 合并  ② PG 分数衰减  ③ 删低分  ④ Top2000 回灌 Redis
+        #   ```
+        #   ⚠ 时间戳存在 Redis 里 ⇒ 进程重启**不会**让周期重置 ✅
+        last_check = 0.0
 
         while True:
             now = time.monotonic()
-            if now - last_flush >= FLUSH_EVERY:
+            # ★ 每 60 秒探一次「到点没有」（* 只是一次 Redis GET）⚠
+            if now - last_check >= 60:
+                last_check = now
                 try:
-                    n = terms.flush()
-                    if n:
-                        self.stdout.write(f"热词落库 {n} 条")
+                    if terms.due():
+                        r = terms.flush_and_decay()
+                        if r["merged"] or r["loaded"]:
+                            self.stdout.write(
+                                f"热词维护：合并 {r['merged']} · 衰减后 {r['decayed']} 条 "
+                                f"· 清理 {r['pruned']} · 回灌 {r['loaded']}"
+                            )
                 except Exception:
-                    self.stderr.write(self.style.WARNING("热词落库失败"))
-                last_flush = now
+                    self.stderr.write(self.style.WARNING("热词维护失败"))
 
             try:
                 sync.drain_once(timeout=options["timeout"])

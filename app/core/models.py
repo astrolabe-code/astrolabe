@@ -1983,3 +1983,51 @@ class NoteLike(TimeStampedModel):
         return f"{self.note_id}:{self.user_id}"
 
 
+
+
+class SearchTerm(TimeStampedModel):
+    """★★ **热搜词的持久化副本**（`B238` / `D109` · 2026-10-22）⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「删掉标题联想的 20 分钟缓存。我说让你删掉这个去postgresql里查表的过程，
+    >   我一系列操作都是在减少对postgresql的查询频率，减小查库压力，就靠热词做联想。
+    >   还有，在postgresql里建一个热词表，用来存储redis里的热词，方便断电后，
+    >   redis恢复。」
+
+    ## ★★ 角色分工
+
+    ```
+    Redis ZSET   = 在线读写（ZINCRBY 记一次搜索 / ZREVRANGE 取热词）—— 快，但会丢
+    SearchTerm   = **断电/重启后的恢复来源** —— 慢，但持久
+    ```
+
+    ⚠★ 两者**不是双向同步**：
+      · · 平时**只有** Redis 在变（* 联想请求一次都不碰这张表）✅
+      · · 后台任务每隔几分钟把 Redis 的分数**合并**进来（* 取最大值，* 幂等）⚠
+      · · Redis 空了（重启 / 失联丢失）⇒ 从这张表**回灌**一次 ✅
+
+    ## ★ 字段
+
+    | 字段 | 说明 |
+    |---|---|
+    | `term` | 搜索词（唯一） |
+    | `count` | 被搜次数（* 单调不减） |
+    | `updated_at` | 最后一次被合并进来的时间 |
+    """
+
+    #: ★ 搜索词（* 唯一；* 超长截断，* 但不影响匹配）⚠
+    term = models.CharField(max_length=200, unique=True)
+    #: ★ 累计被搜次数（* 合并时取 max(redis, db)）⚠
+    count = models.BigIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            # ★ 联想只按分数取 Top N ⇒ 一个倒序索引就够 ⚠
+            models.Index(fields=["-count"], name="ix_searchterm_count"),
+        ]
+        verbose_name = "热搜词"
+        verbose_name_plural = "热搜词"
+
+    def __str__(self) -> str:
+        return f"{self.term}({self.count})"

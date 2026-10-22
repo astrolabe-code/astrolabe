@@ -23,7 +23,7 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from search import client, sync
+from search import client, sync, terms
 
 
 class Command(BaseCommand):
@@ -43,7 +43,22 @@ class Command(BaseCommand):
 
         self.stdout.write(f"索引同步启动（{client.base_url()}）")
 
+        # ★★ 热词落库：每 5 分钟把 Redis 的分数合并进 `core_searchterm` ⚠
+        #   （* 断电/重启后，`terms.ensure_loaded()` 从这里回灌）✅
+        last_flush = 0.0
+        FLUSH_EVERY = 300
+
         while True:
+            now = time.monotonic()
+            if now - last_flush >= FLUSH_EVERY:
+                try:
+                    n = terms.flush()
+                    if n:
+                        self.stdout.write(f"热词落库 {n} 条")
+                except Exception:
+                    self.stderr.write(self.style.WARNING("热词落库失败"))
+                last_flush = now
+
             try:
                 sync.drain_once(timeout=options["timeout"])
             except KeyboardInterrupt:

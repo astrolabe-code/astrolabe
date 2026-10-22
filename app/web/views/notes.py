@@ -51,6 +51,7 @@ from core.models import Note, NoteLike, Project
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
 from graph import scope
+from search import terms as term_store
 from web.http import fail, ok_flat, read_json
 from web.permissions import (
     can_edit,
@@ -63,73 +64,6 @@ from web.permissions import (
 )
 
 logger = logging.getLogger("astrolabe.search.views")
-
-#: ★★★ **别人搜过的词**（`B238` / `D109`）——
-#:
-#: > 「只要有一个人搜了 内核这个词，下一个人搜索就能联想了呀，不用20分钟」
-#:
-#: ⚠★ 与「标题联想」是**两套数据**：
-#:   · 标题联想：查 PG（慢），* 结果缓存 20 分钟
-#:   · 热搜词  ：Redis ZSET（快），* **不缓存、实时**，搜完立刻能被联想 ✅
-TERMS_KEY = "astrolabe:search:terms"
-#: 最多保留多少个热词（* 超出按分数淘汰，* 防止 ZSET 无限长）⚠
-TERMS_MAX = 2000
-
-
-def _terms_redis():
-    import redis
-    from django.conf import settings
-
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-
-
-def _record_term(kw: str) -> None:
-    """★ 记一次搜索词（* 失败只记日志，⛔ 不能影响搜索）⚠"""
-    if len(kw) < 2:
-        return
-    try:
-        r = _terms_redis()
-        r.zincrby(TERMS_KEY, 1, kw)
-        n = r.zcard(TERMS_KEY)
-        if n > TERMS_MAX:
-            r.zremrangebyrank(TERMS_KEY, 0, n - TERMS_MAX - 1)
-    except Exception:
-        logger.debug("热搜词记录失败（忽略）", exc_info=True)
-
-
-def _hot_matches(kw: str, limit: int = 4) -> list[str]:
-    """★ 从热搜词里挑**包含** kw 的 ⚠
-
-    ## ★★★ 所有者原话（逐字）
-
-    > 「**Redis ZSET 不能二分查找选个大概范围吗？就取前面 500 个感觉很怪。**」
-
-    ## ★ 为什么不能"二分查找"
-
-    ```
-    ZSET 的排序键是 **score**（= 被搜次数），不是**词本身**。
-      · 按 score 取范围 ⇒ 只能拿到"最热的 N 个"，* 跟 kw 无关 ⚠
-      · 按词取范围   ⇒ 要 ZRANGEBYLEX，但它**只对同分数的成员按字典序**生效
-        （我们的分数千差万别）⇒ 用不了 ⚠
-    ⇒ ★ Redis 没有「按子串查有序集合」的能力（那需要倒排索引 / n-gram）
-    ```
-
-    ## ★★ 所以我们改成：**全量取回来，在内存里筛** ✅
-
-    ```
-    集合上限 2000 个词 × 平均 10 字 ≈ 40KB，一次 ZREVRANGE 取回
-    2000 次 `in` 判断 ≈ 0.1ms（* 比一次 Redis 往返还便宜）
-    ```
-    """
-    try:
-        pairs = _terms_redis().zrevrange(TERMS_KEY, 0, -1, withscores=True)
-    except Exception:
-        return []
-
-    hits = [(m, s) for m, s in pairs if kw in m and m != kw]
-    # ★ 前缀优先 → 热度高的优先 → 短的优先 ⚠
-    hits.sort(key=lambda ms: (not ms[0].startswith(kw), -ms[1], len(ms[0])))
-    return [m for m, _ in hits[:limit]]
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
@@ -514,7 +448,7 @@ def search(request: HttpRequest):
 
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
-        _record_term(kw)
+        term_store.record(kw)
 
     if _search_backend() != "pg":
         try:
@@ -635,76 +569,36 @@ def _search_pg(request: HttpRequest):
 
 @require_http_methods(["GET"])
 def suggest(request: HttpRequest):
-    """`GET /api/search/suggest/?q=` —— **关键词联想**（`D109` 补充）⚠
+    """`GET /api/search/suggest/?q=` —— **关键词联想**（`D109` · 只有热词）⚠
 
     ## ★★★ 所有者原话（逐字）
 
-    > 「点联想不要直接进详情，联想只是关键词而已，表示用户选中这个关键词进行搜素。
-    >   这就可以重点字符联想了。比如搜红色，下边出现火红色。」
+    > 「删掉标题联想的 20 分钟缓存。我说让你删掉这个去postgresql里查表的过程，
+    >   我一系列操作都是在减少对postgresql的查询频率，减小查库压力，就靠热词做联想。
+    >   还有，在postgresql里建一个热词表，用来存储redis里的热词，方便断电后，
+    >   redis恢复。」
 
-    ## ★★ 为什么要单独一个接口（⛔ 不能复用 Meili）
+    ## ★★ 口径（2026-10-22 起）
 
     ```
-    Meilisearch 只做「词前缀」匹配：
-      「火红」→ 命中「火红色」✅
-      「红色」→ ⛔ 0 条（不是词前缀）
-    而联想要的恰恰是**中缀**：输入「红色」要提示「火红色」
-    ⇒ 只能用 `icontains`（* 但只查 **标题 / 项目名**，* 不碰正文）✅
+    ⛔ 不再查 PG 的标题 / 项目名 —— 联想**只**来自「别人搜过的词」✅
+    ✅ Redis ZSET 全量取回、内存筛（* ZSET 排序键是分数，做不了子串范围查）✅
+    ✅ 联想请求**零次 SQL**；唯一例外：Redis 空了 ⇒ 从 SearchTerm 表回灌一次 ⚠
     ```
 
     ## ★ 返回
 
-    `{items: [{text, type}]}` —— * `type` = `note` / `project`，* 前端只用来选图标 ⚠
+    `{items: [{text, type:"term"}]}` —— * 前端只用来选图标 ⚠
     """
-    from django.db.models import Q
-
     kw = (request.GET.get("q") or "").strip()
     if not kw:
         return ok_flat(items=[])
 
-    # ★★★ **不做缓存**（* 所有者：「标题联想，20 分钟这东西给我删了，不要了，没啥作用」）⚠
-    #   · · 每次现查 PG（* 只查标题/项目名，* 且前端有 250ms 防抖）✅
-    titles = _suggest_titles(kw)
+    # ★ 断电 / 重启后 Redis 可能是空的 ⇒ 从 PG 回灌（* 常态下只是一次 ZCARD）⚠
+    term_store.ensure_loaded()
 
-    # ★ 热词（* Redis ZSET 全量取回后内存筛，* 实时）⚠
-    hot = _hot_matches(kw)
-    seen = {it["text"] for it in titles}
-    items = [{"text": t, "type": "term"} for t in hot if t not in seen] + list(titles)
-    return ok_flat(items=items[:8])
-
-
-def _suggest_titles(kw: str) -> list[dict]:
-    """★ 标题 / 项目名联想（* 查 PG，* 结果会被缓存 20 分钟）⚠"""
-    from django.db.models import Q
-
-    notes = (
-        Note.objects.filter(
-            deleted_at__isnull=True,
-            state=Note.STATE_ACTIVE,
-            is_public=True,
-            title__icontains=kw,
-        )
-        .filter(Q(project__isnull=True) | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE)))
-        .values_list("title", flat=True)[:20]
-    )
-    projects = (
-        Project.objects.filter(
-            is_public=True, state=Project.STATE_ACTIVE, name__icontains=kw
-        )
-        .values_list("name", flat=True)[:10]
-    )
-
-    # ★ 去重 + 短的优先（* 越短越像"关键词"本身）⚠
-    seen: set[str] = set()
-    items = []
-    for text, kind in [(t, "note") for t in notes] + [(n, "project") for n in projects]:
-        t = (text or "").strip()
-        if not t or t in seen:
-            continue
-        seen.add(t)
-        items.append({"text": t, "type": kind})
-    items.sort(key=lambda x: len(x["text"]))
-    return items[:8]
+    hot = term_store.matches(kw, limit=8)
+    return ok_flat(items=[{"text": t, "type": "term"} for t in hot])
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])

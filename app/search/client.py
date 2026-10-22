@@ -142,6 +142,17 @@ def index_stats(uid: str = NOTES_INDEX) -> dict:
 # 查询
 # ---------------------------------------------------------------------------
 
+def multi_search(queries: list[dict]) -> list[dict]:
+    """★★ **一次请求查多组**（* Meilisearch `/multi-search`）⚠
+
+    ⚠ 用途：* 「用户输入 + 前几个联想词」一起查，* 而不是先查一次、空了再补查 ⚠
+    """
+    if not queries:
+        return []
+    res = _request("POST", "/multi-search", {"queries": queries})
+    return res.get("results") or []
+
+
 def search(
     uid: str,
     q: str,

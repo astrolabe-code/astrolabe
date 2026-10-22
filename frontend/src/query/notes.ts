@@ -340,7 +340,7 @@ export function useNoteSearch(
     queryFn: async (): Promise<{
       items: NoteSearchItem[]
       total: number
-      fallback?: { query: string; terms: string[] }
+      expanded?: { query: string; terms: string[]; matched: number }
     }> => {
       const params = new URLSearchParams({
         q: kw,
@@ -354,14 +354,14 @@ export function useNoteSearch(
         await apiGet<{
           total: number
           items: NoteSearchItem[]
-          fallback?: { query: string; terms: string[] }
+          expanded?: { query: string; terms: string[]; matched: number }
         }>(`/api/notes/search/?${params.toString()}`, 'spread'),
       )
       return {
         items: data.items || [],
         total: data.total || 0,
-        // ★ 后端在"空结果时用联想词回搜" ⇒ 告诉用户为什么结果是这些 ⚠
-        fallback: data.fallback,
+        // ★ 后端把「用户词 + 联想词」一次查完 ⇒ 告诉用户多出来的来源 ⚠
+        expanded: data.expanded,
       }
     },
   })

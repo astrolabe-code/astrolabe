@@ -417,38 +417,59 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
 
     # ★ `sort=newest` ⇒ 按创建时间倒序（* Meili 的排序字段已在索引设置里声明）⚠
     order = ["created_at:desc"] if sort == "newest" else None
+
+    # ★★★ **一次把「用户输入 + 前几个联想词」都查了**（* 所有者 2026-10-22）⚠
+    #   > 「差两次干啥呢？把用户输入层和前几个联想词一起拿去检索呀，把用户输入词的
+    #   >   搜索结果排前面就行了。」
+    #   · · 用 Meili 的 `/multi-search`：* 一次 HTTP，* 多组查询 ⚠
+    #   · · 排序口径：* 用户词的命中**全部排在前面**，* 联想词的结果接在后面（去重）✅
+    #   · · 只在**第一页**做（* 翻页时不再重复拼联想词）⚠
+    terms = term_store.matches(kw, limit=3) if offset == 0 else []
+
     res = client.search(client.NOTES_INDEX, kw, limit=limit, offset=offset, sort=order)
     hits = res.get("hits") or []
-    fallback = None
+    primary_count = len(hits)
+    expanded = None
 
-    # ★★★ 空结果 ⇒ **拿联想词再搜一次**（* 所有者 2026-10-22）⚠
-    #   > 「meilisearch没有联想词功能，比如我 搜 红，根本没有结果，那就应该把前几个
-    #   >   联想词带进去搜索一次呀，不要搜 红 就给空内容呀」
-    #   · · Meili 只做「词前缀」：* 「红」不是「火红色」的前缀 ⇒ 0 条 ⚠
-    #   · · 用热搜词兜底：* 取前 3 个联想词，逐个查、合并去重 ✅
-    if not hits and offset == 0:
-        terms = term_store.matches(kw, limit=3)
-        if terms:
-            merged: list[dict] = []
-            used: list[str] = []
-            seen_ids: set = set()
-            for t in terms:
-                r2 = client.search(
-                    client.NOTES_INDEX, t, limit=limit, sort=order
-                )
-                hs = r2.get("hits") or []
-                if hs:
+    if terms:
+        base = {"indexUid": client.NOTES_INDEX, "limit": limit}
+        if order:
+            base["sort"] = order
+
+        results = client.multi_search(
+            [{"q": kw, **base}] + [{"q": t, **base} for t in terms]
+        )
+        # 第 0 组就是用户词本身（* 保留它的顺序）⚠
+        merged: list[dict] = []
+        seen_ids: set = set()
+        for group in results:
+            for h in group.get("hits") or []:
+                hid = h.get("id")
+                if hid and hid not in seen_ids:
+                    seen_ids.add(hid)
+                    merged.append(h)
+
+        if len(merged) > primary_count:
+            hits = merged[:limit]
+            # ★ 只列出**真的带来了新结果**的联想词 ⚠
+            used = []
+            seen2: set = set(
+                h.get("id") for h in (results[0].get("hits") or [])
+            )
+            for t, group in zip(terms, results[1:]):
+                added = [
+                    h.get("id")
+                    for h in (group.get("hits") or [])
+                    if h.get("id") not in seen2
+                ]
+                if added:
                     used.append(t)
-                for h in hs:
-                    hid = h.get("id")
-                    if hid and hid not in seen_ids:
-                        seen_ids.add(hid)
-                        merged.append(h)
-                if len(merged) >= limit:
-                    break
-            if merged:
-                hits = merged[:limit]
-                fallback = {"query": kw, "terms": used}
+                    seen2.update(added)
+            expanded = {
+                "query": kw,
+                "terms": used,
+                "matched": primary_count,
+            }
 
     ids = [h["id"] for h in hits if h.get("id")]
 
@@ -477,12 +498,13 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
         counts[n.pk] = n.comment_count
 
     payload = {
-        "total": int(res.get("estimatedTotalHits") or len(out)),
+        # ★ 并入了联想词 ⇒ total 用"本次合并条数"；* 否则用 Meili 的估算总数 ⚠
+        "total": len(out) if expanded else int(res.get("estimatedTotalHits") or len(out)),
         "items": _attach_counts(out, counts),
     }
-    if fallback:
-        # ★ 告诉前端「这次是按联想词搜的」，* 让用户知道为什么结果对不上 ⚠
-        payload["fallback"] = fallback
+    if expanded:
+        # ★ 告诉前端「还并入了联想词的结果」，* 让用户知道为什么多出这些 ⚠
+        payload["expanded"] = expanded
     return ok_flat(**payload)
 
 

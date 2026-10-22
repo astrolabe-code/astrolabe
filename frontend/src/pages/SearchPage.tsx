@@ -196,11 +196,14 @@ export default function SearchPage() {
             </div>
           </div>
 
-          {/* ★ 空结果时后端用联想词回搜 ⇒ 如实告诉用户 ⚠ */}
-          {notes.data?.fallback && (
+          {/* ★ 后端把「用户词 + 联想词」一次查完 ⇒ 如实说明来源 ⚠ */}
+          {notes.data?.expanded && (
             <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
-              「{notes.data.fallback.query}」没有直接匹配，已按联想词
-              {notes.data.fallback.terms.map((t) => `「${t}」`).join('、')}搜索
+              {notes.data.expanded.matched === 0
+                ? `「${notes.data.expanded.query}」没有直接匹配，已按联想词`
+                : '另外并入了联想词'}
+              {notes.data.expanded.terms.map((t) => `「${t}」`).join('、')}
+              {notes.data.expanded.matched === 0 ? '搜索' : '的结果'}
             </div>
           )}
 

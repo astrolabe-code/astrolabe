@@ -60,10 +60,11 @@ DECAY_BASE = float(__import__("os").environ.get("SEARCH_TERM_DECAY_BASE", "0.995
 #:     * 只被搜过一次的词（1.0）能撑 ~5 个周期再消失，* 不会第二天就没了 ✅
 MIN_COUNT = 0.5
 
-#: ★★ **维护周期**（秒）—— 一天 = 86400 ⚠
-#:   * 所有者：「补上种子命令，**改为一天自动执行一次**」
-#:   * 一次维护 = 合并 → 衰减 → 清理 → 回灌（+ 每天一次的种子）✅
-FLUSH_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_FLUSH_SECONDS", "86400"))
+#: ★★ **维护周期**（秒）—— **半天 = 43200** ⚠
+#:   * 所有者：「每隔半天，定时回灌 postgresql」
+#:   * 一次维护 = 合并 → 衰减 → 清理 → 回灌 ✅
+#:   ⚠ 「一天一次」说的是**种子**（`SEED_INTERVAL`），* 两者周期不同 ⚠
+FLUSH_INTERVAL = int(__import__("os").environ.get("SEARCH_TERM_FLUSH_SECONDS", "43200"))
 
 #: 上次回灌的时间戳（* 存 Redis，* 进程重启也不会丢掉周期）⚠
 LAST_FLUSH_KEY = "astrolabe:search:terms:last_flush"

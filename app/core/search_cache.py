@@ -42,8 +42,6 @@ REGISTRY_TTL_FACTOR = 2
 #: ★ 统一走 `astrolabe:` 命名空间（* 与 jobs / basegraph / neigh / hot 一致）⚠
 NS_NOTES = "astrolabe:search:notes"
 NS_PROJECTS = "astrolabe:search:projects"
-#: ★ 关键词联想（* 单独一个桶，* TTL 由调用方给 20 分钟）⚠
-NS_SUGGEST = "astrolabe:search:suggest"
 
 _client = None
 
@@ -86,7 +84,7 @@ def get(ns: str, uid: int, kw: str):
         return None
 
 
-def put(ns: str, uid: int, kw: str, payload, ttl: int | None = None) -> None:
+def put(ns: str, uid: int, kw: str, payload) -> None:
     """写缓存（带 TTL），并把 key 记进 registry 便于整体失效。
 
     ⚠★ **只存非空结果**（* 调用方保证；空结果没有条目可校验，
@@ -96,7 +94,7 @@ def put(ns: str, uid: int, kw: str, payload, ttl: int | None = None) -> None:
     if client is None:
         return
     key = _key(ns, uid, kw)
-    ttl = ttl or TTL_SECONDS
+    ttl = TTL_SECONDS
     try:
         pipe = client.pipeline()
         pipe.set(key, json.dumps(payload, ensure_ascii=False), ex=ttl)
@@ -177,4 +175,3 @@ def invalidate_all() -> None:
     """笔记 / 项目 / 联想三路一起清（项目改名等场景用）。"""
     invalidate(NS_NOTES)
     invalidate(NS_PROJECTS)
-    invalidate(NS_SUGGEST)

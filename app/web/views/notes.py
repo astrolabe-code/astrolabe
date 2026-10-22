@@ -64,10 +64,6 @@ from web.permissions import (
 
 logger = logging.getLogger("astrolabe.search.views")
 
-#: ★ 联想缓存的命名空间与 TTL（* 所有者要求 20 分钟）⚠
-SUGGEST_NS = search_cache.NS_SUGGEST
-SUGGEST_TTL = 1200
-
 #: ★★★ **别人搜过的词**（`B238` / `D109`）——
 #:
 #: > 「只要有一个人搜了 内核这个词，下一个人搜索就能联想了呀，不用20分钟」
@@ -102,15 +98,38 @@ def _record_term(kw: str) -> None:
 
 
 def _hot_matches(kw: str, limit: int = 4) -> list[str]:
-    """★ 从热搜词里挑**包含** kw 的（* 前缀优先，* 短的优先）⚠"""
+    """★ 从热搜词里挑**包含** kw 的 ⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「**Redis ZSET 不能二分查找选个大概范围吗？就取前面 500 个感觉很怪。**」
+
+    ## ★ 为什么不能"二分查找"
+
+    ```
+    ZSET 的排序键是 **score**（= 被搜次数），不是**词本身**。
+      · 按 score 取范围 ⇒ 只能拿到"最热的 N 个"，* 跟 kw 无关 ⚠
+      · 按词取范围   ⇒ 要 ZRANGEBYLEX，但它**只对同分数的成员按字典序**生效
+        （我们的分数千差万别）⇒ 用不了 ⚠
+    ⇒ ★ Redis 没有「按子串查有序集合」的能力（那需要倒排索引 / n-gram）
+    ```
+
+    ## ★★ 所以我们改成：**全量取回来，在内存里筛** ✅
+
+    ```
+    集合上限 2000 个词 × 平均 10 字 ≈ 40KB，一次 ZREVRANGE 取回
+    2000 次 `in` 判断 ≈ 0.1ms（* 比一次 Redis 往返还便宜）
+    ```
+    """
     try:
-        members = _terms_redis().zrevrange(TERMS_KEY, 0, 499)
+        pairs = _terms_redis().zrevrange(TERMS_KEY, 0, -1, withscores=True)
     except Exception:
         return []
 
-    hits = [m for m in members if kw in m and m != kw]
-    hits.sort(key=lambda t: (not t.startswith(kw), len(t)))
-    return hits[:limit]
+    hits = [(m, s) for m, s in pairs if kw in m and m != kw]
+    # ★ 前缀优先 → 热度高的优先 → 短的优先 ⚠
+    hits.sort(key=lambda ms: (not ms[0].startswith(kw), -ms[1], len(ms[0])))
+    return [m for m, _ in hits[:limit]]
 
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
@@ -643,20 +662,14 @@ def suggest(request: HttpRequest):
     if not kw:
         return ok_flat(items=[])
 
-    # ★★★ **联想结果进 Redis**（* 所有者：「做redis缓存搜过的词，时间弄长一点20分钟」）⚠
-    #   · · key = `astrolabe:search:suggest:0:<sha1(前缀)>`
-    #   · · TTL = **20 分钟**（* 比搜索结果的 10 分钟长 —— 联想只是提示，* 旧一点无妨）✅
-    #   · · ★ 空结果**也缓存**：* 乱敲的前缀最费扫描，* 缓存空数组正好挡住它 ⚠
-    cached = search_cache.get(SUGGEST_NS, 0, kw)
+    # ★★★ **不做缓存**（* 所有者：「标题联想，20 分钟这东西给我删了，不要了，没啥作用」）⚠
+    #   · · 每次现查 PG（* 只查标题/项目名，* 且前端有 250ms 防抖）✅
+    titles = _suggest_titles(kw)
 
-    if cached is None:
-        cached = _suggest_titles(kw)
-        search_cache.put(SUGGEST_NS, 0, kw, cached, ttl=SUGGEST_TTL)
-
-    # ★★★ 热词**不进缓存**（* 别人刚搜过的词要立刻能被联想）⚠
+    # ★ 热词（* Redis ZSET 全量取回后内存筛，* 实时）⚠
     hot = _hot_matches(kw)
-    seen = {it["text"] for it in cached}
-    items = [{"text": t, "type": "term"} for t in hot if t not in seen] + list(cached)
+    seen = {it["text"] for it in titles}
+    items = [{"text": t, "type": "term"} for t in hot if t not in seen] + list(titles)
     return ok_flat(items=items[:8])
 
 

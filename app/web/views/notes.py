@@ -381,18 +381,19 @@ def batch_visibility(request: HttpRequest, project_ref: str):
 def _search_who(request: HttpRequest) -> str:
     """★ 热搜词的「谁搜的」标识（* 仅用于 15 分钟去重，* 不落库）⚠
 
+    ## ★★★ 所有者原话（逐字）
+
+    > 「游客就算一个人，不要整IP，怪复杂的。」
+
     ```
-    登录用户 ⇒ u<id>（* 最准）
-    游客     ⇒ ip<地址>（* 取 X-Forwarded-For 第一跳，* nginx 已设置）
+    登录用户 ⇒ u<id>
+    游客     ⇒ "anon"   ← * 所有游客算**同一个**身份 ✅
     ```
     """
     user = current_user(request)
     if user is not None and getattr(user, "pk", None):
         return f"u{user.pk}"
-
-    xff = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
-    ip = xff or request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR") or ""
-    return f"ip{ip}" if ip else ""
+    return "anon"
 
 
 def _search_backend() -> str:
@@ -418,6 +419,37 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
     order = ["created_at:desc"] if sort == "newest" else None
     res = client.search(client.NOTES_INDEX, kw, limit=limit, offset=offset, sort=order)
     hits = res.get("hits") or []
+    fallback = None
+
+    # ★★★ 空结果 ⇒ **拿联想词再搜一次**（* 所有者 2026-10-22）⚠
+    #   > 「meilisearch没有联想词功能，比如我 搜 红，根本没有结果，那就应该把前几个
+    #   >   联想词带进去搜索一次呀，不要搜 红 就给空内容呀」
+    #   · · Meili 只做「词前缀」：* 「红」不是「火红色」的前缀 ⇒ 0 条 ⚠
+    #   · · 用热搜词兜底：* 取前 3 个联想词，逐个查、合并去重 ✅
+    if not hits and offset == 0:
+        terms = term_store.matches(kw, limit=3)
+        if terms:
+            merged: list[dict] = []
+            used: list[str] = []
+            seen_ids: set = set()
+            for t in terms:
+                r2 = client.search(
+                    client.NOTES_INDEX, t, limit=limit, sort=order
+                )
+                hs = r2.get("hits") or []
+                if hs:
+                    used.append(t)
+                for h in hs:
+                    hid = h.get("id")
+                    if hid and hid not in seen_ids:
+                        seen_ids.add(hid)
+                        merged.append(h)
+                if len(merged) >= limit:
+                    break
+            if merged:
+                hits = merged[:limit]
+                fallback = {"query": kw, "terms": used}
+
     ids = [h["id"] for h in hits if h.get("id")]
 
     if not ids:
@@ -444,10 +476,14 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
         out.append(d)
         counts[n.pk] = n.comment_count
 
-    return ok_flat(
-        total=int(res.get("estimatedTotalHits") or len(out)),
-        items=_attach_counts(out, counts),
-    )
+    payload = {
+        "total": int(res.get("estimatedTotalHits") or len(out)),
+        "items": _attach_counts(out, counts),
+    }
+    if fallback:
+        # ★ 告诉前端「这次是按联想词搜的」，* 让用户知道为什么结果对不上 ⚠
+        payload["fallback"] = fallback
+    return ok_flat(**payload)
 
 
 @require_http_methods(["GET"])

@@ -337,7 +337,11 @@ export function useNoteSearch(
     queryKey: ['notes-search', kw, limit, offset, sort],
     enabled: kw.length > 0,
     staleTime: 30_000,
-    queryFn: async (): Promise<{ items: NoteSearchItem[]; total: number }> => {
+    queryFn: async (): Promise<{
+      items: NoteSearchItem[]
+      total: number
+      fallback?: { query: string; terms: string[] }
+    }> => {
       const params = new URLSearchParams({
         q: kw,
         limit: String(limit),
@@ -347,12 +351,18 @@ export function useNoteSearch(
       if (sort !== 'relevance') params.set('sort', sort)
 
       const data = unwrap(
-        await apiGet<{ total: number; items: NoteSearchItem[] }>(
-          `/api/notes/search/?${params.toString()}`,
-          'spread',
-        ),
+        await apiGet<{
+          total: number
+          items: NoteSearchItem[]
+          fallback?: { query: string; terms: string[] }
+        }>(`/api/notes/search/?${params.toString()}`, 'spread'),
       )
-      return { items: data.items || [], total: data.total || 0 }
+      return {
+        items: data.items || [],
+        total: data.total || 0,
+        // ★ 后端在"空结果时用联想词回搜" ⇒ 告诉用户为什么结果是这些 ⚠
+        fallback: data.fallback,
+      }
     },
   })
 }

@@ -118,27 +118,39 @@ def flush_and_decay(decay: bool = True) -> dict:
     >   postgresql 数据库也没关系，就是要按条目修改，有这个热词的就修改分数，
     >   没有的，就加一个条目。……postgresql 里的热词条目的分数也要定时衰减。
     >   每隔半天，定时回灌 postgresql，并取分数最高的前 2000 条数据载入 redis 缓存。」
+    > 「**postgresql 里存的热词分数在 redis 回灌的时候，也要做同步衰减后，再逐条赋值，
+    >   最后，再选出前 2000 条回灌 redis。**」
 
-    ## ★★ 四步（顺序不能换）
+    ## ★★ 五步（顺序即所有者口述的顺序）
 
     ```
-    ① 合并：Redis → PG，* 取最大值（幂等，* 重复跑不会算重）⚠
-    ② 衰减：PG 所有 count × DECAY
-    ③ 清理：count < 1 的行删掉（* 表不会无限长）✅
-    ④ 回灌：PG 取 Top 2000 ⇒ **重建** Redis ZSET（旧键先删）✅
+    ① 算倍率：DECAY_BASE ^ 实际经过小时数（* 首次部署 ⇒ 1.0 不衰减）⚠
+    ② 衰减 PG：表里**已有**的分数先乘倍率
+    ③ 逐条赋值：Redis 每个词 × 同一倍率 ⇒ 有则更新、无则插入
+    ④ 清理：count < 1 的行删掉
+    ⑤ 回灌：PG 取 Top 2000 ⇒ 重建 Redis ZSET
     ```
 
-    ⚠★ 为什么先合并再衰减：* 衰减要作用在「含本轮增量」的分数上；
-      * 反过来会少算一轮增量 ⚠
+    ⚠★ 两侧乘**同一个倍率**（"同步衰减"）⇒ 谁的数都不比谁新，* 不会一边衰减一边不衰减 ⚠
     """
     from django.db.models import F
     from django.utils import timezone
 
     from core.models import SearchTerm
 
-    result = {"merged": 0, "decayed": 0, "pruned": 0, "loaded": 0}
+    result = {"merged": 0, "decayed": 0, "pruned": 0, "loaded": 0, "factor": 1.0}
 
-    # ---- ① 合并（取 max）----
+    # ---- ① 倍率 ----
+    hours = hours_since_flush()
+    factor = (DECAY_BASE ** hours) if (decay and hours > 0) else 1.0
+    result["factor"] = round(factor, 4)
+    now = timezone.now()
+
+    # ---- ② 先衰减 PG 里已存的分数 ----
+    if factor < 1.0:
+        SearchTerm.objects.update(count=F("count") * factor, updated_at=now)
+
+    # ---- ③ 逐条赋值（Redis 的分数也乘同一倍率）----
     try:
         pairs = _redis().zrange(TERMS_KEY, 0, -1, withscores=True)
     except Exception:
@@ -146,17 +158,17 @@ def flush_and_decay(decay: bool = True) -> dict:
         return result
 
     if pairs:
-        remote = {term: round(float(score), 3) for term, score in pairs}
+        remote = {term: round(float(score) * factor, 3) for term, score in pairs}
         existing = {t.term: t for t in SearchTerm.objects.filter(term__in=remote.keys())}
 
         to_create = []
         to_update = []
-        now = timezone.now()
         for term, count in remote.items():
             row = existing.get(term)
             if row is None:
                 to_create.append(SearchTerm(term=term, count=count))
             elif count > row.count:
+                # ★ 取较大值：* 防 Redis 丢过数据时把 PG 的计数改小（安全网）⚠
                 row.count = count
                 row.updated_at = now
                 to_update.append(row)
@@ -167,27 +179,13 @@ def flush_and_decay(decay: bool = True) -> dict:
             SearchTerm.objects.bulk_update(to_update, ["count", "updated_at"], batch_size=500)
         result["merged"] = len(to_create) + len(to_update)
 
-        if decay:
-            # ---- ② 衰减：* 按**真实经过的小时数**，不是"跑一次乘一次" ⚠
-            #   倍率 = DECAY_BASE ^ 经过小时数
-            #   · · 定时任务晚了 / 进程重启 / 手动跑多次 ⇒ 衰减量都对得上 ✅
-            from search import terms as _self
+        # ---- ④ 清理低分 ----
+        pruned, _ = SearchTerm.objects.filter(count__lt=MIN_COUNT).delete()
+        result["pruned"] = pruned
 
-            hours = _self.hours_since_flush()
-            factor = DECAY_BASE ** hours if hours > 0 else 1.0
+    result["decayed"] = SearchTerm.objects.count()
 
-            if factor < 1.0:
-                SearchTerm.objects.update(
-                    count=F("count") * factor, updated_at=timezone.now()
-                )
-
-            # ---- ③ 清理低于阈值的 ----
-            pruned, _ = SearchTerm.objects.filter(count__lt=MIN_COUNT).delete()
-            result["pruned"] = pruned
-            result["factor"] = round(factor, 4)
-        result["decayed"] = SearchTerm.objects.count()
-
-    # ---- ④ 回灌 Top N ----
+    # ---- ⑤ Top 2000 回灌（* 用衰减后的分数重建）----
     top = list(
         SearchTerm.objects.order_by("-count").values_list("term", "count")[:TERMS_MAX]
     )

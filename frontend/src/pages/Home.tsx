@@ -1,4 +1,5 @@
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { FormEvent } from 'react'
 // ★ `B173`：删掉 `useQuery` / `apiGet` / `ProjectListData` ——
 //   ★ 项目列表改走 `useProjects()`（★ 口径只有一处），★ 这三个都**不再需要** ✅
@@ -9,6 +10,7 @@ import { useMe } from '../hooks/useMe'
 import { SPA_LINKS } from '../legacy'
 import { useInView } from '../hooks/useInView'
 import { useProjects } from '../query/projects'
+import { useSearchSuggest } from '../query/notes'
 import DemoWindow from '../components/DemoWindow'
 
 // D40:卡片预览图谱懒加载(进入视口才请求 vis-network 分包)
@@ -29,8 +31,10 @@ const CARD_NODES = [
 ]
 
 export default function Home() {
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [focus, setFocus] = useState(false)
+  // ★★ 已提交的搜索词 ⇒* 结果**渲染在本页**（* ⛔ 不再跳 /projects/ 这种旧路径）⚠
   const { ref: cardRef, inView: cardInView } = useInView<HTMLDivElement>()
 
   const { data: me } = useMe()
@@ -51,24 +55,30 @@ export default function Home() {
   //   ★★ 不传就会变成"每次挂载都重拉一遍全量列表" ⚠
   const { data: projects } = useProjects({ staleTime: 60_000 })
 
+  // ★★ 输入去抖 250ms（* 别每敲一个字母就打一次接口）⚠
+  const [qDebounced, setQDebounced] = useState('')
+  useEffect(() => {
+    const t = window.setTimeout(() => setQDebounced(q.trim()), 250)
+    return () => window.clearTimeout(t)
+  }, [q])
+
+  // ★★ 提交后的结果：* 项目（后端搜 名称/简介/作者）+ 笔记（搜 标题/正文）⚠
+  // ★★ 联想 = **关键词**（* 选中即拿它去搜，⛔ 不直接进详情）⚠
+  const suggest = useSearchSuggest(focus ? qDebounced : '')
+  const suggestItems = suggest.data || []
+
   const user = me ?? ({ authenticated: false } as Me)
   const name = user.is_staff ? '老大' : user.username || ''
 
   // 首页搜索:后端无 q 参数,沿用旧站语义在前端过滤(name/desc/owner)
-  const suggestions = useMemo<ProjectSummary[]>(() => {
-    const kw = q.trim().toLowerCase()
-    if (!kw) return []
-    return (projects || [])
-      .filter((p) =>
-        [p.name, p.desc, p.owner || ''].some((v) => String(v || '').toLowerCase().includes(kw)),
-      )
-      .slice(0, 6)
-  }, [projects, q])
+
 
   const submitSearch = (e: FormEvent) => {
     e.preventDefault()
     const kw = q.trim()
-    window.location.href = kw ? `/projects/?q=${encodeURIComponent(kw)}` : '/projects/'
+    if (!kw) return
+    // ★★ `D109`：**提交后跳独立结果页**（⛔ 不再在首页内联渲染）⚠
+    navigate(`/search?q=${encodeURIComponent(kw)}`)
   }
 
   // ★ B163：本项目没有旧站 ⇒ 登录后一律去工作区（原版按角色分「管理 / 控制台」，那两个页面还没有）
@@ -110,20 +120,20 @@ export default function Home() {
                 <>
                   欢迎回来，老大。管理好站点，带大家探索源码世界吧~
                   <br />
-                  上传源码，解析结构，在节点上写下你的思考。
+                  填写仓库地址，服务端按开源许可证拉取源码并解析。
                 </>
               ) : (
                 <>
                   欢迎回来，{user.username}。去探索源码的世界吧~
                   <br />
-                  上传源码，解析结构，在节点上写下你的思考。
+                  填写仓库地址，服务端按开源许可证拉取源码并解析。
                 </>
               )
             ) : (
               <>
-                上传源码，解析结构，探索依赖图谱。
+                填写仓库地址，服务端按开源许可证拉取源码，解析成依赖图谱。
                 <br />
-                围绕节点记下灵光一闪、质疑与踩坑，再摊成一张思考的白布。
+                也可以不挂源码，先建一个纯记录的无源码项目。
               </>
             )}
           </p>
@@ -142,13 +152,23 @@ export default function Home() {
             <button type="submit" className="btn primary">
               搜索
             </button>
-            <span className="hint">游客也可搜索并浏览公开项目</span>
-            {focus && suggestions.length > 0 && (
+            <span className="hint">游客也可搜索并浏览公开内容 · 回车进入搜索结果页</span>
+            {focus && suggestItems.length > 0 && (
               <div className="hero-suggest">
-                {suggestions.map((p) => (
-                  <button key={p.project_ref} type="button" onClick={() => (window.location.href = `/app/p/${p.project_ref}`)}>
-                    <span>{p.name}</span>
-                    <span className="s-desc">{p.owner ? `@${p.owner}` : '公开项目'}</span>
+                {suggestItems.slice(0, 6).map((it) => (
+                  <button
+                    key={it.text}
+                    type="button"
+                    // ★ 选中关键词 ⇒ 用它去**搜索**（⛔ 不是跳详情）⚠
+                    onClick={() => {
+                      setQ(it.text)
+                      navigate(`/search?q=${encodeURIComponent(it.text)}`)
+                    }}
+                  >
+                    <span>
+                      {it.type === 'project' ? '📦' : '📝'} {it.text}
+                    </span>
+                    <span className="s-desc">搜索这个关键词</span>
                   </button>
                 ))}
               </div>
@@ -171,7 +191,7 @@ export default function Home() {
       <div className="feats rise d2">
         <div className="f">
           <i />
-          <b>即时解析</b> · 上传即分析
+          <b>拉取即解析</b> · 仓库地址一键解析
         </div>
         <div className="f">
           <i />

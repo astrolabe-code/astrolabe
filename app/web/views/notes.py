@@ -381,7 +381,7 @@ def _search_backend() -> str:
     return (os.environ.get("SEARCH_BACKEND") or "meili").strip().lower()
 
 
-def _search_meili(kw: str, limit: int):
+def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance"):
     """★★ **用 Meilisearch 检索**（`B238` 第 3 步）⚠
 
     ```
@@ -396,7 +396,9 @@ def _search_meili(kw: str, limit: int):
     """
     from search import client, documents
 
-    res = client.search(client.NOTES_INDEX, kw, limit=limit)
+    # ★ `sort=newest` ⇒ 按创建时间倒序（* Meili 的排序字段已在索引设置里声明）⚠
+    order = ["created_at:desc"] if sort == "newest" else None
+    res = client.search(client.NOTES_INDEX, kw, limit=limit, offset=offset, sort=order)
     hits = res.get("hits") or []
     ids = [h["id"] for h in hits if h.get("id")]
 
@@ -449,7 +451,9 @@ def search(request: HttpRequest):
 
             if client.enabled():
                 limit = _clamp(request.GET.get("limit"), 1, 50, 20)
-                return _search_meili(kw, limit)
+                offset = _clamp(request.GET.get("offset"), 0, 1000, 0)
+                sort = (request.GET.get("sort") or "relevance").strip().lower()
+                return _search_meili(kw, limit, offset, sort)
         except Exception:
             # ⚠ 搜索引擎不可用 ⇒ **静默降级**（* 用户不该看到 500）⚠
             logger.warning("Meilisearch 查询失败，回退 PostgreSQL", exc_info=True)
@@ -481,6 +485,10 @@ def _search_pg(request: HttpRequest):
     if not kw:
         return ok_flat(total=0, items=[])
 
+    # ★★ 分页（`D109` 搜索页）：* `offset > 0` 时**跳过缓存**
+    #   （* 缓存只存第一页，* 拿它去 slice 会错位）⚠
+    offset = _clamp(request.GET.get("offset"), 0, 1000, 0)
+
     # ★★★ 2026-10-21（所有者裁定）：**首页搜索只搜公开内容，与用户无关** ⚠
     #   > 「不要让私有项目或者笔记能被搜索，不管对哪个用户都一样，搜私有笔记有什么
     #   >  作用？对作者，他可以清楚知道那些是私有笔记，还可以到项目里搜索，对其他人，
@@ -497,7 +505,9 @@ def _search_pg(request: HttpRequest):
     #     对比一下，无误后，再发出去。对比发现被删除了或者改了，就要修改 redis 的
     #     记录，再按情况发送信息」）——
     #       · · 否则用户点了缓存里的结果，* 跳过去发现是别的内容 / 已消失 ⚠
-    cached = search_cache.get(search_cache.NS_NOTES, uid, kw)
+    cached = (
+        search_cache.get(search_cache.NS_NOTES, uid, kw) if offset == 0 else None
+    )
     if cached is not None:
         checked, comment_counts = _verify_note_cache(cached)
         if checked is not None:
@@ -526,7 +536,9 @@ def _search_pg(request: HttpRequest):
     qs = qs.order_by("-created_at")
 
     limit = _clamp(request.GET.get("limit"), 1, 50, 20)
-    items = list(qs[:limit])
+    # ⚠ 先算 total（* 分页要用），* 再切这一页 ⚠
+    total = qs.count()
+    items = list(qs[offset:offset + limit])
 
     # ★★ 序列化时**不带计数** ⇒ 缓存里只存「搜索结果本身」
     #   （* like_count 有 like_cache，* comment_count 是计数列，* 不在这重复存）⚠
@@ -547,7 +559,67 @@ def _search_pg(request: HttpRequest):
     if out:
         search_cache.put(search_cache.NS_NOTES, uid, kw, out)
     # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
-    return ok_flat(total=len(out), items=_attach_counts(out, comment_counts))
+    return ok_flat(total=total, items=_attach_counts(out, comment_counts))
+
+
+@require_http_methods(["GET"])
+def suggest(request: HttpRequest):
+    """`GET /api/search/suggest/?q=` —— **关键词联想**（`D109` 补充）⚠
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「点联想不要直接进详情，联想只是关键词而已，表示用户选中这个关键词进行搜素。
+    >   这就可以重点字符联想了。比如搜红色，下边出现火红色。」
+
+    ## ★★ 为什么要单独一个接口（⛔ 不能复用 Meili）
+
+    ```
+    Meilisearch 只做「词前缀」匹配：
+      「火红」→ 命中「火红色」✅
+      「红色」→ ⛔ 0 条（不是词前缀）
+    而联想要的恰恰是**中缀**：输入「红色」要提示「火红色」
+    ⇒ 只能用 `icontains`（* 但只查 **标题 / 项目名**，* 不碰正文）✅
+    ```
+
+    ## ★ 返回
+
+    `{items: [{text, type}]}` —— * `type` = `note` / `project`，* 前端只用来选图标 ⚠
+    """
+    from django.db.models import Q
+
+    kw = (request.GET.get("q") or "").strip()
+    if not kw:
+        return ok_flat(items=[])
+
+    # ★ 与搜索同一套可见性（* 只公开内容）⚠
+    notes = (
+        Note.objects.filter(
+            deleted_at__isnull=True,
+            state=Note.STATE_ACTIVE,
+            is_public=True,
+            title__icontains=kw,
+        )
+        .filter(Q(project__isnull=True) | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE)))
+        .values_list("title", flat=True)[:20]
+    )
+    projects = (
+        Project.objects.filter(
+            is_public=True, state=Project.STATE_ACTIVE, name__icontains=kw
+        )
+        .values_list("name", flat=True)[:10]
+    )
+
+    # ★ 去重 + 短的优先（* 越短越像"关键词"本身）⚠
+    seen: set[str] = set()
+    items = []
+    for text, kind in [(t, "note") for t in notes] + [(n, "project") for n in projects]:
+        t = (text or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        items.append({"text": t, "type": kind})
+    items.sort(key=lambda x: len(x["text"]))
+    return ok_flat(items=items[:8])
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])

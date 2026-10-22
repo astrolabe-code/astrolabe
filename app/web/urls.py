@@ -217,6 +217,8 @@ urlpatterns = [
         notes.collection,
         name="note-list",
     ),
+    # ★★ 关键词联想（* 只提示关键词，⛔ 不直接进详情）⚠
+    path("search/suggest/", notes.suggest, name="search-suggest"),
     # ★★ 批量改公开 / 私有（* 所有者：用户排除若干篇，其余批量改）⚠
     path(
         "projects/<project_ref:project_ref>/notes/batch-visibility/",

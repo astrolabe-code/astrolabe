@@ -296,16 +296,25 @@ export function useImportNotes() {
  * ⚠ 匹配**标题 + 正文**（后端 `icontains`）✅
  * ⚠ 每篇带 `project` 三件套 ⇒ 前端能链回项目 ✅
  */
-export function useNoteSearch(q: string) {
+/**
+ * ★★★ **关键词联想**（`D109` 补充 · 2026-10-22）⚠
+ *
+ * > 「点联想不要直接进详情，联想只是关键词而已，表示用户选中这个关键词进行搜素。
+ * >   这就可以重点字符联想了。比如搜红色，下边出现火红色。」
+ *
+ * ⚠ 走 `icontains`（标题 / 项目名），⛔ 不是 Meili —— 因为 Meili 只做词前缀，
+ *   而联想要的正是**中缀**（输入「红色」提示「火红色」）⚠
+ */
+export function useSearchSuggest(q: string) {
   const kw = q.trim()
   return useQuery({
-    queryKey: ['notes-search', kw],
+    queryKey: ['search-suggest', kw],
     enabled: kw.length > 0,
     staleTime: 30_000,
-    queryFn: async (): Promise<NoteSearchItem[]> => {
+    queryFn: async (): Promise<{ text: string; type: 'note' | 'project' }[]> => {
       const data = unwrap(
-        await apiGet<{ total: number; items: NoteSearchItem[] }>(
-          `/api/notes/search/?q=${encodeURIComponent(kw)}`,
+        await apiGet<{ items: { text: string; type: 'note' | 'project' }[] }>(
+          `/api/search/suggest/?q=${encodeURIComponent(kw)}`,
           'spread',
         ),
       )
@@ -313,3 +322,38 @@ export function useNoteSearch(q: string) {
     },
   })
 }
+
+
+export function useNoteSearch(
+  q: string,
+  opts: { limit?: number; offset?: number; sort?: 'relevance' | 'newest' } = {},
+) {
+  const kw = q.trim()
+  const limit = opts.limit ?? 20
+  const offset = opts.offset ?? 0
+  const sort = opts.sort ?? 'relevance'
+
+  return useQuery({
+    queryKey: ['notes-search', kw, limit, offset, sort],
+    enabled: kw.length > 0,
+    staleTime: 30_000,
+    queryFn: async (): Promise<{ items: NoteSearchItem[]; total: number }> => {
+      const params = new URLSearchParams({
+        q: kw,
+        limit: String(limit),
+        offset: String(offset),
+      })
+      // ★ 相关度 = 不传（* 用 Meilisearch 的默认排名）；最新 = 按时间倒序 ⚠
+      if (sort !== 'relevance') params.set('sort', sort)
+
+      const data = unwrap(
+        await apiGet<{ total: number; items: NoteSearchItem[] }>(
+          `/api/notes/search/?${params.toString()}`,
+          'spread',
+        ),
+      )
+      return { items: data.items || [], total: data.total || 0 }
+    },
+  })
+}
+

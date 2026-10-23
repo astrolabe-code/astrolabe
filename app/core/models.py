@@ -1427,12 +1427,12 @@ class ProjectSetting(TimeStampedModel):
 #     （* `graph_node` 一个字段都不动 ✅）
 
 
-def _enqueue_index(note_ids) -> None:
+def _enqueue_index(note_ids, counts_only: bool = False) -> None:
     """★ 把笔记 id 投给索引队列（* `B238` 写后通知；⛔ 失败不许影响写操作）⚠"""
     try:
         from search import sync
 
-        sync.enqueue_many(note_ids)
+        sync.enqueue_many(note_ids, counts_only=counts_only)
     except Exception:
         import logging
 
@@ -1450,14 +1450,29 @@ class NoteQuerySet(models.QuerySet):
     """
 
     def update(self, **kwargs):
-        # ★ 只改 comment_count / updated_at 不用重建文档（* 索引里没有计数字段）⚠
-        interesting = set(kwargs) - {"comment_count", "updated_at"}
-        ids = list(self.values_list("pk", flat=True)) if interesting else []
+        """★★ 批量更新也要通知索引（`B238`）⚠
+
+        ```
+        改了内容 / 可见性 ⇒ 普通任务（POST 整篇）
+        只改计数         ⇒ **计数任务**（PUT 只写 like_count / comment_count）✅
+        只改 updated_at   ⇒ 不用通知（* 那只是时间戳）
+        ```
+        """
+        changed = set(kwargs) - {"updated_at"}
+        if not changed:
+            return super().update(**kwargs)
+
+        ids = list(self.values_list("pk", flat=True))
         rows = super().update(**kwargs)
+
+        # ★ 只动了计数 ⇒ 走部分更新，* 不会把正文覆盖回旧版本 ⚠
+        counts_only = not (changed - {"comment_count", "like_count"})
         if ids:
             from django.db import transaction
 
-            transaction.on_commit(lambda ids=ids: _enqueue_index(ids))
+            transaction.on_commit(
+                lambda ids=ids, c=counts_only: _enqueue_index(ids, counts_only=c)
+            )
         return rows
 
 

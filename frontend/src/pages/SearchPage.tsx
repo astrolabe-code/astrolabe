@@ -313,6 +313,9 @@ export default function SearchPage() {
                       n.project?.project_name || '',
                       n.created_by ? `@${n.created_by}` : '',
                       fmt(n.created_at),
+                      // ★ 计数：* 0 就不显示，* 免得满屏都是「0 赞 0 评论」⚠
+                      n.like_count > 0 ? `${n.like_count} 赞` : '',
+                      n.comment_count > 0 ? `${n.comment_count} 评论` : '',
                     ]}
                     snippet={(n.excerpt || '').replace(/[#*`>\n]/g, ' ').slice(0, 90)}
                     onClick={() => openNote(n)}

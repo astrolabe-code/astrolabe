@@ -17,8 +17,12 @@ PostgreSQL 是真相，Meilisearch 是副本
 
 | 类型 | 现象 |
 |---|---|
-| **缺失**（库里有、索引没有） | 新笔记搜不到 |
-| **残留**（索引有、库里没有/不该有） | 点进去 404，或改过的标题还是旧的 |
+| **缺失**（数据库有、索引没有） | 新笔记搜不到 |
+| **残留**（**索引里**有、数据库里不该有） | 点进去 404，或改过的标题还是旧的 |
+
+⚠★★ **本模块只读数据库，不写数据库**：
+  · 这里的"删"= 删 **Meilisearch 里的索引条目**（`DELETE /indexes/notes/documents/<id>`）
+  · ⛔ 绝不会删 `core_note` / `core_project` 的任何一行 ⚠
 
 ## ★ 什么时候跑
 
@@ -71,7 +75,7 @@ def searchable_ids() -> set:
 
 
 def _why(note_id: int) -> str:
-    """★★ **这条为什么不该在索引里**（* 2026-10-23 补：可见性要能说清原因）⚠
+    """★★ **这条为什么不该在索引里**（* 只读数据库，* 判断完就删索引条目）⚠
 
     > 「索引对账顺便把项目和笔记的公开性，是否隐藏也检查了。私有的，被隐藏的项目或
     >   笔记要把其索引从 meilisearch 里删除。」
@@ -126,9 +130,12 @@ def reconcile(fix: bool = True) -> dict:
     from search import client
 
     pg = searchable_ids()
-    docs = client.list_documents(client.NOTES_INDEX, "id,updated_at")
+    docs = client.list_documents(
+        client.NOTES_INDEX, "id,updated_at,like_count,comment_count"
+    )
     index = {d["id"] for d in docs if "id" in d}
     doc_ts = {d["id"]: d.get("updated_at") for d in docs if "id" in d}
+    doc_by_id = {d["id"]: d for d in docs if "id" in d}
 
     missing = sorted(pg - index)
     stale = sorted(index - pg)
@@ -143,6 +150,23 @@ def reconcile(fix: bool = True) -> dict:
         nid for nid, ts in doc_ts.items() if nid in pg_ts and ts != pg_ts[nid]
     )
 
+    # ★★ 计数对不上（* 赞/评论 漏了通知）⇒ 也补一次"仅计数"任务 ⚠
+    from core import like_cache
+    from core.models import NoteLike
+
+    db_comment = dict(
+        Note.objects.filter(pk__in=(pg & index)).values_list("pk", "comment_count")
+    )
+    stale_counts = []
+    for nid in sorted(pg & index):
+        doc = doc_by_id.get(nid) or {}
+        db_c = int(db_comment.get(nid) or 0)
+        db_l = like_cache.note_count(
+            nid, lambda nid=nid: NoteLike.objects.filter(note_id=nid).count()
+        )
+        if int(doc.get("like_count") or 0) != db_l or int(doc.get("comment_count") or 0) != db_c:
+            stale_counts.append(nid)
+
     # ★ 逐条说明"为什么该删"（* 私有 / 隐藏 / 项目私有 / 已删）⚠
     reasons = {nid: _why(nid) for nid in stale}
     summary = dict(Counter(reasons.values()))
@@ -154,7 +178,7 @@ def reconcile(fix: bool = True) -> dict:
         # ★ 缺的：* 重新投递（走正常索引链路，* 幂等）⚠
         for note_id in missing:
             sync.enqueue_note(note_id)
-        # ★ 多的：* 直接删文档（* 库里都不该有了，* 不必等队列）⚠
+        # ★ 多的：删 **Meilisearch 里的索引条目**（* 数据库不动，* 只是从搜索结果里移除）⚠
         for note_id in stale:
             try:
                 client.delete_document(client.NOTES_INDEX, note_id)
@@ -162,7 +186,9 @@ def reconcile(fix: bool = True) -> dict:
                 logger.warning("对账删除失败 note=%s", note_id, exc_info=True)
         for note_id in outdated:
             sync.enqueue_note(note_id)
-        fixed = len(missing) + len(stale) + len(outdated)
+        for note_id in stale_counts:
+            sync.enqueue_note(note_id, counts_only=True)
+        fixed = len(missing) + len(stale) + len(outdated) + len(stale_counts)
 
     return {
         "pg": len(pg),
@@ -170,7 +196,10 @@ def reconcile(fix: bool = True) -> dict:
         "missing": missing,
         "stale": stale,
         "outdated": outdated,
+        "stale_counts": stale_counts,
         "fixed": fixed,
+        # ★ 这里的 id 是"**索引里多出来的条目**"，* 对应的数据库行可能还在
+        #   （* 只是转私有 / 被隐藏）⇒ 删的是索引条目，⛔ 不是数据 ⚠
         "reasons": reasons,
         "summary": summary,
     }

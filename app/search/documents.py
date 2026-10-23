@@ -61,7 +61,22 @@ def _ts(value) -> int:
     return int(value.timestamp() * 1000)
 
 
-def build_document(note: Note) -> dict:
+def _count_likes(note) -> int:
+    """★ 赞数（* 优先走 Redis 缓存，* miss 才 COUNT）⚠"""
+    from core import like_cache
+    from core.models import NoteLike
+
+    try:
+        return int(
+            like_cache.note_count(
+                note.pk, lambda: NoteLike.objects.filter(note_id=note.pk).count()
+            )
+        )
+    except Exception:
+        return 0
+
+
+def build_document(note: Note, like_count: int | None = None) -> dict:
     """★ 构造一份索引文档（* 调用方保证 `is_searchable(note)` 为真）⚠"""
     project = note.project
     return {
@@ -81,6 +96,10 @@ def build_document(note: Note) -> dict:
         "created_by": note.created_by.get_username() if note.created_by_id else "",
         "created_at": _ts(note.created_at),
         "updated_at": _ts(note.updated_at),
+        # ★★ 两个计数进索引（* 2026-10-23 所有者：用户靠它判断值不值得点进去）⚠
+        #   · · 慢几秒没关系；* 计数变更走 **PUT 部分更新**，碰不到正文 ✅
+        "like_count": int(like_count) if like_count is not None else _count_likes(note),
+        "comment_count": int(note.comment_count or 0),
     }
 
 

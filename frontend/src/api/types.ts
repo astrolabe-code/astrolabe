@@ -737,6 +737,9 @@ export interface NoteSearchItem {
   updated_at: string
   /** ★ 正文摘要（* 索引里带上来的前 140 字）⚠ */
   excerpt: string
+  /** ★ 赞数 / 评论数（* 索引里的值，* 慢几秒；* 用户靠它判断值不值得点）⚠ */
+  like_count: number
+  comment_count: number
 }
 
 export interface CommentListData {

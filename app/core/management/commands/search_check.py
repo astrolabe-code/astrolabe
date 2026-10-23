@@ -34,18 +34,25 @@ class Command(BaseCommand):
         self.stdout.write(
             f"PG 可搜 {r['pg']} · 索引 {r['index']} · "
             f"缺失 {len(r['missing'])} · 残留 {len(r['stale'])} · "
-            f"内容过期 {len(r['outdated'])}"
+            f"内容过期 {len(r['outdated'])} · 计数过期 {len(r['stale_counts'])}"
         )
         if r["missing"]:
-            self.stdout.write(f"  缺失 id（库里有、索引没有）: {r['missing'][:20]}")
+            self.stdout.write(
+                f"  缺失（数据库有、索引没有）: {r['missing'][:20]}  ← 重新投递索引任务"
+            )
         if r["stale"]:
-            self.stdout.write(f"  残留 id（索引有、库里不该有）: {r['stale'][:20]}")
+            self.stdout.write(
+                f"  残留索引条目（Meilisearch 有、数据库不该有）: {r['stale'][:20]}"
+                "  ← 只删索引条目，数据库不动"
+            )
             # ★ 逐条给出原因：* 私有 / 隐藏 / 项目私有 / 已删 ⚠
             for nid, why in list(r["reasons"].items())[:10]:
                 self.stdout.write(f"    - {nid}: {why}")
+        if r["stale_counts"]:
+            self.stdout.write(f"  计数过期（赞/评论 与索引不一致）: {r['stale_counts'][:20]}")
         if r["outdated"]:
             self.stdout.write(
-                f"  内容过期 id（updated_at 对不上，* 索引里是旧内容）: {r['outdated'][:20]}"
+                f"  内容过期（updated_at 对不上，索引里是旧内容）: {r['outdated'][:20]}"
             )
 
         if options["fix"] and r["fixed"]:

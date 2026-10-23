@@ -16,6 +16,7 @@ docker compose exec -T web python manage.py search_reindex --keep
 - Meilisearch 没有 TTL、不会自动过期 ⇒ **对账/重建是唯一兜底** ⚠
 """
 from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Count
 from django.utils import timezone
 from django.db.models import Q
 
@@ -35,7 +36,7 @@ class Command(BaseCommand):
         batch: list[dict] = []
         written = 0
         for note in qs.iterator(chunk_size=size):
-            batch.append(documents.build_document(note))
+            batch.append(documents.build_document(note, like_count=note.like_count))
             if len(batch) >= size:
                 client.add_documents(uid, batch)
                 written += len(batch)
@@ -75,6 +76,8 @@ class Command(BaseCommand):
                 | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE))
             )
             .select_related("project", "created_by")
+            # ★ 赞数用聚合一次算出来（* 否则每篇一次 COUNT）⚠
+            .annotate(like_count=Count("likes"))
             .order_by("pk")
         )
         total = qs.count()

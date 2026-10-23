@@ -481,6 +481,10 @@ def _search_item(d: dict) -> dict:
         "created_at": d.get("created_at") or "",
         "updated_at": d.get("updated_at") or "",
         "excerpt": (d.get("body") or d.get("excerpt") or "").strip()[:140],
+        # ★★ 两个计数（* 用户靠它判断值不值得点进去）⚠
+        #   · · Meili 路径 = 索引里的值（* 慢几秒）；PG 路径 = 当下的值 ✅
+        "like_count": int(d.get("like_count") or 0),
+        "comment_count": int(d.get("comment_count") or 0),
     }
 
 
@@ -510,6 +514,8 @@ def _hit_to_item(h: dict) -> dict:
             "created_at": _ms_to_iso(h.get("created_at")),
             "updated_at": _ms_to_iso(h.get("updated_at")),
             "body": h.get("body") or "",
+            "like_count": h.get("like_count"),
+            "comment_count": h.get("comment_count"),
         }
     )
 
@@ -698,7 +704,11 @@ def _search_pg(request: HttpRequest):
         if checked is not None:
             # ★★ 命中：* 两个计数**现取**（* 缓存里不存，* 不会是 5 分钟前的旧数字）⚠
             return ok_flat(
-                total=len(checked), items=[_search_item(d) for d in checked]
+                total=len(checked),
+                items=[
+                    _search_item(d)
+                    for d in _attach_counts(checked, comment_counts)
+                ],
             )
         # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
 
@@ -743,8 +753,11 @@ def _search_pg(request: HttpRequest):
     #   · · 代价可接受：* 空查询本来就少，* 且真正常搜的还是那几个有结果的词 ✅
     if out:
         search_cache.put(search_cache.NS_NOTES, uid, kw, out)
-    # ★ 回退路径也吐瘦结构（* 与 Meili 路径保持同一 shape）⚠
-    return ok_flat(total=total, items=[_search_item(d) for d in out])
+    # ★ 回退路径也吐瘦结构（* 与 Meili 路径保持同一 shape）
+    #   · · 计数要现取（* 缓存里不存计数，* 见 `_verify_note_cache` 的注释）⚠
+    return ok_flat(
+        total=total, items=[_search_item(d) for d in _attach_counts(out, comment_counts)]
+    )
 
 
 @require_http_methods(["GET"])

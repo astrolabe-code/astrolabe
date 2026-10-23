@@ -124,6 +124,11 @@ def _like(request: HttpRequest, note: Note, user):
     # ★★ 只写赞行 —— **不再维护 like_count 缓存**（* 所有者：「把这两个缓存去掉」）⚠
     with transaction.atomic():
         _like_row, created = NoteLike.objects.get_or_create(note=note, user=user)
+        # ★ 赞数是索引里的字段 ⇒ 只更新计数（PUT，* 碰不到正文）⚠
+        if created:
+            from search import sync
+
+            transaction.on_commit(lambda: sync.enqueue_note(note.pk, counts_only=True))
 
     # ★ 事务提交后再调缓存（* 只改已存在的 key，* 不存在就不管）⚠
     if created:
@@ -146,6 +151,10 @@ def _unlike(request: HttpRequest, note: Note, user):
     # ★★ 只删赞行 —— 计数的**真相**在数据库；缓存随后同步 ⚠
     with transaction.atomic():
         removed, _ = NoteLike.objects.filter(note=note, user=user).delete()
+        if removed:
+            from search import sync
+
+            transaction.on_commit(lambda: sync.enqueue_note(note.pk, counts_only=True))
 
     if removed:
         like_cache.bump_note(note.pk, -1)

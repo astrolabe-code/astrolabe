@@ -68,14 +68,29 @@ def _redis():
     return _conn
 
 
-def enqueue_note(note_id: int) -> bool:
-    """★ 把一个笔记 id 投进索引队列（* 幂等：排队期间重复投递只留一条）⚠"""
+#: ★★ 队列成员前缀：`c:` = **只更新计数**（* PUT 部分更新，碰不到正文）⚠
+COUNTS_PREFIX = "c:"
+
+
+def enqueue_note(note_id: int, counts_only: bool = False) -> bool:
+    """★ 把一个笔记 id 投进索引队列（* 幂等：排队期间重复投递只留一条）⚠
+
+    ## ★★ 两种任务，**写入的字段互斥**（2026-10-23）
+
+    ```
+    普通任务（内容变）⇒ POST 整篇覆盖 —— 文档里带的计数是**当下从库读的** ✅
+    计数任务（赞/评论）⇒ PUT 只写 {id, like_count, comment_count}
+                        ⇒ 物理上碰不到 title / body / project ⚠
+    ⇒ 两边永远不会互相覆盖（* 这是所有者要的"互斥"）✅
+    ```
+    """
     if not client.enabled():
         return False
+    member = f"{COUNTS_PREFIX}{note_id}" if counts_only else str(note_id)
     try:
         r = _redis()
-        if r.sadd(PENDING_KEY, str(note_id)):
-            r.lpush(QUEUE_KEY, str(note_id))
+        if r.sadd(PENDING_KEY, member):
+            r.lpush(QUEUE_KEY, member)
         return True
     except Exception:
         # ⚠ 搜索索引坏了不能影响笔记保存；* 丢了靠 reindex 兜
@@ -83,9 +98,9 @@ def enqueue_note(note_id: int) -> bool:
         return False
 
 
-def enqueue_many(note_ids) -> None:
+def enqueue_many(note_ids, counts_only: bool = False) -> None:
     for nid in note_ids:
-        enqueue_note(nid)
+        enqueue_note(nid, counts_only=counts_only)
 
 
 def enqueue_project_notes(project_ref: str) -> int:
@@ -115,8 +130,14 @@ def _schedule_after_commit(note_id: int) -> None:
 # 消费
 # ---------------------------------------------------------------------------
 
-def apply(note_id: int) -> None:
-    """★ 把**当前数据库状态**同步到索引（* 永远以库为准，⛔ 不用消息里的快照）⚠"""
+def apply(note_id: int, counts_only: bool = False) -> None:
+    """★ 把**当前数据库状态**同步到索引（* 永远以库为准，⛔ 不用消息里的快照）⚠
+
+    ```
+    counts_only=False ⇒ POST 整篇（* 内容、标题、项目…）
+    counts_only=True  ⇒ PUT 只写计数 —— * 不会把正文改回旧版本 ⚠
+    ```
+    """
     note = (
         Note.objects.filter(pk=note_id)
         .select_related("project", "created_by")
@@ -126,6 +147,20 @@ def apply(note_id: int) -> None:
     if note is None or not documents.is_searchable(note):
         # 删了 / 转私有 / 项目转私有 ⇒ 从索引里移除
         client.delete_document(client.NOTES_INDEX, note_id)
+        return
+
+    if counts_only:
+        client.add_documents(
+            client.NOTES_INDEX,
+            [
+                {
+                    "id": note.pk,
+                    "like_count": documents._count_likes(note),
+                    "comment_count": int(note.comment_count or 0),
+                }
+            ],
+            replace=False,  # ★ PUT：只改这三个字段
+        )
         return
 
     client.add_documents(client.NOTES_INDEX, [documents.build_document(note)])
@@ -140,37 +175,42 @@ def drain_once(timeout: int = 2) -> bool:
     if due:
         for raw in due:
             r.zrem(RETRY_KEY, raw)
-            _run(r, int(raw))
+            _run(r, raw)
         return True
 
     # ② 新任务
     item = r.brpop(QUEUE_KEY, timeout=timeout)
     if not item:
         return False
-    _run(r, int(item[1]))
+    _run(r, item[1])
     return True
 
 
-def _run(r, note_id: int) -> None:
+def _run(r, member: str) -> None:
+    """★ 处理一条队列表项（* 可能是 `123` 或 `c:123`）⚠"""
+    raw = str(member)
+    counts_only = raw.startswith(COUNTS_PREFIX)
+    note_id = int(raw[len(COUNTS_PREFIX):] if counts_only else raw)
+
     try:
-        apply(note_id)
+        apply(note_id, counts_only=counts_only)
     except Exception as exc:
-        attempts = r.hincrby(ATTEMPTS_KEY, str(note_id), 1)
+        attempts = r.hincrby(ATTEMPTS_KEY, raw, 1)
         if attempts >= MAX_ATTEMPTS:
-            logger.error("索引同步放弃 note=%s：%s", note_id, exc)
-            r.hdel(ATTEMPTS_KEY, str(note_id))
-            r.srem(PENDING_KEY, str(note_id))
+            logger.error("索引同步放弃 %s：%s", raw, exc)
+            r.hdel(ATTEMPTS_KEY, raw)
+            r.srem(PENDING_KEY, raw)
             return
 
         # 指数退避：2 / 4 / 8 / 16 秒
         delay = 2 ** attempts
-        r.zadd(RETRY_KEY, {str(note_id): _now() + delay})
-        logger.warning("索引同步失败 note=%s（第 %s 次，%ss 后重试）：%s",
-                       note_id, attempts, delay, exc)
+        r.zadd(RETRY_KEY, {raw: _now() + delay})
+        logger.warning("索引同步失败 %s（第 %s 次，%ss 后重试）：%s",
+                       raw, attempts, delay, exc)
         return
 
-    r.hdel(ATTEMPTS_KEY, str(note_id))
-    r.srem(PENDING_KEY, str(note_id))
+    r.hdel(ATTEMPTS_KEY, raw)
+    r.srem(PENDING_KEY, raw)
 
 
 def _now() -> float:

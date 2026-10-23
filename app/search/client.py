@@ -121,11 +121,19 @@ def delete_all_documents(uid: str = NOTES_INDEX) -> None:
     wait_task(task["taskUid"])
 
 
-def add_documents(uid: str, docs: list[dict]) -> None:
-    """★ 批量写（* Meili 单次上限约 100MB / 10 万文档，* 我们按 500 一批足够）⚠"""
+def add_documents(uid: str, docs: list[dict], replace: bool = True) -> None:
+    """★ 批量写 ⚠
+
+    ```
+    replace=True  ⇒ POST：**整篇覆盖**（* 内容变更用这个）
+    replace=False ⇒ PUT ：**只改给出的字段**，* 其余保留 ✅
+                    （* 计数变更用这个，* 碰不到 title/body）⚠
+    ```
+    """
     if not docs:
         return
-    task = _request("POST", f"/indexes/{uid}/documents", docs)
+    method = "POST" if replace else "PUT"
+    task = _request(method, f"/indexes/{uid}/documents", docs)
     wait_task(task["taskUid"])
 
 

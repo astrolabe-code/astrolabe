@@ -21,7 +21,8 @@ import { countMentions } from './mention'
  *   ★★ 「回复谁」就记在这段文本里（* ⛔ 没有 reply_to 列，* 见 `B214`）⚠
  */
 interface CommentComposerProps {
-  noteId: number
+  /** ★ 笔记的对外标识（* ref，⛔ 不是自增 pk）⚠ */
+  noteId: string
   anchor: AnchorKind
   /** 段评必填 */
   /** ★ 段评锚点 = 段落指纹（`B235`）⚠ */

@@ -19,7 +19,8 @@ import { useMe } from '../../hooks/useMe'
  * ⚠ `pending`（防抖窗口里）给一个极轻的视觉提示 —— ⛔ 不做倒计时动画（分散注意）⚠
  */
 interface LikeButtonProps {
-  noteId: number
+  /** ★ 笔记的对外标识（* ref，⛔ 不是自增 pk）⚠ */
+  noteId: string
   /** 章赞（默认）/ 段赞 */
   anchor?: AnchorKind
   /** 段赞必填 */
@@ -36,10 +37,16 @@ export default function LikeButton({
   const me = useMe()
   const authed = !!me.data?.authenticated
   const status = useLikeStatus(noteId, anchor, blockId)
-  const t = useLikeToggle(noteId, anchor, {
-    liked: status.data?.liked ?? false,
-    like_count: status.data?.like_count ?? 0,
-  })
+  const t = useLikeToggle(
+    noteId,
+    anchor,
+    {
+      liked: status.data?.liked ?? false,
+      like_count: status.data?.like_count ?? 0,
+    },
+    // ★★ 段赞把 blockId 传下去（* 之前漏了 ⇒* 后端当章赞、* 计数不动）⚠
+    blockId,
+  )
 
   const dim = size === 'sm' ? 12 : 15
   const liked = t.liked

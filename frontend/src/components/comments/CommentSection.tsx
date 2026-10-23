@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Comment } from '../../api/types'
 import { useComments } from '../../query/comments'
 import { errorMessage } from '../../api/errors'
@@ -19,7 +20,8 @@ import type { DeletePerm } from './perm'
  * ⚠ 写入口只对**登录用户**渲染（* 任何登录用户就能评，* `B207`⑤）✅
  */
 interface CommentSectionProps {
-  noteId: number
+  /** ★ 笔记的对外标识（* ref，⛔ 不是自增 pk）⚠ */
+  noteId: string
   /** 登录用户才写得动 */
   authed: boolean
   /** 删除判据上下文（逐条判：评论作者/项目成员/管理员） */
@@ -27,7 +29,9 @@ interface CommentSectionProps {
 }
 
 export default function CommentSection({ noteId, authed, perm }: CommentSectionProps) {
-  const comments = useComments(noteId, { anchor_kind: 'chapter', limit: 50 })
+  // ★★ 排序：最新 / 最热（* 所有者：「评论要能按时间和热度排序」）⚠
+  const [order, setOrder] = useState<'time' | 'hot'>('time')
+  const comments = useComments(noteId, { anchor_kind: 'chapter', limit: 50, order })
 
   if (comments.isError) {
     return (
@@ -46,6 +50,39 @@ export default function CommentSection({ noteId, authed, perm }: CommentSectionP
         <span className="faint" style={{ fontSize: 11.5 }}>
           {comments.isLoading ? '…' : items.length}
         </span>
+
+        {/* ★ 排序切换（* 最新 / 最热）⚠ */}
+        <div
+          style={{
+            marginLeft: 'auto',
+            display: 'inline-flex',
+            gap: 2,
+            padding: 2,
+            borderRadius: 999,
+            background: 'var(--bg-deep)',
+          }}
+        >
+          {(['time', 'hot'] as const).map((o) => (
+            <button
+              key={o}
+              type="button"
+              onClick={() => setOrder(o)}
+              style={{
+                padding: '2px 10px',
+                borderRadius: 999,
+                fontSize: 11,
+                lineHeight: '17px',
+                border: 'none',
+                cursor: 'pointer',
+                background: order === o ? 'var(--card)' : 'transparent',
+                color: order === o ? 'var(--text-main)' : 'var(--text-sub)',
+                boxShadow: order === o ? '0 1px 3px rgba(15,23,42,.12)' : 'none',
+              }}
+            >
+              {o === 'time' ? '最新' : '最热'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {authed ? (

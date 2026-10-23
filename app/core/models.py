@@ -1507,6 +1507,30 @@ class NoteQuerySet(models.QuerySet):
         return rows
 
 
+def note_by_ref(ref, qs=None):
+    """★★ **按对外标识取笔记**（`2026-10-23`）⚠
+
+    ```
+    优先按 `ref`（随机 16 位十六进制）
+    找不到且是全数字 ⇒ 回退按主键（* 兼容旧链接，* 别让老 URL 全 404）
+    ```
+
+    ⚠ 返回 `None` = 不存在（* 调用方统一回 404，* 不区分"没有"和"无权限"）⚠
+    """
+    from core.models import Note
+
+    base = qs if qs is not None else Note.objects.all()
+    raw = str(ref or "").strip()
+    if not raw:
+        return None
+    note = base.filter(ref=raw).first()
+    if note is not None:
+        return note
+    if raw.isdigit():
+        return base.filter(pk=int(raw)).first()
+    return None
+
+
 class Note(TimeStampedModel):
     """★★ **一篇笔记** —— ★ 用户记下的一段 markdown 想法。
 
@@ -1592,6 +1616,12 @@ class Note(TimeStampedModel):
     #: ★★ **盒子**（* `flash` 灵光一闪 / `question` 提问质疑 / …）——
     #: ★ 所有者：「**笔记以后我会划分为几个类型…分别放入一个节点下的四个不同盒子**」
     #: ⚠★ **固定枚举**（* 所有者 2026-10-14：*「**可增删最多四五个，你整个表干什么？**」）✅
+    # ★★★ 2026-10-23 所有者：「新建笔记带着笔记ID，不要是自增数字主键，不然，别人轻松
+    #   就能看到，推测出数据库的一些信息。」
+    #   · · 对外一律用这个随机标识（* 16 位十六进制），⛔ URL 里不出现自增 pk ⚠
+    #   · · 沿用 `project_ref` 的命名习惯 ⇒ 就叫 `ref` ✅
+    ref = models.CharField(max_length=16, unique=True, blank=True, default="", db_index=True)
+
     kind = models.CharField(max_length=16, default="flash")
     #: ★ 标题（★ 允许用户手改；* 规则见类文档 ①）⚠
     title = models.CharField(max_length=120, blank=True, default="")
@@ -1709,6 +1739,14 @@ class Note(TimeStampedModel):
         ⚠★ 与 `Project.save()` 同一套路（* 所有者当时就说过：
           「不用每条写路径都去加上更新时间，万一写多了，漏了一条路径，那就糟了」）⚠
         """
+        # ★ 对外标识（* 随机 16 位）—— ⛔ 空值会让 URL 出现空串，* 这里兜底 ⚠
+        if not self.ref:
+            import secrets
+
+            self.ref = secrets.token_hex(8)
+            if update_fields is not None:
+                update_fields = set(update_fields) | {"ref"}
+
         if update_fields is not None and "updated_at" not in update_fields:
             update_fields = set(update_fields) | {"updated_at"}
         super().save(*args, update_fields=update_fields, **kwargs)

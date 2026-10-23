@@ -98,7 +98,7 @@ export default function SearchPage() {
 
   const openProject = (ref: string) => navigate(`/p/${ref}`)
   const openNote = (n: NoteSearchItem) =>
-    n.project?.project_ref ? navigate(`/p/${n.project.project_ref}/notes/${n.id}`) : navigate('/')
+    n.project?.project_ref ? navigate(`/p/${n.project.project_ref}/notes/${n.ref}`) : navigate('/')
 
   // ★ 滚到底部自动加载下一页（* 像 CSDN 那样往下滑）⚠
   const sentinel = useRef<HTMLDivElement>(null)

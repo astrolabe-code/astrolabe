@@ -82,7 +82,7 @@ export default function RecycleBinPage() {
     setErr('')
     setMsg(null)
     try {
-      await undelete.mutateAsync(n.id)
+      await undelete.mutateAsync(n.ref)
       setMsg({ text: `已恢复「${n.title || '（无标题）'}」`, ref: n.project_ref })
     } catch (e) {
       setErr(errorMessage(e))

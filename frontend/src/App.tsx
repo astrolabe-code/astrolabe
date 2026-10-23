@@ -4,8 +4,10 @@ import SkyFx from './components/SkyFx'
 import TopNav from './components/TopNav'
 import Home from './pages/Home'
 import Workspace from './pages/Workspace'
+import SearchPage from './pages/SearchPage'
 import ProjectPage from './pages/ProjectPage'
 import NotePage from './pages/NotePage'
+import NoteEditPage from './pages/NoteEditPage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import RecycleBinPage from './pages/RecycleBinPage'
@@ -69,6 +71,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/workspace" element={<Workspace />} />
+        {/* ★★ D109：独立搜索结果页（* 路径先走 /search，* 以后换子域名只改路由）⚠ */}
+        <Route path="/search" element={<SearchPage />} />
         {/* ★★ `F2`（D92）：**项目页 + 设置两页** ✅
             · `/p/:projectRef`     双栏：左节点列表 + 右笔记面板（图谱画布是 2b，未做）
             · `/p/:projectRef/settings`  项目设置（owner ∨ 协作者，后端判）
@@ -78,6 +82,9 @@ export default function App() {
         <Route path="/p/:projectRef" element={<ProjectPage />} />
         {/* ★★ `F3`：**笔记阅读页** —— 评论 / 点赞 / 段评都挂在笔记上 ⇒* 它需要
             一个「能停下来读」的地方（* 可分享 URL + 纵向空间），* ⛔ 不是抽屉 ✅ */}
+        {/* ⚠ 这两条必须在 `/notes/:noteId` 之前 —— 否则 `new` 会被当成 noteId ⚠ */}
+        <Route path="/p/:projectRef/notes/new" element={<NoteEditPage />} />
+        <Route path="/p/:projectRef/notes/:noteId/edit" element={<NoteEditPage />} />
         <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
         <Route path="/p/:projectRef/settings" element={<ProjectSettingsPage />} />
         {/* ★★ `D98`（2026-10-17）：**图谱页** —— 代码结构可视化（AntV G6）✅

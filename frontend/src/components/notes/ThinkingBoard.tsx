@@ -525,7 +525,7 @@ export default function ThinkingBoard({
                   key={n.id}
                   onPointerDown={(e) => onPointerDown(e, n.id)}
                   onDoubleClick={() =>
-                    navigate(`/p/${encodeURIComponent(projectRef)}/notes/${n.id}`)
+                    navigate(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}`)
                   }
                   title="拖动排布 · 右下角改大小 · 双击打开"
                   style={{

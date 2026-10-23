@@ -44,13 +44,13 @@ from django.http import HttpRequest
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
-from core.models import Note, NoteLike
+from core.models import Note, note_by_ref, NoteLike
 from web.http import fail, ok, read_json
 from web.permissions import can_like, current_user, note_readable
 
 
 @require_http_methods(["GET", "POST", "DELETE"])
-def collection(request: HttpRequest, note_id: int):
+def collection(request: HttpRequest, note_ref: str):
     """`GET/POST/DELETE /api/notes/<id>/likes/`。
 
     ## GET（`B211`③：* 初始态的服务端来源）
@@ -70,7 +70,7 @@ def collection(request: HttpRequest, note_id: int):
 
     ⚠★ 两者都**幂等**（* B203⑤）—— * 重复点赞不 409、* 取消没点过的也不 404 ⚠
     """
-    note = Note.objects.filter(pk=note_id).select_related("node").first()
+    note = note_by_ref(note_ref, Note.objects.select_related("node"))
     if note is None or not note_readable(request, note):
         return fail("笔记不存在", 404, code="not_found")
 

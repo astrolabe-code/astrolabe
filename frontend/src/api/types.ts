@@ -620,6 +620,8 @@ export interface NoteBlock {
 
 export interface Note {
   id: number
+  /** ★ 对外标识（* URL / 接口都用它，⛔ 不暴露自增 pk）⚠ */
+  ref: string
   node_id: number
   kind: NoteKind
   title: string
@@ -725,6 +727,8 @@ export interface Comment {
  */
 export interface NoteSearchItem {
   id: number
+  /** ★ 对外标识（* 打开笔记用它）⚠ */
+  ref: string
   title: string
   kind: string
   project: {

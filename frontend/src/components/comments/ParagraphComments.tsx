@@ -33,7 +33,8 @@ import type { DeletePerm } from './perm'
  * ★ 未登录 ⇒ 不拦截右键（* 也就没有写段评入口）⚠
  */
 interface ParagraphCommentsProps {
-  noteId: number
+  /** ★ 笔记的对外标识（* ref，⛔ 不是自增 pk）⚠ */
+  noteId: string
   block: NoteBlock
   authed: boolean
   /** 删除判据上下文（逐条判） */

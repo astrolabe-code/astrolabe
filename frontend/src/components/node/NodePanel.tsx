@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
@@ -6,7 +7,6 @@ import { useDeleteNote } from '../../query/notes'
 
 import { errorMessage } from '../../api/errors'
 import ConfirmDialog from '../ui/ConfirmDialog'
-import NoteEditor from '../notes/NoteEditor'
 import NoteSection from '../notes/NoteSection'
 
 // ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
@@ -29,7 +29,7 @@ const KIND_COLOR: Record<string, string> = {
  * |---|---|
  * | ① | 节点信息（名称 / qname / 文件:行 / 类型 / 语言） |
  * | ② | **笔记区**（`NoteSection`：按 kind 分组） |
- * | ③ | 编辑器 / 只读查看（`NoteEditor`） |
+ * | ③ | 新建 / 编辑 ⇒ 跳**独立页面**（`/notes/new` · `/notes/:id/edit`） |
  * | ④ | 删除确认（`ConfirmDialog` + `B210` 文案） |
  *
  * ⚠★ 删除文案是**硬约束**（`D92`⑤ / `B210` / `D86③）：
@@ -50,6 +50,8 @@ interface NodePanelProps {
   canEditPath?: boolean
   /** ★ 移动端：* 不画自己的卡片（* 由外层写作区统一提供背景/边框）⚠ */
   flat?: boolean
+  /** ★ `?think=1`：* 节点就绪后自动打开思考白板（* 首页直达用）⚠ */
+  autoThink?: boolean
   /** ★★ `D106`：加入路径 */
   onAddToPath?: () => void
   /** ★★ `D106`：从路径移除 */
@@ -64,10 +66,11 @@ export default function NodePanel({
   inPathOrdinal,
   canEditPath,
   onAddToPath,
-  onRemoveFromPath,  flat,
+  onRemoveFromPath,
+  flat,
+  autoThink,
 }: NodePanelProps) {
-  const [editing, setEditing] = useState<Note | null>(null)
-  const [creating, setCreating] = useState(false)
+  const navigate = useNavigate()
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
@@ -91,7 +94,7 @@ export default function NodePanel({
     if (!pendingDelete) return
     setDelErr('')
     try {
-      await del.mutateAsync(pendingDelete.id)
+      await del.mutateAsync(pendingDelete.ref)
       setPendingDelete(null)
     } catch (e) {
       setDelErr(errorMessage(e))
@@ -321,36 +324,27 @@ export default function NodePanel({
             /* ★★ `F3`：点卡片进**阅读页**（NoteCard 内部 navigate）——
                这里不需要再做跳转，⛔ 不留空转的入口 ✅ */
           }}
-          onCreateNote={() => setCreating(true)}
-          onEditNote={setEditing}
+          /* ★ 新建 / 编辑都改成**独立页面**（* 弹窗太挤）⚠ */
+          /* ⚠ 带 `from=` ⇒ 保存后回跳到这个面板，* 而不是掉到阅读页 ⚠ */
+          onCreateNote={() =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&from=${encodeURIComponent(location.pathname + location.search)}`,
+            )
+          }
+          onEditNote={(n) =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
+                `?from=${encodeURIComponent(location.pathname + location.search)}`,
+            )
+          }
           onDeleteNote={setPendingDelete}
+          autoThink={autoThink}
         />
       </div>
 
       {/* ③ 编辑器（只承担「新建 / 编辑」—— 阅读与互动在 NotePage） */}
-      <NoteEditor
-        open={creating || !!editing}
-        note={editing}
-        projectRef={projectRef}
-        nodeId={node.vid}
-        // ★★★ 点弹窗里的「删除」⇒ **先关弹窗**，再弹确认框（* 所有者：
-        //   「按了弹窗里的删除按钮删除了笔记，结果这个弹窗还不消失」）⚠
-        onDelete={
-          editing
-            ? () => {
-                setPendingDelete(editing)
-                setEditing(null)
-              }
-            : undefined
-        }
-        onClose={() => {
-          setCreating(false)
-          setEditing(null)
-        }}
-        onSaved={() => {
-          // ⚠ 保存后刷新由 react-query 的 invalidate 负责（useUpdateNote 内部已做）✅
-        }}
-      />
+
 
       {/* ④ 删除确认 */}
       <ConfirmDialog

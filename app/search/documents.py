@@ -81,6 +81,8 @@ def build_document(note: Note, like_count: int | None = None) -> dict:
     project = note.project
     return {
         "id": note.pk,
+        # ★ 对外标识（* 搜索结果直接给前端做路由，⛔ 不暴露自增 pk）⚠
+        "ref": note.ref,
         "title": note.title or "",
         "body": (note.body or "")[:BODY_INDEX_MAX],
         "kind": note.kind or "",

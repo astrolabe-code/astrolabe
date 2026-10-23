@@ -46,7 +46,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
-from core.models import Note, NoteLike, Project
+from core.models import Note, note_by_ref, NoteLike, Project
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
 from graph import scope
@@ -326,6 +326,8 @@ def _search_item(d: dict) -> dict:
     """
     return {
         "id": d.get("id"),
+        # ★ 对外标识（* 前端路由用；* 旧索引没有这个字段时回退 pk）⚠
+        "ref": d.get("ref") or str(d.get("id") or ""),
         "title": d.get("title") or "",
         "kind": d.get("kind") or "",
         "project": d.get("project")
@@ -360,6 +362,8 @@ def _hit_to_item(h: dict) -> dict:
     return _search_item(
         {
             "id": h.get("id"),
+            # ★★ 对外标识（* 必带，否则前端只能回退到自增 pk）⚠
+            "ref": h.get("ref"),
             "title": h.get("title"),
             "kind": h.get("kind"),
             "project": {
@@ -538,7 +542,7 @@ def suggest(request: HttpRequest):
 
 
 @require_http_methods(["GET", "PATCH", "DELETE"])
-def detail(request: HttpRequest, note_id: int):
+def detail(request: HttpRequest, note_ref: str):
     """`GET/PATCH/DELETE /api/notes/<id>/`。
 
     ## PATCH
@@ -557,7 +561,7 @@ def detail(request: HttpRequest, note_id: int):
       · · ★★ 管理员删是另一条路：* `POST /api/admin/notes/<id>/moderate/`
         `{action: take_down}` = **物理删、* 无恢复**（* `B208` / `B210`）⚠
     """
-    note = Note.objects.filter(pk=note_id).select_related("node").first()
+    note = note_by_ref(note_ref, Note.objects.select_related("node"))
     if note is None:
         return fail("笔记不存在", 404, code="not_found")
 
@@ -649,7 +653,7 @@ def deleted_bin(request: HttpRequest):
 
 
 @require_http_methods(["POST"])
-def undelete(request: HttpRequest, note_id: int):
+def undelete(request: HttpRequest, note_ref: str):
     """`POST /api/notes/<id>/undelete/` —— ★★ **从回收站恢复**（* `B210`⑥）⚠
 
     ⇒ `{note, blocks}`（* 与 PATCH 同形 ✅）
@@ -665,7 +669,7 @@ def undelete(request: HttpRequest, note_id: int):
     ⚠★ 软删期间**没有**任何人改过它的段落（* 它对所有人不可见）⇒
       realign 实际上是空转；* 照 `D86`② 走同一条路，* ❌ 不在这里抄近路 ⚠
     """
-    note = Note.objects.filter(pk=note_id).select_related("node").first()
+    note = note_by_ref(note_ref, Note.objects.select_related("node"))
     # ⚠ 不在回收站里（* 或根本没这篇）⇒* 404 ✅
     if note is None or note.deleted_at is None:
         return fail("笔记不存在（或不在回收站里）", 404, code="not_found")
@@ -866,6 +870,8 @@ def _note_json(n: Note, with_counts: bool = True) -> dict:
     """
     return {
         "id": n.pk,
+        # ★★ 对外标识（* URL / 接口都用它，⛔ 不用自增 pk）⚠
+        "ref": n.ref,
         # ★★ `B219`：* 对外发 stable_vid（* 内部主键不出门）；* 节点没了仍可从快照读 ✅
         "node_id": n.node_vid if n.node_vid is not None else 0,
         # ★★★ `B218`：* 节点快照（* 回收站显示「原节点：name @ file:line」用）⚠

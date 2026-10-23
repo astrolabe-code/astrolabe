@@ -56,12 +56,12 @@ export default function NoteCard({
   const meta = kindMeta(note.kind)
   const Icon = meta.icon
   // ★★ 「公开 / 私有」开关：* 与编辑弹窗里的同一个字段（`is_public`）联动 ⚠
-  const update = useUpdateNote(note.id)
+  const update = useUpdateNote(note.ref)
   return (
     <div
       className="card w-full text-left"
       style={{ padding: '10px 12px', cursor: 'pointer', position: 'relative' }}
-      onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.id}`)}
+      onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.ref}`)}
     >
       <div className="flex items-center gap-2 flex-wrap">
         {/* ★★ 类型标签用**该 kind 的专属色**（* 文字 / 边框 / 淡底同色系）⚠ */}

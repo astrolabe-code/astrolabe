@@ -47,7 +47,7 @@ const DEBOUNCE_MS = 1000
  * ⚠ 未登录也能调（返回 `liked:false` + 计数）—— 计数对所有人可见 ✅
  */
 export function useLikeStatus(
-  noteId: number | null | undefined,
+  noteId: string | null | undefined,
   anchor: AnchorKind = 'chapter',
   blockId?: number | null,
 ) {
@@ -71,7 +71,7 @@ export function useLikeStatus(
  *     （* 表现为：点段赞图标变了、计数不动，取消也是 `removed:false`）⚠
  */
 export function useLikeMutation(
-  noteId?: number | null,
+  noteId?: string | null,
   anchor: AnchorKind = 'chapter',
   blockId?: number | null,
 ) {
@@ -115,7 +115,7 @@ export interface LikeToggleState {
  *   定时器只保留**一个**（后到覆盖前到）⇒ 连续点击永远只发一次最终态 ✅
  */
 export function useLikeToggle(
-  noteId: number | null | undefined,
+  noteId: string | null | undefined,
   anchor: AnchorKind = 'chapter',
   initial: LikeToggleState = { liked: false, like_count: 0 },
   /** ★★ 段赞必传（* 否则后端当成章赞）⚠ */

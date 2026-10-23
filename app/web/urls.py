@@ -232,12 +232,12 @@ urlpatterns = [
     path("notes/import/", notes.import_notes, name="note-import"),
     # ★★ 全局笔记搜索（* 首页搜索框：* 标题 + 正文）⚠
     path("notes/search/", notes.search, name="note-search"),
-    path("notes/<int:note_id>/", notes.detail, name="note-detail"),
+    path("notes/<str:note_ref>/", notes.detail, name="note-detail"),
     # ------------------------------------------------------------ 评论（B201/B203）
     # ★★ 章评 + 段评【同表】；* `anchor_kind` **创建时定死**（* B203④）⚠
     # ★★ 楼中楼：* 默认只给顶层，* `?parent=<id>` 拉某条的回复（* B201②）⚠
     path(
-        "notes/<int:note_id>/comments/",
+        "notes/<str:note_ref>/comments/",
         comments.collection,
         name="note-comments",
     ),
@@ -249,7 +249,7 @@ urlpatterns = [
     # ------------------------------------------------------------ 点赞（B203⑤）
     # ★★ 幂等：* 重复点赞返回 200 且计数不变（* ❌ 不是 409）⚠
     path(
-        "notes/<int:note_id>/likes/",
+        "notes/<str:note_ref>/likes/",
         likes.collection,
         name="note-likes",
     ),
@@ -260,7 +260,7 @@ urlpatterns = [
     path("me/notes/deleted/", notes.deleted_bin, name="me-notes-deleted"),
     # ⚠★ 恢复 ⇒* 清 deleted_at / deleted_by；* 段落按 realign 重算（* D86②）✅
     path(
-        "notes/<int:note_id>/undelete/",
+        "notes/<str:note_ref>/undelete/",
         notes.undelete,
         name="note-undelete",
     ),

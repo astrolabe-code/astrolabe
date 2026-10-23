@@ -53,7 +53,7 @@ export function useNotes(
 }
 
 /** GET /api/notes/<id>/（② 型）⇒ {note, blocks} */
-export function useNote(noteId?: number | null) {
+export function useNote(noteId?: string | null) {
   return useQuery({
     queryKey: ['note', noteId],
     enabled: !!noteId,
@@ -128,7 +128,7 @@ export function useBatchVisibility(projectRef: string) {
   })
 }
 
-export function useUpdateNote(noteId?: number | null) {
+export function useUpdateNote(noteId?: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (body: UpdateNoteBody): Promise<NoteDetailData> =>
@@ -149,7 +149,7 @@ export function useUpdateNote(noteId?: number | null) {
 export function useDeleteNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (noteId: number): Promise<{ deleted: boolean }> =>
+    mutationFn: async (noteId: string): Promise<{ deleted: boolean }> =>
       unwrap(await apiDelete<{ deleted: boolean }>(`/api/notes/${noteId}/`, undefined, 'spread')),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['notes'] })
@@ -193,10 +193,10 @@ export function useDeletedNotes(opts: { limit?: number; offset?: number } = {}) 
 export function useUndeleteNote() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (noteId: number): Promise<NoteDetailData> =>
+    mutationFn: async (noteId: string): Promise<NoteDetailData> =>
       unwrap(await apiPost<NoteDetailData>(`/api/notes/${noteId}/undelete/`, undefined, 'spread')),
     onSuccess: (data) => {
-      qc.setQueryData(['note', data.note.id], data)
+      qc.setQueryData(['note', data.note.ref], data)
       void qc.invalidateQueries({ queryKey: ['notes'] })
       void qc.invalidateQueries({ queryKey: ['deleted-notes'] })
     },

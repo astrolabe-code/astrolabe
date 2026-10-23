@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote } from '../query/notes'
@@ -12,7 +12,6 @@ import CommentSection from '../components/comments/CommentSection'
 import ParagraphComments from '../components/comments/ParagraphComments'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import type { SelectionInfo } from '../components/notes/MilkdownView'
-import NoteEditor from '../components/notes/NoteEditor'
 import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
 
@@ -43,11 +42,12 @@ import { kindMeta } from '../components/notes/kindMeta'
  */
 export default function NotePage() {
   const { projectRef = '', noteId = '' } = useParams<{ projectRef: string; noteId: string }>()
-  const id = Number(noteId)
-  const note = useNote(Number.isFinite(id) ? id : null)
+  // ★ 路由里的这一段现在是**笔记 ref**（* 不是自增 pk）⚠
+  const ref = noteId
+  const note = useNote(ref || null)
   const project = useProject(projectRef)
   const me = useMe()
-  const [editing, setEditing] = useState(false)
+  const nav = useNavigate()
   // ★ 当前打开段评面板的那一段（* 由 Milkdown 里的气泡点击驱动）⚠
   const [activeFp, setActiveFp] = useState('')
   // ★ 右键「选中文字」小菜单 + 面板里预填的引用原文 ⚠
@@ -126,9 +126,13 @@ export default function NotePage() {
       actions={
         <div className="flex items-center gap-2">
           {/* ① 章赞 */}
-          <LikeButton noteId={n.id} anchor="chapter" />
+          <LikeButton noteId={n.ref} anchor="chapter" />
           {canWrite && (
-            <Button icon={<Pencil size={13} />} onClick={() => setEditing(true)}>
+            /* ★ 编辑改成**独立页面**（* 所有者：弹窗太挤）⚠ */
+            <Button
+              icon={<Pencil size={13} />}
+              onClick={() => nav(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`)}
+            >
               编辑
             </Button>
           )}
@@ -206,7 +210,8 @@ export default function NotePage() {
         {/* ②③ 正文：**整篇** Milkdown 只读渲染（`D108` / `B242`）
             ★★ 段评气泡由 MilkdownView 用 ProseMirror Decoration 挂在段落末尾；
                点一下就打开下面那个面板 ✅ */}
-        <div className="card flex flex-col gap-5" style={{ padding: '16px 18px' }}>
+        {/* ⚠ 内边距交给 .note-body-card —— 移动端要收窄，⛔ 不能内联写死 ⚠ */}
+        <div className="card note-body-card flex flex-col gap-5">
           <MilkdownLazy
             text={n.body || ''}
             blocks={blocks}
@@ -266,7 +271,7 @@ export default function NotePage() {
         {activeBlock && (
           <div className="card mt-4" style={{ padding: '12px 16px' }}>
             <ParagraphComments
-              noteId={n.id}
+              noteId={n.ref}
               block={activeBlock}
               authed={authed}
               perm={perm}
@@ -285,18 +290,12 @@ export default function NotePage() {
 
         {/* ④ 章评区 */}
         <div className="card mt-4" style={{ padding: '16px 18px' }}>
-          <CommentSection noteId={n.id} authed={authed} perm={perm} />
+          <CommentSection noteId={n.ref} authed={authed} perm={perm} />
         </div>
       </div>
 
       {/* 编辑器（本页自持一份 Modal —— 与 NodePanel 那个各管各的入口） */}
-      <NoteEditor
-        open={editing}
-        note={n}
-        projectRef={projectRef}
-        nodeId={n.node_id}
-        onClose={() => setEditing(false)}
-      />
+
 
       {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
       <ModeratePanel

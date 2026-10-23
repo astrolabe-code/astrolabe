@@ -47,7 +47,7 @@ export interface CommentsQuery {
 }
 
 /** GET /api/notes/<id>/comments/（① 型） */
-export function useComments(noteId?: number | null, q: CommentsQuery = { anchor_kind: 'chapter' }) {
+export function useComments(noteId?: string | null, q: CommentsQuery = { anchor_kind: 'chapter' }) {
   const params = new URLSearchParams({ anchor_kind: q.anchor_kind })
   if (q.fingerprint) params.set('fingerprint', q.fingerprint)
   if (q.parent != null) params.set('parent', String(q.parent))
@@ -99,7 +99,7 @@ export interface CreateCommentBody {
 }
 
 /** POST /api/notes/<id>/comments/（① 型）⇒ {comment, note_comment_count, block_comment_count} */
-export function useCreateComment(noteId?: number | null) {
+export function useCreateComment(noteId?: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (body: CreateCommentBody): Promise<CommentCreateResult> =>
@@ -117,7 +117,7 @@ export function useCreateComment(noteId?: number | null) {
  * ⚠ 删过的再删照样 200（`deleted:true`）✅
  * ⚠ 删除按钮仅对**作者本人 / 项目 owner / 协作者 / 管理员**渲染（契约 §22.3）⚠
  */
-export function useDeleteComment(noteId?: number | null) {
+export function useDeleteComment(noteId?: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (commentId: number): Promise<{ deleted: boolean }> =>

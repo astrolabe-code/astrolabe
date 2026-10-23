@@ -29,7 +29,8 @@ import { bodyAfterReplyHead, firstMention, splitByMentions } from './mention'
  */
 interface CommentItemProps {
   comment: Comment
-  noteId: number
+  /** ★ 笔记的对外标识（* ref，⛔ 不是自增 pk）⚠ */
+  noteId: string
   anchor: AnchorKind
   /** 删除判据上下文（逐条判：评论作者本人 / 项目成员 / 管理员） */
   perm: DeletePerm

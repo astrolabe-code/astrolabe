@@ -58,7 +58,7 @@ from django.views.decorators.http import require_http_methods
 from core import like_cache
 from core import settings_table as st
 from graph import notes as note_alg
-from core.models import Note, NoteComment, NoteCommentLike
+from core.models import Note, note_by_ref, NoteComment, NoteCommentLike
 from web.http import fail, ok, ok_flat, read_json
 from web.permissions import (
     can_create_comment,
@@ -93,7 +93,7 @@ MENTION_RE = _re.compile(r"@[A-Za-z0-9._+-]+")
 # ---------------------------------------------------------------------------
 
 @require_http_methods(["GET", "POST"])
-def collection(request: HttpRequest, note_id: int):
+def collection(request: HttpRequest, note_ref: str):
     """`GET/POST /api/notes/<id>/comments/`。
 
     ## GET
@@ -112,7 +112,7 @@ def collection(request: HttpRequest, note_id: int):
     - ★ `kind ∈ {reply, mention, both}` ⇒ 正文**必须**带 `@某人`（否则 400 `missing_mention`）
     - ⚠★ `anchor_kind` **创建时定死**；`quote` 后端自动填（前端传了也不算）。
     """
-    note = Note.objects.filter(pk=note_id).select_related("node").first()
+    note = note_by_ref(note_ref, Note.objects.select_related("node"))
     if note is None or not note_readable(request, note):
         # ⚠ 越权统一 404（与"不存在"不可区分 —— 同 notes 的口径）
         return fail("笔记不存在", 404, code="not_found")

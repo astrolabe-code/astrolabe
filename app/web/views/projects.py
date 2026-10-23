@@ -215,37 +215,21 @@ def _built_flags(project_refs: list[str]) -> dict[str, bool]:
 
 
 def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
-    """★★ 一次查询取回所有项目的节点 / 边数量（❌ 不要每个项目查一次）。
+    """★★ 直接读项目表上的计数列（* 2026-10-23 起不再现算）⚠
 
-    ⚠★★ `B179`（2026-10-13）：数量**不再按 `project_ref` 数** ⚠ ——
-      ★ 图数据现在挂在【**基图**】上；★ 而 `project_ref` 那些行只表示
-        「★ 用户自己新增的节点」（★ 那是**另一份数据**）⚠
-      ⇒ ★★ 所以先查【项目 → 基图】的绑定，★ 再按基图数 ⚠
-      ★ 多个项目可能绑**同一份**基图 ⇒ ★ 它们数量相同 ——
-        ★★ 而这正是 `B179` 要的：★ **同一份源码版本只解析一次** ✅
+    > 「项目表补上这个项目的真实节点数和边数字段，每次现算干什么？用户每次修改节点和
+    >   边，项目表里的边数和节点数同步修改」
     """
-    # ⚠★★ 2026-10-14（`B179` 第二步）：**绑定已并入项目表** ⚠
-    binds = dict(
-        Project.objects.filter(project_ref__in=project_refs)
-        .exclude(base_graph=None)
-        .values_list("project_ref", "base_graph_id")
+    rows = {
+        p.project_ref: (p.node_count, p.edge_count)
+        for p in Project.objects.filter(project_ref__in=project_refs).only(
+            "project_ref", "node_count", "edge_count"
+        )
+    }
+    return (
+        {ref: rows.get(ref, (0, 0))[0] for ref in project_refs},
+        {ref: rows.get(ref, (0, 0))[1] for ref in project_refs},
     )
-    bg_ids = list(binds.values())
-    if not bg_ids:
-        return {}, {}
-
-    # ★★ `B220`：* 节点跨版本共用 ⇒* 不能再按 `base_graph_id` 数 ⚠
-    #   · · ★ 直接用基图行上的**每版本计数**（* 写图时落的 `node_count` / `edge_count`）✅
-    by_bg_nodes = dict(
-        BaseGraph.objects.filter(pk__in=bg_ids).values_list("pk", "node_count")
-    )
-    by_bg_edges = dict(
-        BaseGraph.objects.filter(pk__in=bg_ids).values_list("pk", "edge_count")
-    )
-
-    nodes = {ref: by_bg_nodes.get(bg, 0) for ref, bg in binds.items()}
-    edges = {ref: by_bg_edges.get(bg, 0) for ref, bg in binds.items()}
-    return nodes, edges
 
 
 def _latest_parse_job(project_ref: str) -> Job | None:
@@ -491,6 +475,8 @@ def _create(request: HttpRequest) -> JsonResponse:
         desc=str(body.get("desc") or "")[:2000],
         owner=user,
         is_public=bool(body.get("is_public", False)),
+        # ★ 建空壳 ⇒ 自建项目（* 之后没有任何修改入口）⚠
+        provider="self",
     )
     search_cache.invalidate(search_cache.NS_PROJECTS)
     return ok(

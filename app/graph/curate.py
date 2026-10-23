@@ -896,6 +896,14 @@ def apply_changes(
         # ★ 事务已回滚（★ 因为异常穿过了 `atomic()` 的边界）
         return CurateBatchResult(ok=False, message=exc.message, detail=exc.detail)
 
+    # ★★ 增删过节点/边 ⇒ 项目表上的计数同步（`2026-10-23`）⚠
+    try:
+        from core import project_counts
+
+        project_counts.refresh(project_ref=project_ref)
+    except Exception:
+        pass
+
     # ⚠★ 2026-10-18 修：* `via_admin` 字段在 `B208`① 时已删（* 管理员不能代改图）
     #   · · ★ 原代码在**成功路径**上读它 ⇒* 任何成功的修补都会 `AttributeError` ⚠
     #   · · ★★ 审计要区分"谁改的" ⇒* 记 `is_owner` / `is_collaborator` 两个标记 ✅

@@ -168,6 +168,20 @@ class Project(TimeStampedModel):
     #: ```
     reading_path = ArrayField(models.BigIntegerField(), default=list, blank=True)
     graph_dropped_at = models.DateTimeField(null=True, blank=True)
+    # ★★★ 2026-10-23 所有者：「项目表补上这个项目的真实节点数和边数字段，每次现算
+    #   干什么？用户每次修改节点和边，项目表里的边数和节点数同步修改」
+    #   · · 由 `core/project_counts.py::refresh()` 在「基图建成 / 叠加层增删」后维护 ✅
+    node_count = models.IntegerField(default=0)
+    edge_count = models.IntegerField(default=0)
+
+    # ★★★ 「加上是 github 或 gitee 或自建项目字段，以及拉库所用网址字段。
+    #   当然，这两个字段一旦创建，无法修改，不要有修改接口。」
+    #   · · `provider`：github / gitee / self；空 = 还没绑定仓库 ✅
+    #   · · `repo_url`：拉库地址（自建项目为空）✅
+    #   · · ⛔ PATCH 只允许 name / desc（见 `web/views/projects.py`）⚠
+    provider = models.CharField(max_length=16, blank=True, default="")
+    repo_url = models.CharField(max_length=512, blank=True, default="")
+
     base_graph = models.ForeignKey(
         "graph.BaseGraph",
         null=True,
@@ -378,26 +392,6 @@ class Project(TimeStampedModel):
     #   · ★ 列表页请走 `select_related("base_graph")`（* 一次 join）✅
     #   · ★★ 否则 N 个项目 = N 次查询 ⚠
     # ------------------------------------------------------------------
-    @property
-    def provider(self) -> str:
-        """★★ **这份源码从哪个平台拉的**（★ 派生）。空 = 没绑基图。"""
-        return (self.base_graph.provider or "") if self.base_graph_id else ""
-
-    @property
-    def repo_url(self) -> str:
-        """★★ **源码仓库地址**（★ 派生，如 `https://github.com/owner/repo`）。
-
-        ★ 由 `provider` + `repo_full_name` **拼出来** —— ★ 这正是"可推导的不该存" ✅
-        ★（★ 与 `core/publish.py::_repo_url()` 同一口径 ✅）
-        """
-        if not self.base_graph_id:
-            return ""
-        host = {"github": "github.com", "gitee": "gitee.com"}.get(
-            self.base_graph.provider or ""
-        )
-        full = (self.base_graph.repo_full_name or "").strip().strip("/")
-        return f"https://{host}/{full}" if host and full else ""
-
     @property
     def resolved_ref(self) -> str:
         """★★ **真正解析到的那一版 ref**（★ 派生）。空 = 没绑 / 没记。"""

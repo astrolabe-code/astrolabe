@@ -231,6 +231,9 @@ def publish_project(
             name=project_name,
             desc=(desc or "")[:2000],
             owner=user,
+            # ★ 平台与拉库地址**创建时落定**，之后无修改入口（所有者 2026-10-23）⚠
+            provider=(provider or "")[:16],
+            repo_url=(repo_url or "")[:512],
             state=Project.STATE_ACTIVE,
             # ★ 发布即公开「页面」（★ 读开放是策略，U2.1）——
             #   ⚠ 但**列表 / 搜索只列 `review_state=approved` 的**，

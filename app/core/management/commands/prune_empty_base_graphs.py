@@ -106,7 +106,20 @@ class Command(BaseCommand):
         unbound = 0
         for bg in rows:
             with transaction.atomic():
+                # ★ 解绑后项目只剩叠加层 ⇒ 计数要跟着重算（2026-10-23）⚠
+                affected = list(
+                    Project.objects.filter(base_graph=bg).values_list(
+                        "project_ref", flat=True
+                    )
+                )
                 unbound += Project.objects.filter(base_graph=bg).update(base_graph=None)
+                try:
+                    from core import project_counts
+
+                    for ref in affected:
+                        project_counts.refresh(project_ref=ref)
+                except Exception:
+                    pass
                 bg.delete()
             # ★ 基图没了 ⇒ 消掉 `astrolabe:basegraph:<graph_key>` 映射，
             #   * 否则下次同地址建项目会命中一条指向不存在行的死键 ⚠

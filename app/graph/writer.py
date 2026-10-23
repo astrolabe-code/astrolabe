@@ -315,6 +315,14 @@ def write_graph(
         bg.built_at = timezone.now()
         bg.save(update_fields=["node_count", "edge_count", "built_at", "updated_at"])
 
+        # ★★ 基图变了 ⇒ 绑定它的项目计数都要重算（`2026-10-23` 所有者要求落列）⚠
+        try:
+            from core import project_counts
+
+            project_counts.refresh(base_graph_id=bg.pk)
+        except Exception:
+            pass
+
         if replace:
             # ⚠ 覆盖是**例外** ⇒ ★ 必须留痕（★ 见函数文档）
             from core.models import AuditLog

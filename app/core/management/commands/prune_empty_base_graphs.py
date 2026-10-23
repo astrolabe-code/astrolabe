@@ -112,7 +112,10 @@ class Command(BaseCommand):
                         "project_ref", flat=True
                     )
                 )
-                unbound += Project.objects.filter(base_graph=bg).update(base_graph=None)
+                for proj in Project.objects.filter(base_graph=bg):
+                    # ★ 统一走模型方法（* 只有管理员/系统能解绑）⚠
+                    proj.unbind_base_graph(by=None)
+                    unbound += 1
                 try:
                     from core import project_counts
 

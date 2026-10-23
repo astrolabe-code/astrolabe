@@ -392,6 +392,33 @@ class Project(TimeStampedModel):
     #   · ★ 列表页请走 `select_related("base_graph")`（* 一次 join）✅
     #   · ★★ 否则 N 个项目 = N 次查询 ⚠
     # ------------------------------------------------------------------
+    def unbind_base_graph(self, *, by=None) -> None:
+        """★★ **解绑基图** —— * 只有管理员能做，⛔ 项目作者也不行 ⚠
+
+        > 「用户不能解绑基图哦，只能我这个管理员解绑。」
+
+        ```
+        by=None            ⇒ 系统/维护命令（* 允许）
+        by.is_staff=True   ⇒ 管理员（* 允许）
+        其他人             ⇒ PermissionError（* 调用方转 403）
+        ```
+        """
+        if by is not None and not (
+            getattr(by, "is_staff", False) or getattr(by, "is_superuser", False)
+        ):
+            raise PermissionError("只有管理员可以解绑基图")
+
+        from core.models import Project as _P
+
+        _P.objects.filter(pk=self.pk).update(base_graph=None)
+        self.base_graph = None
+        try:
+            from core import project_counts
+
+            project_counts.refresh(project_ref=self.project_ref)
+        except Exception:
+            pass
+
     @property
     def resolved_ref(self) -> str:
         """★★ **真正解析到的那一版 ref**（★ 派生）。空 = 没绑 / 没记。"""

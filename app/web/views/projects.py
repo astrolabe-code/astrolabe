@@ -520,6 +520,11 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
     #   · ★★ 所以这里**不再收这三个字段** —— ★ 收也写不进去
     #     （★ 没有 setter ⇒ `AttributeError`）⚠
     #   · ★ 要改源码地址 ⇒ ★ 重新拉一份（★ 那是建一条新绑定，★ 不是改这一行）✅
+    # ★★★ 「用户不能解绑基图哦，只能我这个管理员解绑」——
+    #   · · 本端点**根本不接受** `base_graph`；显式拒绝比默默忽略更清楚 ⚠
+    if "base_graph" in body or "base_graph_id" in body:
+        return fail("基图绑定只能由管理员调整", 403, code="forbidden")
+
     dirty: list[str] = []
     for field in ("name", "desc"):
         if field in body:

@@ -339,6 +339,8 @@ export function useNoteSearch(
     queryKey: ['notes-search', kw, limit, offset, sort],
     enabled: kw.length > 0,
     staleTime: 30_000,
+    // ★ 429 不重试：* 重试会再占一次额度，等于自己把限流放大一倍 ⚠
+    retry: false,
     queryFn: async (): Promise<{
       items: NoteSearchItem[]
       total: number

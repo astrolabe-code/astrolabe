@@ -404,6 +404,33 @@ def _search_who(request: HttpRequest) -> str:
     return "anon"
 
 
+def _rate_limited(scope: str):
+    """★★ **被限流时的统一响应**（`B238` · 2026-10-23）⚠
+
+    ```
+    ① Retry-After: 1      ⇒ 客户端知道等多久（* 而不是瞎猜）
+    ② 计数 astrolabe:rl:hits:<scope>:<日期>  ⇒ 能看出是否误伤、是否太松 ⚠
+    ③ 文案温和，并提示登录（* 登录用户有自己的桶，* 不用和匿名挤）✅
+    ```
+    """
+    try:
+        r = term_store._redis()
+        day = timezone.localdate().isoformat()
+        key = f"astrolabe:rl:hits:{scope}:{day}"
+        r.incr(key)
+        r.expire(key, 172800)
+    except Exception:
+        pass
+
+    resp = fail(
+        "这会儿搜索的人有点多，先喘口气～登录后就是你的专属通道，不用和大家挤在一起。",
+        429,
+        code="rate_limited",
+    )
+    resp["Retry-After"] = "1"
+    return resp
+
+
 def _rate_ok(request: HttpRequest, scope: str) -> bool:
     """★ 这个请求该不该放行（* 匿名共用一个桶，给 9 倍速率）⚠"""
     who = _search_who(request)
@@ -543,7 +570,7 @@ def search(request: HttpRequest):
 
     # ★★★ 限流（* 所有者：「一起加上」）⚠
     if not _rate_ok(request, "search"):
-        return fail("请求过于频繁", 429, code="rate_limited")
+        return _rate_limited("search")
 
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
@@ -695,7 +722,7 @@ def suggest(request: HttpRequest):
 
     # ★★★ **限流**（* 有令牌/登录 ⇒ 正常速率；* 都没有 ⇒ 共用桶、9 倍）⚠
     if not _rate_ok(request, "suggest"):
-        return fail("请求过于频繁", 429, code="rate_limited")
+        return _rate_limited("suggest")
 
     # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠
     hot = term_store.matches(kw, limit=8)

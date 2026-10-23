@@ -5,7 +5,7 @@ import { ArrowRight, ChevronLeft, ChevronRight, FolderGit2, Search } from 'lucid
 import type { NoteSearchItem, ProjectSummary } from '../api/types'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
-import { errorMessage } from '../api/errors'
+import { ApiRequestError, errorMessage } from '../api/errors'
 import { kindMeta } from '../components/notes/kindMeta'
 import { useNoteSearch, useSearchSuggest } from '../query/notes'
 import { useProjectSearch } from '../query/projects'
@@ -96,8 +96,9 @@ export default function SearchPage() {
       }
     >
       {/* ① 搜索框 + 联想 */}
-      <div style={{ position: 'relative' }}>
-      <form onSubmit={submit} className="mb-4" style={{ display: 'flex', gap: 8 }}>
+      {/* ★ 外层的 margin 放在容器上（* 否则绝对定位的联想框会压到搜索按钮）⚠ */}
+      <div style={{ position: 'relative', marginBottom: 16 }}>
+      <form onSubmit={submit} style={{ display: 'flex', gap: 8 }}>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -122,7 +123,7 @@ export default function SearchPage() {
       </form>
 
       {focus && suggestItems.length > 0 && (
-        <div className="hero-suggest" style={{ top: '100%', marginTop: -10 }}>
+        <div className="hero-suggest" style={{ top: '100%', marginTop: 6 }}>
           {suggestItems.slice(0, 6).map((it) => (
             <button
               key={it.text}
@@ -209,11 +210,31 @@ export default function SearchPage() {
 
           {/* ③ 列表 */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            {notes.isError && (
-              <div style={{ padding: 16, fontSize: 12, color: 'var(--err)' }}>
-                {errorMessage(notes.error)}
-              </div>
-            )}
+            {notes.isError &&
+              (notes.error instanceof ApiRequestError && notes.error.status === 429 ? (
+                <div style={{ padding: '26px 20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13.5, color: 'var(--text-main)', marginBottom: 6 }}>
+                    这会儿搜索的人有点多，先喘口气～
+                  </div>
+                  <div className="faint" style={{ fontSize: 11.5, marginBottom: 14 }}>
+                    登录后就有自己的专属通道，不用和大家挤在一起。
+                  </div>
+                  <Button
+                    variant="primary"
+                    onClick={() =>
+                      navigate(
+                        `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+                      )
+                    }
+                  >
+                    去登录
+                  </Button>
+                </div>
+              ) : (
+                <div style={{ padding: 16, fontSize: 12, color: 'var(--err)' }}>
+                  {errorMessage(notes.error)}
+                </div>
+              ))}
 
             {tab !== 'note' &&
               projectItems.map((p) => (

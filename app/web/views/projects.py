@@ -18,7 +18,6 @@ from django.db.models import Count
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
-from core import search_cache
 from core import fetch, oauth, storage
 from core import publish as publish_core
 # ★★ `F2`：* `_project_json` 要现算 `can_edit` / `can_manage` ⇒* 直接调内核 ⚠
@@ -214,6 +213,35 @@ def _built_flags(project_refs: list[str]) -> dict[str, bool]:
     return {ref: (bg_id in built_ids) for ref, bg_id in bound.items()}
 
 
+def _search_project_refs(kw: str, *, mine: bool, user) -> list[str] | None:
+    """★★ **项目检索走 Meilisearch**（2026-10-23）⚠
+
+    ```
+    公开搜索（默认）  filter：is_public=true AND state="active"   ⛔ 私有绝不出现
+    工作区（mine=1）  filter：owner_id = 当前用户
+    ```
+
+    ⚠ 返回 `None` = 引擎不可用 ⇒ 调用方**回落** PG `icontains`（* 保可用性）⚠
+    """
+    from search import client
+
+    if not client.enabled():
+        return None
+
+    try:
+        cond = (
+            f"owner_id = {int(user.pk)}"
+            if mine and user is not None and getattr(user, "pk", None)
+            else 'is_public = true AND state = "active"'
+        )
+        res = client.search(client.PROJECTS_INDEX, kw, limit=200, filters=cond)
+        refs = [h.get("project_ref") for h in (res.get("hits") or []) if h.get("project_ref")]
+        return refs
+    except Exception:
+        logger.warning("项目检索失败，回落 PostgreSQL", exc_info=True)
+        return None
+
+
 def _counts(project_refs: list[str]) -> tuple[dict[str, int], dict[str, int]]:
     """★★ 直接读项目表上的计数列（* 2026-10-23 起不再现算）⚠
 
@@ -355,25 +383,33 @@ def collection(request: HttpRequest) -> JsonResponse:
         if request.GET.get("mine") != "1":
             qs = qs.filter(is_public=True, state=Project.STATE_ACTIVE)
 
-        qs = qs.filter(
-            Q(name__icontains=kw)
-            | Q(desc__icontains=kw)
-            | Q(owner__username__icontains=kw)
-        )
+        from django.db.models import Case, IntegerField, When
 
-    qs = qs.order_by("-created_at")[:200]
+        mine_flag = request.GET.get("mine") == "1"
+        refs = _search_project_refs(kw, mine=mine_flag, user=user)
+
+        if refs is not None:
+            # ★ 用 Meili 的命中集合 + 它的相关度顺序 ⚠
+            if not refs:
+                qs = qs.none()
+            qs = qs.filter(project_ref__in=refs).order_by(
+                Case(
+                    *[When(project_ref=r, then=i) for i, r in enumerate(refs)],
+                    output_field=IntegerField(),
+                )
+            )
+        else:
+            # ★ 引擎不可用 ⇒ 回落 PG（* 与旧行为一致）⚠
+            qs = qs.filter(
+                Q(name__icontains=kw)
+                | Q(desc__icontains=kw)
+                | Q(owner__username__icontains=kw)
+            ).order_by("-created_at")
+
+    if not kw:
+        qs = qs.order_by("-created_at")
+    qs = qs[:200]
     projects = list(qs)
-
-    # ★★ 带关键词 ⇒ 走 Redis 缓存（* 结果含 per-user 字段 ⇒ key 带 uid）⚠
-    me = getattr(request, "user", None)
-    uid = getattr(me, "pk", 0) or 0
-    if kw:
-        cached = search_cache.get(search_cache.NS_PROJECTS, uid, kw)
-        if cached is not None:
-            # ★★ 发出前核对数据库（* 项目被删 / 改名 / 换作者都要发现）⚠
-            checked = _verify_project_cache(cached)
-            if checked is not None:
-                return ok_flat(projects=checked)
 
     nodes, edges = _counts([p.project_ref for p in projects])
     # ⚠★ 2026-10-14（`B197`）：**同一趟把「有没有图」也查出来** ⚠
@@ -392,57 +428,8 @@ def collection(request: HttpRequest) -> JsonResponse:
         for p in projects
     ]
 
-    if kw:
-        search_cache.put(search_cache.NS_PROJECTS, uid, kw, payload)
 
     return ok_flat(projects=payload)
-
-
-def _verify_project_cache(cached: list):
-    """★★ **核对缓存里的项目是否还对得上**（* 2026-10-21）⚠
-
-    Returns:
-        - `None` ⇒ 有项目被删 / 被改 ⇒ 调用方重新全查并重写缓存
-        - `list` ⇒ 全部核对无误，* 可以直接发
-
-    ⚠★ 比什么：**行还在吗** + **名称 / 简介 / 作者 / 公开性 / 状态**变了吗
-      （* `_project_json` 没有 updated_at，* 所以按这些业务字段逐项比）⚠
-    """
-    if not cached:
-        return []
-
-    refs = [it["project_ref"] for it in cached if it.get("project_ref")]
-    rows = Project.objects.filter(project_ref__in=refs).values(
-        "project_ref",
-        "name",
-        "desc",
-        "state",
-        "is_public",
-        # ⚠★ 2026-10-21：**不查 owner** —— 项目创建后 owner 不可变
-        #   （* 所有者：「项目缓存比作者也去掉，同事检查网站前后端有没有改作者的代码，
-        #     有就去掉。作者只能后台，我这个管理员改。」）
-        #   ⇒ 省掉一次 `auth_user` JOIN ✅
-        # ★★ `updated_at` 是主判据（* 所有者：「redis 也可以根据更新时间确定
-        #   数据是否改过没了」）——* 任何写路径都会刷新它 ⚠
-        "updated_at",
-    )
-    by_ref = {r["project_ref"]: r for r in rows}
-
-    for it in cached:
-        r = by_ref.get(it.get("project_ref"))
-        if r is None:
-            return None
-        # ★★ **唯一判据：`updated_at`**（* 2026-10-21 实测确认足够）
-        #   · · 实测（core_project 的写路径）：
-        #     · 改名 / 改简介 / 改公开性 ⇒ 走 `Project.save()` ⇒ 刷新 ✅
-        #     · 管理员隐藏 / 恢复       ⇒ 同上（* 模型层 `save()` 补了 updated_at）✅
-        #     · 换绑基图               ⇒ `.update(..., updated_at=now())` ✅
-        #   · · ⛔ 原「老缓存没有 updated_at 时按业务字段比」的兜底已删 ——
-        #     * `_project_json` 现在必带 `updated_at` ⇒ 那个分支**永远不执行**；
-        #     * 万一读到老缓存（无该字段），这里会直接判为不一致 ⇒ 重查重写 ✅
-        if r["updated_at"].isoformat() != it.get("updated_at"):
-            return None
-    return cached
 
 
 def _create(request: HttpRequest) -> JsonResponse:
@@ -475,10 +462,10 @@ def _create(request: HttpRequest) -> JsonResponse:
         desc=str(body.get("desc") or "")[:2000],
         owner=user,
         is_public=bool(body.get("is_public", False)),
-        # ★ 建空壳 ⇒ 自建项目（* 之后没有任何修改入口）⚠
-        provider="self",
+        # ★ 平台与拉库地址**创建时落定**（* 之后无修改入口，`B240`）⚠
+        provider=provider[:16],
+        repo_url=repo_url[:512],
     )
-    search_cache.invalidate(search_cache.NS_PROJECTS)
     return ok(
         {"project_ref": project.project_ref, "name": project.name},
         status=201,
@@ -549,7 +536,6 @@ def detail(request: HttpRequest, project_ref: str) -> JsonResponse:
         #   · · 改公开性：* 私有 ⇒ 公开后，项目里的公开笔记**立刻可搜**；
         #     而搜索缓存里的"空结果"没有条目可校验 ⇒ ⛔ 不清就搜不到 ⚠
         #   · · 改名：* 笔记搜索结果里带着 `project_name` 快照 ⇒ 也要清 ✅
-        search_cache.invalidate_all()
     nodes, edges = _counts([project_ref])
     return ok(_project_json(project, request, nodes.get(project_ref, 0), edges.get(project_ref, 0)))
 

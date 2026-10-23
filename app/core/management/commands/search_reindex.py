@@ -26,10 +26,48 @@ from search import client, documents
 
 #: ★ 全量重建用的临时索引名（* 建完再与主索引原子交换）⚠
 TMP_INDEX = "notes_tmp"
+#: ★ 项目索引的临时名（* 2026-10-23 项目搜索也进 Meili）⚠
+TMP_PROJECTS_INDEX = "projects_tmp"
 
 
 class Command(BaseCommand):
     help = "把符合条件的笔记全量导入 Meilisearch（B238）"
+
+    def _rebuild_projects(self, size: int, started) -> None:
+        """★ 重建项目索引（* 全量：含私有，* 查询时按可见性过滤）⚠"""
+        from search import projects as project_docs
+
+        qs = Project.objects.select_related("owner").order_by("pk")
+        total = qs.count()
+
+        tmp = TMP_PROJECTS_INDEX
+        client.delete_index(tmp)
+        client.ensure_index(tmp, primary_key="project_ref")
+        client.update_settings(tmp, project_docs.INDEX_SETTINGS)
+
+        batch: list[dict] = []
+        written = 0
+        for p in qs.iterator(chunk_size=size):
+            batch.append(project_docs.build_document(p))
+            if len(batch) >= size:
+                client.add_documents(tmp, batch)
+                written += len(batch)
+                batch = []
+        if batch:
+            client.add_documents(tmp, batch)
+            written += len(batch)
+
+        client.ensure_index(client.PROJECTS_INDEX, primary_key="project_ref")
+        client.swap_indexes(tmp, client.PROJECTS_INDEX)
+        client.delete_index(tmp)
+
+        stats = client.index_stats(client.PROJECTS_INDEX)
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"项目索引：应索引 {total} 个，已写入 {written} 个，"
+                f"索引内文档数 {stats.get('numberOfDocuments')}"
+            )
+        )
 
     def _fill(self, uid: str, qs, size: int, total: int) -> int:
         """★ 分批写入指定索引，返回写了几篇 ⚠"""
@@ -131,3 +169,6 @@ class Command(BaseCommand):
                 f"索引内文档数 {stats.get('numberOfDocuments')}"
             )
         )
+
+        # ★★ 项目索引：同样走「临时索引 + 原子交换」⚠
+        self._rebuild_projects(size, started)

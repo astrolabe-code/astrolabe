@@ -32,7 +32,7 @@ from django.db import transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
-from core.models import Note
+from core.models import Note, Project
 from search import client, documents
 
 logger = logging.getLogger("astrolabe.search.sync")
@@ -70,6 +70,8 @@ def _redis():
 
 #: ★★ 队列成员前缀：`c:` = **只更新计数**（* PUT 部分更新，碰不到正文）⚠
 COUNTS_PREFIX = "c:"
+#: ★ 项目任务前缀（* 2026-10-23 项目搜索进 Meili）⚠
+PROJECT_PREFIX = "p:"
 
 
 def enqueue_note(note_id: int, counts_only: bool = False) -> bool:
@@ -98,6 +100,39 @@ def enqueue_note(note_id: int, counts_only: bool = False) -> bool:
         return False
 
 
+def enqueue_project(project_ref: str) -> bool:
+    """★ 把一个项目投进索引队列（* 幂等）⚠"""
+    if not client.enabled():
+        return False
+    member = f"{PROJECT_PREFIX}{project_ref}"
+    try:
+        r = _redis()
+        if r.sadd(PENDING_KEY, member):
+            r.lpush(QUEUE_KEY, member)
+        return True
+    except Exception:
+        logger.warning("项目索引投递失败 %s", project_ref, exc_info=True)
+        return False
+
+
+def apply_project(project_ref: str) -> None:
+    """★ 以库为准同步一个项目（* 删了就从索引移除）⚠"""
+    from core.models import Project
+    from search import projects as project_docs
+
+    project = (
+        Project.objects.filter(project_ref=project_ref)
+        .select_related("owner")
+        .first()
+    )
+    if project is None:
+        client.delete_document(client.PROJECTS_INDEX, project_ref)
+        return
+    client.add_documents(
+        client.PROJECTS_INDEX, [project_docs.build_document(project)]
+    )
+
+
 def enqueue_many(note_ids, counts_only: bool = False) -> None:
     for nid in note_ids:
         enqueue_note(nid, counts_only=counts_only)
@@ -110,7 +145,7 @@ def enqueue_project_notes(project_ref: str) -> int:
       · Meili 的文档是**整篇覆盖**的（`add_documents` 是 upsert）
       · ⇒ 只能「重新生成整篇文档」再写，* 不能局部更新 ✅
     """
-    from core.models import Note
+    from core.models import Note, Project
 
     if not client.enabled():
         return 0
@@ -218,7 +253,7 @@ def _apply_counts_batch(r, raws: list[str]) -> None:
     from django.db.models import Count
 
     from core import like_cache
-    from core.models import NoteLike
+    from core.models import Note, ProjectLike
 
     ids = [int(x[len(COUNTS_PREFIX):]) for x in raws]
     try:
@@ -268,13 +303,16 @@ def _apply_counts_batch(r, raws: list[str]) -> None:
 
 
 def _run(r, member: str) -> None:
-    """★ 处理一条队列表项（* 可能是 `123` 或 `c:123`）⚠"""
+    """★ 处理一条队列表项（`123` 笔记全文 / `c:123` 笔记计数 / `p:proj_…` 项目）⚠"""
     raw = str(member)
-    counts_only = raw.startswith(COUNTS_PREFIX)
-    note_id = int(raw[len(COUNTS_PREFIX):] if counts_only else raw)
 
     try:
-        apply(note_id, counts_only=counts_only)
+        if raw.startswith(PROJECT_PREFIX):
+            apply_project(raw[len(PROJECT_PREFIX):])
+        else:
+            counts_only = raw.startswith(COUNTS_PREFIX)
+            note_id = int(raw[len(COUNTS_PREFIX):] if counts_only else raw)
+            apply(note_id, counts_only=counts_only)
     except Exception as exc:
         attempts = r.hincrby(ATTEMPTS_KEY, raw, 1)
         if attempts >= MAX_ATTEMPTS:
@@ -303,6 +341,12 @@ def _now() -> float:
 # ---------------------------------------------------------------------------
 # 信号：删除（含 CASCADE —— 删用户 / 删项目会连带删笔记）
 # ---------------------------------------------------------------------------
+
+@receiver(post_delete, sender=Project)
+def _on_project_deleted(sender, instance, **kwargs):
+    """★ 项目行没了 ⇒ 删索引文档（* `apply_project` 查不到会自动删）⚠"""
+    transaction.on_commit(lambda: enqueue_project(instance.project_ref))
+
 
 @receiver(post_delete, sender=Note)
 def _on_note_deleted(sender, instance, **kwargs):

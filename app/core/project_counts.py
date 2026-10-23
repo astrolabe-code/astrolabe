@@ -110,6 +110,10 @@ def refresh(*, project_ref: str | None = None, base_graph_id: int | None = None)
         try:
             Project.objects.filter(pk=p.pk).update(**fields)
             updated += 1
+            # ★ 计数变了 ⇒ 项目索引也要更新（* 列表里显示节点数）⚠
+            from search import sync
+
+            sync.enqueue_project(p.project_ref)
         except Exception:
             logger.warning("刷新项目计数失败 %s", p.project_ref, exc_info=True)
 

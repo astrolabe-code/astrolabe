@@ -41,7 +41,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import access
-from core import search_cache
 from core.models import AuditLog, Note, Project, ProjectReview
 from web.http import fail, ok, read_json
 from web.permissions import staff_only
@@ -157,7 +156,6 @@ def _set_project_state(request: HttpRequest, project: Project, action: str, reas
                name=project.name, reason=f"级联隐藏 {n} 篇笔记")
 
     # ★★ 两个命名空间都清（* 笔记与项目都受影响）⚠
-    search_cache.invalidate_all()
 
     _audit(request, f"project.{action}", project_ref=project.project_ref,
            name=project.name, reason=reason)

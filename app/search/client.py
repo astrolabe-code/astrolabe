@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 #: 笔记索引的 uid（* 固定，* 重建走 `search_reindex`）⚠
 NOTES_INDEX = "notes"
+#: ★ 项目索引（* 2026-10-23 项目搜索也进 Meili）⚠
+PROJECTS_INDEX = "projects"
 
 
 class MeiliError(RuntimeError):
@@ -110,14 +112,14 @@ def wait_task(
 # 索引管理
 # ---------------------------------------------------------------------------
 
-def ensure_index(uid: str = NOTES_INDEX) -> None:
+def ensure_index(uid: str = NOTES_INDEX, primary_key: str = "id") -> None:
     """★ 建索引（* 已存在就跳过）⚠"""
     try:
         _request("GET", f"/indexes/{uid}")
         return
     except MeiliError:
         pass
-    task = _request("POST", "/indexes", {"uid": uid, "primaryKey": "id"})
+    task = _request("POST", "/indexes", {"uid": uid, "primaryKey": primary_key})
     wait_task(task["taskUid"])
 
 

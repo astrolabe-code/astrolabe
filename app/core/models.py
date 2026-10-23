@@ -338,6 +338,16 @@ class Project(TimeStampedModel):
                 lambda ref=self.project_ref: sync.enqueue_project_notes(ref)
             )
 
+        # ★★ 项目**自身**的索引也要跟着变（名称 / 简介 / 可见性 / 计数）⚠
+        #   · · 2026-10-23：项目搜索也进 Meilisearch ✅
+        from django.db import transaction
+
+        from search import sync
+
+        transaction.on_commit(
+            lambda ref=self.project_ref: sync.enqueue_project(ref)
+        )
+
     class Meta:
         constraints = [
             # ⚠★★ 2026-10-14（`B192`）：**同一用户下不许建同名项目** ⚠

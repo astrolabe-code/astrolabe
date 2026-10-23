@@ -57,22 +57,48 @@ if TYPE_CHECKING:  # pragma: no cover
 # ① 切段
 # ===========================================================================
 
-#: ★ 空行分隔（★ 一个或多个空行都算一段的边界）
-_BLANK_RUN = re.compile(r"\n\s*\n\s*")
+#: ★ markdown 解析器（* 切段用，* 见 `split_blocks` 的口径说明）⚠
+from markdown_it import MarkdownIt
+
+_MD = MarkdownIt("commonmark")
 
 
 def split_blocks(body: str) -> list[str]:
-    """★★ **把正文切成段**（★ 空行分隔）✅
+    """★★ **把正文切成段** —— 按 **markdown 结构**切（`B242`）✅
+
+    ## ★★★ 所有者原话（逐字）
+
+    > 「改后端切段口径，跟前端一样的切法。」
+
+    ## ★ 口径（* 与前端 Milkdown 的顶层节点一一对应）
+
+    ```
+    标题 / 段落 / 列表（整块）/ 有序列表 / 引用（整块）/ 代码块（整块）/ 分割线
+    ```
+
+    ⚠★ 与**原口径**（两个空行一段）的差别：
+      · · 原口径会把**代码块内部有空行的**切成两半 ⇒ 前端整篇渲染时
+        一个代码块对应两段，* 段评气泡挂不上去 ⚠
+      · · 列表 / 引用原本就是一整段，* 行为不变 ✅
 
     ★ 返回**去掉首尾空白**的段列表（* 空段丢掉）✅
-
-    ⚠★ 不解析 markdown 结构（* 列表 / 引用 / 代码块一律按空行切）——
-      ★★ 这是所有者定的口径（* 见模块文档的边界说明）⚠
     """
     if not body:
         return []
-    parts = _BLANK_RUN.split(body.replace("\r\n", "\n").replace("\r", "\n"))
-    return [p.strip() for p in parts if p.strip()]
+    text = body.replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+
+    # ★ 只取**顶层**块（level == 0 且带 map）——
+    #   · · 列表项 / 引用内的段落是嵌套 token，* 由外层一次带走 ✅
+    out: list[str] = []
+    for tok in _MD.parse(text):
+        if tok.level != 0 or not tok.map:
+            continue
+        start, end = tok.map
+        chunk = "\n".join(lines[start:end]).strip()
+        if chunk:
+            out.append(chunk)
+    return out
 
 
 # ===========================================================================

@@ -678,6 +678,11 @@ def suggest(request: HttpRequest):
     if not kw:
         return ok_flat(items=[])
 
+    # ★★★ **限流**（* 所有者：不按 IP，游客算一个人、给 9 倍速率）⚠
+    who = _search_who(request)
+    if not term_store.allow_suggest(who, is_guest=(who == "anon")):
+        return fail("请求过于频繁", 429, code="rate_limited")
+
     # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠
     hot = term_store.matches(kw, limit=8)
     return ok_flat(items=[{"text": t, "type": "term"} for t in hot])

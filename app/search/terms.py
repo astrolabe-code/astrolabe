@@ -79,6 +79,19 @@ SEED_LIMIT = 2000
 #: ★ 同人同词的去重窗口（秒）—— 15 分钟 ⚠
 DEDUP_TTL = int(__import__("os").environ.get("SEARCH_TERM_DEDUP_SECONDS", "900"))
 
+#: ★★★ **联想限流**（`B238` · 2026-10-23）——
+#:
+#: > 「不能按照IP区分，误伤太厉害了。游客都算一个人，给他们的搜索速率放高一点，
+#: >   是正常用户的9倍就行了。登陆用户，就可以按他们的身份限制速率了。」
+#:
+#: ```
+#: 登录用户 ⇒ 按 uid 单独计数：RATE_USER 次/秒
+#: 游客     ⇒ **全体共用一个桶**：RATE_USER × 9 次/秒
+#: ```
+#: ⚠ 为什么游客要给 9 倍：* 他们共用一个桶，* 按单人速率会立刻把所有人卡死 ⚠
+RATE_USER = int(__import__("os").environ.get("SEARCH_SUGGEST_RATE_USER", "10"))
+RATE_GUEST = RATE_USER * 9
+
 
 #: ★★ **进程内复用的 Redis 连接**（* 2026-10-23 修）⚠
 #:
@@ -130,6 +143,28 @@ def record(kw: str, who: str = "") -> None:
 # ---------------------------------------------------------------------------
 # 读：联想
 # ---------------------------------------------------------------------------
+
+def allow_suggest(who: str, is_guest: bool) -> bool:
+    """★★ **联想限流**（* 固定窗口：每秒一个计数键）⚠
+
+    ```
+    登录用户 u<id> ⇒ 每秒 RATE_USER 次
+    游客     anon  ⇒ 每秒 RATE_USER × 9 次（* 全体共享）⚠
+    ```
+
+    ⚠★ 失败**放行**：* 联想是可选增强，* Redis 挂了不该连提示都没有 ✅
+    """
+    limit = RATE_GUEST if is_guest else RATE_USER
+    try:
+        r = _redis()
+        key = f"astrolabe:rl:suggest:{who}:{int(time.time())}"
+        n = r.incr(key)
+        if n == 1:
+            r.expire(key, 2)
+        return n <= limit
+    except Exception:
+        return True
+
 
 def matches(kw: str, limit: int = 8) -> list[str]:
     """★ 从热词里挑**包含** kw 的（* 全量取回内存筛，* ZSET 排序键是分数、做不了子串范围查）⚠"""

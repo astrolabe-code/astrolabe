@@ -311,6 +311,8 @@ export function useSearchSuggest(q: string) {
     queryKey: ['search-suggest', kw],
     enabled: kw.length > 0,
     staleTime: 30_000,
+    // ★ 被限流（429）时不重试：* 联想是可选增强，* 重试只会加重限流 ⚠
+    retry: false,
     queryFn: async (): Promise<{ text: string; type: 'note' | 'project' | 'term' }[]> => {
       const data = unwrap(
         await apiGet<{ items: { text: string; type: 'note' | 'project' | 'term' }[] }>(

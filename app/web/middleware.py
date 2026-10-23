@@ -123,7 +123,7 @@ class DeviceTokenMiddleware:
     >   都没有的，看作一个人，走哪9倍的速率限制……他们用脚本清除token不管用。」
 
     ```
-    没有 cookie / 验签失败 ⇒ 发新令牌并写 HttpOnly Cookie
+    没有 cookie / 验签失败 ⇒ 发新令牌并写 HttpOnly Cookie（每 IP 每小时 150 个）
     有合法令牌            ⇒ request.device_token = 它
     ```
 
@@ -145,8 +145,9 @@ class DeviceTokenMiddleware:
         #   · · 所以：* 带来的合法令牌 ⇒ 记身份；* 没带 ⇒ 就是 anon（共用桶）✅
         valid = device.verify(token)
         if not valid:
-            # ★ 无条件发牌（* 不做 IP 配额 —— 收益不值，见 core/device.py 顶部）⚠
-            freshing = device.issue()
+            # ★ 发牌前先看配额（* 每 IP 每小时 150 个，* 超了就不发）⚠
+            if device._issue_allowed(device.client_ip(request)):
+                freshing = device.issue()
             token = ""
 
         request.device_token = token if valid else ""

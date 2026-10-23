@@ -20,15 +20,19 @@
   · · 签名是**无状态**的，验签只花几微秒 ✅
   · · 代价：没法"吊销单个设备" —— 对限流场景不需要 ⚠
 
-## ★★ 为什么不做"每 IP 每小时发几个"的配额（2026-10-23 所有者裁定）
+## ★★ 发牌速率：每 IP 每小时 150 个（2026-10-23 所有者定）
 
-> 「不要每 IP 每小时最多发 30 个，现在收益不值得。……要是有人这么弄，我也服气了。」
+> 「嗯，还加一个令牌发放速率就行，一个小时150个就行。」
 
 ```
+正常用户：一个设备一辈子只要一个令牌
+   150/小时 ⇒ 相当于"一小时 150 台新设备"，家庭/公司出口都够 ✅
+超出    ：⛔ 不再发牌，* 该客户端落进 anon 桶（共用 90 次/秒）⚠
+
 伪造令牌：不可能（要 SECRET_KEY）
-不带令牌：落进 anon 桶，全体共用 90 次/秒
-要绕过  ：脚本 + 每次丢弃 Cookie 领新令牌 + 自己压速率 + 断开重连
-        ⇒ 做到这个程度的人，不是刷子就是研究者，认了 ✅
+不带令牌：落进 anon 桶
+要绕过  ：脚本 + 丢 Cookie 领新牌 + 自己压速率 + 断开重连
+        ⇒ 做到这个程度的人，认了 ✅
 ```
 
 ## ★ 身份优先级
@@ -46,6 +50,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+import time
 
 from django.conf import settings
 
@@ -57,6 +62,12 @@ COOKIE_NAME = "at_device"
 COOKIE_MAX_AGE = 180 * 24 * 3600
 #: 随机部分字节数（16 字节 ⇒ 22 字符 base64url）
 TOKEN_BYTES = 16
+
+#: ★★ **令牌发放速率**（* 所有者 2026-10-23：「一个小时150个就行」）⚠
+#:   · · 正常用户一个设备只要一次 ⇒ 150 相当于"一小时 150 个新设备"
+#:   · · 超出 ⇒ ⛔ 不再发牌，* 该客户端落进 anon 桶（共用 90 次/秒）✅
+ISSUE_MAX = 150
+ISSUE_WINDOW = 3600
 
 _client = None
 
@@ -91,6 +102,35 @@ def verify(token: str) -> bool:
         return False
     raw, sig = token.rsplit(".", 1)
     return hmac.compare_digest(sig, _sign(raw))
+
+
+def _issue_allowed(ip: str) -> bool:
+    """★★ **每 IP 每小时最多发 150 个令牌**（* 固定小时窗口）⚠
+
+    ⚠★ 只在"要不要发牌"时用 IP；**限流身份**永远不用 IP（* 那是误伤的根源）⚠
+    """
+    if not ip:
+        return True
+    try:
+        key = f"astrolabe:dev:issue:{ip}:{int(time.time()) // ISSUE_WINDOW}"
+        n = _redis().incr(key)
+        if n == 1:
+            _redis().expire(key, ISSUE_WINDOW + 60)
+        return n <= ISSUE_MAX
+    except Exception:
+        # ★ Redis 挂了 ⇒ 放行（* 令牌只是限流手段，* 不能因此不让访问）⚠
+        return True
+
+
+def client_ip(request) -> str:
+    """★ 取客户端 IP（* 仅用于"发牌"配额，* 不用于限流身份）⚠"""
+    xff = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
+    return (
+        xff
+        or request.META.get("HTTP_X_REAL_IP")
+        or request.META.get("REMOTE_ADDR")
+        or ""
+    )
 
 
 def set_cookie(response, token: str):

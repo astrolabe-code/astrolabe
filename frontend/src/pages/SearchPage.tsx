@@ -76,7 +76,6 @@ export default function SearchPage() {
       }
     }
   }
-  const noteTotal = pages[0]?.total ?? 0
   const expanded = pages[0]?.expanded
   const projectItems: ProjectSummary[] = tab === 'note' ? [] : projects.data ?? []
 
@@ -108,7 +107,14 @@ export default function SearchPage() {
     if (!el) return
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && notes.hasNextPage && !notes.isFetchingNextPage) {
+        // ⚠★ 必须排除"上一页失败"：* 失败后 hasNextPage 仍为 true、哨兵仍在视口
+        //   ⇒ 不排除就会**无限重试**（尤其被限流 429 时）⚠
+        if (
+          entries[0].isIntersecting &&
+          notes.hasNextPage &&
+          !notes.isFetchingNextPage &&
+          !notes.isFetchNextPageError
+        ) {
           notes.fetchNextPage()
         }
       },
@@ -116,7 +122,12 @@ export default function SearchPage() {
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [notes.hasNextPage, notes.isFetchingNextPage, notes.fetchNextPage])
+  }, [
+    notes.hasNextPage,
+    notes.isFetchingNextPage,
+    notes.isFetchNextPageError,
+    notes.fetchNextPage,
+  ])
 
   return (
     <AppLayout
@@ -184,11 +195,13 @@ export default function SearchPage() {
           <div className="flex items-center" style={{ gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
             <span className="faint" style={{ fontSize: 11.5 }}>
               「{q}」·{' '}
+              {/* ★ 无限滚动下"总数"不可知（并入联想词时尤其不准）
+                  ⇒ 如实说"已加载 N 条" ⚠ */}
               {tab === 'project'
-                ? `${projectItems.length} 个项目`
+                ? `已加载 ${projectItems.length} 个项目`
                 : tab === 'note'
-                  ? `${noteTotal} 条笔记`
-                  : `${noteTotal} 条笔记 · ${projectItems.length} 个项目`}
+                  ? `已加载 ${noteItems.length} 条笔记`
+                  : `已加载 ${noteItems.length} 条笔记 · ${projectItems.length} 个项目`}
             </span>
 
             <div style={{ display: 'flex', gap: 2, marginLeft: 'auto' }}>
@@ -243,6 +256,7 @@ export default function SearchPage() {
           {/* ③ 列表 */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {notes.isError &&
+              !noteItems.length &&
               (notes.error instanceof ApiRequestError && notes.error.status === 429 ? (
                 <div style={{ padding: '26px 20px', textAlign: 'center' }}>
                   {loggedIn ? (
@@ -339,13 +353,29 @@ export default function SearchPage() {
           {/* ④ 无限滚动：哨兵进入视口就加载下一页 */}
           <div ref={sentinel} style={{ height: 1 }} />
           <div className="faint" style={{ fontSize: 11.5, textAlign: 'center', padding: '12px 0 4px' }}>
-            {notes.isFetchingNextPage
-              ? '加载中…'
-              : notes.hasNextPage
-                ? '往下滑，继续加载'
-                : noteItems.length > 0
-                  ? '没有更多了'
-                  : ''}
+            {notes.isFetchingNextPage ? (
+              '加载中…'
+            ) : notes.isFetchNextPageError ? (
+              <button
+                type="button"
+                onClick={() => notes.fetchNextPage()}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-sub)',
+                  fontSize: 11.5,
+                }}
+              >
+                加载失败，点这里重试
+              </button>
+            ) : notes.hasNextPage ? (
+              '往下滑，继续加载'
+            ) : noteItems.length > 0 ? (
+              '没有更多了'
+            ) : (
+              ''
+            )}
           </div>
         </>
       )}

@@ -382,73 +382,14 @@ def batch_visibility(request: HttpRequest, project_ref: str):
 
 #: ★★ 搜索后端开关（`B238`）：`meili`（默认）· `pg`（回退 / 对照）
 def _search_who(request: HttpRequest) -> str:
-    """★ 热搜词的「谁搜的」标识（* 仅用于 15 分钟去重，* 不落库）⚠
+    """★ 请求身份（* 登录 u<id> / 设备 d<token> / 匿名 anon）⚠
 
-    ## ★★★ 所有者原话（逐字）
-
-    > 「游客就算一个人，不要整IP，怪复杂的。」
-
-    ```
-    登录用户 ⇒ u<id>
-    游客     ⇒ "anon"   ← * 所有游客算**同一个**身份 ✅
-    ```
+    ⚠ 限流已由 `SearchRateLimitMiddleware` 统一处理；
+      · 这里只给"热搜词 15 分钟去重"用（* 同一实现，* 不重复维护）✅
     """
-    user = current_user(request)
-    if user is not None and getattr(user, "pk", None):
-        return f"u{user.pk}"
+    from web import ratelimit
 
-    # ★★ 有设备令牌 ⇒ 按设备区分（* 游客也能各自拿到正常速率）⚠
-    token = getattr(request, "device_token", "") or ""
-    if token:
-        return f"d{token.split('.')[0][:16]}"
-    return "anon"
-
-
-def _rate_limited(scope: str, request: HttpRequest):
-    """★★ **被限流时的统一响应**（`B238` · 2026-10-23）⚠
-
-    ```
-    ① Retry-After: 1      ⇒ 客户端知道等多久（* 而不是瞎猜）
-    ② 计数 astrolabe:rl:hits:<scope>:<日期>  ⇒ 能看出是否误伤、是否太松 ⚠
-    ③ 文案温和，并提示登录（* 登录用户有自己的桶，* 不用和匿名挤）✅
-    ```
-    """
-    try:
-        r = term_store._redis()
-        day = timezone.localdate().isoformat()
-        key = f"astrolabe:rl:hits:{scope}:{day}"
-        r.incr(key)
-        r.expire(key, 172800)
-    except Exception:
-        pass
-
-    # ★★ 文案分两种（* 所有者：「不要登录的用户，触发限流了，都叫他去登录」）⚠
-    #   · · 未登录 ⇒ 提示登录（* 登录后是独立额度，能绕过这个桶）✅
-    #   · · 已登录 ⇒ 只让他慢一点，⛔ 不能叫他"去登录" ⚠
-    user = current_user(request)
-    logged_in = user is not None and getattr(user, "pk", None) is not None
-
-    if logged_in:
-        message = "搜得有点快啦，歇一秒再试试～"
-    else:
-        message = (
-            "这会儿搜索的人有点多，先喘口气～登录后就是你的专属通道，不用和大家挤在一起。"
-        )
-
-    resp = fail(
-        message,
-        429,
-        code="rate_limited",
-        data={"login_hint": not logged_in},
-    )
-    resp["Retry-After"] = "1"
-    return resp
-
-
-def _rate_ok(request: HttpRequest, scope: str) -> bool:
-    """★ 这个请求该不该放行（* 匿名共用一个桶，给 9 倍速率）⚠"""
-    who = _search_who(request)
-    return term_store.allow(scope, who, term_store.rate_limit_for(who))
+    return ratelimit.identity(request)
 
 
 def _search_backend() -> str:
@@ -628,10 +569,6 @@ def search(request: HttpRequest):
     if not kw:
         return ok_flat(total=0, items=[])
 
-    # ★★★ 限流（* 所有者：「一起加上」）⚠
-    if not _rate_ok(request, "search"):
-        return _rate_limited("search", request)
-
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
         term_store.record(kw, who=_search_who(request))
@@ -786,10 +723,6 @@ def suggest(request: HttpRequest):
     kw = (request.GET.get("q") or "").strip()[:MAX_QUERY]
     if not kw:
         return ok_flat(items=[])
-
-    # ★★★ **限流**（* 有令牌/登录 ⇒ 正常速率；* 都没有 ⇒ 共用桶、9 倍）⚠
-    if not _rate_ok(request, "suggest"):
-        return _rate_limited("suggest", request)
 
     # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠
     hot = term_store.matches(kw, limit=8)

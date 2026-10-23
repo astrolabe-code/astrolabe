@@ -155,3 +155,28 @@ class DeviceTokenMiddleware:
         if freshing:
             device.set_cookie(response, freshing)
         return response
+
+
+class SearchRateLimitMiddleware:
+    """★★ **搜索类请求的统一限流**（`B238`）⚠
+
+    > 「直接在任何可以搜索的窗口前，加一个后端验证是不是被限流了，没限流，才去真正
+    >   触发搜索。」
+
+    ```
+    GET /api/** 且 ?q= 非空  ⇒ 判一次（* 笔记搜索 / 联想 / 项目搜索 全部覆盖）✅
+    ```
+
+    ⚠ 必须排在 `DeviceTokenMiddleware` **之后**（* 要用它的设备身份）⚠
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from web import ratelimit
+
+        blocked = ratelimit.check(request)
+        if blocked is not None:
+            return blocked
+        return self.get_response(request)

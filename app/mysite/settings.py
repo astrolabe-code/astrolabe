@@ -77,6 +77,8 @@ MIDDLEWARE = [
     "web.middleware.BearerAuthMiddleware",
     # ★★ 设备令牌（* 给游客发一个签名 Cookie，* 用于限流身份识别）⚠
     "web.middleware.DeviceTokenMiddleware",
+    # ★★ 搜索限流（* 任何带 q 的 GET 统一判一次）⚠
+    "web.middleware.SearchRateLimitMiddleware",
     "django.middleware.common.CommonMiddleware",
     # ★ 到这里 `_dont_enforce_csrf_checks` 已经被 Bearer 中间件设好了 ✅
     "django.middleware.csrf.CsrfViewMiddleware",

@@ -46,7 +46,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
-from core import search_cache
 from core.models import Note, NoteLike, Project
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
@@ -234,90 +233,12 @@ def _create(request: HttpRequest, project):
     )
     blocks = note_alg.realign(note)
     # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
-    search_cache.invalidate(search_cache.NS_NOTES)
     return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in _blocks_with_counts(note, blocks)])
 
 
 # ---------------------------------------------------------------------------
 # 单篇
 # ---------------------------------------------------------------------------
-
-def _verify_note_cache(cached: list):
-    """★★ **核对缓存里的笔记是否还对得上**（* `F3` 补充 · 2026-10-21）⚠
-
-    Returns:
-        - `None` ⇒ 有条目被删除或被改动 ⇒ 调用方**重新全查**并重写缓存
-        - `list` ⇒ 全部核对无误，* 可以直接发
-
-    ⚠★ 比什么（**只剩一条**）：
-    ```
-    ① 行还在吗            ⇒ 物理删 / 作者被 CASCADE
-    ② updated_at 变了吗   ⇒ 一切改动（内容 / 公开性 / 软删 / 恢复 / 审核隐藏）
-    ```
-    ⚠★ 为什么 `deleted_at` / `state` 不用再比：* 模型 `Note.save()` 已收口，
-      它们的改动**必然**刷新 `updated_at`（* 所有者：「这样就不用在 redis 里判断
-      这两个了」）✅
-    ⚠★ 作者也不比（作者创建后不可变；作者被删 ⇒ 笔记整行 CASCADE，由 ① 兜住）✅
-    """
-    ids = [it["id"] for it in cached if it.get("id")]
-    if not cached:
-        return [], {}
-
-    rows = (
-        Note.objects.filter(pk__in=ids)
-        .values(
-            "pk",
-            # ★★★ **唯一判据**（* 所有者：「deleted_at 和 state 的改变都要改变
-            #   updated_at……这样就不用在 redis 里判断这两个了」）⚠
-            #   · · 模型的 `Note.save()` 已收口：`update_fields` 一律补 updated_at
-            #     ⇒ 软删 / 恢复 / 审核隐藏 / PATCH 全都会刷新它 ✅
-            "updated_at",
-            # ★ 评论数**不缓存**，* 命中时从这一行顺手带回去（* 同一行，零额外往返）⚠
-            "comment_count",
-        )
-    )
-    by_id = {r["pk"]: r for r in rows}
-
-    for it in cached:
-        r = by_id.get(it["id"])
-        # ① 行没了（物理删 / 作者被 CASCADE）⇒ 作废
-        if r is None:
-            return None, {}
-        # ② 更新时间对不上 ⇒ 改过（* 含软删 / 隐藏，见上方说明）
-        if r["updated_at"].isoformat() != it.get("updated_at"):
-            return None, {}
-    return cached, {pk: r["comment_count"] for pk, r in by_id.items()}
-
-
-def _attach_counts(items: list, comment_counts: dict | None = None) -> list:
-    """★★ **给搜索结果现取两个计数**（* 2026-10-21）⚠
-
-    ## ★ 为什么单独一个函数
-    - 所有者：「comment_count / like_count 已经有缓存了，为什么还在搜索里缓存一次？」
-    - ⇒ 搜索缓存**只存搜索结果本身**（正文 / 标题 / 项目…），* 计数一律现取：
-      · · ★ `like_count` ⇒ 走 `like_cache`（* 它自己的 Redis 缓存，* 批量 MGET）✅
-      · · ★ `comment_count` ⇒ 库里的计数列；* 命中路径由校验查询顺手带回，
-        * 回源路径直接用已加载的模型属性（* 都不额外打库）✅
-    """
-    if not items:
-        return items
-    ids = [it["id"] for it in items]
-
-    # ① 赞数：* 批量走 like_cache（miss 的才 COUNT）
-    def _db(missing: list[int]) -> dict[int, int]:
-        from django.db.models import Count
-
-        rows = NoteLike.objects.filter(note_id__in=missing).values("note_id").annotate(c=Count("id"))
-        return {r["note_id"]: r["c"] for r in rows}
-
-    likes = like_cache.note_counts(ids, _db)
-
-    for it in items:
-        it["like_count"] = likes.get(it["id"], 0)
-        if comment_counts is not None:
-            it["comment_count"] = comment_counts.get(it["id"], 0)
-    return items
-
 
 @require_http_methods(["POST"])
 def batch_visibility(request: HttpRequest, project_ref: str):
@@ -376,7 +297,6 @@ def batch_visibility(request: HttpRequest, project_ref: str):
         # ⚠ 批量更新不走 `save()` ⇒ 必须显式带 updated_at（* 搜索缓存据此作废）⚠
         updated_at=timezone.now(),
     )
-    search_cache.invalidate(search_cache.NS_NOTES)
     return ok_flat(updated=n, is_public=want, excluded=len(exclude))
 
 
@@ -390,10 +310,6 @@ def _search_who(request: HttpRequest) -> str:
     from web import ratelimit
 
     return ratelimit.identity(request)
-
-
-def _search_backend() -> str:
-    return (os.environ.get("SEARCH_BACKEND") or "meili").strip().lower()
 
 
 def _search_item(d: dict) -> dict:
@@ -558,11 +474,12 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
 
 @require_http_methods(["GET"])
 def search(request: HttpRequest):
-    """`GET /api/notes/search/?q=` —— **公共搜索**（`B238`：Meili 优先，PG 回退）⚠
+    """`GET /api/notes/search/?q=` —— **公共搜索（只走 Meilisearch）** ⚠
 
     ```
-    SEARCH_BACKEND=meili（默认） → Meilisearch；出错自动回落 PG
-    SEARCH_BACKEND=pg            → 走原路径（* 带 Redis 结果缓存）
+    ⛔ 2026-10-23 下线 PostgreSQL 检索 + Redis 结果缓存（`B238` 第四阶段）
+       · 理由：两套实现要同时维护，而 PG 路径在 Meili 正常时**从不触发**
+       · 代价：引擎不可用时搜索直接报错（* 而不是悄悄换一条更慢更差的路）
     ```
     """
     kw = (request.GET.get("q") or "").strip()[:MAX_QUERY]
@@ -573,131 +490,22 @@ def search(request: HttpRequest):
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
         term_store.record(kw, who=_search_who(request))
 
-    if _search_backend() != "pg":
-        try:
-            from search import client
+    from search import client
 
-            if client.enabled():
-                limit = _clamp(request.GET.get("limit"), 1, 50, 20)
-                offset = _clamp(request.GET.get("offset"), 0, 1000, 0)
-                sort = (request.GET.get("sort") or "relevance").strip().lower()
-                return _search_meili(kw, limit, offset, sort)
-        except Exception:
-            # ⚠ 搜索引擎不可用 ⇒ **静默降级**（* 用户不该看到 500）⚠
-            logger.warning("Meilisearch 查询失败，回退 PostgreSQL", exc_info=True)
-
-    return _search_pg(request)
-
-
-def _search_pg(request: HttpRequest):
-    """`GET /api/notes/search/?q=` —— **全局笔记搜索**（首页搜索框用）。
-
-    ⚠ 所有者原话：「你这现在只能搜索项目名称。无法搜索用户和笔记标题吗？」
-
-    ## ★★ 匹配范围
-    - 标题（`title`）+ 正文（`body`）⇒ `icontains`（大小写不敏感）✅
-
-    ## ★★ 可见范围（与项目内笔记列表同一套判据）
-    ```
-    游客              ⇒ 公开且生效中的笔记
-    登录用户          ⇒ 公开 ∨ 自己写的 ∨ 项目 owner / 协作者可见的（含私有）
-    ```
-
-    ## ★ 返回
-    `{total, items:[note…]}`，每篇额外带 `project` 三件套
-    （`project_ref` / `project_name` / `version_label`）⇒ 前端能链回项目 ✅
-    """
-    from django.db.models import Q
-
-    kw = (request.GET.get("q") or "").strip()
-    if not kw:
-        return ok_flat(total=0, items=[])
-
-    # ★★ 分页（`D109` 搜索页）：* `offset > 0` 时**跳过缓存**
-    #   （* 缓存只存第一页，* 拿它去 slice 会错位）⚠
-    offset = _clamp(request.GET.get("offset"), 0, 1000, 0)
-
-    # ★★★ 2026-10-21（所有者裁定）：**首页搜索只搜公开内容，与用户无关** ⚠
-    #   > 「不要让私有项目或者笔记能被搜索，不管对哪个用户都一样，搜私有笔记有什么
-    #   >  作用？对作者，他可以清楚知道那些是私有笔记，还可以到项目里搜索，对其他人，
-    #   >  搜别人的私有笔记是被禁制的行为。首页搜索框应该不允许这种行为的。」
-    #
-    #   ⇒ ★★ 结果**不随用户变化** ⇒ 缓存键**不带 uid**（用 0 作共享桶）：
-    #     · 所有人搜同一个词命中的是**同一份缓存** ✅
-    #     · 100 个不同用户搜同一个词 ⇒ 只扫一次库（* 而不是 100 次）✅
-    uid = 0
-    user = current_user(request)  # ⚠ 仅用于日志/后续扩展，* 不参与筛选
-
-    # ★★ 先查 Redis（* 频繁搜索的词直接命中，* 少打数据库）⚠
-    #   · · ★★ 但**发出前必须核对数据库**（* 所有者：「服务器缓存取出的内容要
-    #     对比一下，无误后，再发出去。对比发现被删除了或者改了，就要修改 redis 的
-    #     记录，再按情况发送信息」）——
-    #       · · 否则用户点了缓存里的结果，* 跳过去发现是别的内容 / 已消失 ⚠
-    cached = (
-        search_cache.get(search_cache.NS_NOTES, uid, kw) if offset == 0 else None
-    )
-    if cached is not None:
-        checked, comment_counts = _verify_note_cache(cached)
-        if checked is not None:
-            # ★★ 命中：* 两个计数**现取**（* 缓存里不存，* 不会是 5 分钟前的旧数字）⚠
-            return ok_flat(
-                total=len(checked),
-                items=[
-                    _search_item(d)
-                    for d in _attach_counts(checked, comment_counts)
-                ],
-            )
-        # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
-
-    # ★★★ **只搜公开内容**（* 与当前用户无关，匿名和作者看到的完全一样）⚠
-    #   · · 笔记必须公开 + 生效中 + 未删
-    #   · · ★ **私有项目里的笔记也不搜**（* 否则等于泄露私有项目的存在）⚠
-    qs = Note.objects.filter(
-        deleted_at__isnull=True,
-        state=Note.STATE_ACTIVE,
-        is_public=True,
-    ).filter(
-        # ★ 项目必须**公开且生效中**（* 被管理员隐藏 / 下架的项目，其笔记也不该搜到）⚠
-        Q(project__isnull=True)
-        | (Q(project__is_public=True) & Q(project__state=Project.STATE_ACTIVE))
-    )
-
-    # ⚠ LIKE 通配符转义（* 用户输入 % / _ 不该当通配符用）⚠
-    like = kw.replace("%", "").replace("_", "")
-    qs = qs.filter(Q(title__icontains=like) | Q(body__icontains=like)).distinct()
-    qs = qs.order_by("-created_at")
+    if not client.enabled():
+        return fail("搜索暂时不可用，请稍后再试", 503, code="search_unavailable")
 
     limit = _clamp(request.GET.get("limit"), 1, 50, 20)
-    # ⚠ 先算 total（* 分页要用），* 再切这一页 ⚠
-    total = qs.count()
-    items = list(qs[offset:offset + limit])
+    offset = _clamp(request.GET.get("offset"), 0, 1000, 0)
+    sort = (request.GET.get("sort") or "relevance").strip().lower()
 
-    # ★★ 序列化时**不带计数** ⇒ 缓存里只存「搜索结果本身」
-    #   （* like_count 有 like_cache，* comment_count 是计数列，* 不在这重复存）⚠
-    out = []
-    comment_counts = {}
-    for n in items:
-        d = _note_json(n, with_counts=False)
-        d["project"] = _project_label(n)
-        out.append(d)
-        comment_counts[n.pk] = n.comment_count
-
-    # ★★★ **空结果一律不缓存**（* 所有者：「不要兜底，直接不存空缓存就完了，
-    #   正常人谁会一直不停搜索空结果？」）⚠
-    #   · · 空数组没有条目可供 `_verify_note_cache` 比对
-    #     ⇒ 一旦某篇笔记/项目变成公开，* 这条空缓存要等 TTL 才失效，
-    #     * 期间搜索一直返回 0（* 这正是刚才担心的那个窗口）⚠
-    #   · · 代价可接受：* 空查询本来就少，* 且真正常搜的还是那几个有结果的词 ✅
-    if out:
-        search_cache.put(search_cache.NS_NOTES, uid, kw, out)
-    # ★ 回退路径也吐瘦结构（* 与 Meili 路径保持同一 shape）
-    #   · · 计数要现取（* 缓存里不存计数，* 见 `_verify_note_cache` 的注释）⚠
-    return ok_flat(
-        total=total, items=[_search_item(d) for d in _attach_counts(out, comment_counts)]
-    )
+    try:
+        return _search_meili(kw, limit, offset, sort)
+    except Exception:
+        logger.warning("Meilisearch 查询失败", exc_info=True)
+        return fail("搜索暂时不可用，请稍后再试", 503, code="search_unavailable")
 
 
-@require_http_methods(["GET"])
 def suggest(request: HttpRequest):
     """`GET /api/search/suggest/?q=` —— **关键词联想**（`D109` · 只有热词）⚠
 
@@ -766,7 +574,6 @@ def detail(request: HttpRequest, note_id: int):
         note.deleted_at = timezone.now()
         note.deleted_by = current_user(request)
         note.save(update_fields=["deleted_at", "deleted_by"])
-        search_cache.invalidate(search_cache.NS_NOTES)
         return ok_flat(deleted=True)
 
     if request.method == "PATCH":
@@ -868,11 +675,9 @@ def undelete(request: HttpRequest, note_id: int):
 
     note.deleted_at = None
     note.deleted_by = None
-    search_cache.invalidate(search_cache.NS_NOTES)
     note.save(update_fields=["deleted_at", "deleted_by"])
     blocks = note_alg.realign(note)
     # ★ 新建会影响搜索结果 ⇒ 清缓存（* TTL 只是兜底）⚠
-    search_cache.invalidate(search_cache.NS_NOTES)
     return ok_flat(note=_note_json(note), blocks=[_block_json(b) for b in _blocks_with_counts(note, blocks)])
 
 
@@ -915,7 +720,6 @@ def _patch(request: HttpRequest, note: Note):
         return fail("没有要改的字段", 400, code="nothing_to_change")
 
     note.save()
-    search_cache.invalidate(search_cache.NS_NOTES)
 
     # ★★ 段落现算（* 段评的 ordinal 在这里跟着新正文对齐）✅
     blocks = note_alg.realign(note)

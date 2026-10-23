@@ -40,7 +40,8 @@ TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL", "600"))
 REGISTRY_TTL_FACTOR = 2
 
 #: ★ 统一走 `astrolabe:` 命名空间（* 与 jobs / basegraph / neigh / hot 一致）⚠
-NS_NOTES = "astrolabe:search:notes"
+# ⚠ 2026-10-23：**笔记搜索结果缓存已下线**（* `B238` 第四阶段：改走 Meilisearch）⚠
+#   · 只剩项目搜索还在用这套（* 项目量小、`icontains` 够用）✅
 NS_PROJECTS = "astrolabe:search:projects"
 
 _client = None
@@ -172,6 +173,5 @@ def invalidate(ns: str) -> None:
 
 
 def invalidate_all() -> None:
-    """笔记 / 项目 / 联想三路一起清（项目改名等场景用）。"""
-    invalidate(NS_NOTES)
+    """★ 项目搜索缓存全清（* 笔记那路已下线）⚠"""
     invalidate(NS_PROJECTS)

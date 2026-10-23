@@ -216,10 +216,7 @@ def moderate_note(request: HttpRequest, note_id: int):
     note.moderated_by = request.user
     note.moderated_at = timezone.now()
     note.save(update_fields=["state", "moderation_reason", "moderated_by", "moderated_at"])
-    # ★★★ 审核改了 `state` ⇒ **搜索缓存立刻作废**
-    #   · · `save(update_fields=...)` 不刷新 `updated_at`（* Django 有意如此），
-    #     * 光靠时间戳判不出来 ⇒ * 必须在这里主动清 ⚠
-    search_cache.invalidate(search_cache.NS_NOTES)
+    # ★ 索引同步由 `Note.save()` 的钩子负责（* `B238`），* 这里不用再清缓存 ⚠
 
     _audit(request, f"note.{action}", note_id=note.pk, name=note.title, reason=reason)
 

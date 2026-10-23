@@ -190,6 +190,31 @@ services:
       db:    { condition: service_healthy }
       redis: { condition: service_healthy }
       meilisearch: { condition: service_healthy }
+    # ★★ 心跳健康检查（`B238`）：* 进程"活着但卡死"时 restart 不会触发，
+    #   所以让它自己报心跳；* 超过 300 秒没更新 ⇒ unhealthy ⇒ 由部署侧重启 ⚠
+    healthcheck:
+      test: ["CMD-SHELL", "python manage.py search_worker --healthcheck || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # ============================ 自愈（健康检查失败自动重启）============================
+  # ★★ 为什么要它（`B238` · 2026-10-23）：
+  #   Docker 的 healthcheck 只**打标记**（unhealthy），
+  #   `restart: unless-stopped` 只在**进程退出**时生效 ⇒ 进程"活着但卡死"没人管 ⚠
+  #   这个容器监听所有带 healthcheck 的服务，变 unhealthy 就 docker restart 它 ✅
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=30
+      - AUTOHEAL_START_PERIOD=60
+    volumes:
+      # ⚠ 挂 docker.sock = 给它本机 root 级控制权；* 单机自建可接受，
+      #   多租户/公有云请换成只读的 docker API 代理 ⚠
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # ============================ 维护调度（热度合并）============================
   #

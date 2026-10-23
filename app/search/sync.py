@@ -182,8 +182,89 @@ def drain_once(timeout: int = 2) -> bool:
     item = r.brpop(QUEUE_KEY, timeout=timeout)
     if not item:
         return False
-    _run(r, item[1])
+
+    raw = item[1]
+    if raw.startswith(COUNTS_PREFIX):
+        # ★ 顺手把后面连续排队的"仅计数"任务也取出来，一次写完 ⚠
+        raws = [raw]
+        while len(raws) < COUNTS_BATCH:
+            more = r.rpop(QUEUE_KEY)
+            if not more:
+                break
+            if not more.startswith(COUNTS_PREFIX):
+                # ⚠ 遇到"整篇重建"任务就放回去，* 不改变原有顺序 ⚠
+                r.rpush(QUEUE_KEY, more)
+                break
+            raws.append(more)
+        _apply_counts_batch(r, raws)
+        return True
+
+    _run(r, raw)
     return True
+
+
+#: ★ 一批最多合并多少个"仅计数"任务（* 一次 HTTP 写多篇）⚠
+COUNTS_BATCH = 50
+
+
+def _apply_counts_batch(r, raws: list[str]) -> None:
+    """★★ **把一批"仅计数"任务合成一次 PUT**（`B238` · 2026-10-23）⚠
+
+    ```
+    点赞风暴：100 次赞 ⇒ 最多 COUNTS_BATCH 个 id 一次写完
+    ⇒ 写次数从"每人一次"降到"每批一次" ✅
+    ```
+    """
+    from django.db.models import Count
+
+    from core import like_cache
+    from core.models import NoteLike
+
+    ids = [int(x[len(COUNTS_PREFIX):]) for x in raws]
+    try:
+        notes = {n.pk: n for n in Note.objects.filter(pk__in=ids)}
+        gone = []
+        alive = []
+        for nid in ids:
+            note = notes.get(nid)
+            if note is None or not documents.is_searchable(note):
+                gone.append(nid)
+            else:
+                alive.append(note)
+
+        if gone:
+            client.delete_documents(client.NOTES_INDEX, gone)
+
+        if alive:
+            pks = [n.pk for n in alive]
+            db_counts = {
+                row["note_id"]: row["c"]
+                for row in NoteLike.objects.filter(note_id__in=pks)
+                .values("note_id")
+                .annotate(c=Count("id"))
+            }
+            likes = like_cache.note_counts(pks, db_counts)
+            client.add_documents(
+                client.NOTES_INDEX,
+                [
+                    {
+                        "id": n.pk,
+                        "like_count": int(likes.get(n.pk, 0)),
+                        "comment_count": int(n.comment_count or 0),
+                    }
+                    for n in alive
+                ],
+                replace=False,  # ★ PUT：只改计数
+            )
+    except Exception:
+        # ★ 整批失败 ⇒ 退回逐条（* 沿用原有重试/退避逻辑）⚠
+        for raw in raws:
+            _run(r, raw)
+        return
+
+    for raw in raws:
+        r.hdel(ATTEMPTS_KEY, raw)
+        r.srem(PENDING_KEY, raw)
 
 
 def _run(r, member: str) -> None:

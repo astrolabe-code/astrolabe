@@ -50,11 +50,22 @@ ATTEMPTS_KEY = "astrolabe:index:attempts"
 MAX_ATTEMPTS = 5
 
 
-def _redis():
-    import redis
-    from django.conf import settings
+#: ★★ 复用连接（* 2026-10-23：原来每次新建 ⇒ 每条命令重新握手，实测 ~1.8ms）⚠
+_conn = None
 
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+def _redis():
+    global _conn
+    if _conn is None:
+        import redis
+        from django.conf import settings
+
+        _conn = redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+    return _conn
 
 
 def enqueue_note(note_id: int) -> bool:

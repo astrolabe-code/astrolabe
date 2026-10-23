@@ -65,6 +65,9 @@ from web.permissions import (
 
 logger = logging.getLogger("astrolabe.search.views")
 
+#: ★ 查询词最大长度（* 防超长串把 Meili / 日志打爆）⚠
+MAX_QUERY = 200
+
 #: ★★ **`kind` 固定 5 种**（★ 所有者 2026-10-15 定，* B201）⚠
 #: ★ 固定枚举 ⇒ ★ ❌ 不是用户自定义字段（* 同 B190 的规矩）⚠
 KINDS = ("flash", "question", "confuse", "pitfall", "summary")
@@ -426,20 +429,32 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
     #   · · 只在**第一页**做（* 翻页时不再重复拼联想词）⚠
     terms = term_store.matches(kw, limit=3) if offset == 0 else []
 
-    res = client.search(client.NOTES_INDEX, kw, limit=limit, offset=offset, sort=order)
-    hits = res.get("hits") or []
-    primary_count = len(hits)
+    base_q = {"indexUid": client.NOTES_INDEX, "limit": limit}
+    if order:
+        base_q["sort"] = order
+
+    if terms:
+        # ★ 只发**一次** HTTP：第 0 组是用户词，后面是联想词 ⚠
+        results = client.multi_search(
+            [{"offset": offset, "q": kw, **base_q}]
+            + [{"q": t, **base_q} for t in terms]
+        )
+        primary = results[0] or {}
+        primary_hits = primary.get("hits") or []
+    else:
+        results = []
+        res = client.search(
+            client.NOTES_INDEX, kw, limit=limit, offset=offset, sort=order
+        )
+        primary_hits = res.get("hits") or []
+        primary = res
+
+    hits = primary_hits
+    primary_count = len(primary_hits)
     expanded = None
 
     if terms:
-        base = {"indexUid": client.NOTES_INDEX, "limit": limit}
-        if order:
-            base["sort"] = order
-
-        results = client.multi_search(
-            [{"q": kw, **base}] + [{"q": t, **base} for t in terms]
-        )
-        # 第 0 组就是用户词本身（* 保留它的顺序）⚠
+        # 合并：用户词在前，联想词接后（去重）
         merged: list[dict] = []
         seen_ids: set = set()
         for group in results:
@@ -453,9 +468,7 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
             hits = merged[:limit]
             # ★ 只列出**真的带来了新结果**的联想词 ⚠
             used = []
-            seen2: set = set(
-                h.get("id") for h in (results[0].get("hits") or [])
-            )
+            seen2: set = {h.get("id") for h in primary_hits}
             for t, group in zip(terms, results[1:]):
                 added = [
                     h.get("id")
@@ -465,11 +478,7 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
                 if added:
                     used.append(t)
                     seen2.update(added)
-            expanded = {
-                "query": kw,
-                "terms": used,
-                "matched": primary_count,
-            }
+            expanded = {"query": kw, "terms": used, "matched": primary_count}
 
     ids = [h["id"] for h in hits if h.get("id")]
 
@@ -499,7 +508,7 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
 
     payload = {
         # ★ 并入了联想词 ⇒ total 用"本次合并条数"；* 否则用 Meili 的估算总数 ⚠
-        "total": len(out) if expanded else int(res.get("estimatedTotalHits") or len(out)),
+        "total": len(out) if expanded else int(primary.get("estimatedTotalHits") or len(out)),
         "items": _attach_counts(out, counts),
     }
     if expanded:
@@ -517,7 +526,7 @@ def search(request: HttpRequest):
     SEARCH_BACKEND=pg            → 走原路径（* 带 Redis 结果缓存）
     ```
     """
-    kw = (request.GET.get("q") or "").strip()
+    kw = (request.GET.get("q") or "").strip()[:MAX_QUERY]
     if not kw:
         return ok_flat(total=0, items=[])
 
@@ -665,13 +674,11 @@ def suggest(request: HttpRequest):
 
     `{items: [{text, type:"term"}]}` —— * 前端只用来选图标 ⚠
     """
-    kw = (request.GET.get("q") or "").strip()
+    kw = (request.GET.get("q") or "").strip()[:MAX_QUERY]
     if not kw:
         return ok_flat(items=[])
 
-    # ★ 断电 / 重启后 Redis 可能是空的 ⇒ 从 PG 回灌（* 常态下只是一次 ZCARD）⚠
-    term_store.ensure_loaded()
-
+    # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠
     hot = term_store.matches(kw, limit=8)
     return ok_flat(items=[{"text": t, "type": "term"} for t in hot])
 

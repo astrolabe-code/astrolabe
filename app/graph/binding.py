@@ -97,6 +97,9 @@ class BindingImmutable(Exception):
     """
 
 
+_conn = None
+
+
 def _redis() -> "redis.Redis":
     """★ Redis 客户端（★ 与 `jobs/queue.py` 同一口径）。
 
@@ -104,7 +107,15 @@ def _redis() -> "redis.Redis":
       ★ 缓存是**加速**，❌ **不是依赖**：★ Redis 挂了照样能查库 ✅
       （★ 否则一个缓存的故障会变成整个网站不能建项目 —— ★ 那是因小失大）⚠
     """
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    # ⚠★ 2026-10-23：**复用同一个 client**（* 原来每次新建 ⇒ 每条命令重新握手）⚠
+    global _conn
+    if _conn is None:
+        _conn = redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+    return _conn
 
 
 def _cache_key(graph_key: str) -> str:

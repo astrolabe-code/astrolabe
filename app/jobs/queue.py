@@ -17,8 +17,26 @@ from django.conf import settings
 QUEUE_KEY = "astrolabe:jobs"
 
 
+#: ★★ **进程内复用的 Redis 连接**（* 2026-10-23 修）⚠
+#:
+#: ⚠★ 原先每次 `_client()` 都 `redis.Redis.from_url(...)` 新建对象，
+#:   而它是**懒连接** ⇒ **每条命令重新 TCP 握手**（实测 ~1.8ms/条）⚠
+#:   · · `dequeue()` 是 worker 的主循环（* 每几秒一次）⇒ 这个开销一直在付 ✅
+#:   · · 现在复用同一个 client（* 内部有连接池）✅
+#:   ⚠ 只设 `socket_connect_timeout`（建连超时），**不设** `socket_timeout` ——
+#:     `bzpopmin(timeout=…)` 是**阻塞命令**，socket 超时太短会误杀 ⚠
+_conn = None
+
+
 def _client() -> "redis.Redis":
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    global _conn
+    if _conn is None:
+        _conn = redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+    return _conn
 
 
 def enqueue(job_id: int, priority: int = 0) -> None:

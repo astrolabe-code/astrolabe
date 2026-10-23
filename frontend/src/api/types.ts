@@ -715,12 +715,28 @@ export interface Comment {
 }
 
 /** ★★ 全局笔记搜索命中项（* 带项目三件套，* 用于链回项目）⚠ */
-export interface NoteSearchItem extends Note {
+/**
+ * ★★ **搜索结果条目（瘦结构）**（2026-10-23）⚠
+ *
+ * > 「从 meilisearch 中取出的搜索结果条目就不要再去数据库里验证了……用户真正点击
+ * >   某个条目，再查数据库。」
+ *
+ * ⛔ 不再包含 like_count / comment_count / body —— * 那些要回库，* 列表里也不显示 ⚠
+ */
+export interface NoteSearchItem {
+  id: number
+  title: string
+  kind: string
   project: {
     project_ref: string
     project_name: string
     version_label: string
   }
+  created_by: string
+  created_at: string
+  updated_at: string
+  /** ★ 正文摘要（* 索引里带上来的前 140 字）⚠ */
+  excerpt: string
 }
 
 export interface CommentListData {

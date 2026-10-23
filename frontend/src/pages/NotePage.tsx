@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
-import { errorMessage } from '../api/errors'
+import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote } from '../query/notes'
 import { useProject } from '../query/projects'
 import { useMe } from '../hooks/useMe'
@@ -63,9 +63,16 @@ export default function NotePage() {
     return (
       <AppLayout title="笔记">
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>不存在或无权访问</div>
+          {/* ★ 从搜索结果点进来时，索引可能比库慢半拍 ⇒ 明确告诉他"被移除了" ⚠ */}
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            {note.error instanceof ApiRequestError && note.error.status === 404
+              ? '这篇笔记已经被移除了'
+              : '不存在或无权访问'}
+          </div>
           <div className="faint" style={{ fontSize: 12.5, marginTop: 6 }}>
-            {errorMessage(note.error)}
+            {note.error instanceof ApiRequestError && note.error.status === 404
+              ? '可能是作者删除了，或者被管理员隐藏了。'
+              : errorMessage(note.error)}
           </div>
           <div className="mt-4">
             <Link to={`/p/${encodeURIComponent(projectRef)}`}>

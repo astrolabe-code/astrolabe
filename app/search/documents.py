@@ -76,6 +76,9 @@ def build_document(note: Note) -> dict:
         #   · · 用户名可以改 ⇒ 存名字的快照会腐化（* 且没人会去重索引它）⚠
         #   · · 展示用的作者名一律从 PG 现取，* 索引里只留 id 供将来筛选 ✅
         "created_by_id": note.created_by_id or 0,
+        # ⚠ 展示用的用户名（* 2026-10-23 所有者：搜索结果直接来自索引，不回库）
+        #   · · 改名后会旧到下次重建 —— 「错了也没关系」✅
+        "created_by": note.created_by.get_username() if note.created_by_id else "",
         "created_at": _ts(note.created_at),
         "updated_at": _ts(note.updated_at),
     }

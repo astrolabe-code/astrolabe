@@ -455,6 +455,65 @@ def _search_backend() -> str:
     return (os.environ.get("SEARCH_BACKEND") or "meili").strip().lower()
 
 
+def _search_item(d: dict) -> dict:
+    """★★ **搜索结果条目（瘦结构）**（* 2026-10-23 所有者裁定）⚠
+
+    > 「从 meilisearch 中取出的搜索结果条目就不要再去数据库里验证了，直接把信息传出去
+    >   就行。都是一些标题名呀，作者名，项目名和创建时间之类的信息，错了也没关系。
+    >   用户真正点击某个条目，再查数据库……这时，被隐藏了，就告诉用户被移除了之类的。」
+
+    ```
+    只给"扫一眼就够"的字段：标题 / 类型 / 项目三件套 / 作者名 / 时间 / 摘要
+    ⛔ 不再带 like_count / comment_count（* 那些要回库，且列表里也不显示）⚠
+    ```
+    """
+    return {
+        "id": d.get("id"),
+        "title": d.get("title") or "",
+        "kind": d.get("kind") or "",
+        "project": d.get("project")
+        or {
+            "project_ref": d.get("project_ref") or "",
+            "project_name": d.get("project_name") or "",
+            "version_label": "",
+        },
+        "created_by": d.get("created_by") or "",
+        "created_at": d.get("created_at") or "",
+        "updated_at": d.get("updated_at") or "",
+        "excerpt": (d.get("body") or d.get("excerpt") or "").strip()[:140],
+    }
+
+
+def _ms_to_iso(ms) -> str:
+    """★ Meili 里的时间是**毫秒整数** ⇒ 转成前端能直接切的 ISO 字符串 ⚠"""
+    from datetime import datetime, timezone as dt_tz
+
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=dt_tz.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _hit_to_item(h: dict) -> dict:
+    """★ 直接把 Meili 的文档转成条目（* 不回库）⚠"""
+    return _search_item(
+        {
+            "id": h.get("id"),
+            "title": h.get("title"),
+            "kind": h.get("kind"),
+            "project": {
+                "project_ref": h.get("project_ref") or "",
+                "project_name": h.get("project_name") or "",
+                "version_label": "",
+            },
+            "created_by": h.get("created_by") or "",
+            "created_at": _ms_to_iso(h.get("created_at")),
+            "updated_at": _ms_to_iso(h.get("updated_at")),
+            "body": h.get("body") or "",
+        }
+    )
+
+
 def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance"):
     """★★ **用 Meilisearch 检索**（`B238` 第 3 步）⚠
 
@@ -532,39 +591,20 @@ def _search_meili(kw: str, limit: int, offset: int = 0, sort: str = "relevance")
                     seen2.update(added)
             expanded = {"query": kw, "terms": used, "matched": primary_count}
 
-    ids = [h["id"] for h in hits if h.get("id")]
+    # ★★★ **直接吐索引里的字段，不再回库**（* 2026-10-23 所有者裁定）⚠
+    #   · · 标题 / 类型 / 项目名 / 作者名 / 时间 —— * 错几秒也无所谓 ✅
+    #   · · 真正点进某一条时才查库；* 那时若已隐藏/删除，* 详情页会提示"已被移除" ⚠
+    items = [_hit_to_item(h) for h in hits if h.get("id")]
 
-    if not ids:
+    if not items:
         return ok_flat(total=0, items=[])
-
-    rows = {
-        n.pk: n
-        for n in Note.objects.filter(pk__in=ids).select_related("project", "created_by")
-    }
-
-    out = []
-    counts = {}
-    for pk in ids:
-        n = rows.get(pk)
-        if n is None:
-            # ⚠ 索引比库慢半拍（* 文档已删但还没同步完）⇒ 跳过，* 不报错 ⚠
-            continue
-        if not documents.is_searchable(n):
-            # ★★ **二次把关**：同步有秒级延迟，* 刚转私有的那条可能还在索引里
-            #   ⇒ 这里按库里的**当前状态**再筛一遍，* 宁可少给，⛔ 不漏给 ⚠
-            continue
-        d = _note_json(n, with_counts=False)
-        d["project"] = _project_label(n)
-        out.append(d)
-        counts[n.pk] = n.comment_count
 
     payload = {
         # ★ 并入了联想词 ⇒ total 用"本次合并条数"；* 否则用 Meili 的估算总数 ⚠
-        "total": len(out) if expanded else int(primary.get("estimatedTotalHits") or len(out)),
-        "items": _attach_counts(out, counts),
+        "total": len(items) if expanded else int(primary.get("estimatedTotalHits") or len(items)),
+        "items": items,
     }
     if expanded:
-        # ★ 告诉前端「还并入了联想词的结果」，* 让用户知道为什么多出这些 ⚠
         payload["expanded"] = expanded
     return ok_flat(**payload)
 
@@ -658,7 +698,7 @@ def _search_pg(request: HttpRequest):
         if checked is not None:
             # ★★ 命中：* 两个计数**现取**（* 缓存里不存，* 不会是 5 分钟前的旧数字）⚠
             return ok_flat(
-                total=len(checked), items=_attach_counts(checked, comment_counts)
+                total=len(checked), items=[_search_item(d) for d in checked]
             )
         # ★ 有条目被删 / 被改 ⇒ 走下面的全量重查，* 写完缓存再返回 ⚠
 
@@ -703,8 +743,8 @@ def _search_pg(request: HttpRequest):
     #   · · 代价可接受：* 空查询本来就少，* 且真正常搜的还是那几个有结果的词 ✅
     if out:
         search_cache.put(search_cache.NS_NOTES, uid, kw, out)
-    # ★ 返回前现取计数（* 赞数走 like_cache 批量，* 评论数用刚拿到的列值）⚠
-    return ok_flat(total=total, items=_attach_counts(out, comment_counts))
+    # ★ 回退路径也吐瘦结构（* 与 Meili 路径保持同一 shape）⚠
+    return ok_flat(total=total, items=[_search_item(d) for d in out])
 
 
 @require_http_methods(["GET"])

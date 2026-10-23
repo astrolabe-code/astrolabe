@@ -314,7 +314,7 @@ export default function SearchPage() {
                       n.created_by ? `@${n.created_by}` : '',
                       fmt(n.created_at),
                     ]}
-                    snippet={(n.body || '').replace(/[#*`>\n]/g, ' ').slice(0, 90)}
+                    snippet={(n.excerpt || '').replace(/[#*`>\n]/g, ' ').slice(0, 90)}
                     onClick={() => openNote(n)}
                   />
                 )

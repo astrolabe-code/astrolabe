@@ -3,8 +3,11 @@ import { Crepe, CrepeFeature } from '@milkdown/crepe'
 import { Milkdown, useEditor } from '@milkdown/react'
 import { $prose } from '@milkdown/utils'
 import type { EditorState } from 'prosemirror-state'
-import { Plugin } from 'prosemirror-state'
+import { Plugin, TextSelection } from 'prosemirror-state'
+import type { EditorView } from 'prosemirror-view'
 import { Decoration, DecorationSet } from 'prosemirror-view'
+// ★ 排版（标题字号 / 段落 / 列表 / 表格…）都在这份里，⚠ 少引它标题就全是同字号
+import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/nord.css'
 import '@milkdown/crepe/theme/frame.css'
 
@@ -71,12 +74,20 @@ export default function MilkdownView({
         // ★ 只留渲染需要的特性，编辑态的一概关掉
         //   ⚠ Latex / AI 依赖 CodeMirror ⇒ 必须一起关，否则 create() 直接抛错
         features: {
+          // ⚠★ 块操作手柄（悬停出现的「+」和拖拽点，点开是 text / advanced / list 菜单）
+          //   * 阅读页绝不能有 —— 那是编辑器的东西，所有者实测发现了 ⚠
+          [CrepeFeature.BlockEdit]: false,
+          // ⚠★ 图片块容器（占位灰框 + 上传/删除操作按钮）—— 阅读页只要一张图
+          //   * 关掉后退化成普通 <img>（commonmark 的 image 节点）⚠
+          [CrepeFeature.ImageBlock]: false,
           [CrepeFeature.Toolbar]: false,
           [CrepeFeature.CodeMirror]: false,
           [CrepeFeature.LinkTooltip]: false,
           [CrepeFeature.Latex]: false,
           [CrepeFeature.AI]: false,
           [CrepeFeature.Placeholder]: false,
+          [CrepeFeature.Cursor]: false,
+          [CrepeFeature.TopBar]: false,
         },
       })
       crepe.setReadonly(true)
@@ -92,6 +103,46 @@ export default function MilkdownView({
 // ---------------------------------------------------------------------------
 // 段评气泡插件
 // ---------------------------------------------------------------------------
+
+/**
+ * ★★ **把选区扩到"段"**（* 顶层块，与后端 `split_blocks` 口径一致）⚠
+ *
+ * ## ★★★ 所有者原话（逐字）
+ *
+ * > 「阅读页面下，选中文字后自动扩成最近的一段，跨段就把跨的段全选上。」
+ *
+ * ## ★ 规则
+ *
+ * ```
+ * 只选了几个字   ⇒ 扩成所在的那一整段
+ * 跨了两段以上   ⇒ 从第一段开头到最末段结尾（中间各段全含）
+ * 空选区（单击） ⇒ 不动 ⚠
+ * ```
+ */
+function expandToBlocks(view: EditorView): void {
+  const state = view.state
+  const sel = state.selection
+  if (sel.empty) return
+
+  const { $from, $to } = sel
+  // ⚠ 顶层块 = doc 的第 1 层（* 列表 / 引用 / 代码块都算一个整块）⚠
+  if ($from.depth < 1 || $to.depth < 1) return
+
+  let from: number
+  let to: number
+  try {
+    from = $from.start(1)
+    to = $to.end(1)
+  } catch {
+    return
+  }
+  if (from === sel.from && to === sel.to) return
+  if (to <= from) return
+
+  const tr = state.tr.setSelection(TextSelection.create(state.doc, from, to))
+  view.dispatch(tr)
+}
+
 
 /** ★ 右键选中文字后回给外层的信息 ⚠ */
 export interface SelectionInfo {
@@ -173,6 +224,12 @@ function makeBubblePlugin(
           // ★★ 右键：选中了文字 ⇒ 弹「写段评」（* 番茄小说那种）⚠
           //   · · 没选中 / 未登录 ⇒ 放行原生菜单 ✅
           handleDOMEvents: {
+            // ★ 选中文字后**自动扩到整段**（* 跨段则全选经过的段）⚠
+            //   · · 用 setTimeout 0：mouseup 时浏览器还没把选区落到 ProseMirror ⚠
+            mouseup: (view) => {
+              setTimeout(() => expandToBlocks(view), 0)
+              return false
+            },
             contextmenu: (view, event) => {
               if (!authedRef.current) return false
               const sel = window.getSelection()

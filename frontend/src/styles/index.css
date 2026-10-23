@@ -70,3 +70,55 @@
   padding: 0;
   outline: none;
 }
+
+/* ===== Milkdown 正文配色：对齐站点纸张与正文色 ===== */
+/* ① 代码块：Crepe 默认给的是灰底（--crepe-color-inline-area 混色）
+      ⇒ 改成**透明**（跟随纸张），* 只留一条细边框把范围圈出来 ⚠ */
+.milkdown .ProseMirror pre {
+  background: transparent;
+  border: 1px solid var(--card-border);
+}
+
+/* ② 列表标记（圆点 / 数字 / 勾选框）：Crepe 默认用 --crepe-color-outline 的灰
+      ⇒ 改成**正文色**（* 选择器比主题更具体，* 不依赖加载顺序）⚠ */
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper,
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper .label {
+  color: var(--text-main);
+}
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper svg {
+  fill: var(--text-main);
+}
+
+/* ===== 正文基准字号：**唯一的参照物** =====
+   ★ 所有标题都按 em 相对它缩放 —— ⛔ 不再写死 px（所有者指出的问题）⚠
+   · · 想让正文和标题整体变大变小，* 只改这一行 ✅
+   · · 默认 16px = 与站点其余正文一致 */
+:root {
+  --md-base-size: 16px;
+}
+
+/* ★ 把 Crepe 的基准也接到同一个参照物上
+     （* 它默认在 nord.css 里写死 16px，* 这里覆盖成我们的 token）⚠ */
+#root .milkdown .ProseMirror {
+  --crepe-base-font-size: var(--md-base-size);
+  font-size: var(--md-base-size);
+}
+
+/* ===== 标题：相对基准字号缩放（em）=====
+   16px 基准下依次为 28 / 24 / 20 / 18 / 16 / 15px ✅
+   ⚠ 行高与上边距同样是相对值，* 基准一变整体等比缩放 ⚠ */
+#root .milkdown .ProseMirror h1,
+#root .milkdown .ProseMirror h2,
+#root .milkdown .ProseMirror h3,
+#root .milkdown .ProseMirror h4,
+#root .milkdown .ProseMirror h5,
+#root .milkdown .ProseMirror h6 {
+  font-weight: 650;
+  line-height: 1.35;
+}
+#root .milkdown .ProseMirror h1 { font-size: 1.75em;  margin-top: 0.93em; }
+#root .milkdown .ProseMirror h2 { font-size: 1.5em;   margin-top: 1em; }
+#root .milkdown .ProseMirror h3 { font-size: 1.25em;  margin-top: 1em; }
+#root .milkdown .ProseMirror h4 { font-size: 1.125em; margin-top: 1em; }
+#root .milkdown .ProseMirror h5 { font-size: 1em;     margin-top: 1em; }
+#root .milkdown .ProseMirror h6 { font-size: 0.9375em; margin-top: 0.93em; }

@@ -113,3 +113,44 @@ def _unauthorized() -> JsonResponse:
       ⚠ 若不带 `code`，前端就**没法区分**它和别的 401 了。）
     """
     return fail(UNAUTHENTICATED_MESSAGE, 401, code="unauthenticated")
+
+
+class DeviceTokenMiddleware:
+    """★★ **设备令牌**（`B238` · 2026-10-23）⚠
+
+    > 「网站链接建立时，就给设备发送一个token存起来。然后，它每次访问都要带上这个
+    >   token，做为身份识别。这样游客也能区分了，有token或有用户名的就给正常速率。
+    >   都没有的，看作一个人，走哪9倍的速率限制……他们用脚本清除token不管用。」
+
+    ```
+    没有 cookie / 验签失败 ⇒ 发新令牌并写 HttpOnly Cookie
+    有合法令牌            ⇒ request.device_token = 它
+    ```
+
+    ⚠ 只挂一个属性，**不做任何拦截** —— 是否限流由各接口自己决定 ✅
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from core import device
+
+        token = request.COOKIES.get(device.COOKIE_NAME, "")
+        freshing = None
+
+        # ⚠★★ **限流身份只看"请求带来的令牌"**：
+        #   · · 如果这里把"刚发的令牌"当身份 ⇒ **不带 cookie 的脚本每次都是新身份**，
+        #     * 限流直接失效（实测发现）⚠
+        #   · · 所以：* 带来的合法令牌 ⇒ 记身份；* 没带 ⇒ 就是 anon（共用桶）✅
+        valid = device.verify(token)
+        if not valid:
+            # ★ 无条件发牌（* 不做 IP 配额 —— 收益不值，见 core/device.py 顶部）⚠
+            freshing = device.issue()
+            token = ""
+
+        request.device_token = token if valid else ""
+        response = self.get_response(request)
+        if freshing:
+            device.set_cookie(response, freshing)
+        return response

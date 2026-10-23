@@ -396,7 +396,18 @@ def _search_who(request: HttpRequest) -> str:
     user = current_user(request)
     if user is not None and getattr(user, "pk", None):
         return f"u{user.pk}"
+
+    # ★★ 有设备令牌 ⇒ 按设备区分（* 游客也能各自拿到正常速率）⚠
+    token = getattr(request, "device_token", "") or ""
+    if token:
+        return f"d{token.split('.')[0][:16]}"
     return "anon"
+
+
+def _rate_ok(request: HttpRequest, scope: str) -> bool:
+    """★ 这个请求该不该放行（* 匿名共用一个桶，给 9 倍速率）⚠"""
+    who = _search_who(request)
+    return term_store.allow(scope, who, term_store.rate_limit_for(who))
 
 
 def _search_backend() -> str:
@@ -529,6 +540,10 @@ def search(request: HttpRequest):
     kw = (request.GET.get("q") or "").strip()[:MAX_QUERY]
     if not kw:
         return ok_flat(total=0, items=[])
+
+    # ★★★ 限流（* 所有者：「一起加上」）⚠
+    if not _rate_ok(request, "search"):
+        return fail("请求过于频繁", 429, code="rate_limited")
 
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
@@ -678,9 +693,8 @@ def suggest(request: HttpRequest):
     if not kw:
         return ok_flat(items=[])
 
-    # ★★★ **限流**（* 所有者：不按 IP，游客算一个人、给 9 倍速率）⚠
-    who = _search_who(request)
-    if not term_store.allow_suggest(who, is_guest=(who == "anon")):
+    # ★★★ **限流**（* 有令牌/登录 ⇒ 正常速率；* 都没有 ⇒ 共用桶、9 倍）⚠
+    if not _rate_ok(request, "suggest"):
         return fail("请求过于频繁", 429, code="rate_limited")
 
     # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠

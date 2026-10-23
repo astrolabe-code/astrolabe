@@ -75,6 +75,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # ★★ Bearer 三态判定（`U4.4` / 契约 §7）—— 位置是硬要求，见 `web/middleware.py`
     "web.middleware.BearerAuthMiddleware",
+    # ★★ 设备令牌（* 给游客发一个签名 Cookie，* 用于限流身份识别）⚠
+    "web.middleware.DeviceTokenMiddleware",
     "django.middleware.common.CommonMiddleware",
     # ★ 到这里 `_dont_enforce_csrf_checks` 已经被 Bearer 中间件设好了 ✅
     "django.middleware.csrf.CsrfViewMiddleware",

@@ -134,6 +134,27 @@ def delete_document(uid: str, doc_id) -> None:
     wait_task(task["taskUid"])
 
 
+def delete_index(uid: str) -> None:
+    """★ 删索引（* 不存在就忽略）⚠"""
+    try:
+        task = _request("DELETE", f"/indexes/{uid}")
+        if task.get("taskUid") is not None:
+            wait_task(task["taskUid"])
+    except MeiliError:
+        # ⚠ 索引不存在时 Meili 会返回一个**失败的任务**，* 这里当作"已经没了" ✅
+        return
+
+
+def swap_indexes(a: str, b: str) -> None:
+    """★★ **原子交换两个索引**（* 重建时用来"零空窗"切换）⚠
+
+    ⚠ Meilisearch 的 `swapIndexes` 会把两个索引的**文档与设置一起**对调，
+      是**原子**操作 —— 切换瞬间搜索不会看到空索引 ✅
+    """
+    task = _request("POST", "/swap-indexes", [{"indexes": [a, b]}])
+    wait_task(task["taskUid"])
+
+
 def index_stats(uid: str = NOTES_INDEX) -> dict:
     return _request("GET", f"/indexes/{uid}/stats")
 

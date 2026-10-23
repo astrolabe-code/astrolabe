@@ -8,6 +8,7 @@ import Button from '../components/ui/Button'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { kindMeta } from '../components/notes/kindMeta'
 import { useNoteSearch, useSearchSuggest } from '../query/notes'
+import { useMe } from '../hooks/useMe'
 import { useProjectSearch } from '../query/projects'
 
 /**
@@ -55,6 +56,9 @@ export default function SearchPage() {
   const suggestItems = suggest.data || []
 
   // ★ 只看「项目」时不必查笔记（* 省一次请求）⚠
+  // ★ 限流文案要区分登录/未登录（* 已登录不能叫他"去登录"）⚠
+  const { data: me } = useMe()
+  const loggedIn = !!me?.authenticated
   const notes = useNoteSearch(tab === 'project' ? '' : q, { limit: PAGE, offset, sort })
   const projects = useProjectSearch(tab === 'note' ? '' : q)
 
@@ -213,22 +217,35 @@ export default function SearchPage() {
             {notes.isError &&
               (notes.error instanceof ApiRequestError && notes.error.status === 429 ? (
                 <div style={{ padding: '26px 20px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 13.5, color: 'var(--text-main)', marginBottom: 6 }}>
-                    这会儿搜索的人有点多，先喘口气～
-                  </div>
-                  <div className="faint" style={{ fontSize: 11.5, marginBottom: 14 }}>
-                    登录后就有自己的专属通道，不用和大家挤在一起。
-                  </div>
-                  <Button
-                    variant="primary"
-                    onClick={() =>
-                      navigate(
-                        `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
-                      )
-                    }
-                  >
-                    去登录
-                  </Button>
+                  {loggedIn ? (
+                    <>
+                      <div style={{ fontSize: 13.5, color: 'var(--text-main)', marginBottom: 6 }}>
+                        搜得有点快啦，歇一秒再试试～
+                      </div>
+                      <div className="faint" style={{ fontSize: 11.5 }}>
+                        一下子搜太多，服务器有点跟不上。
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 13.5, color: 'var(--text-main)', marginBottom: 6 }}>
+                        这会儿搜索的人有点多，先喘口气～
+                      </div>
+                      <div className="faint" style={{ fontSize: 11.5, marginBottom: 14 }}>
+                        登录后就有自己的专属通道，不用和大家挤在一起。
+                      </div>
+                      <Button
+                        variant="primary"
+                        onClick={() =>
+                          navigate(
+                            `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+                          )
+                        }
+                      >
+                        去登录
+                      </Button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div style={{ padding: 16, fontSize: 12, color: 'var(--err)' }}>

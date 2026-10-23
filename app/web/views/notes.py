@@ -404,7 +404,7 @@ def _search_who(request: HttpRequest) -> str:
     return "anon"
 
 
-def _rate_limited(scope: str):
+def _rate_limited(scope: str, request: HttpRequest):
     """★★ **被限流时的统一响应**（`B238` · 2026-10-23）⚠
 
     ```
@@ -422,10 +422,24 @@ def _rate_limited(scope: str):
     except Exception:
         pass
 
+    # ★★ 文案分两种（* 所有者：「不要登录的用户，触发限流了，都叫他去登录」）⚠
+    #   · · 未登录 ⇒ 提示登录（* 登录后是独立额度，能绕过这个桶）✅
+    #   · · 已登录 ⇒ 只让他慢一点，⛔ 不能叫他"去登录" ⚠
+    user = current_user(request)
+    logged_in = user is not None and getattr(user, "pk", None) is not None
+
+    if logged_in:
+        message = "搜得有点快啦，歇一秒再试试～"
+    else:
+        message = (
+            "这会儿搜索的人有点多，先喘口气～登录后就是你的专属通道，不用和大家挤在一起。"
+        )
+
     resp = fail(
-        "这会儿搜索的人有点多，先喘口气～登录后就是你的专属通道，不用和大家挤在一起。",
+        message,
         429,
         code="rate_limited",
+        data={"login_hint": not logged_in},
     )
     resp["Retry-After"] = "1"
     return resp
@@ -570,7 +584,7 @@ def search(request: HttpRequest):
 
     # ★★★ 限流（* 所有者：「一起加上」）⚠
     if not _rate_ok(request, "search"):
-        return _rate_limited("search")
+        return _rate_limited("search", request)
 
     # ★★ 记一次「别人搜过的词」（* 只记第一页，* 翻页不重复计分）⚠
     if (request.GET.get("offset") or "0").strip() in ("", "0"):
@@ -722,7 +736,7 @@ def suggest(request: HttpRequest):
 
     # ★★★ **限流**（* 有令牌/登录 ⇒ 正常速率；* 都没有 ⇒ 共用桶、9 倍）⚠
     if not _rate_ok(request, "suggest"):
-        return _rate_limited("suggest")
+        return _rate_limited("suggest", request)
 
     # ★ 回灌时机由 `matches()` 内部处理（* 常态下只有一次 ZRANGE）⚠
     hot = term_store.matches(kw, limit=8)

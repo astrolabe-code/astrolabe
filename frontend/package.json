@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "@antv/g6": "^5.1.1",
+    "@milkdown/kit": "^7.22.3",
+    "@milkdown/preset-commonmark": "^7.22.3",
+    "@milkdown/react": "^7.22.3",
+    "@milkdown/theme-nord": "^7.22.3",
     "@tanstack/react-query": "^5.102.8",
     "lucide-react": "^1.43.0",
     "react": "^18.3.1",

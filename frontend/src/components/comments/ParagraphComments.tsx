@@ -38,6 +38,19 @@ interface ParagraphCommentsProps {
   authed: boolean
   /** 删除判据上下文（逐条判） */
   perm: DeletePerm
+  /**
+   * ★ 是否渲染段落文字（* `D108` 整篇渲染后由 MilkdownView 画，
+   *   这里只留面板 ⇒ 传 false）⚠
+   */
+  renderText?: boolean
+  /** ★ 面板开关（* 受控：由外层的段评气泡点击驱动）⚠ */
+  panelOpen?: boolean
+  onPanelOpenChange?: (open: boolean) => void
+  /**
+   * ★ 预填的「引用原文」（* 整篇渲染后，右键选中文字由外层传来）⚠
+   *   · · 变化时同步进内部状态；* 传空串 = 不带引用 ✅
+   */
+  quote?: string
 }
 
 interface MenuState {
@@ -45,13 +58,32 @@ interface MenuState {
   y: number
 }
 
-export default function ParagraphComments({ noteId, block, authed, perm }: ParagraphCommentsProps) {
+export default function ParagraphComments({
+  noteId,
+  block,
+  authed,
+  perm,
+  renderText = true,
+  panelOpen,
+  onPanelOpenChange,
+  quote: quoteProp,
+}: ParagraphCommentsProps) {
   /** ★ 右键小菜单（* 只有选中了文字才出现）⚠ */
   const [menu, setMenu] = useState<MenuState | null>(null)
-  /** ★ 弹窗（* 写评论 / 看评论共用）⚠ */
-  const [open, setOpen] = useState(false)
+  /** ★ 弹窗（* 写评论 / 看评论共用）⚠
+      · · 受控（panelOpen 传入）优先；* 没传才用内部状态 ✅ */
+  const [openInner, setOpenInner] = useState(false)
+  const open = panelOpen ?? openInner
+  const setOpen = (v: boolean) => {
+    onPanelOpenChange?.(v)
+    if (panelOpen === undefined) setOpenInner(v)
+  }
   /** ★ 弹窗顶部引用的原文（* 右键选中时的那段字）⚠ */
   const [quote, setQuote] = useState('')
+  // ★ 外层传入的引用文字 ⇒ 同步进来（* 右键选中那几下）⚠
+  useEffect(() => {
+    if (quoteProp !== undefined) setQuote(quoteProp)
+  }, [quoteProp])
 
   const qc = useQueryClient()
   // ★★ 排序：最新 / 最热（* 段评也要能按热度看）⚠
@@ -104,7 +136,8 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* ---- 正文 ---- */}
+      {/* ---- 正文（* 整篇渲染时关掉，* 由 MilkdownView 画 + 挂气泡）---- */}
+      {renderText && (
       <div
         onContextMenu={onContextMenu}
         style={{
@@ -149,6 +182,7 @@ export default function ParagraphComments({ noteId, block, authed, perm }: Parag
           }
         />
       </div>
+      )}
 
       {/* ---- 右键菜单 ---- */}
       {menu && (

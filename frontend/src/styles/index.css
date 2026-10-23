@@ -41,3 +41,32 @@
   opacity: 1;
   color: var(--accent);
 }
+
+/* ===== 段评气泡（* Milkdown 只读渲染里，由 ProseMirror Decoration 挂上）===== */
+.block-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 17px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 1;
+  font-family: var(--font-ui);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid transparent;
+  cursor: pointer;
+  vertical-align: middle;
+  user-select: none;
+}
+.block-bubble:hover {
+  border-color: var(--accent);
+}
+
+/* ★ Milkdown 只读容器：别把编辑器的外框/光标画出来 ⚠ */
+.milkdown-view .ProseMirror {
+  padding: 0;
+  outline: none;
+}

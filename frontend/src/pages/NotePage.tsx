@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
@@ -10,6 +10,8 @@ import Button from '../components/ui/Button'
 import LikeButton from '../components/likes/LikeButton'
 import CommentSection from '../components/comments/CommentSection'
 import ParagraphComments from '../components/comments/ParagraphComments'
+import MilkdownLazy from '../components/notes/MilkdownLazy'
+import type { SelectionInfo } from '../components/notes/MilkdownView'
 import NoteEditor from '../components/notes/NoteEditor'
 import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
@@ -46,10 +48,33 @@ export default function NotePage() {
   const project = useProject(projectRef)
   const me = useMe()
   const [editing, setEditing] = useState(false)
+  // ★ 当前打开段评面板的那一段（* 由 Milkdown 里的气泡点击驱动）⚠
+  const [activeFp, setActiveFp] = useState('')
+  // ★ 右键「选中文字」小菜单 + 面板里预填的引用原文 ⚠
+  const [sel, setSel] = useState<SelectionInfo | null>(null)
+  const [panelQuote, setPanelQuote] = useState('')
   const [moderating, setModerating] = useState(false)
 
   const n = note.data?.note
   const blocks = note.data?.blocks || []
+  const activeBlock = blocks.find((b) => b.fingerprint === activeFp)
+
+  // ★ 点别处 / 滚动 / Esc 都关掉右键小菜单
+  useEffect(() => {
+    if (!sel) return
+    const close = () => setSel(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSel(null)
+    }
+    document.addEventListener('click', close)
+    document.addEventListener('scroll', close, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [sel])
   const authed = !!me.data?.authenticated
   const canEdit = !!project.data?.can_edit
   const meUsername = me.data?.username
@@ -178,20 +203,85 @@ export default function NotePage() {
           </span>
         </div>
 
-        {/* ②③ 正文：按后端 blocks 逐段
-            ★★ 段落文字由 ParagraphComments 自己渲染 ——
-               * 它负责「选中文字 → 右键 → 弹窗写段评」（* 番茄小说那种）⚠ */}
+        {/* ②③ 正文：**整篇** Milkdown 只读渲染（`D108` / `B242`）
+            ★★ 段评气泡由 MilkdownView 用 ProseMirror Decoration 挂在段落末尾；
+               点一下就打开下面那个面板 ✅ */}
         <div className="card flex flex-col gap-5" style={{ padding: '16px 18px' }}>
-          {blocks.map((b) => (
+          <MilkdownLazy
+            text={n.body || ''}
+            blocks={blocks}
+            authed={authed}
+            onOpenBlock={(b) => {
+              setPanelQuote('')
+              setActiveFp(b.fingerprint)
+            }}
+            onSelection={(info) => setSel(info)}
+          />
+        </div>
+
+        {/* ⑤ 右键小菜单：选中文字 ⇒ 写段评（* 番茄小说那种）⚠ */}
+      {sel && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            left: sel.x,
+            top: sel.y,
+            zIndex: 90,
+            background: 'var(--card)',
+            border: '1px solid var(--card-border)',
+            borderRadius: 8,
+            boxShadow: 'var(--shadow-card-hover)',
+            padding: 4,
+          }}
+        >
+          <button
+            type="button"
+            disabled={!sel.block}
+            title={sel.block ? '对选中的文字写段评' : '这段没能对上段落，暂不支持段评'}
+            onClick={() => {
+              if (!sel.block) return
+              setPanelQuote(sel.quote)
+              setActiveFp(sel.block.fingerprint)
+              setSel(null)
+            }}
+            style={{
+              display: 'block',
+              padding: '6px 14px',
+              fontSize: 12.5,
+              fontFamily: 'var(--font-ui)',
+              color: sel.block ? 'var(--text-main)' : 'var(--text-faint)',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 6,
+              cursor: sel.block ? 'pointer' : 'not-allowed',
+            }}
+          >
+            写段评
+          </button>
+        </div>
+      )}
+
+      {/* ④ 段评面板（* 只渲染当前那一段，* 文字由上面的 Milkdown 画）⚠ */}
+        {activeBlock && (
+          <div className="card mt-4" style={{ padding: '12px 16px' }}>
             <ParagraphComments
-              key={b.fingerprint}
               noteId={n.id}
-              block={b}
+              block={activeBlock}
               authed={authed}
               perm={perm}
+              renderText={false}
+              panelOpen
+              quote={panelQuote}
+              onPanelOpenChange={(o) => {
+                if (!o) {
+                  setActiveFp('')
+                  setPanelQuote('')
+                }
+              }}
             />
-          ))}
-        </div>
+          </div>
+        )}
 
         {/* ④ 章评区 */}
         <div className="card mt-4" style={{ padding: '16px 18px' }}>

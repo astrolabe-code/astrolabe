@@ -138,6 +138,32 @@ def index_stats(uid: str = NOTES_INDEX) -> dict:
     return _request("GET", f"/indexes/{uid}/stats")
 
 
+def list_documents(uid: str = NOTES_INDEX, fields: str = "id") -> list[dict]:
+    """★★ **分页取索引里的文档**（* 对账用；* 只取指定字段，* 不拉正文）⚠
+
+    ⚠ `/documents` 单次最多 1000 条 ⇒ 必须翻页 ✅
+    """
+    rows_all: list[dict] = []
+    offset = 0
+    batch = 1000
+    while True:
+        page = _request(
+            "GET",
+            f"/indexes/{uid}/documents?fields={fields}&limit={batch}&offset={offset}",
+        )
+        rows = page.get("results") or []
+        rows_all.extend(rows)
+        if len(rows) < batch:
+            break
+        offset += batch
+    return rows_all
+
+
+def list_document_ids(uid: str = NOTES_INDEX) -> list:
+    """★ 只要 id（* 兼容旧调用）⚠"""
+    return [r["id"] for r in list_documents(uid, "id") if "id" in r]
+
+
 # ---------------------------------------------------------------------------
 # 查询
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from search import client, sync, terms
+from search import client, reconcile, sync, terms
 
 
 class Command(BaseCommand):
@@ -36,8 +36,25 @@ class Command(BaseCommand):
         parser.add_argument(
             "--timeout", type=int, default=2, help="队列阻塞秒数（默认 2）"
         )
+        parser.add_argument(
+            "--healthcheck",
+            action="store_true",
+            help="只检查心跳（* 供 docker healthcheck 用，* 超时退出码 1）⚠",
+        )
 
     def handle(self, *args, **options):
+        if options["healthcheck"]:
+            # ★ 心跳超过 300 秒没更新 ⇒ 判定假死（退出码 1，* 让 compose 重启）⚠
+            age = reconcile.heartbeat_age()
+            if age == float("inf"):
+                self.stderr.write("没有心跳记录")
+                raise CommandError("no heartbeat")
+            if age > 300:
+                self.stderr.write(f"心跳已过期 {int(age)}s")
+                raise CommandError("heartbeat stale")
+            self.stdout.write(f"ok（{int(age)}s 前）")
+            return
+
         if not client.enabled():
             raise CommandError("MEILI_MASTER_KEY 未设置（见 app/deploy/.env）")
 
@@ -51,10 +68,36 @@ class Command(BaseCommand):
         last_check = 0.0
 
         while True:
+            # ★★ 心跳：* 每轮都写（* 消费者"活着且在转"的凭证）⚠
+            reconcile.beat()
+
             now = time.monotonic()
             # ★ 每 60 秒探一次「到点没有」（* 只是一次 Redis GET）⚠
             if now - last_check >= 60:
                 last_check = now
+
+                # ★★ 对账：* 深夜窗口内每天一次（* 所有者：这时系统卡点不影响）⚠
+                try:
+                    if reconcile.due():
+                        rc = reconcile.reconcile(fix=True)
+                        reconcile.mark()
+                        self.stdout.write(
+                            f"索引对账：PG {rc['pg']} · 索引 {rc['index']} "
+                            f"· 缺失 {len(rc['missing'])} · 残留 {len(rc['stale'])} "
+                            f"· 过期 {len(rc['outdated'])} · 已修 {rc['fixed']}"
+                        )
+                        if rc["summary"]:
+                            self.stdout.write(f"  删除原因：{rc['summary']}")
+                except Exception:
+                    self.stderr.write(self.style.WARNING("索引对账失败"))
+
+                # ★ 队列积压提醒（* 消费跟不上 / 消费者卡住）⚠
+                try:
+                    depth = sync._redis().llen(sync.QUEUE_KEY)
+                    if depth > 1000:
+                        self.stderr.write(self.style.WARNING(f"索引队列积压 {depth}"))
+                except Exception:
+                    pass
                 try:
                     if terms.due():
                         r = terms.flush_and_decay()

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronLeft, ChevronRight, FolderGit2, Search } from 'lucide-react'
+import { ArrowRight, FolderGit2, Search } from 'lucide-react'
 
 import type { NoteSearchItem, ProjectSummary } from '../api/types'
 import AppLayout from '../components/AppLayout'
@@ -40,7 +40,6 @@ export default function SearchPage() {
   const q = params.get('q') ?? ''
   const tab = (params.get('type') as Tab) || 'all'
   const sort = (params.get('sort') as Sort) || 'relevance'
-  const offset = Math.max(0, Number(params.get('offset')) || 0)
 
   const [input, setInput] = useState(q)
   useEffect(() => setInput(q), [q])
@@ -59,11 +58,26 @@ export default function SearchPage() {
   // ★ 限流文案要区分登录/未登录（* 已登录不能叫他"去登录"）⚠
   const { data: me } = useMe()
   const loggedIn = !!me?.authenticated
-  const notes = useNoteSearch(tab === 'project' ? '' : q, { limit: PAGE, offset, sort })
+  const notes = useNoteSearch(tab === 'project' ? '' : q, { limit: PAGE, sort })
   const projects = useProjectSearch(tab === 'note' ? '' : q)
 
-  const noteItems: NoteSearchItem[] = tab === 'project' ? [] : notes.data?.items ?? []
-  const noteTotal = notes.data?.total ?? 0
+  // ★★ 无限滚动：把已加载的几页**拍平 + 按 id 去重**
+  //   （* 并入联想词时，后续页可能与前面的条目重复）⚠
+  const pages = notes.data?.pages ?? []
+  const noteItems: NoteSearchItem[] = []
+  if (tab !== 'project') {
+    const seen = new Set<number>()
+    for (const pg of pages) {
+      for (const it of pg.items) {
+        if (!seen.has(it.id)) {
+          seen.add(it.id)
+          noteItems.push(it)
+        }
+      }
+    }
+  }
+  const noteTotal = pages[0]?.total ?? 0
+  const expanded = pages[0]?.expanded
   const projectItems: ProjectSummary[] = tab === 'note' ? [] : projects.data ?? []
 
   const patch = (next: Record<string, string | number | null>) => {
@@ -87,8 +101,22 @@ export default function SearchPage() {
   const openNote = (n: NoteSearchItem) =>
     n.project?.project_ref ? navigate(`/p/${n.project.project_ref}/notes/${n.id}`) : navigate('/')
 
-  const hasPrev = offset > 0
-  const hasNext = offset + PAGE < noteTotal
+  // ★ 滚到底部自动加载下一页（* 像 CSDN 那样往下滑）⚠
+  const sentinel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && notes.hasNextPage && !notes.isFetchingNextPage) {
+          notes.fetchNextPage()
+        }
+      },
+      { rootMargin: '240px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [notes.hasNextPage, notes.isFetchingNextPage, notes.fetchNextPage])
 
   return (
     <AppLayout
@@ -202,13 +230,13 @@ export default function SearchPage() {
           </div>
 
           {/* ★ 后端把「用户词 + 联想词」一次查完 ⇒ 如实说明来源 ⚠ */}
-          {notes.data?.expanded && (
+          {expanded && (
             <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
-              {notes.data.expanded.matched === 0
-                ? `「${notes.data.expanded.query}」没有直接匹配，已按联想词`
+              {expanded.matched === 0
+                ? `「${expanded.query}」没有直接匹配，已按联想词`
                 : '另外并入了联想词'}
-              {notes.data.expanded.terms.map((t) => `「${t}」`).join('、')}
-              {notes.data.expanded.matched === 0 ? '搜索' : '的结果'}
+              {expanded.terms.map((t) => `「${t}」`).join('、')}
+              {expanded.matched === 0 ? '搜索' : '的结果'}
             </div>
           )}
 
@@ -305,28 +333,17 @@ export default function SearchPage() {
             )}
           </div>
 
-          {/* ④ 分页 */}
-          {noteTotal > PAGE && (
-            <div className="flex items-center" style={{ gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-              <span className="faint" style={{ fontSize: 11.5 }}>
-                {offset + 1}–{Math.min(offset + PAGE, noteTotal)} / {noteTotal}
-              </span>
-              <Button
-                disabled={!hasPrev}
-                onClick={() => patch({ offset: Math.max(0, offset - PAGE) })}
-                icon={<ChevronLeft size={13} />}
-              >
-                上一页
-              </Button>
-              <Button
-                disabled={!hasNext}
-                onClick={() => patch({ offset: offset + PAGE })}
-                icon={<ChevronRight size={13} />}
-              >
-                下一页
-              </Button>
-            </div>
-          )}
+          {/* ④ 无限滚动：哨兵进入视口就加载下一页 */}
+          <div ref={sentinel} style={{ height: 1 }} />
+          <div className="faint" style={{ fontSize: 11.5, textAlign: 'center', padding: '12px 0 4px' }}>
+            {notes.isFetchingNextPage
+              ? '加载中…'
+              : notes.hasNextPage
+                ? '往下滑，继续加载'
+                : noteItems.length > 0
+                  ? '没有更多了'
+                  : ''}
+          </div>
         </>
       )}
     </AppLayout>

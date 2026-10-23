@@ -18,7 +18,7 @@
 | `id` | 主键（= `Note.pk`） |
 | `title` / `body` | 可搜索 |
 | `node_name` / `project_name` | 可搜索（* 用户常按函数名、项目名找） |
-| `kind` / `project_ref` / `created_by` | 可过滤（* 将来搜索页的筛选） |
+| `kind` / `project_ref` / `created_by_id` | 可过滤（* 将来搜索页的筛选） |
 | `created_at` / `updated_at` | 可排序（* 毫秒时间戳） |
 """
 from __future__ import annotations
@@ -72,7 +72,10 @@ def build_document(note: Note) -> dict:
         "project_ref": project.project_ref if project else "",
         "project_name": project.name if project else "",
         "node_name": getattr(note, "node_name", "") or "",
-        "created_by": note.created_by.get_username() if note.created_by_id else "",
+        # ★★ 存 **id** 而不是用户名（* 2026-10-23 所有者裁定）⚠
+        #   · · 用户名可以改 ⇒ 存名字的快照会腐化（* 且没人会去重索引它）⚠
+        #   · · 展示用的作者名一律从 PG 现取，* 索引里只留 id 供将来筛选 ✅
+        "created_by_id": note.created_by_id or 0,
         "created_at": _ts(note.created_at),
         "updated_at": _ts(note.updated_at),
     }
@@ -95,7 +98,7 @@ PROJECT_FIELDS_IN_DOC = {"name"}
 INDEX_SETTINGS = {
     # ★ 越靠前权重越高：* 标题 > 正文 > 项目名 > 节点名 ⚠
     "searchableAttributes": ["title", "body", "project_name", "node_name"],
-    "filterableAttributes": ["kind", "project_ref", "created_by"],
+    "filterableAttributes": ["kind", "project_ref", "created_by_id"],
     "sortableAttributes": ["created_at", "updated_at"],
     "pagination": {"maxTotalHits": 1000},
 }

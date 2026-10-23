@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, getToken, upload } from '../api/client'
 import { unwrap } from '../api/errors'
 import type {
@@ -326,26 +326,40 @@ export function useSearchSuggest(q: string) {
 }
 
 
+export interface NoteSearchPage {
+  items: NoteSearchItem[]
+  total: number
+  expanded?: { query: string; terms: string[]; matched: number }
+  offset: number
+}
+
+/**
+ * ★★★ **搜索结果（无限滚动）**（`D109` · 2026-10-23）⚠
+ *
+ * > 「搜索结构不要分页展示了，这样有些问题，直接就是像CSDN一样，往下滑，就刷出新的就行。」
+ *
+ * ```
+ * 首屏 offset=0；滚到底部 ⇒ fetchNextPage() ⇒ offset+=limit
+ * hasNextPage：最后一页条数 == limit 才继续（* 不满就是到底了）
+ * ```
+ */
 export function useNoteSearch(
   q: string,
-  opts: { limit?: number; offset?: number; sort?: 'relevance' | 'newest' } = {},
+  opts: { limit?: number; sort?: 'relevance' | 'newest' } = {},
 ) {
   const kw = q.trim()
   const limit = opts.limit ?? 20
-  const offset = opts.offset ?? 0
   const sort = opts.sort ?? 'relevance'
 
-  return useQuery({
-    queryKey: ['notes-search', kw, limit, offset, sort],
+  return useInfiniteQuery({
+    queryKey: ['notes-search', kw, limit, sort],
     enabled: kw.length > 0,
+    initialPageParam: 0,
     staleTime: 30_000,
     // ★ 429 不重试：* 重试会再占一次额度，等于自己把限流放大一倍 ⚠
     retry: false,
-    queryFn: async (): Promise<{
-      items: NoteSearchItem[]
-      total: number
-      expanded?: { query: string; terms: string[]; matched: number }
-    }> => {
+    queryFn: async ({ pageParam }): Promise<NoteSearchPage> => {
+      const offset = Number(pageParam) || 0
       const params = new URLSearchParams({
         q: kw,
         limit: String(limit),
@@ -364,10 +378,13 @@ export function useNoteSearch(
       return {
         items: data.items || [],
         total: data.total || 0,
-        // ★ 后端把「用户词 + 联想词」一次查完 ⇒ 告诉用户多出来的来源 ⚠
         expanded: data.expanded,
+        offset,
       }
     },
+    getNextPageParam: (last) =>
+      last.items.length >= limit ? last.offset + limit : undefined,
   })
 }
+
 

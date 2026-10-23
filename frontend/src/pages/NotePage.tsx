@@ -66,11 +66,19 @@ export default function NotePage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSel(null)
     }
-    document.addEventListener('click', close)
+    // ⚠ 用 mousedown 而不是 click：* 拖选结束时常伴随一次 click，
+    //   会在工具条刚出现时又把它关掉（竞争）⚠
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest('.sel-toolbar')) return // 点工具条自身 ⇒ 不关
+      if (t?.closest('.milkdown .ProseMirror')) return // 点正文 ⇒ 交给选区上报
+      close()
+    }
+    document.addEventListener('mousedown', onDown, true)
     document.addEventListener('scroll', close, true)
     document.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('click', close)
+      document.removeEventListener('mousedown', onDown, true)
       document.removeEventListener('scroll', close, true)
       document.removeEventListener('keydown', onKey)
     }
@@ -224,46 +232,73 @@ export default function NotePage() {
           />
         </div>
 
-        {/* ⑤ 右键小菜单：选中文字 ⇒ 写段评（* 番茄小说那种）⚠ */}
+        {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
+            · · ⛔ 不再用右键：所有者：「不要右键弹出评论按钮了……评论按钮和
+              原生的浏览器右键弹窗同时出现了」⚠ */}
       {sel && (
         <div
-          onClick={(e) => e.stopPropagation()}
+          className="sel-toolbar"
+          onMouseDown={(e) => e.preventDefault()}
           style={{
             position: 'fixed',
-            left: sel.x,
-            top: sel.y,
+            // ★ 浮在选区上方 40px；贴边时收进视口 ⚠
+            top: Math.max(8, sel.rect.top - 40),
+            left: Math.max(
+              8,
+              Math.min(
+                sel.rect.left + sel.rect.width / 2 - 44,
+                window.innerWidth - 108,
+              ),
+            ),
             zIndex: 90,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            padding: 3,
             background: 'var(--card)',
             border: '1px solid var(--card-border)',
-            borderRadius: 8,
+            borderRadius: 999,
             boxShadow: 'var(--shadow-card-hover)',
-            padding: 4,
           }}
         >
-          <button
-            type="button"
-            disabled={!sel.block}
-            title={sel.block ? '对选中的文字写段评' : '这段没能对上段落，暂不支持段评'}
-            onClick={() => {
-              if (!sel.block) return
-              setPanelQuote(sel.quote)
-              setActiveFp(sel.block.fingerprint)
-              setSel(null)
-            }}
-            style={{
-              display: 'block',
-              padding: '6px 14px',
-              fontSize: 12.5,
-              fontFamily: 'var(--font-ui)',
-              color: sel.block ? 'var(--text-main)' : 'var(--text-faint)',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 6,
-              cursor: sel.block ? 'pointer' : 'not-allowed',
-            }}
-          >
-            写段评
-          </button>
+          {[
+            {
+              key: 'comment',
+              label: '评论',
+              title: sel.block ? '对选中的文字写段评' : '这段没能对上段落，暂不支持段评',
+              disabled: !sel.block,
+              run: () => {
+                if (!sel.block) return
+                setPanelQuote(sel.quote)
+                setActiveFp(sel.block.fingerprint)
+                setSel(null)
+              },
+            },
+            // ★ 以后要加按钮就往这个数组里塞（* 高亮 / 复制 / 引用…）⚠
+          ].map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              disabled={a.disabled}
+              title={a.title}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={a.run}
+              style={{
+                padding: '5px 12px',
+                fontSize: 12,
+                fontFamily: 'var(--font-ui)',
+                lineHeight: 1.2,
+                color: a.disabled ? 'var(--text-faint)' : 'var(--text-main)',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 999,
+                cursor: a.disabled ? 'not-allowed' : 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
         </div>
       )}
 

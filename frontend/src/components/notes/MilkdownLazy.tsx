@@ -17,7 +17,7 @@ export interface MilkdownLazyProps {
   blocks?: NoteBlockInfo[]
   onOpenBlock?: (b: NoteBlockInfo) => void
   authed?: boolean
-  onSelection?: (info: SelectionInfo) => void
+  onSelection?: (info: SelectionInfo | null) => void
 }
 
 export default function MilkdownLazy(props: MilkdownLazyProps) {

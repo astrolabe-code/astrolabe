@@ -52,8 +52,12 @@ export default function MilkdownView({
   onOpenBlock?: (block: NoteBlockInfo) => void
   /** ★ 是否登录（* 未登录不拦右键菜单）⚠ */
   authed?: boolean
-  /** ★ 选中文字后右键 ⇒ 外层弹「写段评」小菜单 ⚠ */
-  onSelection?: (info: SelectionInfo) => void
+  /**
+   * ★★ **选区变化**（* 2026-10-23）：选中文字 ⇒ 回信息，选区没了 ⇒ 回 null ⚠
+   *   · · ⛔ 不再用右键菜单 —— 所有者：「不要右键弹出评论按钮了……评论按钮和
+   *     原生的浏览器右键弹窗同时出现了」⚠
+   */
+  onSelection?: (info: SelectionInfo | null) => void
 }) {
   // ★ 用 ref 存最新的 blocks / 回调 —— decorations 每次重绘都读它，
   //   这样「新来一条评论」不用重建整个编辑器 ✅
@@ -150,9 +154,63 @@ export interface SelectionInfo {
   block?: NoteBlockInfo
   /** 选中的原文（* 后端存 quote 快照）⚠ */
   quote: string
-  x: number
-  y: number
+  /** 选区在视口里的位置（* 浮动工具条据此定位）⚠ */
+  rect: { top: number; left: number; width: number; height: number }
 }
+
+/**
+ * ★★ **把当前选区上报给外层**（* 浮动工具条据此出现）⚠
+ *
+ * ```
+ * 有选区 ⇒ 算出所属段 + 原文 + 视口矩形
+ * 无选区 ⇒ 回 null（工具条收起）
+ * ```
+ */
+function reportSelection(
+  view: EditorView,
+  cb: ((i: SelectionInfo | null) => void) | undefined,
+  list: NoteBlockInfo[],
+): void {
+  if (!cb) return
+  const sel = window.getSelection()
+  const text = (sel?.toString() || '').trim()
+  if (!sel || !text || sel.rangeCount === 0) {
+    cb(null)
+    return
+  }
+
+  // ★ 选中位置 ⇒ 顶层节点下标 ⇒ 反查段下标
+  //   ⚠ 不能爬 DOM：Milkdown 在 .ProseMirror 里还套了一层 div，
+  //     爬上去会停在外层容器上（* 实测踩过）⇒ 用 PM 的位置反解 ✅
+  let nodeIdx = -1
+  try {
+    const anchorNode = sel.anchorNode
+    if (anchorNode) {
+      const pos = view.posAtDOM(anchorNode, 0)
+      view.state.doc.forEach((n, offset, index) => {
+        if (nodeIdx < 0 && pos >= offset && pos <= offset + n.nodeSize) nodeIdx = index
+      })
+    }
+  } catch {
+    nodeIdx = -1
+  }
+
+  let block: NoteBlockInfo | undefined
+  if (nodeIdx >= 0) {
+    const nodes = topNodes(view.state)
+    const map = alignBlocks(nodes, list)
+    const blockIdx = map.indexOf(nodeIdx)
+    if (blockIdx >= 0) block = list[blockIdx]
+  }
+
+  const r = sel.getRangeAt(0).getBoundingClientRect()
+  cb({
+    block,
+    quote: text.length > 200 ? `${text.slice(0, 200)}…` : text,
+    rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+  })
+}
+
 
 /** 顶层节点 + 它在文档里的结束位置 */
 interface TopNode {
@@ -214,7 +272,7 @@ function bubbleButton(b: NoteBlockInfo, cb: () => void): HTMLElement {
 function makeBubblePlugin(
   blocksRef: { current: NoteBlockInfo[] },
   cbRef: { current: ((b: NoteBlockInfo) => void) | undefined },
-  selRef: { current: ((i: SelectionInfo) => void) | undefined },
+  selRef: { current: ((i: SelectionInfo | null) => void) | undefined },
   authedRef: { current: boolean },
 ) {
   return $prose(
@@ -224,52 +282,15 @@ function makeBubblePlugin(
           // ★★ 右键：选中了文字 ⇒ 弹「写段评」（* 番茄小说那种）⚠
           //   · · 没选中 / 未登录 ⇒ 放行原生菜单 ✅
           handleDOMEvents: {
-            // ★ 选中文字后**自动扩到整段**（* 跨段则全选经过的段）⚠
+            // ★★ 选中文字 ⇒ ① 自动扩到整段 ② 上报选区给外层弹浮动工具条 ⚠
             //   · · 用 setTimeout 0：mouseup 时浏览器还没把选区落到 ProseMirror ⚠
+            //   · · 单击（空选区）⇒ 上报 null，工具条收起 ✅
             mouseup: (view) => {
-              setTimeout(() => expandToBlocks(view), 0)
+              setTimeout(() => {
+                expandToBlocks(view)
+                reportSelection(view, selRef.current, blocksRef.current)
+              }, 0)
               return false
-            },
-            contextmenu: (view, event) => {
-              if (!authedRef.current) return false
-              const sel = window.getSelection()
-              const text = (sel?.toString() || '').trim()
-              if (!text) return false
-
-              // ★ 选中位置 ⇒ 顶层节点下标 ⇒ 反查段下标
-              //   ⚠ 不能爬 DOM：Milkdown 在 .ProseMirror 里还套了一层 div，
-              //     爬上去会停在外层容器上（* 实测踩过）⇒ 用 PM 的位置反解 ✅
-              let nodeIdx = -1
-              try {
-                const anchor = sel!.anchorNode
-                if (anchor) {
-                  const pos = view.posAtDOM(anchor, 0)
-                  view.state.doc.forEach((_n, offset, index) => {
-                    if (nodeIdx < 0 && pos >= offset && pos <= offset + _n.nodeSize) {
-                      nodeIdx = index
-                    }
-                  })
-                }
-              } catch {
-                nodeIdx = -1
-              }
-
-              const list = blocksRef.current
-              const nodes = topNodes(view.state)
-              const map = alignBlocks(nodes, list)
-              let block: NoteBlockInfo | undefined
-              if (nodeIdx >= 0) {
-                const blockIdx = map.indexOf(nodeIdx)
-                if (blockIdx >= 0) block = list[blockIdx]
-              }
-
-              selRef.current?.({
-                block,
-                quote: text.length > 200 ? `${text.slice(0, 200)}…` : text,
-                x: event.clientX,
-                y: event.clientY,
-              })
-              return true
             },
           },
           decorations: (state: EditorState) => {

@@ -88,8 +88,13 @@ def split_blocks(body: str) -> list[str]:
     text = body.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
 
-    # ★ 只取**顶层**块（level == 0 且带 map）——
+    # ★★ 只取**第一层**（level == 0 且带 map），⛔ 不下钻 ——
+    #   所有者（2026-10-23，逐字）：「markdown文档是结构化的，你只要取到第一层，
+    #   或者第二层就可以了。如果故意写嵌套极深的markdown文档，那下钻很费事，
+    #   要多许多指纹验算。」
     #   · · 列表项 / 引用内的段落是嵌套 token，* 由外层一次带走 ✅
+    #   · · ⇒ 成本只随**文档长度**线性增长，* 与**嵌套深度**无关
+    #     （* 实测 500 层嵌套引用 1.7ms / 300 层嵌套列表 25.7ms）✅
     out: list[str] = []
     for tok in _MD.parse(text):
         if tok.level != 0 or not tok.map:

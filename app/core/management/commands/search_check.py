@@ -60,4 +60,29 @@ class Command(BaseCommand):
         elif r["missing"] or r["stale"] or r["outdated"]:
             self.stdout.write(self.style.WARNING("加 --fix 可直接修复"))
         else:
-            self.stdout.write(self.style.SUCCESS("两边一致 ✅"))
+            self.stdout.write(self.style.SUCCESS("笔记两边一致 ✅"))
+
+        # ★★ 项目索引：同一套对账（* 2026-10-23）⚠
+        pr = reconcile.reconcile_projects(fix=options["fix"])
+        self.stdout.write(
+            f"项目：PG {pr['pg']} · 索引 {pr['index']} · "
+            f"缺失 {len(pr['missing'])} · 残留 {len(pr['stale'])} · "
+            f"内容过期 {len(pr['outdated'])} · 计数过期 {len(pr['stale_counts'])}"
+        )
+        if pr["missing"]:
+            self.stdout.write(f"  缺失项目: {pr['missing'][:10]}  ← 重新投递索引任务")
+        if pr["stale"]:
+            self.stdout.write(
+                f"  残留索引条目: {pr['stale'][:10]}  ← 只删索引条目，数据库不动"
+            )
+        if pr["outdated"]:
+            self.stdout.write(f"  内容过期: {pr['outdated'][:10]}")
+        if pr["stale_counts"]:
+            self.stdout.write(f"  计数过期: {pr['stale_counts'][:10]}")
+
+        if options["fix"] and pr["fixed"]:
+            self.stdout.write(self.style.SUCCESS(f"项目已修复 {pr['fixed']} 个"))
+        elif pr["missing"] or pr["stale"] or pr["outdated"] or pr["stale_counts"]:
+            self.stdout.write(self.style.WARNING("加 --fix 可直接修复"))
+        else:
+            self.stdout.write(self.style.SUCCESS("项目两边一致 ✅"))

@@ -205,6 +205,84 @@ def reconcile(fix: bool = True) -> dict:
     }
 
 
+def project_refs() -> set:
+    """★ 数据库里**所有**项目 —— 项目索引收录全量（* 含私有，* 查询时过滤）⚠"""
+    from core.models import Project
+
+    return set(Project.objects.values_list("project_ref", flat=True))
+
+
+def reconcile_projects(fix: bool = True) -> dict:
+    """★★ **项目索引对账**（2026-10-23 所有者：「把对账补上，跟笔记一样」）⚠
+
+    ```
+    缺失：库里有、索引没有      ⇒ 重新投递
+    残留：索引有、库里没有      ⇒ 删索引条目（* 数据库不动）
+    过期：updated_at 对不上      ⇒ 重新投递
+    计数：node_count/edge_count 对不上 ⇒ 重新投递
+    ```
+    """
+    from core.models import Project
+    from search import client
+
+    pg = project_refs()
+    docs = client.list_documents(
+        client.PROJECTS_INDEX,
+        "project_ref,updated_at,node_count,edge_count",
+    )
+    index = {d["project_ref"] for d in docs if d.get("project_ref")}
+    by_id = {d["project_ref"]: d for d in docs if d.get("project_ref")}
+
+    missing = sorted(pg - index)
+    stale = sorted(index - pg)
+
+    both = pg & index
+    rows = {
+        ref: (ts, n, e)
+        for ref, ts, n, e in Project.objects.filter(project_ref__in=both).values_list(
+            "project_ref", "updated_at", "node_count", "edge_count"
+        )
+    }
+
+    outdated: list[str] = []
+    stale_counts: list[str] = []
+    for ref in sorted(both):
+        ts, n, e = rows.get(ref, (None, 0, 0))
+        doc = by_id.get(ref) or {}
+        if ts is not None and int(ts.timestamp() * 1000) != doc.get("updated_at"):
+            outdated.append(ref)
+        if (int(n or 0), int(e or 0)) != (
+            int(doc.get("node_count") or 0),
+            int(doc.get("edge_count") or 0),
+        ):
+            stale_counts.append(ref)
+
+    fixed = 0
+    if fix:
+        from search import sync
+
+        for ref in missing:
+            sync.enqueue_project(ref)
+        for ref in stale:
+            try:
+                client.delete_document(client.PROJECTS_INDEX, ref)
+            except Exception:
+                logger.warning("项目对账删除失败 %s", ref, exc_info=True)
+        for ref in sorted(set(outdated) | set(stale_counts)):
+            sync.enqueue_project(ref)
+        fixed = len(missing) + len(stale) + len(set(outdated) | set(stale_counts))
+
+    return {
+        "pg": len(pg),
+        "index": len(index),
+        "missing": missing,
+        "stale": stale,
+        "outdated": outdated,
+        "stale_counts": stale_counts,
+        "fixed": fixed,
+    }
+
+
 def due() -> bool:
     """★ 现在是否该对账（* 深夜窗口 + 今天还没跑过）⚠"""
     from django.utils import timezone

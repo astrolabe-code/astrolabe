@@ -88,6 +88,16 @@ class Command(BaseCommand):
                         )
                         if rc["summary"]:
                             self.stdout.write(f"  删除原因：{rc['summary']}")
+
+                        # ★ 项目索引对账（* 同一套口径）⚠
+                        pr = reconcile.reconcile_projects(fix=True)
+                        self.stdout.write(
+                            f"项目对账：PG {pr['pg']} · 索引 {pr['index']} "
+                            f"· 缺失 {len(pr['missing'])} · 残留 {len(pr['stale'])} "
+                            f"· 过期 {len(pr['outdated'])} "
+                            f"· 计数过期 {len(pr['stale_counts'])} "
+                            f"· 已修 {pr['fixed']}"
+                        )
                 except Exception:
                     self.stderr.write(self.style.WARNING("索引对账失败"))
 

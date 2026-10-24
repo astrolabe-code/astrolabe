@@ -21,6 +21,23 @@ function Stat({ value, label }: { value: number; label: string }) {
   )
 }
 
+/** ★ 头像样式（* 本人可点、别人不可点，共用一份）⚠ */
+const avatarStyle: React.CSSProperties = {
+  width: 66,
+  height: 66,
+  borderRadius: '50%',
+  // ★ 底色 --accent、字色 --card：浅色白字、深色深字，两边对比都够 ⚠
+  background: 'var(--accent)',
+  color: 'var(--card)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 26,
+  fontWeight: 650,
+  border: '3px solid var(--card)',
+  flex: 'none',
+}
+
 export default function ProfileHeader({ data }: { data: UserSpaceData }) {
   const initial = (data.display_name || data.username).trim().slice(0, 1).toUpperCase()
   const joined = data.joined_at ? data.joined_at.slice(0, 7).replace('-', ' 年 ') + ' 月' : ''
@@ -43,26 +60,17 @@ export default function ProfileHeader({ data }: { data: UserSpaceData }) {
       {/* ② 资料区 */}
       <div style={{ padding: '0 20px 16px' }}>
         <div className="flex items-end gap-3" style={{ marginTop: -30 }}>
-          <div
-            aria-hidden
-            style={{
-              width: 66,
-              height: 66,
-              borderRadius: '50%',
-              // ★ 底色用 --accent，字色用 --card：浅色=白字、深色=深字，两边都够对比 ⚠
-              background: 'var(--accent)',
-              color: 'var(--card)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 26,
-              fontWeight: 650,
-              border: '3px solid var(--card)',
-              flex: 'none',
-            }}
-          >
-            {initial}
-          </div>
+          {/* ★★ 本人点头像 ⇒ **进设置**（所有者：「点击我的空间里的头像，就可以进入设置页」）⚠
+              · · 别人的空间里头像只是装饰，不做可点（* 他点已经在自己看的地方）✅ */}
+          {data.is_self ? (
+            <Link to="/me/settings" title="编辑资料" style={{ ...avatarStyle, textDecoration: 'none' }}>
+              {initial}
+            </Link>
+          ) : (
+            <div aria-hidden style={avatarStyle}>
+              {initial}
+            </div>
+          )}
 
           <div style={{ paddingBottom: 2, minWidth: 0 }}>
             <div className="flex items-center gap-2 flex-wrap">

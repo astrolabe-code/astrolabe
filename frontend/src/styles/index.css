@@ -267,3 +267,57 @@
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
+
+/* ===== 设置页：左分类 / 右内容 ===== */
+.settings-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.settings-nav {
+  width: 176px;
+  flex: none;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  color: var(--text-sub);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.settings-nav-item:hover {
+  background: var(--bg-deep);
+  color: var(--text-main);
+}
+.settings-nav-item.active {
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .settings-nav-item {
+    width: auto;
+    white-space: nowrap;
+  }
+}

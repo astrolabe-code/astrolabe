@@ -4,13 +4,11 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import {
   EyeOff,
   Home,
-  LogOut,
   Menu,
   Moon,
   Settings,
   Shield,
   Sun,
-  Trash2,
   User,
   ChevronsUp,
   ChevronsDown,
@@ -19,7 +17,6 @@ import {
 import type { Me } from '../hooks/useMe'
 import { useMe } from '../hooks/useMe'
 import { useTheme } from '../hooks/useTheme'
-import { useLogout } from '../query/auth'
 
 /**
  * ★ 顶栏（B163 精简版）
@@ -43,7 +40,7 @@ import { useLogout } from '../query/auth'
  * │  (头像)          ⌃           ☰   │  左头像 · 中向上箭头 · 右汉堡
  * └──────────────────────────────────┘
  *
- * 点 ☰ ⇒ 横条下方拉出菜单（主题 / 管理 / 已处置 / 回收站 / 退出 / 首页）
+ * 点 ☰ ⇒ 横条下方拉出菜单（主题 / 管理 / 已处置 / 我的设置 / 我的空间 / 首页）
  * 点 ⌃ ⇒ 整个横条消失，顶部居中留「⌄⌄ 顶栏」胶囊（与电脑端一致）
  * ```
  *
@@ -51,7 +48,6 @@ import { useLogout } from '../query/auth'
  */
 export default function TopNav() {
   const { theme, toggle } = useTheme()
-  const logout = useLogout()
   const [open, setOpen] = useState(false)
   // ★★ 顶栏可**向上收起**（* 所有者：「首页按钮所在的标题栏也要做一个向上收缩按钮」）⚠
   //   · · ★ 收起后不占高度 ⇒* 图谱 / 阅读区更长 ✅ · 顶部居中留一个「顶栏」胶囊恢复 ⚠
@@ -112,10 +108,6 @@ export default function TopNav() {
    *   ⚠★ **哪怕请求失败也清** —— ★ 否则用户会卡在"点了退出、但界面还是登录状态"
    *     这种最别扭的状态里 ⚠
    */
-  async function handleLogout() {
-    await logout.mutateAsync().catch(() => undefined)
-    navigate('/', { replace: true })
-  }
 
   // ★★ 收起态：只留顶部居中的恢复胶囊（* 桌面 / 移动端同一套）⚠
   if (collapsed) {
@@ -320,18 +312,10 @@ export default function TopNav() {
                   我的空间
                 </Link>
               )}
-              {me.authenticated && (
-                <Link style={menuBtn} to="/me/deleted" title="回收站">
-                  <Trash2 size={15} />
-                  回收站
-                </Link>
-              )}
-              {me.authenticated ? (
-                <button type="button" style={menuBtn} onClick={handleLogout}>
-                  <LogOut size={15} />
-                  退出
-                </button>
-              ) : (
+              {/* ★★ 2026-10-24：**回收站 / 退出登录已移入设置页**
+                  ⇒ 这里只保留「没登录时的登录入口」（* 所有者：「既然回收站和退出登录
+                  按钮在设置页有了，那么就不用在导航栏的这两个按钮了，去掉」）⚠ */}
+              {!me.authenticated && (
                 <Link style={menuBtn} to="/login">
                   <User size={15} />
                   登录
@@ -442,19 +426,8 @@ export default function TopNav() {
                 已处置
               </Link>
             )}
-            {/* ★★ `F4`（`D96`）：回收站入口 ——* 登录用户可见（* 游客点了也是空）✅ */}
-            {me.authenticated && (
-              <Link className="nav-btn ghost-btn" to="/me/deleted" title="回收站">
-                <Trash2 size={15} />
-                回收站
-              </Link>
-            )}
-            {me.authenticated ? (
-              <button className="nav-btn ghost-btn logout" onClick={handleLogout} data-nav-logout>
-                <LogOut size={15} />
-                退出
-              </button>
-            ) : (
+            {/* ★★ 2026-10-24：**回收站 / 退出登录已移入设置页**，导航不再重复（所有者要求）⚠ */}
+            {!me.authenticated && (
               <Link className="nav-btn ghost-btn" to="/login">
                 登录
               </Link>

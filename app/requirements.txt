@@ -7,6 +7,8 @@
 
 # ---- Web 框架 ----
 Django==5.1.4
+# ★ 管理后台主题（MIT，无传染性）—— 2026-10-24 所有者要求用现成组件 ⚠
+django-unfold==0.80.0
 djangorestframework==3.15.2
 
 # ---- ASGI 服务器（ARCHITECTURE.md：Web 层用 ASGI 就绪的配置）----

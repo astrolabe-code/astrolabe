@@ -49,6 +49,12 @@ ASTROLABE_EDITION = env("ASTROLABE_EDITION", "public")
 #     graph —— 图（模型与查询，被 ① ② 共用）
 
 INSTALLED_APPS = [
+    # ★★★ 管理后台主题（django-unfold 0.110.0 · MIT · 2026-10-24）⚠
+    #   · · ⚠ **必须排在 `django.contrib.admin` 之前**（* 它会覆盖 admin 模板）⚠
+    #   · · 所有者要求「用现成的、经过时间检验的」，* 不自建后台 ✅
+    "unfold",
+    "unfold.contrib.filters",
+    "unfold.contrib.forms",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -244,3 +250,48 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ============================================================================
+# ★★★ 管理后台外观（django-unfold · 2026-10-24）⚠
+# ============================================================================
+# ⚠ 侧栏分组与「先看什么」的顺序，* 按运维习惯排：内容 → 用户 → 系统 ⚠
+UNFOLD = {
+    "SITE_TITLE": "Astrolabe 后台",
+    "SITE_HEADER": "Astrolabe 后台",
+    "SITE_SUBHEADER": "内容处置 · 用户与邀请 · 运行状态",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    # ★ 侧栏按运维习惯分组（* 不按 app 自动排）⚠
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "内容",
+                "items": [
+                    {"title": "笔记", "link": "admin:core_note_changelist"},
+                    {"title": "段评 / 章评", "link": "admin:core_notecomment_changelist"},
+                    {"title": "项目", "link": "admin:core_project_changelist"},
+                ],
+            },
+            {
+                "title": "用户与邀请",
+                "items": [
+                    {"title": "用户", "link": "admin:auth_user_changelist"},
+                    {"title": "用户档案", "link": "admin:core_userprofile_changelist"},
+                    {"title": "邀请码", "link": "admin:core_invite_changelist"},
+                    {"title": "协作者", "link": "admin:core_collaborator_changelist"},
+                    {"title": "访问令牌", "link": "admin:core_apitoken_changelist"},
+                ],
+            },
+            {
+                "title": "系统",
+                "items": [
+                    {"title": "审计日志", "link": "admin:core_auditlog_changelist"},
+                    {"title": "站点参数", "link": "admin:core_appsetting_changelist"},
+                    {"title": "存储占用", "link": "admin:core_projectstorage_changelist"},
+                ],
+            },
+        ],
+    },
+}

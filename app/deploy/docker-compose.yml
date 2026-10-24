@@ -243,6 +243,9 @@ services:
     ports:
       # ⚠★ 2026-10-13：旧站退役 ⇒ 直接占 80（★ 花生壳穿透本来就指 80）
       - "${WEB_HTTP_PORT:-80}:80"
+      # ★★★ 2026-10-24：**管理后台独立端口**（所有者：「不要公开」「通过 SSH 隧道访问」）⚠
+      #   · · 只绑 127.0.0.1 ⇒ 公网/穿透都摸不到，* 必须 SSH 隧道进来 ✅
+      - "127.0.0.1:${ADMIN_HTTP_PORT:-8090}:8090"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # ⚠★★ 前端产物在 **`/home/ma/astrolabe/frontend/dist`** ⚠ ——

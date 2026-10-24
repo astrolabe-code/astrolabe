@@ -122,3 +122,106 @@
 #root .milkdown .ProseMirror h4 { font-size: 1.125em; margin-top: 1em; }
 #root .milkdown .ProseMirror h5 { font-size: 1em;     margin-top: 1em; }
 #root .milkdown .ProseMirror h6 { font-size: 0.9375em; margin-top: 0.93em; }
+
+/* ===== 阅读节奏：块之间的留白 =====
+   ⚠ Crepe 是**编辑器**样式：段落只有 `padding: 4px 0`、没有 margin
+     ⇒ 只读页里所有段落挤成一片（所有者：「正文都挤在一起了」）⚠
+   · · 下面全部用 em（相对正文基准字号），* 随 --md-base-size 一起缩放 ✅ */
+#root .milkdown .ProseMirror p {
+  padding: 0;
+  margin: 0 0 0.9em;
+  line-height: 1.75;          /* 中文长文比 1.5 更松快 */
+}
+#root .milkdown .ProseMirror ul,
+#root .milkdown .ProseMirror ol,
+#root .milkdown .ProseMirror pre,
+#root .milkdown .ProseMirror table {
+  margin: 0 0 0.9em;
+}
+#root .milkdown .ProseMirror li {
+  margin: 0.25em 0;
+  line-height: 1.7;
+}
+#root .milkdown .ProseMirror blockquote {
+  margin: 0.9em 0;
+  /* ⚠ 主题给的是 40px 死值 ⇒ 移动端太深，* 改成相对值 ⚠ */
+  padding-left: 1.4em;
+}
+#root .milkdown .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+/* ===== 正文卡片：内边距随屏幕收窄（* 原来是内联写死的 16/18）===== */
+.note-body-card { padding: 16px 18px; }
+@media (max-width: 640px) {
+  .note-body-card { padding: 14px 12px; }
+}
+
+/* ===== 正文左右留白 =====
+   ⚠ Crepe 给编辑器留了 `padding: 0 120px`（块手柄要站的地方）
+     * 344px 的移动端卡片减掉 240px ⇒ 正文只剩 100px 宽（所有者：「挤在一起」）⚠
+   · · 阅读页：卡片自己已有内边距 ⇒ 正文**铺满** ✅
+   · · 编辑器：仍需左侧留白给「+」手柄，* 但比 120px 窄得多 ⚠ */
+#root .note-body-card .milkdown .ProseMirror {
+  padding-left: 0;
+  padding-right: 0;
+}
+#root .milkdown-editor .milkdown .ProseMirror {
+  padding-left: 2.5em;
+  padding-right: 0.5em;
+}
+@media (max-width: 640px) {
+  #root .milkdown-editor .milkdown .ProseMirror {
+    padding-left: 1.8em;
+    padding-right: 0.25em;
+  }
+}
+
+/* ===== 笔记编辑页（* 弹窗改成整页后，正文要吃掉页面高度）===== */
+.note-edit-card { padding: 20px 22px 16px; }
+.note-edit-card .milkdown-editor {
+  min-height: 56vh;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 6px 4px;
+  background: var(--card);
+}
+@media (max-width: 640px) {
+  .note-edit-card { padding: 14px 12px 12px; }
+  .note-edit-card .milkdown-editor { min-height: 48vh; }
+}
+
+/* ===== Milkdown 正文配色：接到站点主题上 =====
+   ⚠ Crepe 的 nord 主题只考虑浅色（--crepe-color-background: #fdfcff）
+     ⇒ 深色模式下正文区是一块**纯白底**，字贴着白块边缘
+     ⇒ 所有者：「深色背景下，正文内容像顶格写的一样，不好看」⚠
+   · · 正文背景**永远跟随卡片**（透明），文字与线条按主题映射 ✅ */
+.milkdown {
+  background: transparent;
+  /* ★ 两种主题都接：文字用站点正文色，* 不再用 Crepe 自带的黑/白 ⚠ */
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text-main);
+  --crepe-color-surface: var(--card);
+  --crepe-color-on-surface: var(--text-main);
+  --crepe-color-on-surface-variant: var(--text-sub);
+  --crepe-color-outline: var(--text-sub);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-inline-area: var(--bg-deep);
+}
+
+[data-theme='dark'] .milkdown {
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text-main);
+  --crepe-color-surface: var(--card);
+  --crepe-color-surface-low: #1e1e2c;
+  --crepe-color-on-surface: var(--text-main);
+  --crepe-color-on-surface-variant: var(--text-sub);
+  --crepe-color-outline: var(--text-sub);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: rgba(77, 184, 214, 0.15);
+  --crepe-color-on-secondary: var(--text-main);
+  --crepe-color-inline-code: #ffb4a8;
+  --crepe-color-inline-area: rgba(148, 163, 184, 0.18);
+  --crepe-color-hover: rgba(148, 163, 184, 0.12);
+  --crepe-color-selected: rgba(77, 184, 214, 0.22);
+}

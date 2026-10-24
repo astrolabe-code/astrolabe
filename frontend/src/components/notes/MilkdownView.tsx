@@ -6,6 +6,7 @@ import type { EditorState } from 'prosemirror-state'
 import { Plugin, TextSelection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import { Decoration, DecorationSet } from 'prosemirror-view'
+import { makeHighlightPlugin } from './highlight'
 // ★ 排版（标题字号 / 段落 / 列表 / 表格…）都在这份里，⚠ 少引它标题就全是同字号
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/nord.css'
@@ -49,7 +50,7 @@ export default function MilkdownView({
 }: {
   text: string
   blocks?: NoteBlockInfo[]
-  onOpenBlock?: (block: NoteBlockInfo) => void
+  onOpenBlock?: (block: NoteBlockInfo, anchor?: AnchorRect) => void
   /** ★ 是否登录（* 未登录不拦右键菜单）⚠ */
   authed?: boolean
   /**
@@ -96,6 +97,8 @@ export default function MilkdownView({
       })
       crepe.setReadonly(true)
       crepe.editor.use(makeBubblePlugin(blocksRef, cbRef, selRef, authedRef))
+      // ★ 代码块高亮（* 只影响阅读页）⚠
+      crepe.editor.use(makeHighlightPlugin())
       return crepe.editor
     },
     [text],
@@ -149,13 +152,21 @@ function expandToBlocks(view: EditorView): void {
 
 
 /** ★ 右键选中文字后回给外层的信息 ⚠ */
+/** ★ 视口矩形（* 浮层定位锚点）⚠ */
+export interface AnchorRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
 export interface SelectionInfo {
   /** 选中文字所属的那一段（* 找不到就 undefined）⚠ */
   block?: NoteBlockInfo
   /** 选中的原文（* 后端存 quote 快照）⚠ */
   quote: string
   /** 选区在视口里的位置（* 浮动工具条据此定位）⚠ */
-  rect: { top: number; left: number; width: number; height: number }
+  rect: AnchorRect
 }
 
 /**
@@ -255,7 +266,7 @@ function alignBlocks(nodes: TopNode[], list: NoteBlockInfo[]): number[] {
 }
 
 /** ③ 造一个气泡按钮 DOM ⚠ */
-function bubbleButton(b: NoteBlockInfo, cb: () => void): HTMLElement {
+function bubbleButton(b: NoteBlockInfo, cb: (anchor: AnchorRect) => void): HTMLElement {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'block-bubble'
@@ -264,14 +275,16 @@ function bubbleButton(b: NoteBlockInfo, cb: () => void): HTMLElement {
   btn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    cb()
+    // ★ 把气泡自己的位置带出去 ⇒ 面板贴着它弹出（* 而不是跑到页面底部）⚠
+    const r = btn.getBoundingClientRect()
+    cb({ top: r.top, left: r.left, width: r.width, height: r.height })
   })
   return btn
 }
 
 function makeBubblePlugin(
   blocksRef: { current: NoteBlockInfo[] },
-  cbRef: { current: ((b: NoteBlockInfo) => void) | undefined },
+  cbRef: { current: ((b: NoteBlockInfo, anchor?: AnchorRect) => void) | undefined },
   selRef: { current: ((i: SelectionInfo | null) => void) | undefined },
   authedRef: { current: boolean },
 ) {
@@ -308,7 +321,7 @@ function makeBubblePlugin(
               if (!b.comment_count) return null
               return Decoration.widget(
                 n.end - 1,
-                () => bubbleButton(b, () => cbRef.current?.(b)),
+                () => bubbleButton(b, (anchor) => cbRef.current?.(b, anchor)),
                 { side: 1, key: `bubble-${b.fingerprint}` },
               )
             })

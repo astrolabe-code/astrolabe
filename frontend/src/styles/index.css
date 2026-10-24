@@ -225,3 +225,45 @@
   --crepe-color-hover: rgba(148, 163, 184, 0.12);
   --crepe-color-selected: rgba(77, 184, 214, 0.22);
 }
+
+/* ===== 代码块语法高亮（阅读页 · Prism 区间着色）=====
+   · · 颜色全部取站点 token ⇒ 深浅主题自动跟随 ✅
+   · · 类名由 components/notes/highlight.ts 映射 */
+.milkdown .ProseMirror pre {
+  color: var(--code-text);
+  tab-size: 2;
+}
+/* ⚠ Crepe 把 `code` 的颜色设成了**行内代码色**（红），连 `pre code` 一起吃
+   ⇒ 代码块里没被 Prism 着色的部分（变量名、空白）会变红，必须纠正 ⚠ */
+.milkdown .ProseMirror pre code {
+  color: var(--code-text);
+  background: transparent;
+}
+.milkdown .md-tok-key { color: var(--code-key); }
+.milkdown .md-tok-str { color: var(--code-str); }
+.milkdown .md-tok-fn  { color: var(--code-fn); }
+.milkdown .md-tok-com { color: var(--code-com); font-style: italic; }
+.milkdown .md-tok-num { color: var(--code-num); }
+.milkdown .md-tok-dec { color: var(--code-dec); }
+.milkdown .md-tok-dim { color: var(--code-dim); }
+
+/* ===== 代码块行号 =====
+   ⚠ 行号靠「每行行首插一个 inline-block」实现
+     ⇒ 代码块必须**不自动折行**（white-space: pre），* 否则行号会跟内容错位 ⚠
+   · · 长行改为横向滚动（滚动条在代码块内部）✅ */
+.milkdown .ProseMirror pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+.milkdown .md-line-no {
+  display: inline-block;
+  width: 2.2em;
+  margin-right: 10px;
+  text-align: right;
+  color: var(--code-dim);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}

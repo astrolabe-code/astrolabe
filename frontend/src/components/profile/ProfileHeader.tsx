@@ -63,11 +63,16 @@ export default function ProfileHeader({ data }: { data: UserSpaceData }) {
           {/* ★★ 本人点头像 ⇒ **进设置**（所有者：「点击我的空间里的头像，就可以进入设置页」）⚠
               · · 别人的空间里头像只是装饰，不做可点（* 他点已经在自己看的地方）✅ */}
           {data.is_self ? (
-            <Link to="/me/settings" title="编辑资料" style={{ ...avatarStyle, textDecoration: 'none' }}>
+            <Link
+              to="/me/settings"
+              title="编辑资料"
+              className="profile-avatar"
+              style={{ ...avatarStyle, textDecoration: 'none' }}
+            >
               {initial}
             </Link>
           ) : (
-            <div aria-hidden style={avatarStyle}>
+            <div aria-hidden className="profile-avatar" style={avatarStyle}>
               {initial}
             </div>
           )}

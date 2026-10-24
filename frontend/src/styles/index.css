@@ -321,3 +321,29 @@
     white-space: nowrap;
   }
 }
+
+/* ===== 空间头像：可点时给悬停反馈 =====
+   · · 只有本人视角才是 <a>（可点）⇒ **只对 a 做放大**
+   · · 别人空间里头像不可点，* 不加动效（⛔ 别骗用户去点）⚠ */
+.profile-avatar {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  will-change: transform;
+}
+a.profile-avatar {
+  cursor: pointer;
+}
+a.profile-avatar:hover {
+  transform: scale(1.09);
+  box-shadow: 0 6px 18px rgba(8, 145, 178, 0.35);
+}
+a.profile-avatar:active {
+  transform: scale(1.03);
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-avatar {
+    transition: none;
+  }
+  a.profile-avatar:hover {
+    transform: none;
+  }
+}

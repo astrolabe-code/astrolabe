@@ -201,6 +201,52 @@ def apply(note_id: int, counts_only: bool = False) -> None:
     client.add_documents(client.NOTES_INDEX, [documents.build_document(note)])
 
 
+def recover_orphans() -> int:
+    """★★ **启动时自愈：把"孤儿任务"重新入队**（2026-10-23）⚠
+
+    ## ★ 问题
+
+    ```
+    消费者 BRPOP 拿走任务（队列里没了）→ 处理中崩溃
+      ⇒ 任务丢了，但 PENDING_KEY 里还留着它
+      ⇒ 之后 enqueue_note 的 sadd 返回 0 ⇒ **再也不会推队列**
+      ⇒ 该笔记的索引从此永久停止更新（* 实测踩到 `c:189`）⚠
+    ```
+
+    ## ★ 做法
+
+    ```
+    PENDING 里有、QUEUE 和 RETRY 里都没有 ⇒ 判定为孤儿 ⇒ 重新 lpush
+    ```
+
+    ⚠ 只在**启动时**跑：运行中调用会与正在处理的任务撞车（* 虽然重复处理幂等，
+      但没必要）⚠
+
+    Returns: 恢复的任务数
+    """
+    try:
+        r = _redis()
+        pending = {_s(m) for m in r.smembers(PENDING_KEY)}
+        if not pending:
+            return 0
+        alive = {_s(m) for m in r.lrange(QUEUE_KEY, 0, -1)}
+        alive |= {_s(m) for m in r.zrange(RETRY_KEY, 0, -1)}
+        orphans = pending - alive
+        for member in orphans:
+            r.lpush(QUEUE_KEY, member)
+        if orphans:
+            logger.warning("索引队列自愈：重新入队 %d 个孤儿任务 %s", len(orphans), sorted(orphans)[:10])
+        return len(orphans)
+    except Exception:
+        logger.warning("索引队列自愈失败", exc_info=True)
+        return 0
+
+
+def _s(raw) -> str:
+    """★ Redis 返回的可能是 bytes ⚠"""
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
 def drain_once(timeout: int = 2) -> bool:
     """★ 处理一个待办（* 先看重试队列里有没有到期的）；返回是否处理了东西 ⚠"""
     r = _redis()
@@ -250,13 +296,15 @@ def _apply_counts_batch(r, raws: list[str]) -> None:
     ⇒ 写次数从"每人一次"降到"每批一次" ✅
     ```
     """
-    from django.db.models import Count
-
-    from core import like_cache
-    from core.models import Note, ProjectLike
-
     ids = [int(x[len(COUNTS_PREFIX):]) for x in raws]
     try:
+        # ⚠ 导入放在 try 内：* 万一某个模型改名，也只是这批退回逐条，
+        #   ⛔ 不会把整个消费循环打挂（2026-10-23 踩过：`ProjectLike` 不存在）⚠
+        from django.db.models import Count
+
+        from core import like_cache
+        from core.models import Note, NoteLike
+
         notes = {n.pk: n for n in Note.objects.filter(pk__in=ids)}
         gone = []
         alive = []

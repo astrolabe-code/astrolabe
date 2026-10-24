@@ -239,7 +239,7 @@
   color: var(--code-text);
   background: transparent;
 }
-.milkdown .md-tok-key { color: var(--code-key); }
+.milkdown .md-tok-key { color: var(--code-key); font-weight: 600; }
 .milkdown .md-tok-str { color: var(--code-str); }
 .milkdown .md-tok-fn  { color: var(--code-fn); }
 .milkdown .md-tok-com { color: var(--code-com); font-style: italic; }

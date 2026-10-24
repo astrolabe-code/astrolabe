@@ -4,7 +4,6 @@ import { tags } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
-import { makeHighlightPlugin } from './highlight'
 // ★ 排版（标题字号 / 段落 / 列表 / 表格…）都在这份里，⚠ 少引它标题就全是同字号
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/nord.css'
@@ -127,7 +126,11 @@ const CODE_THEME = EditorView.theme({
  */
 const CODE_HIGHLIGHT = syntaxHighlighting(
   HighlightStyle.define([
-    { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword], color: 'var(--code-key)' },
+    {
+      tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword],
+      color: 'var(--code-key)',
+      fontWeight: '600',
+    },
     { tag: [tags.string, tags.special(tags.string), tags.regexp], color: 'var(--code-str)' },
     { tag: [tags.function(tags.variableName), tags.className, tags.typeName], color: 'var(--code-fn)' },
     { tag: [tags.comment, tags.lineComment, tags.blockComment], color: 'var(--code-com)', fontStyle: 'italic' },
@@ -192,8 +195,10 @@ function Inner({
         ctx.update(uploadConfig.key, (prev) => ({ ...prev, uploader: async () => [] }))
       })
 
-      // ★ 代码块高亮 + 行号（* 与阅读页同一个插件）⚠
-      crepe.editor.use(makeHighlightPlugin())
+      // ⚠★ 这里**不再**挂 `makeHighlightPlugin`（2026-10-24）⚠
+      //   · · 编辑器代码块由 CodeMirror 渲染，* PM 装饰器进不去其 DOM，
+      //     挂了也只是每次改动白算一遍 Prism ⇒ 已移除 ✅
+      //   · · 编辑器的高亮/行号分别来自 CM 语言包与 `basicSetup` ⚠
       // ★ 句柄直接塞进父组件的 ref（* 不靠回调，* 避免时序问题）⚠
       apiRef.current = { getMarkdown: () => crepe.getMarkdown() }
       return crepe.editor

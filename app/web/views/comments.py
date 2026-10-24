@@ -58,6 +58,7 @@ from django.views.decorators.http import require_http_methods
 from core import like_cache
 from core import settings_table as st
 from graph import notes as note_alg
+from core import profiles
 from core.models import Note, note_by_ref, NoteComment, NoteCommentLike
 from web.http import fail, ok, ok_flat, read_json
 from web.permissions import (
@@ -189,6 +190,8 @@ def _list(request: HttpRequest, note: Note):
             .order_by("-created_at")
         )
 
+    # ★ 预取作者 profile ⇒ 昵称不用每条查一次（2026-10-24）⚠
+    qs = qs.select_related("created_by__profile")
     total = qs.count()
     items = list(qs[offset:offset + limit])
 
@@ -407,6 +410,8 @@ def _comment_json(c: NoteComment, liked: bool = False) -> dict:
             else c.replies.count()
         ),
         "created_by": c.created_by.get_username() if c.created_by_id else "",
+        # ★ 昵称（* 为空回落 username）⚠
+        "created_by_display": profiles.display_of(c.created_by) if c.created_by_id else "",
         "created_at": c.created_at.isoformat(),
         # ★★ 评论赞：* 计数**实时数明细表**（* 已去掉 like_count 缓存）+ 我赞过没有 ⚠
         "like_count": (

@@ -308,6 +308,12 @@ export default function TopNav() {
                 </Link>
               )}
               {me.authenticated && (
+                <Link style={menuBtn} to="/me" title="我的空间">
+                  <User size={15} />
+                  我的空间
+                </Link>
+              )}
+              {me.authenticated && (
                 <Link style={menuBtn} to="/me/deleted" title="回收站">
                   <Trash2 size={15} />
                   回收站

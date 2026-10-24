@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { MessageSquare, ThumbsUp, Trash2 } from 'lucide-react'
 import type { AnchorKind, Comment } from '../../api/types'
@@ -136,7 +137,16 @@ export default function CommentItem({
   return (
     <div style={{ fontSize: 13 }}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span style={{ fontWeight: 600, fontSize: 12.5 }}>{comment.created_by || '匿名'}</span>
+        {comment.created_by ? (
+          <Link
+            to={`/u/${encodeURIComponent(comment.created_by)}`}
+            style={{ fontWeight: 600, fontSize: 12.5, color: 'inherit' }}
+          >
+            {comment.created_by_display || comment.created_by}
+          </Link>
+        ) : (
+          <span style={{ fontWeight: 600, fontSize: 12.5 }}>匿名</span>
+        )}
         {/* ★★ 视觉一：回复头（`reply` / `both`） */}
         {isReply && replyTarget && (
           <span className="faint" style={{ fontSize: 11 }}>

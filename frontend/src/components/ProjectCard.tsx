@@ -243,7 +243,7 @@ export default function ProjectCard({
         <ParseStatus status={project.graph_built ? 'done' : project.status} size="sm" />
         <span className="inline-flex items-center gap-1 text-text-faint" style={{ fontSize: 11 }}>
           <User size={11} />
-          {project.mine ? '我的项目' : project.owner || '内置'}
+          {project.mine ? '我的项目' : project.owner_display || project.owner || '内置'}
         </span>
       </div>
 

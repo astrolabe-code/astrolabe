@@ -30,6 +30,7 @@ from web.views import (
     publish,
     reading_path,
     review,
+    user_space,
     settings,
 )
 
@@ -281,6 +282,15 @@ urlpatterns = [
     # ------------------------------------------------------------ 设置（B190）
     # ★★ 用户档 / 项目档（* 三级继承，* 见 core/settings_table.py）⚠
     path("me/settings/", settings.user_settings, name="user-settings"),
+
+    # ------------------------------------------------------------ 用户空间（2026-10-24）
+    # ★ 参考 B 站个人空间：头部资料 → Tab → 内容流 ⚠
+    # ⚠ `/api/u/<username>/` 是**公开**的（游客可看，只给公开内容）✅
+    path("u/<str:username>/", user_space.detail, name="user-space"),
+    path("u/<str:username>/notes/", user_space.notes, name="user-space-notes"),
+    path("u/<str:username>/projects/", user_space.projects, name="user-space-projects"),
+    path("u/<str:username>/activity/", user_space.activity, name="user-space-activity"),
+    path("me/profile/", user_space.my_profile, name="me-profile"),
     path(
         "projects/<project_ref:project_ref>/settings/",
         settings.project_settings,

@@ -5,6 +5,7 @@ import { useMe } from '../hooks/useMe'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import SettingsForm from '../components/settings/SettingsForm'
+import ProfileForm from '../components/profile/ProfileForm'
 import { usePatchUserSettings, useUserSettings } from '../query/settings'
 
 /**
@@ -45,6 +46,9 @@ export default function UserSettingsPage() {
         <div className="faint" style={{ fontSize: 13 }}>加载中…</div>
       ) : (
         <>
+          {/* ★ 个人资料（昵称 / 签名）—— 用户空间头部显示的就是它 ⚠ */}
+          <ProfileForm />
+
           <div className="faint" style={{ fontSize: 12.5, marginBottom: 14 }}>
             你的默认参数。项目档可以覆盖它们；标着「门禁项」的只有站点管理员能改。
           </div>

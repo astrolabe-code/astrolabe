@@ -38,6 +38,8 @@ export interface WhoAmI {
  * 依据：`app/web/views/projects.py::_project_json()`
  */
 export interface ProjectSummary {
+  /** ★ 作者昵称（* 为空回落 owner）⚠ */
+  owner_display?: string
   project_ref: string
   name: string
   desc?: string
@@ -622,6 +624,8 @@ export interface Note {
   id: number
   /** ★ 对外标识（* URL / 接口都用它，⛔ 不暴露自增 pk）⚠ */
   ref: string
+  /** ★ 作者昵称（* 为空回落 created_by）⚠ */
+  created_by_display?: string
   node_id: number
   kind: NoteKind
   title: string
@@ -690,6 +694,8 @@ export type AnchorKind = 'chapter' | 'paragraph'
 export type CommentKind = 'comment' | 'reply' | 'mention' | 'both'
 
 export interface Comment {
+  /** ★ 作者昵称（* 为空回落 created_by）⚠ */
+  created_by_display?: string
   id: number
   note_id: number
   anchor_kind: AnchorKind
@@ -729,6 +735,8 @@ export interface NoteSearchItem {
   id: number
   /** ★ 对外标识（* 打开笔记用它）⚠ */
   ref: string
+  /** ★ 作者昵称（* 为空回落 created_by）⚠ */
+  created_by_display?: string
   title: string
   kind: string
   project: {
@@ -865,4 +873,75 @@ export interface ReadingPathData {
   items: ReadingPathItem[]
   /** ★ `D107`：已不在项目图里的 vid（* 前端提示用户处理，* ⛔ 不自动删）*/
   stale: number[]
+}
+
+
+/* ============================== 用户空间（2026-10-24）============================== */
+
+/** ★ 空间头部的四个数字（* 本人还有 *_all）⚠ */
+export interface UserSpaceStats {
+  notes: number
+  projects: number
+  likes: number
+  comments: number
+  notes_all?: number
+  projects_all?: number
+}
+
+/** ★ `GET /api/u/<username>/` ⚠ */
+export interface UserSpaceData {
+  username: string
+  display_name: string
+  bio: string
+  joined_at: string
+  is_self: boolean
+  stats: UserSpaceStats
+}
+
+interface SpaceItemBase {
+  created_at: string
+  updated_at: string
+}
+
+/** ★ 空间里的笔记条目（瘦结构，* 不带正文全文）⚠ */
+export interface SpaceNote extends SpaceItemBase {
+  type: 'note'
+  ref: string
+  title: string
+  kind: NoteKind
+  excerpt: string
+  is_public: boolean
+  state: string
+  like_count: number
+  comment_count: number
+  project: { project_ref: string; project_name: string } | null
+}
+
+/** ★ 空间里的项目条目 ⚠ */
+export interface SpaceProject extends SpaceItemBase {
+  type: 'project'
+  project_ref: string
+  name: string
+  desc: string
+  is_public: boolean
+  state: string
+  provider: string
+  node_count: number
+  edge_count: number
+}
+
+export type SpaceItem = SpaceNote | SpaceProject
+
+/** ★ 分页返回（* keyset：next_cursor 空 = 到底）⚠ */
+export interface SpacePage<T> {
+  items: T[]
+  next_cursor: string
+}
+
+/** ★ 本人资料（`/api/me/profile/`）⚠ */
+export interface MyProfile {
+  username: string
+  display_name: string
+  bio: string
+  raw_display_name: string
 }

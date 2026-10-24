@@ -8,6 +8,7 @@ import SearchPage from './pages/SearchPage'
 import ProjectPage from './pages/ProjectPage'
 import NotePage from './pages/NotePage'
 import NoteEditPage from './pages/NoteEditPage'
+import UserSpacePage from './pages/UserSpacePage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import RecycleBinPage from './pages/RecycleBinPage'
@@ -71,6 +72,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/workspace" element={<Workspace />} />
+        {/* ★ 用户空间（参考 B 站 · 2026-10-24）：/u/<username> 公开看，/me 是本人视角 ⚠ */}
+        <Route path="/u/:username" element={<UserSpacePage />} />
+        <Route path="/me" element={<UserSpacePage />} />
         {/* ★★ D109：独立搜索结果页（* 路径先走 /search，* 以后换子域名只改路由）⚠ */}
         <Route path="/search" element={<SearchPage />} />
         {/* ★★ `F2`（D92）：**项目页 + 设置两页** ✅

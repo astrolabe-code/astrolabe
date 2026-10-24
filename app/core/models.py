@@ -1226,6 +1226,12 @@ class UserProfile(TimeStampedModel):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile"
     )
 
+    #: ★★ **昵称 / 一句话签名**（2026-10-24 · 用户空间）⚠
+    #: · · 昵称**不唯一**（* 唯一的是 `username`，⛔ 不让用户抢注）
+    #: · · 为空 ⇒ 全站回落到 `username`（* 存量用户不需要回填）✅
+    display_name = models.CharField(max_length=40, blank=True, default="")
+    bio = models.CharField(max_length=120, blank=True, default="")
+
     #: ★★ 订阅层级 —— ⚠ **只决定配额与荣誉，❌ 绝不决定内容可读性**（`U1` 铁律）
     tier = models.CharField(max_length=16, choices=TIER_CHOICES, default=TIER_FREE)
 

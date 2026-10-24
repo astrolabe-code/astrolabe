@@ -325,7 +325,7 @@ export default function SearchPage() {
                     title={n.title || '（无标题）'}
                     meta={[
                       n.project?.project_name || '',
-                      n.created_by ? `@${n.created_by}` : '',
+                      n.created_by ? `@${n.created_by_display || n.created_by}` : '',
                       fmt(n.created_at),
                       // ★ 计数：* 0 就不显示，* 免得满屏都是「0 赞 0 评论」⚠
                       n.like_count > 0 ? `${n.like_count} 赞` : '',

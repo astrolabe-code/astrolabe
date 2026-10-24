@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
@@ -40,6 +41,54 @@ import { kindMeta } from '../components/notes/kindMeta'
  * ⚠★ markdown 渲染**本批不做**（* 按段纯文）——* 段评锚点本来就在段上，* 不影响使用；
  *   * 上 markdown 渲染是后面一件独立的小事 ✅
  */
+/** ★ 段评浮层宽度（* 窄屏铺满，宽屏 420）⚠ */
+function panelWidth(): number {
+  return Math.min(420, window.innerWidth - 24)
+}
+
+/**
+ * ★★ **段评浮层的落点**（2026-10-23）⚠
+ *
+ * ## ★★★ 所有者原话（逐字）
+ *
+ * > 「翻来翻去的干啥？固定段评窗口长度，然后加滑块。」
+ *
+ * ## ★ 规则（⛔ 不再按空间翻上翻下）
+ *
+ * ```
+ * 高度**固定**（420 或 58vh 取小）· 内容长就在面板内部滚动（有滑块）
+ * 位置**永远贴在锚点下方** 8px
+ * 只做一件事：整块超出视口底部时，* 把整个面板往上推回视口内（⛔ 不翻到上方）
+ * ```
+ */
+function panelLayout(a: { top: number; left: number; width: number; height: number } | null) {
+  const GAP = 8
+  const width = panelWidth()
+  const height = Math.min(420, Math.round(window.innerHeight * 0.58))
+
+  if (!a) {
+    return {
+      style: {
+        top: Math.max(GAP, Math.round((window.innerHeight - height) / 2)),
+        left: Math.max(12, Math.round((window.innerWidth - width) / 2)),
+        width,
+        height,
+      },
+      scrollBy: 0,
+    }
+  }
+
+  const left = Math.max(12, Math.min(a.left, window.innerWidth - width - 12))
+  const rawTop = a.top + a.height + GAP
+  // ★ 下面放不下 ⇒ **把页面滚一点**（而不是翻到上方，也不盖住选中的字）⚠
+  const overflow = Math.max(0, rawTop + height + GAP - window.innerHeight)
+  return {
+    style: { top: rawTop - overflow, left, width, height },
+    scrollBy: overflow,
+  }
+}
+
+
 export default function NotePage() {
   const { projectRef = '', noteId = '' } = useParams<{ projectRef: string; noteId: string }>()
   // ★ 路由里的这一段现在是**笔记 ref**（* 不是自增 pk）⚠
@@ -53,11 +102,21 @@ export default function NotePage() {
   // ★ 右键「选中文字」小菜单 + 面板里预填的引用原文 ⚠
   const [sel, setSel] = useState<SelectionInfo | null>(null)
   const [panelQuote, setPanelQuote] = useState('')
+  // ★ 面板贴着哪个位置弹出（* 选区 / 气泡的视口矩形）⚠
+  const [panelAnchor, setPanelAnchor] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   const [moderating, setModerating] = useState(false)
 
   const n = note.data?.note
   const blocks = note.data?.blocks || []
   const activeBlock = blocks.find((b) => b.fingerprint === activeFp)
+
+  // ★ 面板下面空间不够 ⇒ 轻轻滚一下页面，* 让它正好落在选中文字下方 ⚠
+  useEffect(() => {
+    if (!activeBlock || !panelAnchor) return
+    const { scrollBy } = panelLayout(panelAnchor)
+    if (scrollBy > 0) window.scrollBy({ top: scrollBy, behavior: 'auto' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBlock, panelAnchor])
 
   // ★ 点别处 / 滚动 / Esc 都关掉右键小菜单
   useEffect(() => {
@@ -211,7 +270,13 @@ export default function NotePage() {
             </span>
           )}
           <span className="faint" style={{ fontSize: 11.5 }}>
-            {n.created_by} · {n.created_at?.replace('T', ' ').slice(0, 16)}
+            <Link
+              to={`/u/${encodeURIComponent(n.created_by)}`}
+              style={{ color: 'inherit' }}
+            >
+              {n.created_by_display || n.created_by}
+            </Link>{' '}
+            · {n.created_at?.replace('T', ' ').slice(0, 16)}
           </span>
         </div>
 
@@ -224,8 +289,9 @@ export default function NotePage() {
             text={n.body || ''}
             blocks={blocks}
             authed={authed}
-            onOpenBlock={(b) => {
+            onOpenBlock={(b, anchor) => {
               setPanelQuote('')
+              setPanelAnchor(anchor ?? null)
               setActiveFp(b.fingerprint)
             }}
             onSelection={(info) => setSel(info)}
@@ -235,14 +301,20 @@ export default function NotePage() {
         {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
             · · ⛔ 不再用右键：所有者：「不要右键弹出评论按钮了……评论按钮和
               原生的浏览器右键弹窗同时出现了」⚠ */}
-      {sel && (
-        <div
-          className="sel-toolbar"
+      {/* ⚠★ 必须用 portal 挂到 body：`.page.rise` 上有 `transform`（单位矩阵也算），
+            会让 `position: fixed` 相对它定位而不是视口 ⇒ 工具条飘到别处 ⚠ */}
+      {sel &&
+        createPortal(
+          <div
+            className="sel-toolbar"
           onMouseDown={(e) => e.preventDefault()}
           style={{
             position: 'fixed',
-            // ★ 浮在选区上方 40px；贴边时收进视口 ⚠
-            top: Math.max(8, sel.rect.top - 40),
+            // ★★ 贴着选区上沿（* 只留 6px 缝）—— 所有者：「就在选中文字上方一点点就可以了」⚠
+            //   · · 用 translateY(-100%) 让**底边**对齐，* 不用猜工具条高度 ✅
+            //   · · 太靠页面顶部时改放选区下方，* 避免被裁掉 ⚠
+            top: sel.rect.top > 44 ? sel.rect.top - 6 : sel.rect.top + sel.rect.height + 6,
+            transform: sel.rect.top > 44 ? 'translateY(-100%)' : undefined,
             left: Math.max(
               8,
               Math.min(
@@ -270,6 +342,7 @@ export default function NotePage() {
               run: () => {
                 if (!sel.block) return
                 setPanelQuote(sel.quote)
+                setPanelAnchor(sel.rect)
                 setActiveFp(sel.block.fingerprint)
                 setSel(null)
               },
@@ -298,30 +371,51 @@ export default function NotePage() {
             >
               {a.label}
             </button>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>,
+          document.body,
+        )}
 
       {/* ④ 段评面板（* 只渲染当前那一段，* 文字由上面的 Milkdown 画）⚠ */}
-        {activeBlock && (
-          <div className="card mt-4" style={{ padding: '12px 16px' }}>
-            <ParagraphComments
-              noteId={n.ref}
-              block={activeBlock}
-              authed={authed}
-              perm={perm}
-              renderText={false}
-              panelOpen
-              quote={panelQuote}
-              onPanelOpenChange={(o) => {
-                if (!o) {
-                  setActiveFp('')
-                  setPanelQuote('')
-                }
+        {/* ★★ 段评面板：**贴着选中文字 / 气泡**弹出（2026-10-23）⚠
+            · · 所有者：「段评的弹窗就贴在选中文字下方弹出呀。现在总是在页面中间，
+              要翻很长才能看见」
+            · · 用 portal 挂 body：`.page.rise` 的 transform 会让 fixed 相对它定位 ⚠ */}
+        {activeBlock &&
+          createPortal(
+            <div
+              className="block-comment-panel"
+              style={{
+                position: 'fixed',
+                ...panelLayout(panelAnchor).style,
+                overflow: 'auto', // ★ 固定高度 + 内部滑块（所有者要求）⚠
+                zIndex: 95,
+                background: 'var(--card)',
+                border: '1px solid var(--card-border)',
+                borderRadius: 12,
+                boxShadow: 'var(--shadow-card-hover)',
+                padding: '12px 14px',
               }}
-            />
-          </div>
-        )}
+            >
+              <ParagraphComments
+                noteId={n.ref}
+                block={activeBlock}
+                authed={authed}
+                perm={perm}
+                renderText={false}
+                panelOpen
+                quote={panelQuote}
+                onPanelOpenChange={(o) => {
+                  if (!o) {
+                    setActiveFp('')
+                    setPanelQuote('')
+                    setPanelAnchor(null)
+                  }
+                }}
+              />
+            </div>,
+            document.body,
+          )}
 
         {/* ④ 章评区 */}
         <div className="card mt-4" style={{ padding: '16px 18px' }}>

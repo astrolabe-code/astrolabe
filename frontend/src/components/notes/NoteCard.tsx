@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { EyeOff, Lock, LockOpen, MessageSquare, Pencil, ThumbsUp, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
@@ -94,7 +94,19 @@ export default function NoteCard({
           </span>
         )}
         <span className="faint" style={{ fontSize: 11, marginLeft: 'auto' }}>
-          {note.created_by} · {note.created_at?.slice(0, 10)}
+          {/* ★ 显示昵称（* 为空回落用户名），* 点名字进 TA 的空间（⛔ 不触发卡片跳转）⚠ */}
+          {note.created_by ? (
+            <Link
+              to={`/u/${encodeURIComponent(note.created_by)}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: 'inherit' }}
+            >
+              {note.created_by_display || note.created_by}
+            </Link>
+          ) : (
+            note.created_by_display || ''
+          )}{' '}
+          · {note.created_at?.slice(0, 10)}
         </span>
       </div>
       <div style={{ fontSize: 13.5, marginTop: 6, fontWeight: 500 }}>{note.title || '（无标题）'}</div>

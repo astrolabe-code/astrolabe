@@ -25,6 +25,7 @@ from core import publish as publish_core
 from core import access
 # ⚠★ `B176` ①：`OAuthIdentity` / `OAuthState` **不再需要** ——
 #   ★ 「拉取代码」已不走 OAuth（★ 不再要求绑定身份、不再建 state）✅
+from core import profiles
 from core.models import Project
 # ★★ `B179`：`GraphPatch` 也要用到 ——
 #   ★ 删除项目时要清掉"它自己的修改"与"它的绑定"（⚠ 但**不碰共享基图**）⚠
@@ -306,6 +307,8 @@ def _project_json(
         # ★★ `F4` 预留：* 能不能管理协作者（* owner/staff）——* 协作者管理页入口显隐 ⚠
         "can_manage": access.can_manage_members(user, project),
         "owner": project.owner.get_username() if project.owner_id else "",
+        # ★ 昵称（* 为空回落 username）⚠
+        "owner_display": profiles.display_of(project.owner) if project.owner_id else "",
         "status": job.state if job else "none",
         "progress": job.progress if job else 0,
         # ★★★ `B169` 新增：**是否已定版** —— 前端靠它决定「拉取代码」按钮的显隐：
@@ -340,7 +343,8 @@ def collection(request: HttpRequest) -> JsonResponse:
 
     user = getattr(request, "user", None)
     authed = bool(user and user.is_authenticated)
-    qs = Project.objects.all()
+    # ★ 预取 owner.profile ⇒ 昵称不用每条查一次（2026-10-24）⚠
+    qs = Project.objects.all().select_related("owner__profile", "base_graph")
 
     if request.GET.get("mine") == "1":
         # ★★★ `B172`：**我的工作区** —— ★★ 只给【自己的项目】。

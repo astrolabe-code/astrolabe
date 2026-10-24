@@ -46,6 +46,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from core import like_cache
+from core import profiles
 from core.models import Note, note_by_ref, NoteLike, Project
 from core.refs import new_project_ref  # noqa: F401  （* 仅说明 ref 口径一致）
 from graph import notes as note_alg
@@ -124,7 +125,9 @@ def _list(request: HttpRequest, project):
     # ★★★ `B226`：* 笔记**绑项目** ⇒* 直接按项目筛（* 不再用「可读节点」反推）⚠
     #   · · ★ 这也顺带保证「**不跨版本**」—— * 项目不可换绑（`B227`）✅
     # ★★ `B210`：* 软删的笔记不进任何列表（* 它在回收站里）⚠
-    qs = Note.objects.filter(project=project, deleted_at__isnull=True)
+    qs = Note.objects.filter(project=project, deleted_at__isnull=True).select_related(
+        "created_by__profile", "project"
+    )
     # ⚠★ 私有笔记的可见范围（* 与 `can_read_note` **保持一致**）：
     #   · · ★ 公开且在生效中 ⇒ 所有人可见 ✅
     #   · · ★ 作者本人 ⇒ 自己的笔记（* 含私有 / 隐藏）✅
@@ -288,7 +291,9 @@ def batch_visibility(request: HttpRequest, project_ref: str):
     except (TypeError, ValueError):
         return fail("exclude_ids 必须是数字数组", 400, code="bad_exclude")
 
-    qs = Note.objects.filter(project=project, deleted_at__isnull=True)
+    qs = Note.objects.filter(project=project, deleted_at__isnull=True).select_related(
+        "created_by__profile", "project"
+    )
     if exclude:
         qs = qs.exclude(pk__in=exclude)
 
@@ -310,6 +315,11 @@ def _search_who(request: HttpRequest) -> str:
     from web import ratelimit
 
     return ratelimit.identity(request)
+
+
+def _with_display(items: list[dict]) -> list[dict]:
+    """★ 给搜索结果补昵称（* 一次查询，避免 N+1）⚠"""
+    return profiles.attach_display(items)
 
 
 def _search_item(d: dict) -> dict:
@@ -906,6 +916,8 @@ def _note_json(n: Note, with_counts: bool = True) -> dict:
         )} if with_counts else {}),
         **({"comment_count": n.comment_count} if with_counts else {}),
         "created_by": n.created_by.get_username() if n.created_by_id else "",
+        # ★ 昵称（* 为空回落 username）—— 全站显示用（2026-10-24）⚠
+        "created_by_display": profiles.display_of(n.created_by) if n.created_by_id else "",
         "created_at": n.created_at.isoformat(),
         "updated_at": n.updated_at.isoformat(),
     }

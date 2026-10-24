@@ -6,16 +6,10 @@ import Button from '../ui/Button'
 /**
  * ★★ **用户空间头部**（参考 B 站个人空间 · 2026-10-24）⚠
  *
- * ```\n * 渐变头图（按用户名取色，* 纯 CSS —— ⛔ 不做图片上传）\n * 圆形头像（昵称首字 + 同色系）\n * 昵称 / @username / 加入时间 / 一句话签名\n * 四个数字：项目 · 笔记 · 获赞 · 评论\n * 本人可见「编辑资料」\n * ```
+ * ```\n * 渐变头图（★ 用站点 `--accent` 调色 —— ⛔ 不按用户名随机取色，* 那样会飘到品红/橙，和站点撞色）\n * 圆形头像（昵称首字 + 同色系）\n * 昵称 / @username / 加入时间 / 一句话签名\n * 四个数字：项目 · 笔记 · 获赞 · 评论\n * 本人可见「编辑资料」\n * ```
  *
  * ⚠ 关注/粉丝**暂不做**（所有者：「等我把项目完善一点了，再加上」）⚠
  */
-function hueOf(text: string): number {
-  let h = 0
-  for (let i = 0; i < text.length; i += 1) h = (h * 31 + text.charCodeAt(i)) % 360
-  return h
-}
-
 function Stat({ value, label }: { value: number; label: string }) {
   return (
     <div className="flex flex-col items-center" style={{ minWidth: 56 }}>
@@ -28,8 +22,6 @@ function Stat({ value, label }: { value: number; label: string }) {
 }
 
 export default function ProfileHeader({ data }: { data: UserSpaceData }) {
-  const hue = hueOf(data.username)
-  const banner = `linear-gradient(120deg, hsl(${hue} 68% 58%), hsl(${(hue + 44) % 360} 72% 46%))`
   const initial = (data.display_name || data.username).trim().slice(0, 1).toUpperCase()
   const joined = data.joined_at ? data.joined_at.slice(0, 7).replace('-', ' 年 ') + ' 月' : ''
   const privateNotes = data.is_self ? (data.stats.notes_all ?? 0) - data.stats.notes : 0
@@ -37,7 +29,16 @@ export default function ProfileHeader({ data }: { data: UserSpaceData }) {
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       {/* ① 渐变头图 */}
-      <div style={{ height: 92, background: banner }} />
+      <div
+        style={{
+          height: 92,
+          // ★★ 只用站点主色的"淡色叠加"：浅色主题是青蓝洗，深色是同一族的微光
+          //   · · 两端都混入 `--card` ⇒ 自动跟随主题，⛔ 不再是写死的颜色 ⚠
+          background:
+            'linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, var(--card)), color-mix(in srgb, var(--accent) 6%, var(--card)))',
+          borderBottom: '1px solid var(--card-border)',
+        }}
+      />
 
       {/* ② 资料区 */}
       <div style={{ padding: '0 20px 16px' }}>
@@ -48,8 +49,9 @@ export default function ProfileHeader({ data }: { data: UserSpaceData }) {
               width: 66,
               height: 66,
               borderRadius: '50%',
-              background: `hsl(${hue} 62% 48%)`,
-              color: '#fff',
+              // ★ 底色用 --accent，字色用 --card：浅色=白字、深色=深字，两边都够对比 ⚠
+              background: 'var(--accent)',
+              color: 'var(--card)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

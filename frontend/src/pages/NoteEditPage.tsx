@@ -39,6 +39,18 @@ import { useCreateNote, useDeleteNote, useNote, useUpdateNote } from '../query/n
  * | ④ | 保存后段落由后端重算 ⇒ 跳回阅读页拿新 blocks | `B203③` |
  * | ⑤ | ⚠ 图片上传**不提供**（站内不存图片文件） | 所有者 2026-10-23 |
  */
+/** ★ SPA 的 basename（`/app`）—— * 与 `main.tsx` 的 BrowserRouter 同源 ⚠ */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
+
+/** ★ 去掉路径开头的 basename（* 已经是路由相对路径时原样返回）⚠ */
+function stripBase(path: string): string {
+  if (!BASE) return path
+  if (path === BASE) return '/'
+  if (path.startsWith(`${BASE}/`)) return path.slice(BASE.length)
+  return path
+}
+
+
 export default function NoteEditPage() {
   const { projectRef = '', noteId } = useParams()
   const [sp] = useSearchParams()
@@ -51,8 +63,12 @@ export default function NoteEditPage() {
   const nodeId = Number(sp.get('node') || 0)
   // ★★ 来源页（* 从节点面板进来时带）：保存后回跳 ⚠
   //   · · ⛔ 只接受站内相对路径 —— 防开放重定向 ⚠
+  //   · · ⚠★ 必须**剥掉 SPA 的 basename**（`/app`）：
+  //       `location.pathname` 是浏览器地址、含 `/app`，
+  //       而 `nav('/app/p/…')` 会被路由再叠一层 ⇒ `/app/app/p/…`
+  //       ⇒ 匹配不到任何路由 ⇒ 掉回首页（所有者实测踩到）⚠
   const rawFrom = sp.get('from') || ''
-  const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? rawFrom : ''
+  const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? stripBase(rawFrom) : ''
 
   const noteQ = useNote(id)
   const note = noteQ.data?.note
@@ -100,6 +116,10 @@ export default function NoteEditPage() {
     const text = editorApi.current?.getMarkdown() ?? body
     if (!text.trim()) {
       setErr('正文不能为空')
+      // ★ 顺手把光标送回正文，* 用户不用再自己找地方点 ⚠
+      const el = document.querySelector<HTMLElement>('.milkdown-editor .ProseMirror')
+      // ⚠ preventScroll：* 否则浏览器会把页面滚回正文，把按钮旁的提示挤出视口 ⚠
+      el?.focus({ preventScroll: true })
       return
     }
     if (!editing && !nodeId) {
@@ -257,12 +277,6 @@ export default function NoteEditPage() {
           </span>
         </button>
 
-        {err && (
-          <div className="text-xs mt-3" style={{ color: 'var(--err)' }}>
-            {err}
-          </div>
-        )}
-
         {/* ⑤ **唯一的操作栏**（⚠ 页头不再放按钮 —— 两套按钮所有者已指出太乱）⚠
             删除（编辑态）· 取消 · 保存/写下 —— 写完正好在底部，顺手 ✅ */}
         <div
@@ -275,10 +289,14 @@ export default function NoteEditPage() {
               icon={<Trash2 size={13} />}
               disabled={busy}
               onClick={remove}
-              style={{ marginRight: 'auto' }}
             >
               删除
             </Button>
+          )}
+          {/* ⚠★ 提示必须挨着按钮 —— 原来放在内容区下面，
+                内容空的时窗口没滚动，提示在视口外，点了像没反应 ⚠ */}
+          {err && (
+            <span style={{ color: 'var(--err)', fontSize: 12, lineHeight: 1.4 }}>{err}</span>
           )}
           <div style={{ marginLeft: 'auto' }} />
           <Button onClick={back} disabled={busy}>

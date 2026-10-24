@@ -10,12 +10,12 @@ import { MilkdownProvider } from '@milkdown/react'
 const Inner = lazy(() => import('./MilkdownView'))
 
 /** ★ 与 MilkdownView 同形的 props（* 这里只做转发）⚠ */
-import type { NoteBlockInfo, SelectionInfo } from './MilkdownView'
+import type { AnchorRect, NoteBlockInfo, SelectionInfo } from './MilkdownView'
 
 export interface MilkdownLazyProps {
   text: string
   blocks?: NoteBlockInfo[]
-  onOpenBlock?: (b: NoteBlockInfo) => void
+  onOpenBlock?: (b: NoteBlockInfo, anchor?: AnchorRect) => void
   authed?: boolean
   onSelection?: (info: SelectionInfo | null) => void
 }

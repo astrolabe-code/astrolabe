@@ -58,6 +58,25 @@ interface NodePanelProps {
   onRemoveFromPath?: () => void
 }
 
+/** ★ SPA 的 basename（`/app`）—— * 与 `main.tsx` 的 BrowserRouter 同源 ⚠ */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
+
+/**
+ * ★ 当前位置的**路由相对路径**（`from=` 用）⚠
+ *
+ * ```
+ * ⚠ `location.pathname` 含 `/app`，直接拿去 navigate 会叠成 `/app/app/…`
+ *   ⇒ 路由匹配不到 ⇒ 掉回首页（所有者实测踩到）⚠
+ * ```
+ */
+function fromHere(): string {
+  const path = location.pathname.startsWith(BASE)
+    ? location.pathname.slice(BASE.length) || '/'
+    : location.pathname
+  return `${path}${location.search}`
+}
+
+
 export default function NodePanel({
   projectRef,
   node,
@@ -329,13 +348,13 @@ export default function NodePanel({
           onCreateNote={() =>
             navigate(
               `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                `&from=${encodeURIComponent(location.pathname + location.search)}`,
+                `&from=${encodeURIComponent(fromHere())}`,
             )
           }
           onEditNote={(n) =>
             navigate(
               `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
-                `?from=${encodeURIComponent(location.pathname + location.search)}`,
+                `?from=${encodeURIComponent(fromHere())}`,
             )
           }
           onDeleteNote={setPendingDelete}

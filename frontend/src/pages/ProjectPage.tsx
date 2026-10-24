@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { EyeOff, Lock, Settings, ShieldAlert, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
@@ -35,6 +35,9 @@ import ModeratePanel from '../components/admin/ModeratePanel'
 export default function ProjectPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
   const project = useProject(projectRef)
+  // ★ `?think=1` ⇒ 自动选中首个节点并打开思考白板（* 首页「思考模式」卡片直达）⚠
+  const [sp] = useSearchParams()
+  const autoThink = sp.get('think') === '1'
   const me = useMe()
   const [selected, setSelected] = useState<GraphNode | null>(null)
   const [moderating, setModerating] = useState(false)
@@ -73,30 +76,36 @@ export default function ProjectPage() {
 
   return (
     <AppLayout
-      // ★★★ 不再传 title（* 所有者：「不要在这个页面左上部位显示项目名称了，
-      //   一个黑色大字，还挤在左边了，太怪了」）⚠
-      //   · · ★ 同时用回 `.page` 容器 ⇒* 内容有左右留白，* 不再贴着屏幕边缘 ⚠
-      actions={
-        <div className="flex items-center gap-2" style={{ marginLeft: 'auto' }}>
-          {/* ★★ `D98`：图谱入口 ——* 谁都能看（读权限由后端判）✅ */}
-          <Link to={`/p/${encodeURIComponent(projectRef)}/graph`}>
-            <Button icon={<Workflow size={14} />}>图谱</Button>
-          </Link>
-          {canWrite && (
-            <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
-              <Button icon={<Settings size={14} />}>设置</Button>
-            </Link>
-          )}
-          {/* ★★ `F4`：**管理处置入口** ——* 只有 staff 才渲染（`B208`）⚠
-              · · ⚠ 这里只决定"显不显示"；* 真正的拦截在后端 `@staff_only` ✅ */}
-          {me.data?.is_staff && (
-            <Button icon={<ShieldAlert size={14} />} onClick={() => setModerating(true)}>
-              管理
-            </Button>
-          )}
-        </div>
-      }
+      // ★★★ 不传 title / 不用 `.page` 容器 ——* 两个白面板要**尽量宽**，
+      //   * 只留一点点左右边距（* 所有者：「两个白色区域要更宽一点呀，左右留出
+      //   很多空白」）⚠
+      page={false}
     >
+      {/* ★★ 自绘顶部操作行（* 靠右，不占 `.page` 那 1120 的窄容器）⚠ */}
+      <div
+        className="flex items-center justify-end gap-2"
+        style={{ marginBottom: 12, padding: isNarrow ? '0 10px' : '0 18px' }}
+      >
+        {/* ★★ `D98`：图谱入口 ——* 谁都能看（读权限由后端判）✅ */}
+        <Link to={`/p/${encodeURIComponent(projectRef)}/graph`}>
+          <Button icon={<Workflow size={14} />}>图谱</Button>
+        </Link>
+        {canWrite && (
+          <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
+            <Button icon={<Settings size={14} />}>设置</Button>
+          </Link>
+        )}
+        {/* ★★ `F4`：**管理处置入口** ——* 只有 staff 才渲染（`B208`）⚠
+            · · ⚠ 这里只决定"显不显示"；* 真正的拦截在后端 `@staff_only` ✅ */}
+        {me.data?.is_staff && (
+          <Button icon={<ShieldAlert size={14} />} onClick={() => setModerating(true)}>
+            管理
+          </Button>
+        )}
+      </div>
+
+      {/* ★★ 内容区：* 左右只留 18px（移动 10px）⇒* 白面板尽量宽 ⚠ */}
+      <div style={{ padding: isNarrow ? '0 10px' : '0 18px' }}>
       {/* ① 隐藏横幅：只有 owner 看得到（后端把其余人挡在 404） */}
       {p.state === 'hidden' && (
         <div
@@ -164,6 +173,7 @@ export default function ProjectPage() {
               projectRef={projectRef}
               selectedUid={selected?.uid ?? null}
               onSelect={setSelected}
+              autoSelectFirst={autoThink}
             />
           </div>
         </div>
@@ -187,9 +197,12 @@ export default function ProjectPage() {
             node={selected}
             canWrite={canWrite}
             meUsername={meUsername}
+            autoThink={autoThink}
             flat
           />
         </div>
+      </div>
+
       </div>
 
       {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}

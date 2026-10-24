@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Search } from 'lucide-react'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useGraphNodes } from '../../query/graph'
@@ -24,11 +24,18 @@ interface NodeListProps {
   /** 当前选中的节点 uid（受控） */
   selectedUid?: string | null
   onSelect: (node: GraphNode) => void
+  /** ★ `?think=1`：* 列表就绪后自动选中第一个节点（* 让思考白板有节点可开）⚠ */
+  autoSelectFirst?: boolean
 }
 
 const PAGE = 100
 
-export default function NodeList({ projectRef, selectedUid, onSelect }: NodeListProps) {
+export default function NodeList({
+  projectRef,
+  selectedUid,
+  onSelect,
+  autoSelectFirst,
+}: NodeListProps) {
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [limit, setLimit] = useState(PAGE)
@@ -54,6 +61,20 @@ export default function NodeList({ projectRef, selectedUid, onSelect }: NodeList
       )
     })
   }, [items, q, kind])
+
+  // ★★ `autoSelectFirst`：* 只在**第一次**列表就绪时选一个，* 之后不再干预用户 ⚠
+  const autoPicked = useRef(false)
+  useEffect(() => {
+    if (!autoSelectFirst || autoPicked.current) return
+    if (selectedUid) {
+      autoPicked.current = true
+      return
+    }
+    if (filtered.length > 0) {
+      autoPicked.current = true
+      onSelect(filtered[0])
+    }
+  }, [autoSelectFirst, filtered, onSelect, selectedUid])
 
   if (nodes.isError) {
     return (

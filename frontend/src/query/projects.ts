@@ -374,3 +374,24 @@ export function useProgress(
     },
   })
 }
+
+/**
+ * ★★ 项目搜索（`GET /api/projects/?q=`）—— 首页搜索框用
+ *
+ * ⚠ 匹配**名称 / 简介 / 作者名**（后端 `icontains`）✅
+ * ⚠ 空关键词不发请求（enabled 关）⚠
+ */
+export function useProjectSearch(q: string) {
+  const kw = q.trim()
+  return useQuery({
+    queryKey: ['projects-search', kw],
+    enabled: kw.length > 0,
+    staleTime: 30_000,
+    queryFn: async (): Promise<ProjectSummary[]> => {
+      const data = unwrap(
+        await apiGet<ProjectListData>(`/api/projects/?q=${encodeURIComponent(kw)}`, 'spread'),
+      )
+      return data.projects || []
+    },
+  })
+}

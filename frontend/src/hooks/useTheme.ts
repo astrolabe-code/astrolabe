@@ -49,7 +49,18 @@ export function useTheme() {
       setTheme(next)
     }
     mq.addEventListener?.('change', onChange)
-    return () => mq.removeEventListener?.('change', onChange)
+
+    // ★★★ **监听全局主题事件** ——* 否则各组件各一份 state：
+    //   · · 点顶栏切换 ⇒ 只有 TopNav 那份变了，* 画布里的标签还是旧色（* 实测）⚠
+    const onTheme = (e: Event) => {
+      const t = (e as CustomEvent<{ theme?: Theme }>).detail?.theme
+      if (t === 'dark' || t === 'light') setTheme(t)
+    }
+    document.addEventListener('themechange', onTheme)
+    return () => {
+      mq.removeEventListener?.('change', onChange)
+      document.removeEventListener('themechange', onTheme)
+    }
   }, [])
 
   const toggle = useCallback(() => {

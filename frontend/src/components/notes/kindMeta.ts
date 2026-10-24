@@ -32,17 +32,28 @@ export interface KindMeta {
   icon: typeof Zap
   /** 一句话说明（编辑器里给用户看） */
   hint: string
+  /** ★★ 该类型的主题色（* 五个盒子各不同色；卡片标签 / 分组标题 / 编辑器共用）⚠ */
+  color: string
 }
 
 export const KIND_META: Record<NoteKind, KindMeta> = {
-  flash: { label: '灵光一闪', icon: Lightbulb, hint: '突然明白的一件事' },
-  question: { label: '质疑', icon: CircleHelp, hint: '这里为什么要这样写？' },
-  confuse: { label: '困惑', icon: CircleHelp, hint: '看不懂，先记下来' },
-  pitfall: { label: '踩坑', icon: TriangleAlert, hint: '这里容易出错' },
-  summary: { label: '小结', icon: ListChecks, hint: '串起一片知识的总结' },
+  // ★★★ 五色：* 灵感=琥珀、* 质疑=蓝、* 困惑=紫、* 踩坑=红、* 小结=绿 ⚠
+  //   · · ★ 深浅两套主题下都够亮（* 饱和度高、* 不依赖 --accent）✅
+  flash: { label: '灵光一闪', icon: Lightbulb, hint: '突然明白的一件事', color: '#f59e0b' },
+  question: { label: '质疑', icon: CircleHelp, hint: '这里为什么要这样写？', color: '#3b82f6' },
+  confuse: { label: '困惑', icon: CircleHelp, hint: '看不懂，先记下来', color: '#a855f7' },
+  pitfall: { label: '踩坑', icon: TriangleAlert, hint: '这里容易出错', color: '#ef4444' },
+  summary: { label: '小结', icon: ListChecks, hint: '串起一片知识的总结', color: '#10b981' },
 }
 
 /** ★ 兜底：未知 kind 不该出现（后端已校验），真出现了也别崩 ✅ */
 export function kindMeta(kind: string): KindMeta {
-  return KIND_META[kind as NoteKind] ?? { label: kind || '笔记', icon: BookOpenCheck, hint: '' }
+  return (
+    KIND_META[kind as NoteKind] ?? {
+      label: kind || '笔记',
+      icon: BookOpenCheck,
+      hint: '',
+      color: '#94a3b8',
+    }
+  )
 }

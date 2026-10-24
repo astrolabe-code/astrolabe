@@ -251,7 +251,11 @@ export default function GraphCanvas({
         speed: 10,
       },
       behaviors: [
+        // ★ 滚轮缩放（默认 trigger:[] ⇒ 内部走 wheel 分支）
         'zoom-canvas',
+        // ★★★ **双指缩放**（移动端）——* G6 默认 `trigger: []` **只绑 wheel**，
+        //   · · 要想双指捏合必须显式 `trigger: ['pinch']`（* 否则静默不生效）⚠
+        { type: 'zoom-canvas', trigger: ['pinch'] },
         'drag-canvas',
         'drag-element',
         // ⚠ 不用 `click-select` ——* 它会给选中元素套一层 G6 默认高亮（* 那圈深色）
@@ -491,7 +495,9 @@ export default function GraphCanvas({
       if (timer != null) window.clearTimeout(timer)
       stop?.()
     }
-  }, [graph, meteors, meteorSpeed, meteorSizeRatio])
+    // ★★ `labelColor` 也进依赖：* 切主题 ⇒ 建图 effect 重跑（图重建）⇒
+    //    * 旧的流星实例已销毁 ⇒* 必须跟着重启，否则"切背景后流星没了"⚠
+  }, [graph, meteors, meteorSpeed, meteorSizeRatio, labelColor])
 
   // ★★★ 展开邻居：**只把新节点摆到宿主四周 80px 处 + draw()** ——
   //   * ⛔ 绝不 `render()` / 跑布局（* 那会整图重排，* 是所有者踩过的坑）⚠

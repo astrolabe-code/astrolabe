@@ -7,6 +7,7 @@ import {
   LogOut,
   Menu,
   Moon,
+  Settings,
   Shield,
   Sun,
   Trash2,
@@ -173,11 +174,11 @@ export default function TopNav() {
             justifyContent: 'space-between',
           }}
         >
-          {/* ---- 左：用户头像（点进用户设置） ---- */}
+          {/* ---- 左：用户头像（★ 2026-10-24：点进**用户空间**）---- */}
           {me.authenticated ? (
             <Link
-              to="/me/settings"
-              title="用户设置"
+              to={`/u/${encodeURIComponent(me.username || '')}`}
+              title="我的空间"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -308,6 +309,12 @@ export default function TopNav() {
                 </Link>
               )}
               {me.authenticated && (
+                <Link style={menuBtn} to="/me/settings" title="我的设置">
+                  <Settings size={15} />
+                  我的设置
+                </Link>
+              )}
+              {me.authenticated && (
                 <Link style={menuBtn} to="/me" title="我的空间">
                   <User size={15} />
                   我的空间
@@ -365,11 +372,12 @@ export default function TopNav() {
         <div className="nav-left">
           <div className="nav-user-slot">
             {me.authenticated ? (
-              // ★★ 点头像 / 用户名 ⇒ **用户设置**（* 所有者：「不然很难找的」）⚠
+              // ★★★ 点头像 ⇒ **用户空间**（所有者 2026-10-24：「点击头像，就要跳转用户空间呀」）⚠
+              //   · · 设置页改从 ☰ 菜单进（* 别让设置变得找不到）✅
               <Link
                 className="nav-btn ghost-btn nav-user"
-                to="/me/settings"
-                title="用户设置（点击进入）"
+                to={`/u/${encodeURIComponent(me.username || '')}`}
+                title="我的空间（点击进入）"
               >
                 {me.avatar ? (
                   <img className="nav-avatar" src={me.avatar} alt="头像" />

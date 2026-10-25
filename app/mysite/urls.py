@@ -8,12 +8,14 @@
 from django.contrib import admin
 from django.urls import include, path
 
-from core.views import healthz
+from core.views import healthz, readyz
 
 urlpatterns = [
     # ★ 健康检查（DEPLOYMENT.md D5：容器 healthcheck 探测它）
     # ⚠ 只检查进程存活 —— 【不要】在这里查数据库，否则探针会变成压测
     path("healthz", healthz, name="healthz"),
+    # ★★ 就绪探针：DB / Redis / Meili 全通才 200（* 给 Uptime Kuma 用，2026-10-24）⚠
+    path("readyz", readyz, name="readyz"),
 
     path("admin/", admin.site.urls),
 

@@ -148,6 +148,12 @@ services:
       - /home/ma/astrolabe/app:/app
       - /home/ma/astrolabe/data/uploads:/app/data/uploads
       - /home/ma/astrolabe/data/static:/app/staticfiles
+      # ★★★ 只读挂 Kuma 的数据卷（2026-10-24）⚠
+      #   · · 后台「运维概览」要读监控状态；⛔ iframe 不行（X-Frame-Options: SAMEORIGIN）
+      #   · · ⚠ 只读：Kuma 正在写这个库，我们绝不对它做任何写操作 ⚠
+      - uptime_data:/kuma-data:ro
+      # ★ 备份目录只读挂载 —— 后台「运维概览」显示最近备份（2026-10-24）⚠
+      - /home/ma/backup:/backup:ro
     depends_on:
       db:    { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -265,7 +271,22 @@ services:
     depends_on:
       - web
 
+  # ============================================================ 运维监控（2026-10-24）
+  # ⚠ 全部**只绑 127.0.0.1** —— 所有者：「不要公开，这样不容易被攻陷，
+  #   这里面有太多重要的设置和信息了」⇒ 一律 SSH 隧道访问 ⚠
+  uptime-kuma:
+    # ★ MIT 许可（无 copyleft）；探活 + 告警 + 定时任务 Push 监控
+    image: louislam/uptime-kuma:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${UPTIME_PORT:-3001}:3001"
+    volumes:
+      - uptime_data:/app/data
+    # ⚠ 不需要任何特权 / 不挂 docker.sock：* 只做 HTTP 探活 ⚠
+
 volumes:
+  uptime_data:
+
   pgdata:      # ★ PG 数据（不挂宿主机 —— 用 Navicat 查看，见 DEPLOYMENT.md D5）
   redisdata:   # ○ 可重建
   meilidata:   # ○ 可重建（★ 只是索引，丢了跑 reindex）

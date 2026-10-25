@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+
+{% comment %}
+  ★★ 覆盖 unfold 的 admin/base_site.html（2026-10-24）⚠
+
+  为什么放在 `templates_override/`：unfold 的模板目录在 INSTALLED_APPS 里排在前头，
+  直接放 `templates/admin/` 会被它的同名文件盖掉；* 用 `TEMPLATES["DIRS"]`（优先级更高）✅
+
+  做什么：给后台注入少量自定义样式（* unfold 没有提供 STYLES 挂载点）⚠
+{% endcomment %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% comment %}
+  ⚠ 为什么用 `extrastyle` 而不是 `footer`：`change_list.html` / `change_form.html`
+    自己也定义了 `footer` 块且不调 `block.super` ⇒ 注进去会被整块丢掉（踩过）⚠
+  · · `extrastyle` 两个模板都调 `block.super` ⇒ 这里的样式一定进得去 ✅
+{% endcomment %}
+
+{% block extrastyle %}{{ block.super }}
+<style id="astrolabe-admin-extra">
+  /* ===== 列表表格：允许左右拖动，⛔ 不再压缩列 =====
+     · · unfold 外层已经有 overflow-x-auto，但表格是 width:100%
+       ⇒ 永远不溢出 ⇒ 列被压扁（* 右边几列挤在一起，所有者指出）⚠
+     · · 给表格一个最小宽度 ⇒ 超出容器 ⇒ 外层滚动条接管 ✅
+     · · 只在桌面端（lg+）：移动端 unfold 会把行渲染成卡片，不能乱加宽度 ⚠ */
+  @media (min-width: 1024px) {
+    /* ⚠ 特异性要比下面那条高（* 同为 id+两标签时会按先后次序判，坑过）⚠ */
+    #content table#result_list { min-width: 1120px; }
+    /* 详情页的字段表同理（* 长 token / 已注册用户一栏）⚠
+       · · `:not(#result_list)` —— 别把列表页的表格一起压成 620px ⚠ */
+    #content form table:not(#result_list) { min-width: 620px; }
+  }
+
+  /* 表格里的长文本（token / 原因）截断加省略号，别把行撑高 */
+  #result_list td { word-break: break-word; }
+</style>
+{% endblock %}

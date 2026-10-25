@@ -1,0 +1,154 @@
+{% extends "admin/base_site.html" %}
+{% comment %}
+  ★★ 运维概览（2026-10-24）⚠
+  · · 一页看完：依赖探活 / Kuma 监控 / 索引进度
+  · · 刻意极简（所有者：「那是为了给用户看的，花里胡哨的太多了」）⚠
+{% endcomment %}
+
+{% block content %}
+<div id="content-main" style="padding: 4px 0 40px;">
+
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+    <span style="font-size:12px;opacity:.6;">采集于 {{ collected_at }}</span>
+    <a href="{% url 'admin:ops-dashboard' %}"
+       style="font-size:12px;padding:4px 12px;border:1px solid rgba(128,128,128,.4);border-radius:6px;text-decoration:none;color:inherit;">
+      刷新
+    </a>
+    <a href="http://127.0.0.1:3001" target="_blank" rel="noopener"
+       style="font-size:12px;padding:4px 12px;border:1px solid rgba(128,128,128,.4);border-radius:6px;text-decoration:none;color:inherit;">
+      打开 Uptime Kuma ↗
+    </a>
+  </div>
+
+  {# ---------- ① 依赖 ---------- #}
+  <h2 style="font-size:14px;font-weight:600;margin:0 0 8px;">依赖</h2>
+  <table style="width:100%;max-width:640px;border-collapse:collapse;font-size:13px;margin-bottom:24px;">
+    <tbody>
+      {% for name, c in checks.items %}
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;width:120px;">{{ name }}</td>
+        <td style="padding:7px 4px;width:80px;">
+          {% if c.ok %}
+            <span style="color:#15803d;font-weight:600;">正常</span>
+          {% else %}
+            <span style="color:#b91c1c;font-weight:600;">异常</span>
+          {% endif %}
+        </td>
+        <td style="padding:7px 4px;width:80px;opacity:.7;">{{ c.ms }} ms</td>
+        <td style="padding:7px 4px;opacity:.7;">{{ c.error|default:"" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# ---------- ② Kuma 监控 ---------- #}
+  <h2 style="font-size:14px;font-weight:600;margin:0 0 8px;">监控（Uptime Kuma）</h2>
+  {% if not kuma.ok %}
+    <p style="font-size:12.5px;color:#b91c1c;">{{ kuma.error }}</p>
+  {% else %}
+  <table style="width:100%;max-width:900px;border-collapse:collapse;font-size:13px;margin-bottom:24px;">
+    <thead>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.4);text-align:left;">
+        <th style="padding:6px 4px;">名称</th>
+        <th style="padding:6px 4px;width:70px;">类型</th>
+        <th style="padding:6px 4px;width:70px;">状态</th>
+        <th style="padding:6px 4px;width:80px;">延迟</th>
+        <th style="padding:6px 4px;width:90px;">间隔</th>
+        <th style="padding:6px 4px;">最近消息</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in kuma.items %}
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">{{ m.name }}</td>
+        <td style="padding:7px 4px;opacity:.7;">{{ m.type }}</td>
+        <td style="padding:7px 4px;">
+          {% if m.status == 1 %}
+            <span style="color:#15803d;font-weight:600;">Up</span>
+          {% elif m.status == 0 %}
+            <span style="color:#b91c1c;font-weight:600;">Down</span>
+          {% else %}
+            <span style="opacity:.5;">无心跳</span>
+          {% endif %}
+        </td>
+        <td style="padding:7px 4px;opacity:.7;">{% if m.ping %}{{ m.ping }} ms{% else %}—{% endif %}</td>
+        <td style="padding:7px 4px;opacity:.7;">{{ m.interval }}s</td>
+        <td style="padding:7px 4px;opacity:.7;">{{ m.msg }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {# ---------- ③ 备份 ---------- #}
+  <h2 style="font-size:14px;font-weight:600;margin:0 0 8px;">每日备份</h2>
+  {% if not backup.ok %}
+    <p style="font-size:12.5px;color:#b91c1c;">{{ backup.error }}</p>
+  {% else %}
+  <table style="width:100%;max-width:640px;border-collapse:collapse;font-size:13px;margin-bottom:24px;">
+    <tbody>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;width:160px;">最近备份</td>
+        <td style="padding:7px 4px;">{{ backup.latest.name }}</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">时间 / 大小</td>
+        <td style="padding:7px 4px;">
+          {{ backup.latest.time }}
+          <span style="opacity:.6;">· {{ backup.latest.size|filesizeformat }}</span>
+          {% if backup.stale %}
+            <span style="color:#b91c1c;font-weight:600;margin-left:8px;">已超过 36 小时，检查 cron</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">保留份数</td>
+        <td style="padding:7px 4px;">{{ backup.count }} 份（7 天滚动）</td>
+      </tr>
+      <tr>
+        <td style="padding:7px 4px;">Kuma 备份</td>
+        <td style="padding:7px 4px;">{{ backup.kuma_latest|default:"—" }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% endif %}
+
+  {# ---------- ④ 索引 ---------- #}
+  <h2 style="font-size:14px;font-weight:600;margin:0 0 8px;">索引同步</h2>
+  {% if not index.ok %}
+    <p style="font-size:12.5px;color:#b91c1c;">{{ index.error }}</p>
+  {% else %}
+  <table style="width:100%;max-width:640px;border-collapse:collapse;font-size:13px;">
+    <tbody>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;width:160px;">待处理队列</td>
+        <td style="padding:7px 4px;">{{ index.queue }}</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">处理中</td>
+        <td style="padding:7px 4px;">{{ index.pending }}</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">重试中</td>
+        <td style="padding:7px 4px;">{{ index.retry }}</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(128,128,128,.2);">
+        <td style="padding:7px 4px;">同步进程心跳</td>
+        <td style="padding:7px 4px;">
+          {% if index.heartbeat_age is not None %}
+            {{ index.heartbeat_age }} 秒前
+          {% else %}
+            <span style="color:#b91c1c;">没有心跳</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:7px 4px;">上次对账</td>
+        <td style="padding:7px 4px;">{{ index.reconcile_day|default:"未跑过" }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% endif %}
+
+</div>
+{% endblock %}

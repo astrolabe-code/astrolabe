@@ -1,0 +1,43 @@
+{% extends "admin/base_site.html" %}
+{% comment %}
+  ★★ 隐藏/恢复的「理由填写页」（2026-10-24）⚠
+  · · 不做成「点一下就隐藏」：`B208` 要求**理由必填**，作者来问时必须答得出
+{% endcomment %}
+
+{% block content %}
+<div id="content-main" style="max-width:720px;">
+  <p style="font-size:13px;margin-bottom:14px;">{{ intro }}</p>
+
+  <form method="post">
+    {% csrf_token %}
+    {% for obj in queryset %}
+      <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
+    {% endfor %}
+    <input type="hidden" name="action" value="{{ action_name }}">
+    <input type="hidden" name="confirmed" value="1">
+
+    <div style="margin-bottom:10px;font-size:12.5px;">
+      <label for="id_reason" style="display:block;margin-bottom:4px;font-weight:600;">
+        处置理由（必填，会记进审计日志）
+      </label>
+      <textarea id="id_reason" name="reason" rows="4"
+                style="width:100%;padding:8px;border:1px solid rgba(128,128,128,.4);border-radius:6px;font-size:13px;"></textarea>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button type="submit"
+              style="padding:7px 16px;border-radius:6px;border:1px solid rgba(128,128,128,.4);font-size:13px;cursor:pointer;">
+        确定
+      </button>
+      <a href="./"
+         style="padding:7px 16px;border-radius:6px;border:1px solid rgba(128,128,128,.4);font-size:13px;text-decoration:none;color:inherit;">
+        取消
+      </a>
+    </div>
+  </form>
+
+  <div style="margin-top:20px;font-size:12px;opacity:.6;">
+    将影响 {{ queryset.count }} 条记录
+  </div>
+</div>
+{% endblock %}

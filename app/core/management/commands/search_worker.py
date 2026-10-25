@@ -26,6 +26,33 @@ from django.core.management.base import BaseCommand, CommandError
 from search import client, reconcile, sync, terms
 
 
+def _uptime_ping(ok: bool, msg: str) -> None:
+    """★★ **给 Uptime Kuma 的 Push 监控打点**（2026-10-24）⚠
+
+    ```
+    每日对账跑完 ⇒ GET <ASTROLABE_UPTIME_PUSH>?status=up
+    对账抛异常   ⇒ status=down
+    超过预期时间没收到 ⇒ Kuma 报警（* 这就是「每日任务提醒」）✅
+    ```
+
+    ⚠ 打点失败**绝不影响对账**：吞掉所有异常 ⚠
+    """
+    import os
+    import urllib.parse
+    import urllib.request
+
+    url = (os.environ.get("ASTROLABE_UPTIME_PUSH") or "").strip()
+    if not url:
+        return
+    query = urllib.parse.urlencode(
+        {"status": "up" if ok else "down", "msg": msg[:80], "ping": 0}
+    )
+    try:
+        urllib.request.urlopen(f"{url}?{query}", timeout=3).read()
+    except Exception:  # pragma: no cover - 打点只是锦上添花
+        pass
+
+
 class Command(BaseCommand):
     help = "消费索引同步队列（B238）"
 
@@ -59,6 +86,13 @@ class Command(BaseCommand):
             raise CommandError("MEILI_MASTER_KEY 未设置（见 app/deploy/.env）")
 
         self.stdout.write(f"索引同步启动（{client.base_url()}）")
+
+        # ★★★ 启动自愈：把上次崩溃留下的"孤儿任务"重新入队（2026-10-23）⚠
+        #   · · 孤儿 = PENDING 里还在、QUEUE/RETRY 里都没有
+        #   · · 不修的话，那篇笔记**永远**不会再更新索引（`sadd` 返回 0 就不推）⚠
+        recovered = sync.recover_orphans()
+        if recovered:
+            self.stdout.write(self.style.WARNING(f"队列自愈：重新入队 {recovered} 个孤儿任务"))
 
         # ★★★ 热词维护：**每半天一次**（* 所有者 2026-10-22 定）⚠
         #   ```
@@ -98,8 +132,13 @@ class Command(BaseCommand):
                             f"· 计数过期 {len(pr['stale_counts'])} "
                             f"· 已修 {pr['fixed']}"
                         )
+
+                        # ★ 对账完成 ⇒ 给「每日任务」打点（* 未配置则跳过）⚠
+                        _uptime_ping(True, "对账完成")
                 except Exception:
                     self.stderr.write(self.style.WARNING("索引对账失败"))
+                    # ★ 失败也打点 ⇒ 家长能收到报警 ⚠
+                    _uptime_ping(False, "对账失败")
 
                 # ★ 队列积压提醒（* 消费跟不上 / 消费者卡住）⚠
                 try:

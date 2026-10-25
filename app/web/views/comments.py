@@ -134,7 +134,9 @@ def _list(request: HttpRequest, note: Note):
 
     # ★★ `B214`：**平铺** —— 没有楼中楼的层，* 也就没有 `?parent=` ✅
     #   · · ★ 「回复谁」在正文的 @ 里，* `kind` 只决定视觉 ⚠
-    q = Q(note=note, deleted_at__isnull=True)
+    # ★★ 2026-10-24：**后台隐藏的评论列表里不再出现**（数据保留）⚠
+    #   · · `NoteComment.state` 默认 `normal`，后台「隐藏所选评论」置为 `hidden` ⚠
+    q = Q(note=note, deleted_at__isnull=True) & ~Q(state="hidden")
 
     if anchor == "paragraph":
         # ★★ 锚点 = **段落指纹**（* `B235`：段落不再是表里的行）⚠

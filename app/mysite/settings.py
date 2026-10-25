@@ -7,6 +7,8 @@
 import os
 from pathlib import Path
 
+from django.urls import reverse_lazy
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -32,6 +34,30 @@ if not SECRET_KEY:
         SECRET_KEY = "dev-only-insecure-key-do-not-use-in-production"
     else:
         raise RuntimeError("生产环境必须设置 SECRET_KEY（见 deploy/.env）")
+
+# ============================================================================
+# ★★ 登录会话与 CSRF（B245 / B246 / B247 · 2026-10-25）⚠
+# ============================================================================
+# ⚠ 换回 Django session 后，**HttpOnly 由框架保证**（⛔ JS 读不到 sessionid）——
+#   ★ 这正是本次替换的核心收益：旧方案把令牌放 localStorage，XSS 一读就走 ⚠
+
+#: ★★ 会话有效期**默认 7 天**（B246，所有者：「一周就差不多了，而且后台应该可调」）
+#:   · · 实际值在登录时按 `auth.session_ttl_days` 动态 `set_expiry()`
+#:   · · ⚠ 这里只是兜底：配置被删 / 读到 None 时用它 ⚠
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 7
+
+#: ★ HttpOnly —— ⛔ 绝不允许 JS 读 sessionid（XSS 的最后一道闸）
+SESSION_COOKIE_HTTPONLY = True
+
+#: ★ 后台与前台**同源同端口** ⇒ SameSite=Lax 足够，且不影响登录跳转
+SESSION_COOKIE_SAMESITE = "Lax"
+
+#: ★★ CSRF Cookie **必须可被 JS 读取**（否则前端拿不到 token 发 X-CSRFToken）⚠
+#:   · · 它保护的正是 sessionid，⛔ 千万不能顺手设成 True（B247② 踩过这个念头）⚠
+CSRF_COOKIE_HTTPONLY = False
+
+#: ★ 前端统一读这个名字（见 frontend/src/api/client.ts）
+CSRF_COOKIE_NAME = "csrftoken"
 
 ALLOWED_HOSTS = [h.strip() for h in (env("ALLOWED_HOSTS", "") or "").split(",") if h.strip()]
 if not ALLOWED_HOSTS and not DEBUG:
@@ -73,20 +99,18 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    # ⚠★ **`AuthenticationMiddleware` 被【上移】了**（Django 默认把它放在 CsrfView 之后）——
-    #   原因见 `web/middleware.py` 顶部的三条硬要求：
-    #   ★ 契约 §7 要求「BearerAuthMiddleware 必须在 CSRF 之前、且在 AuthenticationMiddleware 之后」。
-    #   ★ Django 默认次序**同时满足不了这两条** ⇒ 必须把 Authentication 提前。
-    #   ⚠ 上移是安全的：`CsrfViewMiddleware` 不读 `request.user`，两者无耦合。
+    # ★★★ 2026-10-25（B245）：**BearerAuthMiddleware 已删除** —— 公网改用 Django session。
+    #   · · 原话：「我的天呐，你把django设计好的维持登陆状态和身份识别的令牌系统给了后台了吗？」
+    #   · · ⇒ 认证回到 `AuthenticationMiddleware`（Django 默认次序即可，⛔ 不再需要上移）⚠
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    # ★★ Bearer 三态判定（`U4.4` / 契约 §7）—— 位置是硬要求，见 `web/middleware.py`
-    "web.middleware.BearerAuthMiddleware",
+    # ★★ B247②：GET 时种 csrftoken Cookie（* 否则前端第一个 POST 就 403）⚠
+    #   ⚠ 必须在 CsrfViewMiddleware **之前**（* 它靠 META 里的值在 process_response 种 Cookie）⚠
+    "web.middleware.CsrfCookieMiddleware",
     # ★★ 设备令牌（* 给游客发一个签名 Cookie，* 用于限流身份识别）⚠
     "web.middleware.DeviceTokenMiddleware",
     # ★★ 搜索限流（* 任何带 q 的 GET 统一判一次）⚠
     "web.middleware.SearchRateLimitMiddleware",
     "django.middleware.common.CommonMiddleware",
-    # ★ 到这里 `_dont_enforce_csrf_checks` 已经被 Bearer 中间件设好了 ✅
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -97,7 +121,10 @@ ROOT_URLCONF = "mysite.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # ★★ 后台模板覆盖目录（2026-10-24）⚠
+        #   · · unfold 的 admin 模板在 INSTALLED_APPS 里排在前头，
+        #     * 放 templates/admin/ 会被它的同名文件盖掉 ⇒ 必须走 DIRS（优先级更高）✅
+        "DIRS": [BASE_DIR / "core" / "templates_override"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -269,27 +296,30 @@ UNFOLD = {
             {
                 "title": "内容",
                 "items": [
-                    {"title": "笔记", "link": "admin:core_note_changelist"},
-                    {"title": "段评 / 章评", "link": "admin:core_notecomment_changelist"},
-                    {"title": "项目", "link": "admin:core_project_changelist"},
+                    {"title": "笔记", "link": reverse_lazy("admin:core_note_changelist")},
+                    {"title": "段评 / 章评", "link": reverse_lazy("admin:core_notecomment_changelist")},
+                    {"title": "项目", "link": reverse_lazy("admin:core_project_changelist")},
+                    # ⚠ 「项目协作者」**不进侧栏**（2026-10-24 所有者：「完全没用」）⚠
+                    #   · · 前台在「项目设置 → 协作者」就能管；后台这个只是全局镜像，
+                    #     只有排查"某人怎么会被加进这个项目"时才用得上
+                    #   · · 仍然注册着 ⇒ 直接访问 /admin/core/collaborator/ 可用 ✅
                 ],
             },
             {
                 "title": "用户与邀请",
                 "items": [
-                    {"title": "用户", "link": "admin:auth_user_changelist"},
-                    {"title": "用户档案", "link": "admin:core_userprofile_changelist"},
-                    {"title": "邀请码", "link": "admin:core_invite_changelist"},
-                    {"title": "协作者", "link": "admin:core_collaborator_changelist"},
-                    {"title": "访问令牌", "link": "admin:core_apitoken_changelist"},
+                    {"title": "用户", "link": reverse_lazy("admin:auth_user_changelist")},
+                    {"title": "用户档案", "link": reverse_lazy("admin:core_userprofile_changelist")},
+                    {"title": "邀请码", "link": reverse_lazy("admin:core_invite_changelist")},
                 ],
             },
             {
                 "title": "系统",
                 "items": [
-                    {"title": "审计日志", "link": "admin:core_auditlog_changelist"},
-                    {"title": "站点参数", "link": "admin:core_appsetting_changelist"},
-                    {"title": "存储占用", "link": "admin:core_projectstorage_changelist"},
+                    {"title": "运维概览", "link": reverse_lazy("admin:ops-dashboard")},
+                    {"title": "审计日志", "link": reverse_lazy("admin:core_auditlog_changelist")},
+                    {"title": "站点参数", "link": reverse_lazy("admin:core_appsetting_changelist")},
+                    {"title": "存储占用", "link": reverse_lazy("admin:core_projectstorage_changelist")},
                 ],
             },
         ],

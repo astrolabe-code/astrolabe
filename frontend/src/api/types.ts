@@ -477,10 +477,18 @@ export interface AuthUser {
 }
 
 /** ★ 登录 / 注册的响应（★ `B170`）—— ★ 契约 §12：`data:{token, user, exp}` */
-export interface AuthTokenData {
-  token: string
-  exp: string
-  user: AuthUser
+export interface AuthLoginData {
+  /**
+   * ★★ B245（2026-10-25）：session 制 ⇒ 登录只回 `{user}` ⚠
+   * · · 旧版还带 `token` / `exp`（Bearer 令牌），**已删除**
+   * · · `sessionid` 由浏览器自动存（HttpOnly，JS 读不到）✅
+   */
+  user: {
+    id: number
+    username: string
+    is_staff: boolean
+    avatar: string | null
+  }
 }
 
 /* ---------------------------------------------------------------- 邀请（U4.7） */

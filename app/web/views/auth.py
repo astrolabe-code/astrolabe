@@ -45,7 +45,6 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction
 from django.http import HttpRequest, HttpResponseRedirect, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from core import appsettings, invites, oauth
@@ -183,13 +182,10 @@ def callback(request: HttpRequest, provider: str) -> JsonResponse | HttpResponse
     if not result.ok or result.user is None:
         return _failure(result.message or "登录失败，请重试。", as_json=as_json)
 
-    # ★★ 签发本站令牌（★ 明文只在这里出现一次）
-    raw, token = auth.issue_token(
-        result.user,
-        provider=result.provider,
-        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
-        remember=result.remember,
-    )
+    # ★★ 2026-10-25（B245）：**改成 Django session** —— 种 sessionid Cookie
+    #   · · 旧做法是 `auth.issue_token()` 签发 Bearer 令牌，前端存 localStorage
+    #     （XSS 可读）⇒ 所有者裁定换回框架 ⚠
+    auth.login_user(request, result.user, remember=result.remember)
 
     # ---- ★★★ `B176` ①：**这里原本还有「发布意图」/「拉取意图」两条路 —— 已退役** ----
     #   ★ 以前 OAuth 回调不只是登录，★ 它还**顺手替用户完成一件事**：
@@ -204,17 +200,14 @@ def callback(request: HttpRequest, provider: str) -> JsonResponse | HttpResponse
     # ⚠★ 再次校验 `next_url`（★ 防的是"state 是几分钟前存的"这个时间差）
     target = safe_next_url(result.next_url) or _spa_url()
     payload = {
-        "token": raw,
-        "exp": token.expires_at.isoformat(),
         "user": auth.user_json(result.user),
         "action": result.action,      # ★ `login` / `register` —— ★ 前端可据此显示欢迎语
     }
 
     if as_json:
         return ok(payload)
-    return _redirect_with_fragment(
-        target, token=raw, exp=payload["exp"], action=payload["action"]
-    )
+    # ⚠ fragment 里**不再带 token**（session 靠 Cookie，本来就不该出现在 URL 里）⚠
+    return _redirect_with_fragment(target, action=payload["action"])
 
 
 # ===========================================================================
@@ -279,7 +272,6 @@ def _password_problem(password: str) -> str:
     return ""
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def register(request: HttpRequest) -> JsonResponse:
     """★★★ **注册**（`B170`）—— ★ 用户名 + 密码 +（可能）邀请码。
@@ -345,29 +337,31 @@ def register(request: HttpRequest) -> JsonResponse:
                 transaction.set_rollback(True)
                 return fail(r.message or "邀请凭证无效。", 400, code="invite_failed")
 
-    raw, token = auth.issue_token(
-        user,
-        provider="password",
-        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
-        remember=True,
-    )
-    return ok(
-        {
-            "token": raw,
-            "exp": token.expires_at.isoformat(),
-            "user": auth.user_json(user),
-        },
-        status=201,
-    )
+    # ★★ B245：注册即登录 —— 种 session（不再签发 Bearer 令牌）⚠
+    auth.login_user(request, user, remember=True)
+    return ok({"user": auth.user_json(user)}, status=201)
 
 
-@csrf_exempt
+def _truthy(raw) -> bool:
+    """★ 「记住我」勾选框的判定（★ 前端可能送 true / "true" / "1"）。"""
+    if isinstance(raw, bool):
+        return raw
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @require_http_methods(["POST"])
 def login(request: HttpRequest) -> JsonResponse:
     """★★★ **用户名 + 密码 登录**（`B170` · `U4.9`）。
 
-    ★ 契约 §12 定好了形状：★ `POST /api/auth/login/` ⇒ `data:{token, user, exp}`，
-    ★★ 且**显式 `csrf_exempt`** —— ★ 因为此刻**还没有 token**，★ Bearer 那条路走不到 ⚠
+    ## ★★★ 2026-10-25（B245 / B247②）：**改用 Django session**
+
+    ```
+    旧：POST /api/auth/login/ ⇒ data:{token, user, exp}（Bearer 令牌）
+    新：POST /api/auth/login/ ⇒ data:{user}（sessionid Cookie，Django 种）
+    ```
+
+    ⚠★ **刻意不加 `csrf_exempt`** —— cookie 认证下，登录表单是 CSRF 的经典靶子：
+      放开它 ⇒ 攻击者能用受害者自己的浏览器把受害者登录成攻击者的账号 ⚠
 
     ## ⚠★★ 一条安全底线（★ 一期就必须有）
     ★ **「用户名不存在」与「密码错误」返回【同一句话 + 同一个状态码 + 同一个 code】** ——
@@ -406,19 +400,12 @@ def login(request: HttpRequest) -> JsonResponse:
         # ⚠ 见上：★ 当前 `ModelBackend` 走不到这里（★ 留着是为了不依赖某个 backend 的实现细节）
         return fail("这个账号已被停用。", 403, code="account_disabled")
 
-    raw, token = auth.issue_token(
-        user,
-        provider="password",
-        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
-        remember=bool(body.get("remember", True)),
-    )
-    return ok(
-        {
-            "token": raw,
-            "exp": token.expires_at.isoformat(),
-            "user": auth.user_json(user),
-        }
-    )
+    # ★★ B245：登录 = 种 session（不再签发 Bearer 令牌）⚠
+    #   · · ⚠ 本接口**刻意不加 `csrf_exempt`**（B247②）：cookie 认证下
+    #     登录表单是 CSRF 的经典靶子，放开它等于"替攻击者登录受害者" ⚠
+    remember = _truthy(body.get("remember"))
+    auth.login_user(request, user, remember=remember)
+    return ok({"user": auth.user_json(user)})
 
 
 # ===========================================================================
@@ -451,22 +438,13 @@ def me(request: HttpRequest) -> JsonResponse:
 
 @require_http_methods(["POST"])
 def logout(request: HttpRequest) -> JsonResponse:
-    """★ 登出 —— 撤销**当前这一个**令牌。
+    """★★ **登出**（B245）—— 清掉当前会话。
 
-    ★ **幂等**（契约 §12：`data:{revoked:bool}`）——
-      ⚠ 重复登出**不算错**：⚠ 否则"网络抖动后自动重试"会得到一个刺眼的报错。
+    ★ **幂等**：⚠ 重复登出**不算错** —— 否则"网络抖动后自动重试"会得到刺眼报错。
+    · · 游客调用也返回 200（* 本来就没有会话可清）✅
     """
-    token = getattr(request, "api_token", None)
-    if token is None:
-        # ⚠ 用 session 登录的人（管理员）也会走到这里 —— ★ 那就只清 session
-        try:
-            from django.contrib.auth import logout as dj_logout
-
-            dj_logout(request)
-            return ok({"revoked": False, "session": True})
-        except Exception:  # noqa: BLE001
-            return ok({"revoked": False})
-    return ok({"revoked": auth.revoke_token(token)})
+    auth.logout_user(request)
+    return ok({"revoked": True})
 
 
 @require_http_methods(["POST"])
@@ -479,13 +457,22 @@ def logout_all(request: HttpRequest) -> JsonResponse:
     user = _current_user(request)
     if user is None:
         return fail("未登录", 401, code="unauthenticated")
-    return ok({"revoked": auth.revoke_all(user)})
+    # ★★ B245：登出全部设备 = 删该用户所有会话（含当前这个）⚠
+    n = auth.logout_all_sessions(user)
+    return ok({"revoked": n, "sessions": n})
 
 
-@require_http_methods(["GET"])
 def tokens(request: HttpRequest) -> JsonResponse:
-    """★ 「登录设备」列表（⚠ **绝不含明文** —— 只有前缀与时间）。"""
+    """★★ 「登录设备」列表（B245 后 = **会话列表**）⚠
+
+    ```
+    令牌制时这里列 ApiToken（前缀 + 时间）
+    session 制后列 Session（创建时间 + 过期时间）—— ⚠ 同样不含任何机密
+    ```
+
+    ★ 会话的 `_auth_user_id` 存在 `session_data` 里，★ 这里只回**时间**，不回内容 ✅
+    """
     user = _current_user(request)
     if user is None:
         return fail("未登录", 401, code="unauthenticated")
-    return ok({"tokens": [auth.token_json(t) for t in auth.active_tokens(user)[:50]]})
+    return ok({"tokens": auth.session_list(user), "count": auth.session_count(user)})

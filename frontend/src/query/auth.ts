@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import type { AuthProvidersData, AuthTokenData } from '../api/types'
+import type { AuthLoginData, AuthProvidersData } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 
 /**
@@ -53,8 +53,9 @@ export function useAuthProviders() {
  * ========================================================================== */
 
 /** ★★ 把登录结果落地（★ 三件事见文件头）*/
-function applyAuth(data: AuthTokenData) {
-  useAuthStore.getState().setAuth({ token: data.token, user: data.user, exp: data.exp })
+function applyAuth(data: AuthLoginData) {
+  // ★ B245：登录只回 {user}（sessionid 由浏览器存）⇒ 不再有 token / exp ⚠
+  useAuthStore.getState().setAuth({ user: data.user })
 }
 
 export interface LoginInput {
@@ -73,9 +74,9 @@ export interface LoginInput {
 export function useLogin() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: LoginInput): Promise<AuthTokenData> =>
+    mutationFn: async (input: LoginInput): Promise<AuthLoginData> =>
       unwrap(
-        await apiPost<AuthTokenData>(
+        await apiPost<AuthLoginData>(
           '/api/auth/login/',
           {
             username: input.username.trim(),
@@ -111,9 +112,9 @@ export interface RegisterInput {
 export function useRegister() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (input: RegisterInput): Promise<AuthTokenData> =>
+    mutationFn: async (input: RegisterInput): Promise<AuthLoginData> =>
       unwrap(
-        await apiPost<AuthTokenData>(
+        await apiPost<AuthLoginData>(
           '/api/auth/register/',
           {
             username: input.username.trim(),

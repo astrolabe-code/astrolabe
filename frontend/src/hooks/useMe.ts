@@ -26,20 +26,17 @@ export interface Me {
  * ★ 未登录就直接返回 `{authenticated: false}` —— ★ 一次请求都不发 ✅
  */
 export function useMe() {
-  const token = useAuthStore((s) => s.token)
-
+  // ★ B245：登录态在 HttpOnly sessionid 里 ⇒ **每次都问后端**（⛔ 不能再凭本地字段跳过）
+  //   · · 代价：多一次 GET；收益：登出 / 禁用 / 过期都能正确反映 ⚠
   return useQuery({
-    queryKey: ['me', token ? 'token' : 'anon'],
+    queryKey: ['me'],
     staleTime: 60_000,
     queryFn: async (): Promise<Me> => {
-      // ★ 没有 token ⇒ 不问后端（⚠ 少一次注定 401 的往返）
-      if (!token) return { authenticated: false }
-
       const r = await apiGet<{ user: Record<string, unknown> }>('/api/auth/me/', 'data')
       if (r.ok) {
         return { authenticated: true, ...(r.data.user || {}) }
       }
-      // ★ 401 ⇒ 这枚 token 已经没用了：★ 清掉，避免下次继续带着它敲门
+      // ★ 401 ⇒ 会话没了（过期 / 已登出 / 被禁用）⚠
       if (r.error.status === 401) return { authenticated: false }
       // ⚠ 其它错误（网络 / 5xx）也按未登录处理 —— ★ 不给调用方一个"薛定谔的登录态"
       return { authenticated: false }

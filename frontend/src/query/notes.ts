@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPatch, apiPost, getToken, upload } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, getCsrfToken, upload } from '../api/client'
 import { unwrap } from '../api/errors'
 import type {
   DeletedNote,
@@ -235,14 +235,15 @@ export function groupByProject(notes: DeletedNote[]) {
  *   （它会把响应当 JSON/text 解析，二进制会被毁）✅
  */
 export async function downloadNotesBackup(noteIds: number[]): Promise<void> {
-  const token = getToken()
+  // ★ B245：导出走 session；B247②：带 CSRF 头 ⚠
+  const csrf = getCsrfToken()
   const res = await fetch('/api/me/deleted/export/', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/octet-stream',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(csrf ? { 'X-CSRFToken': csrf } : {}),
     },
     body: JSON.stringify({ note_ids: noteIds }),
   })

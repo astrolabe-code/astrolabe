@@ -8,10 +8,16 @@
  *   coded-error  → {ok:false, error:{code,message}} + status     (edit.py CAS)
  *
  * 上传(D15)独立实现:fetch 无上传进度,改用 XMLHttpRequest。
+ *
+ * ★★★ 认证(2026-10-25 · B245)：**改用 Django session，⛔ 不再用 Bearer 令牌**
+ *   · · 所有者原话：「我的天呐，你把django设计好的维持登陆状态和身份识别的令牌系统给了后台了吗？」
+ *   · · 登录后 `sessionid` 由浏览器自动带(HttpOnly，JS 读不到)⇒ **不能也不会**放 localStorage
+ *   · · 代价：cookie 认证必须带 CSRF 头 ⇒ 所有非 GET 带 `X-CSRFToken`(B247②)⚠
  */
 import type { ApiError, ApiResult, EnvelopeKind } from './types'
 
-const TOKEN_KEY = 'api_token'
+/** ★ CSRF Cookie 名 —— 与后端 `settings.CSRF_COOKIE_NAME` 一致(必须是**非** HttpOnly)⚠ */
+const CSRF_COOKIE = 'csrftoken'
 
 /** 401(unauthenticated)统一处理钩子:由 App 注册(清登录态 + 跳登录页) */
 let unauthorizedHandler: (() => void) | null = null
@@ -20,21 +26,33 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   unauthorizedHandler = fn
 }
 
-export function getToken(): string | null {
+/**
+ * ★ 读 CSRF Token(供非 GET 请求带 `X-CSRFToken` 头,B247②)⚠
+ *
+ * ⚠ 它保护的就是 sessionid —— ⛔ **不是**登录凭证本身,
+ *   泄露它没有意义(攻击者仍然拿不到你的 HttpOnly sessionid)✅
+ */
+export function getCsrfToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY)
+    const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]*)`))
+    return m ? decodeURIComponent(m[1]) : null
   } catch (e) {
-    console.error('read token failed', e)
+    console.error('read csrf token failed', e)
     return null
   }
 }
 
-export function setToken(token: string | null) {
+/**
+ * ★ 登出后的本地清理(B245 后 session 由服务端管)
+ *
+ * ⚠ localStorage 里**不再存任何凭证** —— 只需清掉遗留的旧键
+ *   (老版本曾把 `api_token` 放在这里,升级后要扫掉,否则用户永远登不出)⚠
+ */
+export function clearLegacyAuth() {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem('api_token')
   } catch (e) {
-    console.error('write token failed', e)
+    console.error('clear legacy auth failed', e)
   }
 }
 
@@ -69,7 +87,7 @@ function normalize<T>(status: number, body: any, kind: EnvelopeKind): ApiResult<
 /** 统一后置处理:401 清 token 并交给 App 跳登录(只触发一次由 handler 保证) */
 function afterResult<T>(result: ApiResult<T>): ApiResult<T> {
   if (!result.ok && result.error.status === 401 && result.error.code === 'unauthenticated') {
-    setToken(null)
+    // ★ B245：session 失效由服务端管,前端只需跳登录页(⛔ 不清 Cookie,那归 Django)⚠
     try {
       unauthorizedHandler?.()
     } catch (e) {
@@ -87,8 +105,13 @@ export async function api<T = any>(
   const headers = new Headers(init.headers || {})
   if (!headers.has('Accept')) headers.set('Accept', 'application/json')
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const token = getToken()
-  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
+
+  // ★★ B247②：非 GET 一律带 CSRF 头(⛔ GET/HEAD 不需要,带了反而多余)⚠
+  const method = (init.method || 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD' && !headers.has('X-CSRFToken')) {
+    const csrf = getCsrfToken()
+    if (csrf) headers.set('X-CSRFToken', csrf)
+  }
 
   let res: Response
   try {
@@ -168,8 +191,10 @@ export function upload(path: string, file: File, opts: UploadOptions = {}): Uplo
 
     xhr.open('POST', path, true)
     xhr.setRequestHeader('Accept', 'application/json')
-    const token = getToken()
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    // ★ B245：上传走 session；B247②：带 CSRF 头 ⚠
+    xhr.withCredentials = true
+    const csrf = getCsrfToken()
+    if (csrf) xhr.setRequestHeader('X-CSRFToken', csrf)
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && opts.onProgress) {

@@ -103,7 +103,7 @@ export default function Login() {
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
             />
-            记住我（不勾选则 7 天后需重新登录）
+            记住我（不勾选则关闭浏览器即失效）
           </label>
 
           <div className="auth-actions">

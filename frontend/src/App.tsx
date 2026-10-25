@@ -58,6 +58,14 @@ export default function App() {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      // ★★★ B245 后的**必修复归**（2026-10-25 实测）⚠
+      //   · · 令牌制时：没 token ⇒ useMe **根本不发请求** ⇒ 游客永远撞不到 401
+      //   · · session 制时：useMe **每次都问后端** ⇒ 游客一律 401
+      //     ⇒ 若不设守卫，游客打开公开的用户空间会被当场弹去登录页 ⚠
+      //   · · ⇒ **只有"原本登录着"才跳**（会话过期 / 被禁用），游客安静保持未登录态 ✅
+      const wasLoggedIn = !!useAuthStore.getState().user
+      if (!wasLoggedIn) return
+
       clear()
       // ⚠ 去掉 /app 前缀（那是 SPA 的 basename，不是路由的一部分）
       const next = `${window.location.pathname.replace('/app', '')}${window.location.search}`

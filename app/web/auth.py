@@ -1,183 +1,154 @@
-"""Astrolabe · ① Web 层：**Bearer 令牌**（签发 / 校验 / 撤销）
-
-★ 依据 `USERS-AND-AUTH.md` `U4.4` 纪律 1 + `frontend-contract.md` §12。
+"""Astrolabe · ① Web 层：**登录会话**（Django 自带 session · B245 / B246）
 
 ---
 
-# ★★ 唯一的硬纪律：**明文只返回一次，库里只存哈希**
+# ★★★ 2026-10-25 所有者裁定：**弃用自研 Bearer 令牌，改用 Django session**
 
-| | |
-|---|---|
-| ★ 明文 | ★ **只在签发的那一刻返回**（此后服务端**再也拿不到**） |
-| ★ 库里 | ★ **`blake2b(raw, digest_size=32)` 的 hex** |
+> 原话（逐字）：
+> 「**我的天呐，你把django设计好的维持登陆状态和身份识别的令牌系统给了后台了吗？
+>   你自己整个可能有漏洞的令牌系统给放到公网的网站？**」
+>
+> 「**你要换成django自带的token验证身份呀，你这样做，不知道有什么缺口，
+>   django大家都在维护，出了问题，我能第一时间知道，打补丁，
+>   你这自研的令牌系统，出了问题，谁知道呢？后台这种通过ssh链接的网页用这套自研的还差不多**」
 
-★★ 为什么用 **`blake2b` 而不是 `make_password`**：★ token 是**高熵随机串**，
-爆破物理上不可能 ⇒ 慢哈希只是**白白拖慢每个请求**。★ 契约 §12 也是这个口径。
+## ★ 为什么这个裁定是对的
 
----
+| | 自研 Bearer 令牌（旧） | Django session（现在） |
+|---|---|---|
+| 存放位置 | `localStorage` ⇒ **JS 可读，XSS 能偷走** | HttpOnly Cookie ⇒ **JS 读不到** |
+| CSRF | 头不自动携带 ⇒ 无风险 | 需显式防护 ⇒ **见 `middleware.py` 的三件套** |
+| 泄露后 | 30 天内服务端不主动失效 | 登出即失效；禁用账号可**当场删会话** |
+| 维护 | 自己盯 | 跟着 Django 版本走，CVE 有公开补丁 |
 
-# ★★ 一个容易忽略的工程细节：**`last_used_at` 不能每个请求都写**
+★★ 旧方案的实现本身是按标准做的（`secrets` 高熵 · 库内只存 `blake2b` 哈希 · 明文只返回一次），
+真正的短板是**架构取舍**：Bearer 放 localStorage 在公网场景下不值得 ⚠。
 
-⚠★ 它看着无害，其实是**写放大**：每个 API 请求都 UPDATE 一行 ⇒
-★ 在只读为主的站点上，**把一个纯读请求变成了写请求**（⚠ 还会撑大 WAL、加剧 autovacuum）。
+## ★ 有效期（B246）
 
-⇒ ★ 只在「距上次记录超过 `_TOUCH_INTERVAL`」时才写。
+> 原话：「**现有的 397 个 ApiToken直接删掉，记住我要做，但不要那么长的时间，
+>   一周就差不多了，而且后台应该可调。**」
 
----
+* `auth.session_ttl_days`（**默认 7 天**，后台「站点参数」可调，下限 1 天）
+* 未勾「记住我」⇒ `set_expiry(0)`，**浏览器关闭即失效**
 
-# ★ 撤销的两种粒度
+## ★ 设备令牌与此无关
 
-| 场景 | 函数 |
-|---|---|
-| ★ 登出（撤销**这一个**令牌） | `revoke_token()` |
-| ★★ **登出全部设备**（`U4.4` / 契约 §12 的 `--revoke-user`） | `revoke_all()` |
+`at_device` Cookie + HMAC 验签那套（`B238`）**只做限流身份**，本次不动 ——
+它回答的是「这是哪台设备」，而 session 回答的是「你是谁」。
 """
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 from datetime import timedelta
 
+from django.contrib import auth as django_auth
+from django.contrib.sessions.models import Session
 from django.utils import timezone
 
 from core import appsettings
-from core.models import ApiToken
-
-#: ★ 明文前缀 —— ★ 让令牌在日志 / 密钥扫描器里**一眼可辨**（⚠ 也便于排查泄露）
-TOKEN_PREFIX = "ast_"
-
-#: ★ 随机字节数 —— `token_urlsafe(32)` ⇒ 约 43 字符，**熵 ≈ 256 bit**
-TOKEN_BYTES = 32
-
-#: ⚠ `last_used_at` 的写节流（秒）—— ★ 见模块文档的"写放大"
-_TOUCH_INTERVAL = 300
 
 
 # ===========================================================================
-# 生成 / 哈希
+# 会话有效期
 # ===========================================================================
 
 
-def new_raw_token() -> str:
-    """★ 生成一个**猜不到**的令牌明文。"""
-    return TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
+def session_expiry(remember: bool = True) -> int | None:
+    """★★ **会话有效期（秒）**（B246）⚠
 
-
-def hash_token(raw: str) -> str:
-    """★ `blake2b(raw, digest_size=32)` 的 hex（64 字符）—— ★ **库里只存它**。
-
-    ⚠★ 这是**查 token 的唯一入口**：★ 用哈希本身做等值查询，❌ 不存在"比较明文"这一步
-      （⇒ ★ 也就没有 `==` 的时序侧信道问题）。
+    ```\n    勾「记住我」  ⇒ appsettings 的 auth.session_ttl_days × 86400（默认 7 天）\n    不勾           ⇒ None —— Django 语义是「浏览器关闭即失效」✅\n    ```\n
+    ⚠ **下限 1 天**：配成 0 会让用户「登录成功但下一秒就掉线」，**极难排查** ⚠
     """
-    return hashlib.blake2b((raw or "").encode("utf-8"), digest_size=32).hexdigest()
-
-
-def _prefix_of(raw: str) -> str:
-    """★ 明文前 12 位 —— ⚠ 只用于**辨认**（★ 远不足以还原 32 字节随机串）。"""
-    return (raw or "")[:12]
-
-
-# ===========================================================================
-# 签发 / 校验 / 撤销
-# ===========================================================================
-
-
-def _ttl(remember: bool = True) -> timedelta:
-    key = "auth.token_ttl_days" if remember else "auth.token_ttl_days_short"
-    days = int(appsettings.get(key) or (30 if remember else 7))
-    # ⚠ 下限 1 天 —— ★ 不允许配置成 0/负数（那会签发一个**立刻失效**的令牌，
-    #   ⚠ 表现为"登录成功了但下一秒就 401"，**极难排查**）
-    return timedelta(days=max(1, days))
-
-
-def issue_token(
-    user,
-    *,
-    provider: str = "",
-    user_agent: str = "",
-    remember: bool = True,
-) -> tuple[str, ApiToken]:
-    """★ 签发令牌。
-
-    Returns:
-        `(明文, ApiToken)` —— ★★ **明文只有这一次机会**，⚠ 调用方必须立刻返回给前端，
-        而且**不要记进日志**。
-    """
-    raw = new_raw_token()
-    token = ApiToken.objects.create(
-        user=user,
-        token_hash=hash_token(raw),
-        prefix=_prefix_of(raw),
-        provider=(provider or "")[:16],
-        user_agent=(user_agent or "")[:200],
-        expires_at=timezone.now() + _ttl(remember),
-    )
-    return raw, token
-
-
-def verify_token(raw: str, *, touch: bool = True) -> ApiToken | None:
-    """★ 校验令牌 —— ★ 无效 / 过期 / 已撤销一律返回 `None`（⚠ 调用方**不区分**这三者）。
-
-    ⚠★ 为什么调用方不该区分：★ 对攻击者来说它们**没有区别**
-      （"这个 token 存在但过期了"同样是**免费的信息**）。
-      ★ 用户看到的都应该是同一句「登录状态已失效，请重新登录」。
-    """
-    if not raw or not raw.startswith(TOKEN_PREFIX):
-        # ⚠ 快速排除明显不是令牌的串 —— ★ 省一次数据库查询
-        #   （⚠ 不靠它做安全判定：真正的判定是下面的哈希查询）
+    if not remember:
         return None
-
-    token = ApiToken.objects.select_related("user").filter(token_hash=hash_token(raw)).first()
-    if token is None or not token.is_valid():
-        return None
-
-    if touch:
-        now = timezone.now()
-        last = token.last_used_at
-        # ★ 写节流 —— ⚠ 见模块文档（不这么做就把纯读请求变成了写请求）
-        if last is None or (now - last).total_seconds() >= _TOUCH_INTERVAL:
-            ApiToken.objects.filter(pk=token.pk).update(last_used_at=now)
-            token.last_used_at = now
-    return token
+    days = int(appsettings.get("auth.session_ttl_days") or 7)
+    return int(timedelta(days=max(1, days)).total_seconds())
 
 
-def revoke_token(token: ApiToken) -> bool:
-    """★ 撤销**一个**令牌（登出）。
+def login_user(request, user, *, remember: bool = True) -> None:
+    """★★ **登录** —— 种 session + 按「记住我」设有效期 ⚠
 
-    ★ **幂等**（契约 §12：`data:{revoked:bool}`）—— ⚠ 重复登出不算错。
+    ⚠ 必须在**同一个响应**里种下 `sessionid` Cookie（Django 的标准行为）✅
     """
-    if token is None or token.revoked_at is not None:
-        return False
-    ApiToken.objects.filter(pk=token.pk).update(revoked_at=timezone.now())
-    return True
+    django_auth.login(request, user)
+    request.session.set_expiry(session_expiry(remember))
 
 
-def revoke_all(user) -> int:
-    """★★ **登出全部设备** —— 撤销该用户所有**还活着**的令牌。
+def logout_user(request) -> None:
+    """★★ **登出** —— 清掉当前会话（Cookie 由 Django 负责删）。"""
+    django_auth.logout(request)
 
-    ★ 用途：★ **怀疑令牌泄露**时的止血手段（契约 §12 的 `--revoke-user`）。
+
+# ===========================================================================
+# 会话查询 / 批量清理
+# ===========================================================================
+
+
+def _session_pks(user) -> list[str]:
+    """★★ 该用户所有**未过期**会话的主键（★ 查「某用户有哪些会话」的唯一入口）⚠
+
+    ## ⚠⚠ 为什么不能靠 `session_data__contains`（实测踩过，**两次**）
+
+    ```\n    ① session_data 存的是【压缩 + base64】后的串（以 `.` 开头）⇒ ⛔ 字面量永远匹配不上
+    ② 即使解开，`_auth_user_id` 也是【字符串】`\"434\"` 而不是整数 434
+    ```\n
+    ⇒ ★★ 只能**遍历 + 解码**（`get_decoded()`）✅
+
+    ⚠ 代价：O(会话总数)。★ 可接受的理由：
+      · 本函数**只在**「登出全部设备 / 禁用账号 / 看设备列表」时调用，
+        ⛔ **不在请求链路上**（否则每个 API 请求都要扫一遍表）⚠
+      · 单机部署下会话数是百级 ⇒ 一次遍历 < 10ms ✅
     """
     if not getattr(user, "pk", None):
-        return 0
-    return ApiToken.objects.filter(user=user, revoked_at__isnull=True).update(
-        revoked_at=timezone.now()
-    )
+        return []
+    pk = str(user.pk)          # ⚠ 会话里存的是**字符串**（见上）⚠
+    out: list[str] = []
+    for sess in Session.objects.filter(expire_date__gt=timezone.now()).only("pk", "session_data"):
+        try:
+            if str(sess.get_decoded().get("_auth_user_id") or "") == pk:
+                out.append(sess.pk)
+        except Exception:  # pragma: no cover - 坏会话不该让查询炸掉
+            continue
+    return out
 
 
-def active_tokens(user):
-    """★ 该用户还活着的令牌（★ 供"登录设备"页面用）。"""
-    return ApiToken.objects.filter(user=user, revoked_at__isnull=True).order_by("-created_at")
+def session_count(user) -> int:
+    """★ 该用户当前有几个活着的会话（★ 供「登录设备」页 / 排查用）。"""
+    return len(_session_pks(user))
 
 
-def purge_expired(*, days: int = 30) -> int:
-    """★ 清理**早已过期**的令牌（⚠ 否则这张表会无限增长）。
+def session_list(user, limit: int = 50) -> list[dict]:
+    """★★ **会话列表**（B245 后「登录设备」页的数据源）⚠
 
-    ⚠ 刻意留 `days` 天缓冲再删 —— ★ 因为"过期"与"可以忘掉"不是同一件事：
-      ★ 用户可能正是在过期后才来查"我上次是哪台设备登的"。
+    ⚠ 只回**时间**，不回 `session_data` 内容 —— 那里面是 Django 的内部结构 ⚠
     """
-    cutoff = timezone.now() - timedelta(days=max(0, days))
-    deleted, _ = ApiToken.objects.filter(expires_at__lt=cutoff).delete()
+    rows = (
+        Session.objects.filter(pk__in=_session_pks(user))
+        .order_by("-expire_date")
+        .values_list("pk", "expire_date")[:limit]
+    )
+    return [
+        {"id": pk, "expire_date": exp.isoformat() if exp else None} for pk, exp in rows
+    ]
+
+
+def logout_all_sessions(user) -> int:
+    """★★ **登出全部设备** —— 删掉该用户**所有**会话。
+
+    ★ 用途：①「登出全部设备」按钮；② 禁用账号时**顺手清掉会话行**（B247①）。
+
+    ⚠★ 关于②的一个诚实更正（2026-10-25 实测）：
+      · 原以为「只把 `is_active` 置 False 不会让已登录的人掉线」—— **这是错的** ⚠
+      · Django 的 `ModelBackend.get_user()` 内部会调 `user_can_authenticate()`
+        （它检查 `is_active`）⇒ **停用账号的旧会话会自动变成 AnonymousUser** ✅
+      · ⇒ 本函数对「禁止登录」而言是**锦上添花**（把行删掉，表更干净），
+        ⛔ 不是那道必需的闸门 —— 必需的闸门 Django 已经给了 ✅
+    """
+    pks = _session_pks(user)
+    if not pks:
+        return 0
+    deleted, _ = Session.objects.filter(pk__in=pks).delete()
     return deleted
 
 
@@ -194,7 +165,11 @@ def user_json(user) -> dict:
     """
     if user is None:
         return {}
-    ident = user.oauth_identities.order_by("created_at").first() if hasattr(user, "oauth_identities") else None
+    ident = (
+        user.oauth_identities.order_by("created_at").first()
+        if hasattr(user, "oauth_identities")
+        else None
+    )
     return {
         "id": user.pk,
         "username": user.get_username(),
@@ -202,16 +177,4 @@ def user_json(user) -> dict:
         "avatar": ident.avatar_url if ident else "",
         # ★ 一期：本站没有密码登录 ⇒ 这个字段恒为 False（★ 前端可据此隐藏"改密码"入口）
         "has_password": user.has_usable_password(),
-    }
-
-
-def token_json(token: ApiToken) -> dict:
-    """★ 令牌的公开投影（★ 供"登录设备"页面 —— ⚠ 绝不含明文）。"""
-    return {
-        "id": token.pk,
-        "prefix": token.prefix,
-        "provider": token.provider,
-        "created_at": token.created_at.isoformat() if token.created_at else None,
-        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-        "last_used_at": token.last_used_at.isoformat() if token.last_used_at else None,
     }

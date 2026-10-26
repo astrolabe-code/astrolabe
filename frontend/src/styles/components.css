@@ -10,6 +10,34 @@ body {
   min-height: 100vh;
   color: var(--text-main);
   background-color: var(--bg);
+  position: relative;
+}
+
+/* ★★★ 天光 / 星点 / 工程网格：**固定定位的伪元素**（2026-10-26）⚠
+ *
+ * 现象（所有者）：「阅读页的背景与 markdown 文档页面绑定了吗？
+ *   为什么我移动文档查看，背景的颜色也在跟着上下移动？」
+ *
+ * 原因：天空渐变那一层的 `background-size` 是 `100% 100%`，
+ *   参照物是**整页高度**（长笔记 2650px，视口只有 900px），
+ *   而 `background-attachment` 默认 `scroll` ⇒ 渐变随内容走 ⚠
+ *
+ * 为什么不用 `body { background-attachment: fixed }`：
+ *   ⚠ iOS Safari 对 `background-attachment: fixed` 支持很差
+ *     （老版本直接退化成 `scroll`，等于没修；新版本滚动时还会整页重绘卡顿）⚠
+ *   ⇒ 改成 `position: fixed` 的伪元素：所有浏览器行为一致，且滚动时**只重绘纸** ✅
+ *
+ * ⚠ 关键约束：
+ *   · `z-index: -1`      ⇒ 画在 body 背景色之上、所有内容之下 ⚠
+ *   · `pointer-events: none` ⇒ 不挡任何点击 ⚠
+ *   · 只能用**固定尺寸/百分比**，⛔ 不要用 vh/vw 换算整页高度 ⚠
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background-image:
     /* 天顶天光 */
     radial-gradient(760px 360px at 50% -10%, rgba(255,255,255,0.22), transparent 70%),
@@ -39,7 +67,6 @@ body {
   background-size: auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto,
     auto, auto, auto, auto, auto, 28px 28px, 28px 28px, 100% 100%;
   background-repeat: no-repeat;
-  position: relative;
 }
 
 /* ===== 顶部导航:极淡天青玻璃 ===== */
@@ -234,6 +261,9 @@ main, .wrap { position: relative; z-index: 1; margin-inline: auto; }
 /* ★ 页头只有操作按钮（没有 title）时，* 让它靠右 —— 否则 flex space-between
    在单子元素下会把它放在最左边 ⚠ */
 .page-head > .head-actions:only-child { margin-left: auto; }
+/* ★ 页头只剩按钮时（阅读页 / 编辑页去掉了大标题），
+   * 把 22px 的下边距收到 10px —— 纸能早一点开始 ⚠ */
+.page-head--actions-only { margin-bottom: 10px; }
 
 /* ===== 表格 ===== */
 .table-wrap { overflow-x: auto; }

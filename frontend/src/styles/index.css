@@ -71,6 +71,32 @@
   outline: none;
 }
 
+/* ★★★ 阅读页：**去掉 Crepe 给编辑器留的上下 60px**（2026-10-25）⚠
+ *
+ * 现象（所有者）：「阅读页的 markdown 文档，怎么正文上面有很大一块空白？」
+ *
+ * 原因：
+ *   · Crepe 是**编辑器**样式，`.ProseMirror` 自带 `padding: 60px 0`
+ *     （* 给顶部浮动工具栏留位置）
+ *   · 只读页里没有工具栏 ⇒ 这 60px 就是**纯空白**
+ *   · 再叠上卡片的 16px 和 h1 自己的 26px 上边距 ⇒ 正文顶部空了近 100px ⚠
+ *
+ * ⛔ 只作用于 `.note-body-card`（阅读页专有）——
+ *   编辑页还要靠这块空间放工具栏，不能一起改 ⚠
+ */
+.note-body-card .milkdown .ProseMirror {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* ★ 正文第一个块的 margin-top 也归零 ——
+ *   ⚠ 否则去掉 60px 之后，h1/h2 的上边距还会再顶出一截空白 ⚠
+ *   ⚠★ 必须带 `#root`：下面那条 `#root .milkdown .ProseMirror h1 { margin-top: .93em }`
+ *      是 **ID 选择器**，优先级更高 —— 不带 `#root` 的话本条会被它压掉（实测无效）⚠ */
+#root .note-body-card .milkdown .ProseMirror > *:first-child {
+  margin-top: 0;
+}
+
 /* ===== Milkdown 正文配色：对齐站点纸张与正文色 ===== */
 /* ① 代码块：Crepe 默认给的是灰底（--crepe-color-inline-area 混色）
       ⇒ 改成**透明**（跟随纸张），* 只留一条细边框把范围圈出来 ⚠ */

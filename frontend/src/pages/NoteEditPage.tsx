@@ -183,10 +183,12 @@ export default function NoteEditPage() {
     )
   }
 
+  // ★★ 2026-10-26：**去掉页头大字「编辑笔记」**（所有者：
+  //   「编辑页也是一样，有个黑色大字编辑笔记也去掉，解放这部分空间给纸张」）⚠
+  //   · · 这个标题只是重复"你正在编辑"，没有信息量 ⚠
+  //   · · 编辑态和新建态的切换，靠纸里的类型条和按钮文字已经能看出来 ✅
   return (
-    <AppLayout
-      title={editing ? '编辑笔记' : '写笔记'}
-    >
+    <AppLayout>
       <div className="card note-edit-card">
         {/* ① kind 五选一（固定） */}
         <div className="mb-4">

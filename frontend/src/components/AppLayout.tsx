@@ -30,7 +30,9 @@ export default function AppLayout({
   const inner = (
     <>
       {(title || actions) && (
-        <div className="page-head">
+        // ⚠ 没有 title、只剩操作按钮时加一个类 ⇒ 收紧下边距，
+        //   否则会留下一条窄而空的横条（* 2026-10-26 去掉阅读页/编辑页大标题后暴露）⚠
+        <div className={`page-head${title ? '' : ' page-head--actions-only'}`}>
           {title && <div className="h1">{title}</div>}
           {actions && <div className="head-actions">{actions}</div>}
         </div>

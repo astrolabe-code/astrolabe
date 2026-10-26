@@ -153,7 +153,7 @@ export default function NotePage() {
 
   if (note.isError) {
     return (
-      <AppLayout title="笔记">
+      <AppLayout>
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
           {/* ★ 从搜索结果点进来时，索引可能比库慢半拍 ⇒ 明确告诉他"被移除了" ⚠ */}
           <div style={{ fontSize: 14, fontWeight: 600 }}>
@@ -178,7 +178,7 @@ export default function NotePage() {
 
   if (note.isLoading || !n) {
     return (
-      <AppLayout title="笔记">
+      <AppLayout>
         <div className="faint" style={{ fontSize: 13 }}>加载中…</div>
       </AppLayout>
     )
@@ -189,7 +189,10 @@ export default function NotePage() {
 
   return (
     <AppLayout
-      title={n.title || '（无标题）'}
+      /* ★★ 2026-10-26：**不再渲染页头大标题**（所有者：
+         「阅读页纸张上面有个大标题，去掉…解放这部分空间给纸张」）⚠
+         · · 标题通常已经在正文的 `# 一级标题` 里，重复一遍白占 80px ⚠
+         · · 右侧操作（章赞 / 编辑 / 删除）仍保留 ✅ */
       actions={
         <div className="flex items-center gap-2">
           {/* ① 章赞 */}

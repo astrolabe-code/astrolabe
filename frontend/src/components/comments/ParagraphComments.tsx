@@ -96,7 +96,10 @@ export default function ParagraphComments({
     limit: 50,
     order,
     // ⚠ 折叠态不拉（口径①）
-    enabled: false,
+    // ★★ 2026-10-24：**面板打开时才拉** —— 原来固定 false，
+    //    靠组件内部的 openPanel() 手动 refetch；面板改成外部受控后
+    //    那条链路断了 ⇒ 打开面板看不到原有段评（所有者实测）⚠
+    enabled: open,
   })
 
   // ★ 右键菜单：点别处 / 滚动 / Esc 都关掉
@@ -120,6 +123,12 @@ export default function ParagraphComments({
     setOpen(true)
     if (!comments.data) void comments.refetch()
   }
+
+  // ★ 外部受控打开（`panelOpen`）时，* 也把数据拉起来 ⚠
+  useEffect(() => {
+    if (open && !comments.data && !comments.isFetching) void comments.refetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const onContextMenu = (e: React.MouseEvent) => {
     // ★ 未登录 ⇒ 不拦截（* 原生菜单照常）⚠

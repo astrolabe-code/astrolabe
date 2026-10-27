@@ -1,5 +1,8 @@
 /**
- * ★★★ **导读进度**（`D123` · 2026-10-27）⚠
+ * ★★★ **导读路径**（`D123` 修正版 · 2026-10-27）⚠
+ *
+ * ⚠★ 改名的原因：上一版把它叫「导读进度」，显示「N / M 章」，
+ *   但那些数字其实是**作者的小结覆盖**，读者看了会以为是自己的进度 ⚠
  *
  * ## 所有者原话（逐字）
  *
@@ -44,42 +47,16 @@ export default function PathProgress({ projectRef, collapsed = 5 }: PathProgress
 
   if (pathQ.isLoading || total === 0) return null
 
-  const pct = Math.round((done / total) * 100)
   const shown = open ? items : items.slice(0, collapsed)
-  const allDone = done === total
 
   return (
     <div className="card" style={{ padding: '10px 12px', marginBottom: 12 }}>
       <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>导读进度</span>
-        <span className="faint" style={{ fontSize: 11.5 }}>
-          {done} / {total} 章
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>导读路径</span>
+        {/* ⚠ 这里显示的是「作者写了多少站」，⛔ 不是读者的进度 ⚠ */}
+        <span className="faint" style={{ fontSize: 11 }}>
+          {total} 站 · 已写 {done}
         </span>
-        {allDone && (
-          <span style={{ fontSize: 11, color: 'var(--ok)', marginLeft: 'auto' }}>
-            全部读完 ✅
-          </span>
-        )}
-      </div>
-
-      {/* 进度条 —— 看着它往前走，就是这套系统的"实时反馈" ⚠ */}
-      <div
-        style={{
-          height: 5,
-          borderRadius: 999,
-          background: 'var(--card-border)',
-          overflow: 'hidden',
-          marginBottom: 10,
-        }}
-      >
-        <div
-          style={{
-            width: `${pct}%`,
-            height: '100%',
-            background: 'var(--accent)',
-            transition: 'width .3s',
-          }}
-        />
       </div>
 
       <div className="flex flex-col gap-0.5">

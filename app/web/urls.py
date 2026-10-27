@@ -33,6 +33,7 @@ from web.views import (
     user_space,
     settings,
     site_config,
+    writing_progress,
 )
 
 # ⚠ 必须在 URL 解析之前注册
@@ -220,6 +221,13 @@ urlpatterns = [
         "projects/<project_ref:project_ref>/notes/",
         notes.collection,
         name="note-list",
+    ),
+    # ★★ 写作进度 = 节点覆盖率（`D123`）——
+    #   ⚠ 不能叫 `/progress/`：那个路径已经是「解析进度」（* 上传弹窗轮询用）⚠
+    path(
+        "projects/<project_ref:project_ref>/writing-progress/",
+        writing_progress.project_progress,
+        name="project-writing-progress",
     ),
     # ★★ 关键词联想（* 只提示关键词，⛔ 不直接进详情）⚠
     path("search/suggest/", notes.suggest, name="search-suggest"),

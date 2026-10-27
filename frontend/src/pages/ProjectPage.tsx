@@ -10,6 +10,7 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
+import WritingProgress from '../components/graph/WritingProgress'
 import { clearResume, markResume, readResume } from '../lib/resume'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
@@ -190,7 +191,10 @@ export default function ProjectPage() {
             overflow: 'hidden',
           }}
         >
-          {/* ★★★ 导读进度（`D123`）—— 「每天打开都能看见自己在往前写一本书」⚠ */}
+          {/* ★★★ 写作进度（覆盖率）—— 只有作者/协作者看得到（`D123`）⚠ */}
+          {canWrite && <WritingProgress projectRef={projectRef} />}
+
+          {/* ★★ 导读路径 —— 阅读顺序（* 读者看这个，⛔ 不是"进度"）⚠ */}
           <PathProgress projectRef={projectRef} />
 
           <div className="flex items-center justify-between mb-2.5" style={{ flexShrink: 0 }}>

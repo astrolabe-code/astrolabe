@@ -5,6 +5,7 @@ import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
+import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
@@ -81,6 +82,11 @@ export default function NoteEditPage() {
   const [isPublic, setIsPublic] = useState(true)
   const [err, setErr] = useState('')
   const [hint, setHint] = useState('')
+  // ★ 保存确认弹窗（`D112` 补）⚠
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [suggested, setSuggested] = useState('')
+  const [pendingText, setPendingText] = useState('')
   /** ★ 初值灌进编辑器**只做一次**（* 否则一改就重建编辑器、光标丢失）⚠ */
   const [ready, setReady] = useState(!editing)
   const editorApi = useRef<MilkdownEditorApi | null>(null)
@@ -112,7 +118,21 @@ export default function NoteEditPage() {
     else nav(`/p/${encodeURIComponent(projectRef)}`)
   }
 
-  const save = async () => {
+  /**
+   * ★★★ 点「保存」→ **先弹确认**（`D112` 补 · 2026-10-27）⚠
+   *
+   * 所有者原话（逐字）：
+   *   「**你那个写作页面，抖动太厉害了，不要每次输入都记录了，
+   *     否则遇到不兼容的浏览器就完蛋了。用户点击保存后，再弹出标题确认就好。**」
+   *
+   * ⚠ 为什么必须改：原来 `onChange` 每 300ms 把正文写回 state，
+   *   而编辑器是 `<MilkdownEditor initial={body}>`、`useEditor` 只依赖 `initial`
+   *   ⇒ **每敲几下就把编辑器销毁重建一次**（抖动的真正原因）⚠
+   *
+   * ⇒ 现在**写的时候一个字都不回写**，只在保存那一刻读一次正文，
+   *   顺手算出默认名字，弹窗里让人看一眼、可改 ✅
+   */
+  const requestSave = () => {
     setErr('')
     // ★★ 正文从**编辑器**读（* Milkdown 序列化结果），* 原样保存、⛔ 不 trim ⚠
     const text = editorApi.current?.getMarkdown() ?? body
@@ -128,12 +148,24 @@ export default function NoteEditPage() {
       setErr('缺少节点信息，无法新建笔记（请从节点面板进入）')
       return
     }
+    // ★ 默认名字：手写优先，否则按正文首行推导（`D112`）⚠
+    const auto = autoTitle(text)
+    setPendingText(text)
+    setSuggested(auto)
+    setDraftTitle(title.trim() || auto)
+    setConfirmOpen(true)
+  }
+
+  const save = async () => {
+    const text = pendingText
+    // ★ 名字和推导值一致 ⇒ 传空，让后端自己截（* 语义仍是「自动」）⚠
+    const finalTitle = draftTitle.trim() === suggested ? '' : draftTitle.trim()
     try {
       const data = editing
-        ? await update.mutateAsync({ kind, title, body: text, is_public: isPublic })
+        ? await update.mutateAsync({ kind, title: finalTitle, body: text, is_public: isPublic })
         : await create.mutateAsync({
             kind,
-            title,
+            title: finalTitle,
             body: text,
             node_id: nodeId,
             is_public: isPublic,
@@ -252,31 +284,14 @@ export default function NoteEditPage() {
           <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
             起个名字只是为了以后搜得到它；正文里的 <code>#</code> 才是章节标题。
           </div>
-          {/*
-            ★★★ 实时预览「不填会变成什么」（2026-10-27）⚠
-            · · 所有者：「真正的困难应该是取名困难」
-            · · 光写一行说明，用户仍要**猜**自己这篇会被叫成什么 —— 猜就要停下来想 ⚠
-            · · 边打字边显示 ⇒ 不满意就改，不用先保存再看效果 ✅
-            ⚠ 规则镜像后端 `_auto_title`（见 `components/notes/autoTitle.ts`）⚠
-          */}
-          {!title.trim() && body.trim() && (
-            <div
-              style={{
-                fontSize: 11.5,
-                marginTop: 6,
-                padding: '5px 9px',
-                borderRadius: 8,
-                background: 'var(--accent-dim)',
-                color: 'var(--text-sub)',
-                lineHeight: 1.6,
-              }}
-            >
-              不填名字的话，这篇会叫：
-              <b style={{ color: 'var(--text-main)', marginLeft: 4 }}>
-                {autoTitle(body) || '（正文为空）'}
-              </b>
-            </div>
-          )}
+          {/* ⚠★ 2026-10-27：**这里不再做实时预览** ⚠
+              · · 所有者：「你那个写作页面，抖动太厉害了，不要每次输入都记录了，
+                否则遇到不兼容的浏览器就完蛋了。用户点击保存后，再弹出标题确认就好。」
+              · · 根因：`onChange` 每 300ms 把正文写回 `body` state，
+                而编辑器是 `<MilkdownEditor initial={body}>`、`useEditor` 又只依赖 `initial`
+                ⇒ **每敲几下就把编辑器销毁重建一次** ⇒ 抖动 + 光标丢失 ⚠
+              · · 现在改成：**保存时才读正文、才推导名字**，并在弹窗里让人确认 ✅ */}
+
         </div>
 
         {/* ③ 正文：Milkdown 所见即所得（* 高度吃满页面，* 不再是弹窗里的小格子）⚠ */}
@@ -292,7 +307,6 @@ export default function NoteEditPage() {
               initial={body}
               apiRef={editorApi}
               onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
-              onChange={(md) => setBody(md)}
             />
           )}
           {hint && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{hint}</div>}
@@ -343,11 +357,79 @@ export default function NoteEditPage() {
           <Button onClick={back} disabled={busy}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} onClick={save}>
+          <Button variant="primary" loading={busy} onClick={requestSave}>
             {editing ? '保存' : '写下'}
           </Button>
         </div>
       </div>
+
+      {/*
+        ★★★ 保存确认（`D112` 补 · 2026-10-27）——
+        所有者：「用户点击保存后，再弹出标题确认就好。」
+        · · 写的时候**一个字都不回写**（那才是抖动的根源）
+        · · 到这一步才推导名字，让人看一眼、能改 ✅
+      */}
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title={editing ? '保存这篇笔记' : '记下这篇笔记'}
+        width={480}
+        footer={
+          <div className="flex items-center gap-2">
+            <div style={{ marginLeft: 'auto' }} />
+            <Button onClick={() => setConfirmOpen(false)} disabled={busy}>
+              再改改
+            </Button>
+            <Button variant="primary" loading={busy} onClick={() => void save()}>
+              确认{editing ? '保存' : '记下'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <div>
+            <label
+              className="block text-xs font-medium tracking-wide text-text-sub mb-1.5"
+              htmlFor="confirm-title"
+            >
+              名字（可改）
+            </label>
+            <input
+              id="confirm-title"
+              className="input"
+              maxLength={60}
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void save()
+                }
+              }}
+            />
+          </div>
+
+          {/* ★ 一眼看出「不改的话会叫什么」——⛔ 不给空值，永远有名字 ⚠ */}
+          <div
+            style={{
+              fontSize: 11.5,
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'var(--accent-dim)',
+              color: 'var(--text-sub)',
+              lineHeight: 1.7,
+            }}
+          >
+            留空则按正文首行自动取：
+            <b style={{ color: 'var(--text-main)', marginLeft: 4 }}>
+              {suggested || '（正文为空）'}
+            </b>
+            <div style={{ opacity: 0.75, marginTop: 2 }}>
+              名字只用于搜索列表和浏览器标签页；正文里的 <code>#</code> 才是章节标题。
+            </div>
+          </div>
+        </div>
+      </Modal>
     </AppLayout>
   )
 }

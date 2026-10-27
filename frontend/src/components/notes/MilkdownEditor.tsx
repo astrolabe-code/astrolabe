@@ -156,8 +156,13 @@ export default function MilkdownEditor({
   /**
    * ★★ 正文变化时回调（2026-10-27）⚠
    *
-   * 用途：编辑页「不填名字会叫什么」的**实时预览** —— 所有者：
-   *   「**真正的困难应该是取名困难**」
+   * ⚠⚠ **危险 API，接之前先看这段** ⚠⚠
+   *
+   * ```\n   * 错误用法（2026-10-27 踩过，表现为「写作页面抖动太厉害」）：\n   *   <MilkdownEditor initial={body} onChange={setBody} />\n   *   ⇒ body 一变 ⇒ initial 变 ⇒ useEditor 的依赖变 ⇒ **编辑器被销毁重建**\n   *   ⇒ 每敲几下抖一次、光标乱跳 ⚠\n   * ```\n
+   * ✅ 正确用法：**只在 `initial` 不随 state 变化时**接（例如独立的预览面板）。
+   * 需要「正文 → 外层」的场合，改成**保存时读一次** `apiRef.current.getMarkdown()`。
+   *
+   * 原用途（* 已被上面这条取代）：编辑页「不填名字会叫什么」的实时预览。
    * ⚠ 只在**防抖 300ms** 后触发一次，⛔ 不是每次击键都回调（序列化整篇很贵）⚠
    */
   onChange?: (markdown: string) => void

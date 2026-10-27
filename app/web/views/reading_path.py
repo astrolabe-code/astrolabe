@@ -33,6 +33,7 @@ from graph import kinds
 from graph import scope
 from web.http import fail, ok, read_json
 from web.permissions import can_edit, can_view, current_user, get_project
+from core.access import can_edit_project
 
 #: ★ 路径长度上限（* 一批才展示十几个，* 200 条足够）⚠
 MAX_PATH_ITEMS = 200
@@ -43,9 +44,36 @@ def _readable_nodes(project: Project):
     return scope.readable_nodes_of(project.project_ref)
 
 
-def _payload(project: Project) -> dict:
-    """★★★ 路径响应（* `D107`：* 失效项进 `stale`，* ⛔ 不卡住）⚠"""
+def _summary_vids(project: Project, viewer) -> set[int]:
+    """★ 这条路径上**已经写过「小结」**的节点（`D123` · 2026-10-27）⚠
+
+    ## 为什么只认 `summary`
+
+    ```\n    · 所有者：「总结是对前面4个标签都理解后做的」\n    · 五类里只有「小结」是**对象视角**（这段代码是什么）\n      ⇒ 它才是"这一站我读懂了"的信号 ⚠\n    ```\n
+    ⚠ 可见性按**看的人**算：外人只数公开的小结，作者/协作者连私有的一起数 ⚠
+    """
+    from core.models import Note
+
+    qs = Note.objects.filter(
+        project=project,
+        kind="summary",
+        state="active",  # ⚠ 取的是 `Note.state` 的正常态（不是 hidden）
+        deleted_at__isnull=True,
+    )
+    if not (viewer is not None and getattr(viewer, "is_authenticated", False)
+            and can_edit_project(viewer, project)):
+        qs = qs.filter(is_public=True)
+    return {int(v) for v in qs.values_list("node_vid", flat=True) if v}
+
+
+def _payload(project: Project, viewer=None) -> dict:
+    """★★★ 路径响应（* `D107`：* 失效项进 `stale`，* ⛔ 不卡住）⚠
+
+    ★★ 2026-10-27（`D123`）：每站带 `has_summary`，并给出 `done` / `total`
+      ⇒ 前端直接显示「3 / 4 章完成」，不需要自己拼数据 ⚠
+    """
     by_vid = {n.stable_vid: n for n in _readable_nodes(project)}
+    done_vids = _summary_vids(project, viewer)
     items, stale = [], []
     for vid in project.reading_path or []:
         node = by_vid.get(int(vid))
@@ -62,9 +90,12 @@ def _payload(project: Project) -> dict:
                 "file_path": node.file_path,
                 "line": node.line,
                 "line_end": node.line_end,
+                # ★ 这一站写过小结了吗（`D123` 章节进度）⚠
+                "has_summary": node.stable_vid in done_vids,
             }
         )
-    return {"total": len(items), "items": items, "stale": stale}
+    done = sum(1 for it in items if it["has_summary"])
+    return {"total": len(items), "items": items, "stale": stale, "done": done}
 
 
 def _validate(project: Project, vids) -> tuple[list[int] | None, str | None]:
@@ -119,7 +150,7 @@ def collection(request: HttpRequest, project_ref: str):
     if request.method == "GET":
         if not can_view(request, project):
             return fail("没有阅读权限", 403, code="forbidden")
-        return ok(_payload(project))
+        return ok(_payload(project, viewer=request.user))
 
     # ---- 以下都要能编辑 ----
     user = current_user(request)
@@ -137,7 +168,7 @@ def collection(request: HttpRequest, project_ref: str):
             return fail("vid 必须是整数", 400, code="bad_vid")
         current = list(project.reading_path or [])
         if vid in current:
-            return ok(_payload(project))  # ★ 已在路径里 ⇒ 幂等不动
+            return ok(_payload(project, viewer=request.user))  # ★ 已在路径里 ⇒ 幂等不动
         current.append(vid)
         clean, err = _validate(project, current)
         if err is not None:

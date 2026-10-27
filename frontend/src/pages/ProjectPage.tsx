@@ -9,6 +9,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
+import PathProgress from '../components/graph/PathProgress'
 import { clearResume, markResume, readResume } from '../lib/resume'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
@@ -189,6 +190,9 @@ export default function ProjectPage() {
             overflow: 'hidden',
           }}
         >
+          {/* ★★★ 导读进度（`D123`）—— 「每天打开都能看见自己在往前写一本书」⚠ */}
+          <PathProgress projectRef={projectRef} />
+
           <div className="flex items-center justify-between mb-2.5" style={{ flexShrink: 0 }}>
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>节点</span>
             <span className="faint" style={{ fontSize: 11 }}>

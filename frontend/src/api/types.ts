@@ -885,6 +885,8 @@ export interface ReadingPathItem {
   file_path: string
   line: number
   line_end: number
+  /** ★★ 这一站已经写过「小结」了吗（`D123`）⚠ */
+  has_summary?: boolean
 }
 
 /** GET /api/projects/<ref>/reading-path/ */
@@ -893,6 +895,8 @@ export interface ReadingPathData {
   items: ReadingPathItem[]
   /** ★ `D107`：已不在项目图里的 vid（* 前端提示用户处理，* ⛔ 不自动删）*/
   stale: number[]
+  /** ★★ 已写过「小结」的站数（`D123` 章节进度）⚠ */
+  done?: number
 }
 
 

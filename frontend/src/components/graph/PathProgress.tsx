@@ -23,9 +23,10 @@
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight } from 'lucide-react'
 
 import { useReadingPath } from '../../query/readingPath'
+import { useCollapsed } from '../../lib/useCollapsed'
 
 interface PathProgressProps {
   projectRef: string
@@ -35,6 +36,8 @@ interface PathProgressProps {
 
 export default function PathProgress({ projectRef, collapsed = 5 }: PathProgressProps) {
   const nav = useNavigate()
+  // ★ 折叠状态按项目记 ⚠
+  const { collapsed: folded, toggle } = useCollapsed(`path:${projectRef}`)
   const pathQ = useReadingPath(projectRef)
   const [open, setOpen] = useState(false)
 
@@ -51,14 +54,34 @@ export default function PathProgress({ projectRef, collapsed = 5 }: PathProgress
 
   return (
     <div className="card" style={{ padding: '10px 12px', marginBottom: 12 }}>
-      <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+      <button
+        type="button"
+        onClick={toggle}
+        title={folded ? '展开' : '收起'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          width: '100%',
+          padding: 0,
+          marginBottom: folded ? 0 : 8,
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          fontFamily: 'var(--font-ui)',
+          textAlign: 'left',
+        }}
+      >
+        {folded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>导读路径</span>
         {/* ⚠ 这里显示的是「作者写了多少站」，⛔ 不是读者的进度 ⚠ */}
-        <span className="faint" style={{ fontSize: 11 }}>
+        <span className="faint" style={{ fontSize: 11, marginLeft: 'auto' }}>
           {total} 站 · 已写 {done}
         </span>
-      </div>
+      </button>
 
+      {folded ? null : (
+      <>
       <div className="flex flex-col gap-0.5">
         {shown.map((it) => {
           const isNext = it.vid === nextVid
@@ -133,6 +156,8 @@ export default function PathProgress({ projectRef, collapsed = 5 }: PathProgress
         >
           {open ? '收起' : `展开全部 ${items.length} 站`}
         </button>
+      )}
+      </>
       )}
     </div>
   )

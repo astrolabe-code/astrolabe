@@ -17,6 +17,9 @@
  * 灵光 / 质疑 / 困惑 / 踩坑是「我」视角，写了也不算 ⚠
  */
 import { useQuery } from '@tanstack/react-query'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+
+import { useCollapsed } from '../../lib/useCollapsed'
 
 import { apiGet } from '../../api/client'
 import { unwrap } from '../../api/errors'
@@ -58,6 +61,8 @@ const ROWS: { key: keyof Bucket; label: string }[] = [
 ]
 
 export default function WritingProgress({ projectRef }: { projectRef: string }) {
+  // ★ 折叠状态按项目记（* 收起后下次打开还是收着的）⚠
+  const { collapsed, toggle } = useCollapsed(`wp:${projectRef}`)
   const q = useWritingProgress(projectRef)
   if (q.isLoading || !q.data) return null
 
@@ -68,16 +73,39 @@ export default function WritingProgress({ projectRef }: { projectRef: string }) 
 
   return (
     <div className="card" style={{ padding: '10px 12px', marginBottom: 12 }}>
-      <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+      {/* ★ 整行可点 ⇒ 折叠（`D126` 后加：两张卡占的空间太多）⚠ */}
+      <button
+        type="button"
+        onClick={toggle}
+        title={collapsed ? '展开' : '收起'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          width: '100%',
+          padding: 0,
+          marginBottom: collapsed ? 0 : 8,
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          fontFamily: 'var(--font-ui)',
+          textAlign: 'left',
+        }}
+      >
+        {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>写作进度</span>
-        <span className="faint" style={{ fontSize: 11 }}>
-          按「小结」算
-        </span>
+        {!collapsed && (
+          <span className="faint" style={{ fontSize: 11 }}>
+            按「小结」算
+          </span>
+        )}
         <span className="faint" style={{ fontSize: 11.5, marginLeft: 'auto' }}>
           {summary.total} / {nodes.total}
         </span>
-      </div>
+      </button>
 
+      {collapsed ? null : (
+      <>
       <div className="flex flex-col gap-1.5">
         {ROWS.map((r) => {
           const total = nodes[r.key]
@@ -131,6 +159,8 @@ export default function WritingProgress({ projectRef }: { projectRef: string }) 
         还有 <b style={{ color: 'var(--text-main)' }}>{nodes.total - summary.total}</b> 个节点没写小结
         {noted.total > summary.total && ` · ${noted.total} 个节点有笔记`}
       </div>
+      </>
+      )}
     </div>
   )
 }

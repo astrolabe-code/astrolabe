@@ -192,25 +192,29 @@
   padding-left: 0;
   padding-right: 0;
 }
+/* ⚠★ 2026-10-27：左边那 2.5em 本来是给 **块手柄**（`+` / `⋮⋮`）让位的，
+ *   手柄关掉后它只会让正文比「名字」右缩 20px（实测很别扭）⇒ 归零，让两者左对齐 ✅ */
 #root .milkdown-editor .milkdown .ProseMirror {
-  padding-left: 2.5em;
-  padding-right: 0.5em;
-}
-@media (max-width: 640px) {
-  #root .milkdown-editor .milkdown .ProseMirror {
-    padding-left: 1.8em;
-    padding-right: 0.25em;
-  }
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* ===== 笔记编辑页（* 弹窗改成整页后，正文要吃掉页面高度）===== */
 .note-edit-card { padding: 20px 22px 16px; }
+/* ★★★ 2026-10-27（`D129`）：**正文不再画边框** ——
+ * 所有者要的是"铺在纸上的稿纸"，不是一个输入框（参照 CSDN 的编辑区）⚠
+ * ⚠ 上内边距从 Crepe 的 60px 收到 10px：那块空间本是给浮动工具栏的，
+ *   但留 60px 会让第一行字悬在半空（实测观感很空）⚠ */
 .note-edit-card .milkdown-editor {
   min-height: 56vh;
-  border: 1px solid var(--card-border);
-  border-radius: 8px;
-  padding: 6px 4px;
-  background: var(--card);
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+.note-edit-card .milkdown .ProseMirror {
+  padding-top: 10px;
+  padding-bottom: 24px;
 }
 @media (max-width: 640px) {
   .note-edit-card { padding: 14px 12px 12px; }
@@ -493,4 +497,37 @@ a.profile-avatar:active {
   }
   .note-rail-card { flex: 1 1 200px; }
   .note-foot { margin: 18px -12px -14px; padding: 12px; }
+}
+
+
+/* ============================================================================
+   ★★★ 写作页底部常驻栏（`D129` · 2026-10-27）⚠
+
+   所有者：「就按这个改，要加字数统计，停止输入一秒后计数就行，不要弄出抖动」
+
+   · · 元信息（类型 / 公开）从正文上方**沉到这里**（CSDN 也是这么放的）
+   · · `sticky bottom: 0` ⇒ 正文再长也不用滚到底找按钮
+   · · 负边距是为了**贴到卡片边缘**（与 `.note-edit-card` 的内边距对齐）
+   ========================================================================== */
+.note-edit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px -22px -16px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--card-border);
+  background: var(--card);
+}
+
+@media (max-width: 720px) {
+  /* ⚠ 移动端卡片内边距是 14/12 ⇒ 负边距要跟着变，否则会横向溢出 ⚠ */
+  .note-edit-bar {
+    margin: 14px -12px -12px;
+    padding: 9px 12px;
+    gap: 6px;
+  }
 }

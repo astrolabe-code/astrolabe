@@ -200,6 +200,14 @@ function Inner({
       const crepe = new Crepe({
         root,
         defaultValue: initial,
+        // ★★★ **关掉块手柄**（2026-10-27）⚠
+        //   · · 所有者：「正文每段前有个加号和六个点是什么东西？」→「关掉吧，obsidian 都没有这东西。」
+        //   · · 那两样是 Crepe 的 `BlockEdit`（`+` 插入块 / `⋮⋮` 拖动排序），
+        //     只在光标所在块旁淡入（实测 opacity 0 → 1）⚠
+        //   · · ⛔ 读者页（`MilkdownView`）本来就关着它 —— 这里补齐，编辑页也不要 ✅
+        features: {
+          [CrepeFeature.BlockEdit]: false,
+        },
         // ★★★ **编辑器保留 CodeMirror**（2026-10-24）⚠
         //   · · CM 的 `basicSetup` 自带行号（lineNumbers）✅
         //   · · 但默认 `languages: []` ⇒ 没有语法高亮 ⇒ 这里补上语言包

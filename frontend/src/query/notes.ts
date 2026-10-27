@@ -94,6 +94,8 @@ export interface UpdateNoteBody {
   body?: string
   card_skin?: string
   is_public?: boolean
+  /** ★★ 重挂锚点（`D125`）—— stable_vid；⛔ 不是主键、不是 uid ⚠ */
+  node_id?: number
 }
 
 /**

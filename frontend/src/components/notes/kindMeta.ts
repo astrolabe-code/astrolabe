@@ -3,6 +3,7 @@ import {
   CircleHelp,
   Lightbulb,
   ListChecks,
+  Scale,
   TriangleAlert,
   Zap,
 } from 'lucide-react'
@@ -40,8 +41,25 @@ export const KIND_META: Record<NoteKind, KindMeta> = {
   // ★★★ 五色：* 灵感=琥珀、* 质疑=蓝、* 困惑=紫、* 踩坑=红、* 小结=绿 ⚠
   //   · · ★ 深浅两套主题下都够亮（* 饱和度高、* 不依赖 --accent）✅
   flash: { label: '灵光一闪', icon: Lightbulb, hint: '突然明白的一件事', color: '#f59e0b' },
-  question: { label: '质疑', icon: CircleHelp, hint: '这里为什么要这样写？', color: '#3b82f6' },
-  confuse: { label: '困惑', icon: CircleHelp, hint: '看不懂，先记下来', color: '#a855f7' },
+  // ★★★ 2026-10-27：**质疑 ≠ 困惑**（所有者原话，逐字）⚠
+  //   「**质疑是凭什么我这样写代码不行，而困惑是为什么要这样写，我看不懂。**」
+  //   ⇒ 差别在**写的人有没有立场**：
+  //      · 质疑 = 有立场，能说出更好的写法 ⇒ 要作者**回应/辩护**
+  //      · 困惑 = 没立场，只是缺信息   ⇒ 只要作者**解释一句**
+  //   ⚠ 旧版两条 hint 都写成「为什么」，图标又都是 CircleHelp
+  //     ⇒ 界面上这两类根本分不开（数据里 question 长期 0 篇）⚠
+  question: {
+    label: '质疑',
+    icon: Scale,
+    hint: '我觉得这里该那样写 —— 凭什么非要这样？',
+    color: '#3b82f6',
+  },
+  confuse: {
+    label: '困惑',
+    icon: CircleHelp,
+    hint: '这段在干什么 —— 暂时看不懂',
+    color: '#a855f7',
+  },
   pitfall: { label: '踩坑', icon: TriangleAlert, hint: '这里容易出错', color: '#ef4444' },
   summary: { label: '小结', icon: ListChecks, hint: '串起一片知识的总结', color: '#10b981' },
 }

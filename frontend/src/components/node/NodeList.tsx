@@ -26,6 +26,13 @@ interface NodeListProps {
   onSelect: (node: GraphNode) => void
   /** ★ `?think=1`：* 列表就绪后自动选中第一个节点（* 让思考白板有节点可开）⚠ */
   autoSelectFirst?: boolean
+  /**
+   * ★★ `?node=<vid>` 深链（`D120` · 2026-10-27）⚠
+   *
+   * 用途：「继续上次」跳回来时，自动选中那个节点 ⚠
+   * ⚠ 用 **stable_vid**（和 `reading_path` 一致），⛔ 不是自增 id、也不是 uid ⚠
+   */
+  selectVid?: number
 }
 
 const PAGE = 100
@@ -35,6 +42,7 @@ export default function NodeList({
   selectedUid,
   onSelect,
   autoSelectFirst,
+  selectVid,
 }: NodeListProps) {
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
@@ -61,6 +69,32 @@ export default function NodeList({
       )
     })
   }, [items, q, kind])
+
+  /**
+   * ★★ `selectVid`：把深链指向的节点选中（`D120`）⚠
+   *
+   * ⚠ 列表是**分页**的（`PAGE=100`）⇒ 目标可能还没加载
+   *   ⇒ 找不到就扩大 limit 重取一次（* 上限 2000，防止大项目拉全量）⚠
+   * ⚠ 只做一次（`ref` 守门）—— 之后用户怎么点都不干预 ✅
+   */
+  const deepLinkDone = useRef(false)
+  useEffect(() => {
+    if (!selectVid || deepLinkDone.current) return
+    if (nodes.isLoading) return
+    const hit = items.find((n) => n.vid === selectVid)
+    if (hit) {
+      deepLinkDone.current = true
+      if (hit.uid !== selectedUid) onSelect(hit)
+      return
+    }
+    // ★ 还没加载到 ⇒ 扩大一次（* 最多到 2000）⚠
+    if (items.length < total && limit < 2000) {
+      setLimit(Math.min(2000, Math.max(total, limit * 4)))
+    } else {
+      // ★ 图里压根没这个 vid（* 代码变了 / 存档过期）⇒ 放弃，⛔ 别无限重试 ⚠
+      deepLinkDone.current = true
+    }
+  }, [selectVid, items, total, limit, nodes.isLoading, onSelect, selectedUid])
 
   // ★★ `autoSelectFirst`：* 只在**第一次**列表就绪时选一个，* 之后不再干预用户 ⚠
   const autoPicked = useRef(false)

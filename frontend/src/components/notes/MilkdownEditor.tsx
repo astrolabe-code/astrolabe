@@ -2,6 +2,7 @@ import { Crepe, CrepeFeature } from '@milkdown/crepe'
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
+import { useRef } from 'react'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
 // ★ 排版（标题字号 / 段落 / 列表 / 表格…）都在这份里，⚠ 少引它标题就全是同字号
@@ -145,16 +146,30 @@ export default function MilkdownEditor({
   initial,
   apiRef,
   onRejectUpload,
+  onChange,
 }: {
   initial: string
   /** ★ 父组件的 ref —— 编辑器就绪后把句柄塞进去（* 保存时读它）⚠ */
   apiRef: React.MutableRefObject<MilkdownEditorApi | null>
   /** ★ 有人拖/粘图片进来时通知外层（* 站点不支持上传）⚠ */
   onRejectUpload?: () => void
+  /**
+   * ★★ 正文变化时回调（2026-10-27）⚠
+   *
+   * 用途：编辑页「不填名字会叫什么」的**实时预览** —— 所有者：
+   *   「**真正的困难应该是取名困难**」
+   * ⚠ 只在**防抖 300ms** 后触发一次，⛔ 不是每次击键都回调（序列化整篇很贵）⚠
+   */
+  onChange?: (markdown: string) => void
 }) {
   return (
     <MilkdownProvider>
-      <Inner initial={initial} apiRef={apiRef} onRejectUpload={onRejectUpload} />
+      <Inner
+        initial={initial}
+        apiRef={apiRef}
+        onRejectUpload={onRejectUpload}
+        onChange={onChange}
+      />
     </MilkdownProvider>
   )
 }
@@ -163,11 +178,18 @@ function Inner({
   initial,
   apiRef,
   onRejectUpload,
+  onChange,
 }: {
   initial: string
   apiRef: React.MutableRefObject<MilkdownEditorApi | null>
   onRejectUpload?: () => void
+  onChange?: (markdown: string) => void
 }) {
+  // ⚠ 用 ref 存回调：`useEditor` 的 deps 里只有 `initial`
+  //   ⇒ 把 `onChange` 放进依赖会**重建编辑器**（光标丢失）⚠
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
   useEditor(
     (root) => {
       const crepe = new Crepe({
@@ -201,6 +223,18 @@ function Inner({
       //   · · 编辑器的高亮/行号分别来自 CM 语言包与 `basicSetup` ⚠
       // ★ 句柄直接塞进父组件的 ref（* 不靠回调，* 避免时序问题）⚠
       apiRef.current = { getMarkdown: () => crepe.getMarkdown() }
+
+      // ★★ 正文变化 ⇒ 防抖 300ms 后回调（2026-10-27）⚠
+      //   · · ⛔ 不做防抖的话，每敲一个字都要 `getMarkdown()` 序列化整篇 ⚠
+      if (onChangeRef.current) {
+        let timer: ReturnType<typeof setTimeout> | null = null
+        crepe.on((listener) => {
+          listener.markdownUpdated((_ctx, markdown) => {
+            if (timer) clearTimeout(timer)
+            timer = setTimeout(() => onChangeRef.current?.(markdown), 300)
+          })
+        })
+      }
       return crepe.editor
     },
     [initial],

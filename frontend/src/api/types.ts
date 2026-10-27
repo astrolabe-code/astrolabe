@@ -637,6 +637,18 @@ export interface Note {
   node_id: number
   kind: NoteKind
   title: string
+  /** ★★ 编号 = 该作者的第几篇（`D113`）；阅读页显示成 №001 ⚠ */
+  seq: number
+  /** ★★★ 锚点快照（`D125`）—— 阅读页左栏显示「挂在哪」⚠ */
+  node_snapshot?: {
+    vid: number
+    name: string
+    kind: string
+    qname: string
+    file_path: string
+    line: number
+    line_end: number
+  }
   body: string
   card_skin: string
   is_public: boolean
@@ -916,6 +928,8 @@ export interface SpaceNote extends SpaceItemBase {
   type: 'note'
   ref: string
   title: string
+  /** ★★ 编号 = 该作者的第几篇（`D113`）⚠ */
+  seq: number
   kind: NoteKind
   excerpt: string
   is_public: boolean

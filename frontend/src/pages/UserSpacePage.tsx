@@ -6,7 +6,7 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import ProfileHeader from '../components/profile/ProfileHeader'
-import { kindMeta } from '../components/notes/kindMeta'
+import { kindMeta, KIND_META, NOTE_KINDS } from '../components/notes/kindMeta'
 import { useMe } from '../hooks/useMe'
 import {
   useUserActivity,
@@ -50,6 +50,20 @@ function SpaceNoteRow({ item }: { item: SpaceNote }) {
       onClick={open}
     >
       <div className="flex items-center gap-2 flex-wrap">
+        {/* ★ 编号（`D113`）—— 让「这是第几篇」在列表里也看得见 ⚠ */}
+        <span
+          style={{
+            fontSize: 10.5,
+            lineHeight: '16px',
+            padding: '0 5px',
+            borderRadius: 4,
+            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+            color: 'var(--text-faint)',
+            border: '1px solid var(--card-border)',
+          }}
+        >
+          №{String(item.seq || 0).padStart(3, '0')}
+        </span>
         <span
           style={{
             fontSize: 10.5,
@@ -140,9 +154,11 @@ export default function UserSpacePage() {
 
   const [tab, setTab] = useState<Tab>('home')
   const [sort, setSort] = useState<'new' | 'hot'>('new')
+  // ★★★ 2026-10-27：**按类别筛**（设计理念：五个盒子要能聚合，不只是一个颜色）⚠
+  const [kind, setKind] = useState<string>('all')
 
   const space = useUserSpace(username)
-  const notes = useUserNotes(username, sort, tab === 'notes')
+  const notes = useUserNotes(username, sort, kind, tab === 'notes')
   const projects = useUserProjects(username, tab === 'projects')
   const activity = useUserActivity(username, tab === 'home')
 
@@ -241,6 +257,35 @@ export default function UserSpacePage() {
             )
           })}
 
+          {tab === 'notes' && (
+            <div className="flex items-center gap-1" style={{ marginLeft: '10px' }}>
+              {(['all', ...NOTE_KINDS] as const).map((k) => {
+                const active = kind === k
+                const color = k === 'all' ? 'var(--text-sub)' : KIND_META[k].color
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setKind(k)}
+                    style={{
+                      padding: '3px 9px',
+                      fontSize: 11,
+                      lineHeight: '17px',
+                      fontFamily: 'var(--font-ui)',
+                      whiteSpace: 'nowrap',
+                      color: active ? color : 'var(--text-faint)',
+                      background: active ? `${k === 'all' ? 'transparent' : color + '1a'}` : 'transparent',
+                      border: `1px solid ${active ? color : 'var(--card-border)'}`,
+                      borderRadius: 999,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {k === 'all' ? '全部' : KIND_META[k].label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {tab === 'notes' && (
             <div className="flex items-center gap-1" style={{ marginLeft: 'auto' }}>
               {(['new', 'hot'] as const).map((s) => (

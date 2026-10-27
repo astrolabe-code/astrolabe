@@ -10,6 +10,8 @@ import { useMe } from '../hooks/useMe'
 import { SPA_LINKS } from '../legacy'
 import { useInView } from '../hooks/useInView'
 import { useProjects } from '../query/projects'
+import { agoText, clearResume, readResume, type ResumePoint } from '../lib/resume'
+import { useSiteConfig } from '../query/siteConfig'
 import { useSearchSuggest } from '../query/notes'
 import DemoWindow from '../components/DemoWindow'
 
@@ -68,6 +70,20 @@ export default function Home() {
   const suggestItems = suggest.data || []
 
   const user = me ?? ({ authenticated: false } as Me)
+
+  /**
+   * ★★★ 「继续上次」提示条（`D120` · 2026-10-27）⚠
+   *
+   * ```\n   * ⛔ 不强制跳转 —— 游戏只有一个进程，网站不是：打开网站可能想干别的事\n   * ✅ 只给一条「继续 →」，点不点由你\n   * ```\n
+   * ⚠ `ui.resume_dwell_seconds = 0` ⇒ 关闭这个功能（连提示条都不出）⚠
+   */
+  const siteCfg = useSiteConfig()
+  const resumeEnabled = Number(siteCfg.data?.resumeDwellSeconds ?? 20) > 0
+  const [resume, setResume] = useState<ResumePoint | null>(null)
+  useEffect(() => {
+    if (!resumeEnabled) return
+    setResume(readResume())
+  }, [resumeEnabled])
   const name = user.is_staff ? '老大' : user.username || ''
 
   // 首页搜索:后端无 q 参数,沿用旧站语义在前端过滤(name/desc/owner)
@@ -97,6 +113,67 @@ export default function Home() {
 
   return (
     <div className="page">
+      {/* ★★ 「继续上次」提示条 —— 只提示，不劫持导航 ⚠ */}
+      {resume && resumeEnabled && (
+        <div
+          className="card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '9px 14px',
+            marginBottom: 14,
+            fontSize: 12.5,
+            flexWrap: 'wrap',
+            background: 'var(--accent-dim)',
+          }}
+        >
+          <span style={{ color: 'var(--text-sub)' }}>
+            上次看到
+            <b style={{ color: 'var(--text-main)', margin: '0 4px' }}>
+              {resume.name || '某个节点'}
+            </b>
+            <span className="faint">（{agoText(resume.at)}）</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => navigate(`/p/${encodeURIComponent(resume.ref)}?node=${resume.vid}`)}
+            style={{
+              marginLeft: 'auto',
+              padding: '3px 12px',
+              fontSize: 12,
+              fontFamily: 'var(--font-ui)',
+              color: '#fff',
+              background: 'var(--accent)',
+              border: 'none',
+              borderRadius: 999,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            继续 →
+          </button>
+          <button
+            type="button"
+            title="不再提示"
+            onClick={() => {
+              clearResume()
+              setResume(null)
+            }}
+            style={{
+              padding: '3px 8px',
+              fontSize: 11.5,
+              fontFamily: 'var(--font-ui)',
+              color: 'var(--text-faint)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            忽略
+          </button>
+        </div>
+      )}
       <div className="hero">
         <div className="rise">
           <div className="kicker">Source Graph &amp; Notes</div>

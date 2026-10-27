@@ -32,6 +32,7 @@ from web.views import (
     review,
     user_space,
     settings,
+    site_config,
 )
 
 # ⚠ 必须在 URL 解析之前注册
@@ -53,6 +54,8 @@ urlpatterns = [
     path("auth/login/", auth.login, name="auth-login"),
     path("auth/register/", auth.register, name="auth-register"),
     path("auth/providers/", auth.providers, name="auth-providers"),
+    # ★★ 前台可读的站点配置（白名单 · `D120`）⚠
+    path("site-config/", site_config.site_config, name="site-config"),
     path("auth/me/", auth.me, name="auth-me"),
     path("auth/logout/", auth.logout, name="auth-logout"),
     path("auth/logout-all/", auth.logout_all, name="auth-logout-all"),

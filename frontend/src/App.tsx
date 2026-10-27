@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import SkyFx from './components/SkyFx'
 import TopNav from './components/TopNav'
+import QuickNote from './components/notes/QuickNote'
 import Home from './pages/Home'
 import Workspace from './pages/Workspace'
 import SearchPage from './pages/SearchPage'
@@ -77,6 +78,8 @@ export default function App() {
   return (
     <>
       <TopNav />
+      {/* ★★ 顺手写（`D125` 配套）—— 全局常驻：右下角按钮 + 快捷键 n ⚠ */}
+      <QuickNote />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/workspace" element={<Workspace />} />

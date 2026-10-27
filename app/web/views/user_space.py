@@ -59,6 +59,8 @@ def _note_item(n: Note, likes: dict) -> dict:
         "type": "note",
         "ref": n.ref,
         "title": n.title or "",
+        # ★★ 编号（`D113`）—— 列表里也显示 №，让「卡片盒身份」贯穿全程 ⚠
+        "seq": int(n.seq or 0),
         "kind": n.kind or "",
         "excerpt": (n.body or "").strip().replace("\n", " ")[:140],
         "is_public": bool(n.is_public),
@@ -131,13 +133,23 @@ def detail(request: HttpRequest, username: str) -> JsonResponse:
 
 @require_http_methods(["GET"])
 def notes(request: HttpRequest, username: str) -> JsonResponse:
-    """★ `GET /api/u/<username>/notes/?sort=new|hot&cursor=&limit=` ⚠"""
+    """★ `GET /api/u/<username>/notes/?sort=new|hot&kind=&cursor=&limit=` ⚠
+
+    ★★ `kind` 过滤（2026-10-27 · 设计理念配套）⚠
+      · · 五个类别的价值是**能把同类碎片聚起来**；
+        只能看不能聚合的话，它就退化成"给碎片涂了个颜色" ⚠
+    """
     user = _resolve(username)
     if user is None:
         return fail("用户不存在", 404, code="not_found")
 
     is_self = _self_viewer(request, user)
     qs = profiles.visible_notes_qs(user, is_self=is_self).select_related("project")
+
+    # ★ 按类别筛（* 空值 / all ⇒ 不筛）⚠
+    kind = (request.GET.get("kind") or "").strip()
+    if kind and kind != "all":
+        qs = qs.filter(kind=kind)
 
     sort = (request.GET.get("sort") or "new").strip().lower()
     if sort == "hot":

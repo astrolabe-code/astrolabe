@@ -41,12 +41,14 @@ function useSpaceFeed(
 export function useUserNotes(
   username?: string | null,
   sort: 'new' | 'hot' = 'new',
+  kind: string = '',
   enabled = true,
 ) {
+  const k = kind && kind !== 'all' ? `&kind=${encodeURIComponent(kind)}` : ''
   return useSpaceFeed(
-    ['user-notes', username, sort],
+    ['user-notes', username, sort, kind],
     (cursor) =>
-      `/api/u/${encodeURIComponent(username!)}/notes/?sort=${sort}&cursor=${encodeURIComponent(cursor)}`,
+      `/api/u/${encodeURIComponent(username!)}/notes/?sort=${sort}${k}&cursor=${encodeURIComponent(cursor)}`,
     Boolean(username) && enabled,
   )
 }

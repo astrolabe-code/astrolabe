@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
-import { useNote } from '../query/notes'
+import { useNote, useUpdateNote } from '../query/notes'
 import { useProject } from '../query/projects'
 import { useMe } from '../hooks/useMe'
 import AppLayout from '../components/AppLayout'
@@ -12,9 +12,29 @@ import LikeButton from '../components/likes/LikeButton'
 import CommentSection from '../components/comments/CommentSection'
 import ParagraphComments from '../components/comments/ParagraphComments'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
+import AnchorPicker from '../components/notes/AnchorPicker'
 import type { SelectionInfo } from '../components/notes/MilkdownView'
 import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
+
+/** 从正文提取目录（`D114`）：只认 # / ## / ###，名字标题不参与 ⚠ */
+function extractToc(body: string): { level: number; text: string }[] {
+  const out: { level: number; text: string }[] = []
+  for (const raw of (body || '').split('\n')) {
+    const m = /^(#{1,3})\s+(.+)$/.exec(raw.trim())
+    if (!m) continue
+    const text = m[2].replace(/[*`_~]/g, '').trim()
+    if (text) out.push({ level: m[1].length, text })
+  }
+  return out
+}
+
+/** 标题字号按长度分档（`D112`⑥ 实测：25 字 22px = 624px，可用 712px）⚠ */
+function titleSize(len: number): number {
+  if (len <= 12) return 26
+  if (len <= 18) return 24
+  return 22
+}
 
 /**
  * ★ 笔记阅读页（`F3` · `/p/:projectRef/notes/:noteId`）
@@ -105,8 +125,11 @@ export default function NotePage() {
   // ★ 面板贴着哪个位置弹出（* 选区 / 气泡的视口矩形）⚠
   const [panelAnchor, setPanelAnchor] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   const [moderating, setModerating] = useState(false)
+  const [anchorOpen, setAnchorOpen] = useState(false)
 
   const n = note.data?.note
+  // ★★ 改锚点用（`D125`）—— 必须放在 `n` 之后（* 它要 `n.ref`）⚠
+  const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
   const activeBlock = blocks.find((b) => b.fingerprint === activeFp)
 
@@ -186,122 +209,233 @@ export default function NotePage() {
 
   const meta = kindMeta(n.kind)
   const Icon = meta.icon
+  // ★ 名字标题永远有（手写 or 服务端兜底的 25 字，`D112`）⚠
+  const titleText = n.title || '（无标题）'
+  /**
+   * ★ 点目录 ⇒ 滚到对应标题（2026-10-26）⚠
+   *
+   * ⚠ 不靠锚点 id：Milkdown 渲染的标题没有 id，
+   *   所以在 `.ProseMirror` 里按「级别 + 文字」找那个元素再滚 ⚠
+   *   · · 找不到就退回滚到正文顶部（至少有个反应）✅
+   */
+  const jumpToHeading = (text: string, level: number) => {
+    const root = document.querySelector('.note-body-card .ProseMirror')
+    const body = document.getElementById('note-body')
+    if (!root) {
+      body?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    const all = Array.from(root.querySelectorAll('h1,h2,h3'))
+    const hit =
+      all.find((el) => el.tagName === `H${level}` && el.textContent?.trim() === text) ||
+      all.find((el) => el.textContent?.trim() === text)
+    ;(hit || body)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const toc = extractToc(n.body || '')
+  const displayName = n.created_by_display || n.created_by || ''
 
   return (
-    <AppLayout
-      /* ★★ 2026-10-26：**不再渲染页头大标题**（所有者：
-         「阅读页纸张上面有个大标题，去掉…解放这部分空间给纸张」）⚠
-         · · 标题通常已经在正文的 `# 一级标题` 里，重复一遍白占 80px ⚠
-         · · 右侧操作（章赞 / 编辑 / 删除）仍保留 ✅ */
-      actions={
-        <div className="flex items-center gap-2">
-          {/* ① 章赞 */}
-          <LikeButton noteId={n.ref} anchor="chapter" />
-          {canWrite && (
-            /* ★ 编辑改成**独立页面**（* 所有者：弹窗太挤）⚠ */
-            <Button
-              icon={<Pencil size={13} />}
-              onClick={() => nav(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`)}
-            >
-              编辑
-            </Button>
-          )}
-          {/* ★★ `F4`：管理处置入口（仅 staff；`B208`） */}
-          {isStaff && (
-            <Button icon={<ShieldAlert size={13} />} onClick={() => setModerating(true)}>
-              管理
-            </Button>
-          )}
-        </div>
-      }
-    >
-      <div style={{ maxWidth: 760, margin: '0 auto' }}>
-        {/* 隐藏横幅：只有作者看得到 */}
-        {n.state === 'hidden' && (
-          <div
-            className="card flex items-start gap-2"
-            style={{ padding: '10px 14px', marginBottom: 14, borderColor: 'var(--err)' }}
-          >
-            <EyeOff size={15} style={{ color: 'var(--err)', marginTop: 2 }} />
-            <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-              <b>这篇笔记已被管理员隐藏</b>
-              {n.moderation_reason ? `：${n.moderation_reason}` : ''}
-              <div className="faint" style={{ fontSize: 11.5 }}>
-                隐藏期间只有你（作者）能看到它。恢复请联系管理员。
+    <AppLayout>
+      {/* ★★★ 2026-10-26（`D111` / `D114`）——
+          所有者：「还是要右栏好看一点，不过放在左边」
+                  「作者信息要放在目录上边」
+                  「这个居中显示，颜色字体与#不太一样就行，这样就真的是标题」
+          · · 页头彻底清空：大标题删掉（`D110`），操作移到文末（CSDN 口径）
+          · · 左栏 264（作者卡在上 / 目录在下，sticky）＋ 纸 760 ⚠ */}
+      <div className="note-layout">
+        {/* ---------------------------------------------------------- 左栏 */}
+        <aside className="note-rail">
+          <div className="note-rail-card">
+            <div className="note-author">
+              <div className="note-avatar">{(displayName || '?').slice(0, 1)}</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="note-author-name">
+                  <Link
+                    to={`/u/${encodeURIComponent(n.created_by)}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {displayName}
+                  </Link>
+                </div>
+                <div className="note-author-sub">查看他的空间 →</div>
               </div>
             </div>
           </div>
-        )}
 
-        {/* 头部信息 */}
-        <div className="flex items-center gap-2 flex-wrap mb-3">
-          {/* ★★★ 类型徽标：* **用该类型的专属色**（* 所有者：「这些还要有颜色呀，
-              困惑这些有对应颜色的」）+ 图标文字同一行 ⚠
-              · · ⛔ 不再套 .tag（* 中性灰边）——* 文字 / 边框取类型色，背景透明 ✅ */}
-          <span
-            style={{
-              fontSize: 10.5,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 3,
-              whiteSpace: 'nowrap',
-              padding: '1px 8px',
-              borderRadius: 999,
-              lineHeight: '16px',
-              color: meta.color,
-              border: `1px solid ${meta.color}`,
-              background: 'transparent',
-            }}
-          >
-            <Icon size={11} />
-            {meta.label}
-          </span>
-          {!n.is_public && (
-            <span
-              className="tag"
+          {/* ★★★ 「挂在哪个节点」（`D125`）——
+              结构要**看得见**：每篇笔记都明确知道自己挂在代码的哪个位置 ⚠ */}
+          <div className="note-rail-card">
+            <div
+              className="faint"
+              style={{ fontSize: 11, letterSpacing: 0.5, marginBottom: 6 }}
+            >
+              挂在
+            </div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5 }}>
+              {n.node_snapshot?.name || '（节点已不存在）'}
+            </div>
+            <div
+              className="faint"
               style={{
-                fontSize: 10.5,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 3,
-                whiteSpace: 'nowrap',
+                fontSize: 11,
+                marginTop: 2,
+                fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                wordBreak: 'break-all',
               }}
-              title="只有作者可见"
             >
-              <Lock size={10} />
-              私有
-            </span>
+              {n.node_snapshot?.file_path}
+              {n.node_snapshot?.line ? `:${n.node_snapshot.line}` : ''}
+            </div>
+            {canWrite && (
+              <button
+                type="button"
+                className="link-btn"
+                style={{ marginTop: 6, paddingLeft: 0 }}
+                onClick={() => setAnchorOpen(true)}
+              >
+                改挂到别的节点
+              </button>
+            )}
+          </div>
+
+          {/* ★ 正文没有 # 标题就整块不渲染（空框比没有更难看）⚠ */}
+          {toc.length > 0 && (
+            <div className="note-rail-card note-toc">
+              <h4>目录</h4>
+              {toc.map((h, i) => (
+                <button
+                  key={`${h.text}-${i}`}
+                  type="button"
+                  onClick={() => jumpToHeading(h.text, h.level)}
+                  className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
+                >
+                  {h.text}
+                </button>
+              ))}
+            </div>
           )}
-          <span className="faint" style={{ fontSize: 11.5 }}>
-            <Link
-              to={`/u/${encodeURIComponent(n.created_by)}`}
-              style={{ color: 'inherit' }}
+        </aside>
+
+        {/* ---------------------------------------------------------- 纸 */}
+        <div className="note-article">
+          {/* 隐藏横幅：只有作者看得到 */}
+          {n.state === 'hidden' && (
+            <div
+              className="card flex items-start gap-2"
+              style={{ padding: '10px 14px', marginBottom: 14, borderColor: 'var(--err)' }}
             >
-              {n.created_by_display || n.created_by}
-            </Link>{' '}
-            · {n.created_at?.replace('T', ' ').slice(0, 16)}
-          </span>
-        </div>
+              <EyeOff size={15} style={{ color: 'var(--err)', marginTop: 2 }} />
+              <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+                <b>这篇笔记已被管理员隐藏</b>
+                {n.moderation_reason ? `：${n.moderation_reason}` : ''}
+                <div className="faint" style={{ fontSize: 11.5 }}>
+                  隐藏期间只有你（作者）能看到它。恢复请联系管理员。
+                </div>
+              </div>
+            </div>
+          )}
 
-        {/* ②③ 正文：**整篇** Milkdown 只读渲染（`D108` / `B242`）
-            ★★ 段评气泡由 MilkdownView 用 ProseMirror Decoration 挂在段落末尾；
-               点一下就打开下面那个面板 ✅ */}
-        {/* ⚠ 内边距交给 .note-body-card —— 移动端要收窄，⛔ 不能内联写死 ⚠ */}
-        <div className="card note-body-card flex flex-col gap-5">
-          <MilkdownLazy
-            text={n.body || ''}
-            blocks={blocks}
-            authed={authed}
-            onOpenBlock={(b, anchor) => {
-              setPanelQuote('')
-              setPanelAnchor(anchor ?? null)
-              setActiveFp(b.fingerprint)
-            }}
-            onSelection={(info) => setSel(info)}
-          />
-        </div>
+          {/* 纸：名字标题 + 信息行 + 正文 + 文末操作，全在一张卡里 ⚠ */}
+          <div className="card note-body-card flex flex-col">
+            {/* ★★★ 「名字」标题：居中 + 字距 2px + 独立颜色
+                ⇒ 一眼看出「这是哪篇」而不是「哪一章」⚠ */}
+            <h1 className="note-title" style={{ fontSize: titleSize(titleText.length) }}>
+              {titleText}
+            </h1>
 
-        {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
+            {/* ★ 信息行：编号 · 类型 · 私有 · 作者 · 时间 ⚠ */}
+            <div className="note-meta">
+              <span className="note-no">№{String(n.seq || 0).padStart(3, '0')}</span>
+              {/* ★ 类型徽标用该类型的专属色（所有者：「这些还要有颜色呀」）⚠ */}
+              <span
+                style={{
+                  fontSize: 10.5,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  whiteSpace: 'nowrap',
+                  padding: '1px 8px',
+                  borderRadius: 999,
+                  lineHeight: '16px',
+                  color: meta.color,
+                  border: `1px solid ${meta.color}`,
+                  background: 'transparent',
+                }}
+              >
+                <Icon size={11} />
+                {meta.label}
+              </span>
+              {!n.is_public && (
+                <span
+                  className="tag"
+                  style={{
+                    fontSize: 10.5,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    whiteSpace: 'nowrap',
+                  }}
+                  title="只有作者可见"
+                >
+                  <Lock size={10} />
+                  私有
+                </span>
+              )}
+              <span>
+                <Link to={`/u/${encodeURIComponent(n.created_by)}`} style={{ color: 'inherit' }}>
+                  {displayName}
+                </Link>{' '}
+                · {n.created_at?.replace('T', ' ').slice(0, 16)}
+              </span>
+            </div>
+
+            {/* ②③ 正文：整篇 Milkdown 只读渲染（`D108` / `B242`）
+                ★★ 段评气泡由 MilkdownView 用 ProseMirror Decoration 挂在段落末尾 ✅ */}
+            <div id="note-body" className="flex flex-col gap-5">
+              <MilkdownLazy
+                text={n.body || ''}
+                blocks={blocks}
+                authed={authed}
+                onOpenBlock={(b, anchor) => {
+                  setPanelQuote('')
+                  setPanelAnchor(anchor ?? null)
+                  setActiveFp(b.fingerprint)
+                }}
+                onSelection={(info) => setSel(info)}
+              />
+            </div>
+
+            {/* ★★★ 文末操作条（`D111`④）：章赞在左、编辑/管理在右且更小 ⚠ */}
+            <div className="note-foot">
+              <LikeButton noteId={n.ref} anchor="chapter" />
+              <span className="note-foot-hint">读到这里才点得顺手</span>
+              <span className="note-foot-right">
+                {canWrite && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => nav(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`)}
+                  >
+                    <Pencil size={12} /> 编辑
+                  </button>
+                )}
+                {isStaff && (
+                  <button type="button" className="link-btn" onClick={() => setModerating(true)}>
+                    <ShieldAlert size={12} /> 管理
+                  </button>
+                )}
+              </span>
+            </div>
+          </div>
+
+          {/* ④ 章评区 */}
+          <div className="card mt-4" style={{ padding: '16px 18px' }}>
+            <CommentSection noteId={n.ref} authed={authed} perm={perm} />
+          </div>
+        </div>
+      </div>
+
+      {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
             · · ⛔ 不再用右键：所有者：「不要右键弹出评论按钮了……评论按钮和
               原生的浏览器右键弹窗同时出现了」⚠ */}
       {/* ⚠★ 必须用 portal 挂到 body：`.page.rise` 上有 `transform`（单位矩阵也算），
@@ -420,16 +554,19 @@ export default function NotePage() {
             document.body,
           )}
 
-        {/* ④ 章评区 */}
-        <div className="card mt-4" style={{ padding: '16px 18px' }}>
-          <CommentSection noteId={n.ref} authed={authed} perm={perm} />
-        </div>
-      </div>
-
-      {/* 编辑器（本页自持一份 Modal —— 与 NodePanel 那个各管各的入口） */}
-
-
       {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
+      {/* ★★ 改锚点弹窗（`D125`）⚠ */}
+      <AnchorPicker
+        open={anchorOpen}
+        projectRef={projectRef}
+        currentVid={n.node_snapshot?.vid}
+        onClose={() => setAnchorOpen(false)}
+        onPick={(vid) => {
+          updateNote.mutate({ node_id: vid })
+          setAnchorOpen(false)
+        }}
+      />
+
       <ModeratePanel
         open={moderating}
         kind="note"

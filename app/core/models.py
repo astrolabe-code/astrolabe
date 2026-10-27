@@ -372,6 +372,7 @@ class Project(TimeStampedModel):
             models.Index(fields=["review_state", "-created_at"]),
         ]
         verbose_name = "项目"
+        verbose_name_plural = "项目"
 
     # ------------------------------------------------------------------
     # ⚠★★ 2026-10-14（`B197`）：**源码相关信息全部改为【从基图派生】** ⚠
@@ -608,6 +609,7 @@ class ProjectReview(TimeStampedModel):
             models.Index(fields=["submitted_by", "repo_url"]),
         ]
         verbose_name = "项目审核"
+        verbose_name_plural = "项目审核"
 
     def __str__(self) -> str:
         return f"{self.project_ref or self.project_id}:{self.reason_code}:{self.decision}"
@@ -782,6 +784,7 @@ class Invite(TimeStampedModel):
             models.Index(fields=["created_by", "-created_at"]),
         ]
         verbose_name = "邀请"
+        verbose_name_plural = "邀请"
 
     def __str__(self) -> str:
         return f"{self.token[:8]}…({self.used_count}/{self.max_uses})"
@@ -893,6 +896,7 @@ class OAuthIdentity(TimeStampedModel):
             models.UniqueConstraint(fields=["user", "provider"], name="uniq_user_provider"),
         ]
         verbose_name = "第三方身份"
+        verbose_name_plural = "第三方身份"
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.login}({self.provider_user_id})"
@@ -991,6 +995,7 @@ class OAuthState(TimeStampedModel):
             models.Index(fields=["-created_at"]),
         ]
         verbose_name = "OAuth 会话"
+        verbose_name_plural = "OAuth 会话"
 
     def __str__(self) -> str:
         return f"{self.state[:10]}…:{self.provider}:{self.action}"
@@ -1068,6 +1073,7 @@ class ProjectStorage(models.Model):
             models.Index(fields=["-bytes_used"]),
         ]
         verbose_name = "项目存储占用"
+        verbose_name_plural = "项目存储占用"
 
     def __str__(self) -> str:
         return f"{self.project_ref}:{self.bytes_used}B/{self.files_used}files"
@@ -1132,6 +1138,7 @@ class Collaborator(models.Model):
         #   · ★ 按 `user` 反查（* "我参与了哪些项目"）**本批没有用例** ⇒ 不加 ⚠
         #   · ★★ 能少加一个字段进索引就少加一个 ⚠
         verbose_name = "项目协作者"
+        verbose_name_plural = "项目协作者"
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.user_id}"
@@ -1190,6 +1197,7 @@ class UserProfile(TimeStampedModel):
 
     class Meta:
         verbose_name = "用户档案"
+        verbose_name_plural = "用户档案"
 
     def __str__(self) -> str:
         return f"{self.user_id}@{self.tier}"
@@ -1211,6 +1219,7 @@ class AppSetting(models.Model):
 
     class Meta:
         verbose_name = "参数"
+        verbose_name_plural = "参数"
 
     def __str__(self) -> str:
         return f"{self.key}={self.value!r}"
@@ -1253,6 +1262,7 @@ class AuditLog(models.Model):
             models.Index(fields=["action", "-created_at"]),
         ]
         verbose_name = "审计日志"
+        verbose_name_plural = "审计日志"
 
     def __str__(self) -> str:
         return f"{self.action} by {self.actor_id}"
@@ -1314,6 +1324,7 @@ class UserSetting(TimeStampedModel):
             models.UniqueConstraint(fields=["user", "key"], name="uniq_user_setting"),
         ]
         verbose_name = "用户设置"
+        verbose_name_plural = "用户设置"
 
     def __str__(self) -> str:
         return f"{self.user_id}:{self.key}"
@@ -1361,6 +1372,7 @@ class ProjectSetting(TimeStampedModel):
             models.UniqueConstraint(fields=["project", "key"], name="uniq_project_setting"),
         ]
         verbose_name = "项目设置"
+        verbose_name_plural = "项目设置"
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.key}"
@@ -1564,6 +1576,22 @@ class Note(TimeStampedModel):
     kind = models.CharField(max_length=16, default="flash")
     #: ★ 标题（★ 允许用户手改；* 规则见类文档 ①）⚠
     title = models.CharField(max_length=120, blank=True, default="")
+    #: ★★★ **笔记编号 = 该作者的第几篇**（`D113` · 2026-10-26）⚠
+    #:
+    #: ## 所有者原话（逐字）
+    #:
+    #: > 「**笔记盒学习法，不就是这样吗？不过，他是在编号，可以借鉴一下。**」
+    #: > 「**A的编号是怎么计算出来的？用时间戳的话，信息行最后不就是时间吗？
+    #: >   都写了，还写一次吗？**」
+    #:
+    #: ## 为什么不用主键、不用时间戳
+    #:
+    #: ```\n    · 主键：实测 190 / 191 / 192 / 17407 … —— 早先测试数据建了一万七千条又删掉\n      ⇒ 编号断成两截，№17407 完全不像卡片盒 ⚠\n    · 时间戳：信息行末尾已经有日期 ⇒ 重复信息 ⚠\n    ```\n
+    #: ## 为什么必须落库
+    #:
+    #: ⚠ 实时 `count(created_by=me, created_at <= 自己)` 在**管理员物理删一篇**之后
+    #:   会让后面全部前移 ⇒ 编号一旦被引用过（"看 №42"）就不能再变 ⚠
+    seq = models.PositiveIntegerField(default=0, db_index=True)
     #: ★ 正文（★ markdown 原文）——
     #: ★★ **一个 blob**，* ❌ 不拆结构化块数组（* 所有者 2026-10-14 定的口径）⚠
     body = models.TextField(blank=True, default="")
@@ -1706,6 +1734,7 @@ class Note(TimeStampedModel):
             models.Index(fields=["created_by", "-created_at"]),
         ]
         verbose_name = "笔记"
+        verbose_name_plural = "笔记"
 
     def __str__(self) -> str:
         return (self.title or self.body[:20] or f"note#{self.pk}")[:40]
@@ -1763,6 +1792,7 @@ class NoteLink(TimeStampedModel):
             models.Index(fields=["to_note"]),
         ]
         verbose_name = "笔记关联"
+        verbose_name_plural = "笔记关联"
 
     def __str__(self) -> str:
         return f"{self.from_note_id} -{self.relation}-> {self.to_note_id}"
@@ -1953,6 +1983,7 @@ class NoteComment(TimeStampedModel):
             models.Index(fields=["created_by", "-created_at"]),
         ]
         verbose_name = "评论"
+        verbose_name_plural = "评论"
 
     @property
     def anchor_kind(self) -> str:
@@ -2001,6 +2032,7 @@ class NoteLike(TimeStampedModel):
             ),
         ]
         verbose_name = "点赞"
+        verbose_name_plural = "点赞"
 
     def __str__(self) -> str:
         return f"{self.note_id}:{self.user_id}"
@@ -2051,6 +2083,7 @@ class SearchTerm(TimeStampedModel):
             models.Index(fields=["-count"], name="ix_searchterm_count"),
         ]
         verbose_name = "热搜词"
+        verbose_name_plural = "热搜词"
         verbose_name_plural = "热搜词"
 
     def __str__(self) -> str:

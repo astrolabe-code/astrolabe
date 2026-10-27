@@ -67,6 +67,8 @@
   --radius-sm: 9px;
   /* 字体 */
   --font-ui: "MiSans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* ★ 笔记「名字」标题的专用色（`D114`）—— 比正文深一档，和 # 章节区分 ⚠ */
+  --note-title: #0f2a45;
   --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
 }
 
@@ -84,6 +86,7 @@
   --text-faint: #6b6b80;
   --accent: #4db8d6;
   --accent-strong: #6dc8e0;
+  --note-title: #cfe0ee;
   --accent-dim: rgba(77, 184, 214, 0.14);
   --ok: #34d399;
   --warn: #fbbf24;

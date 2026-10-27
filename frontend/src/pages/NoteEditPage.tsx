@@ -7,6 +7,8 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
+import { autoTitle } from '../components/notes/autoTitle'
+import { markResume } from '../lib/resume'
 import { useCreateNote, useDeleteNote, useNote, useUpdateNote } from '../query/notes'
 
 /**
@@ -136,6 +138,12 @@ export default function NoteEditPage() {
             node_id: nodeId,
             is_public: isPublic,
           })
+
+      // ★★ 写完**立刻**记下位置（`D120` 补口 · 2026-10-27）⚠
+      //   · · 停留计时只覆盖「读了一会儿」，⛔ 覆盖不到「停 5 秒写一条就走」⚠
+      //   · · 用返回的锚点快照，⛔ 不要再查一次节点 ⚠
+      const snap = data?.note?.node_snapshot
+      if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
       //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
       nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
@@ -223,22 +231,52 @@ export default function NoteEditPage() {
           </div>
         </div>
 
-        {/* ② 标题（可空） */}
+        {/* ② 名字（可空）—— ★★ `D112`③：它不是「内容标题」，是**笔记的名字**
+            · · 所有者：「笔记是想到什么记什么，没有事先想好的标题」
+            · · 名字只用于搜索列表 / 浏览器标签页；正文里的 `#` 才是章节标题 ⚠ */}
         <div className="mb-4">
           <label
             className="block text-xs font-medium tracking-wide text-text-sub mb-1.5"
             htmlFor="note-title"
           >
-            标题（可空）
+            名字（可空）
           </label>
           <input
             id="note-title"
             className="input"
-            maxLength={120}
-            placeholder="不填就自动取正文前几字"
+            maxLength={60}
+            placeholder="不填就自动取正文第一行（25 字）"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
+          <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+            起个名字只是为了以后搜得到它；正文里的 <code>#</code> 才是章节标题。
+          </div>
+          {/*
+            ★★★ 实时预览「不填会变成什么」（2026-10-27）⚠
+            · · 所有者：「真正的困难应该是取名困难」
+            · · 光写一行说明，用户仍要**猜**自己这篇会被叫成什么 —— 猜就要停下来想 ⚠
+            · · 边打字边显示 ⇒ 不满意就改，不用先保存再看效果 ✅
+            ⚠ 规则镜像后端 `_auto_title`（见 `components/notes/autoTitle.ts`）⚠
+          */}
+          {!title.trim() && body.trim() && (
+            <div
+              style={{
+                fontSize: 11.5,
+                marginTop: 6,
+                padding: '5px 9px',
+                borderRadius: 8,
+                background: 'var(--accent-dim)',
+                color: 'var(--text-sub)',
+                lineHeight: 1.6,
+              }}
+            >
+              不填名字的话，这篇会叫：
+              <b style={{ color: 'var(--text-main)', marginLeft: 4 }}>
+                {autoTitle(body) || '（正文为空）'}
+              </b>
+            </div>
+          )}
         </div>
 
         {/* ③ 正文：Milkdown 所见即所得（* 高度吃满页面，* 不再是弹窗里的小格子）⚠ */}
@@ -254,6 +292,7 @@ export default function NoteEditPage() {
               initial={body}
               apiRef={editorApi}
               onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
+              onChange={(md) => setBody(md)}
             />
           )}
           {hint && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{hint}</div>}

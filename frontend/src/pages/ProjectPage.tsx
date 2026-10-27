@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { EyeOff, Lock, Settings, ShieldAlert, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
@@ -9,6 +9,8 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
+import { clearResume, markResume, readResume } from '../lib/resume'
+import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
 import ModeratePanel from '../components/admin/ModeratePanel'
 
@@ -38,17 +40,43 @@ export default function ProjectPage() {
   // ★ `?think=1` ⇒ 自动选中首个节点并打开思考白板（* 首页「思考模式」卡片直达）⚠
   const [sp] = useSearchParams()
   const autoThink = sp.get('think') === '1'
+  /**
+   * ★★ `?node=<vid>` 深链（`D120`）—— 「继续上次」跳回来时用 ⚠
+   * ⚠ vid 是 stable_vid；解析失败就当没传 ✅
+   */
+  const deepVid = Number(sp.get('node') || 0) || undefined
+  const siteCfg = useSiteConfig()
+  const dwellMs = Math.max(0, Number(siteCfg.data?.resumeDwellSeconds ?? 20)) * 1000
   const me = useMe()
   const [selected, setSelected] = useState<GraphNode | null>(null)
   const [moderating, setModerating] = useState(false)
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
 
+  /**
+   * ★★★ 「继续上次」的**记录时机**（`D120`③ · 2026-10-27）⚠
+   *
+   * ```\n   * ⛔ 每次点击就记   ⇒ 存档漂移到「只是瞟了一眼」的节点\n   * ⛔ 只在写笔记时记 ⇒ 读两小时没写字，回来没存档\n   * ✅ 停留 ≥ 阈值 才记（阈值后台可调，0 = 关闭）\n   * ```\n
+   * ⚠ 切换节点会清掉上一个计时器 —— 只有「待够久」的那个才算 ⚠
+   */
+  useEffect(() => {
+    if (!selected || !projectRef) return
+    if (dwellMs <= 0) return // ★ 0 = 关闭「继续上次」✅
+    const vid = selected.vid
+    const nm = selected.name
+    const t = window.setTimeout(() => markResume(projectRef, vid, nm), dwellMs)
+    return () => window.clearTimeout(t)
+  }, [selected, projectRef, dwellMs])
+
   const p = project.data
   const canWrite = !!p?.can_edit
   const meUsername = me.data?.username
 
+  // ★★ 存档指向的项目已经打不开 ⇒ 清掉存档（`D120` 防御）⚠
+  //   · · 否则首页那条「继续」永远指向一个 404，点一次烦一次 ⚠
   if (project.isError) {
+    const rp = readResume()
+    if (rp && rp.ref === projectRef) clearResume()
     return (
       <AppLayout title="项目">
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
@@ -174,6 +202,7 @@ export default function ProjectPage() {
               selectedUid={selected?.uid ?? null}
               onSelect={setSelected}
               autoSelectFirst={autoThink}
+              selectVid={deepVid}
             />
           </div>
         </div>

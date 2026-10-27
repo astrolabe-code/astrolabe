@@ -73,7 +73,10 @@ MAX_QUERY = 200
 KINDS = ("flash", "question", "confuse", "pitfall", "summary")
 
 #: ★ 标题最多多少字（* 与模型 `varchar(120)` 一致）
-TITLE_MAX = 120
+#: ★★ 手写名字的上限（`D112`⑤）—— 主动意图，给点余地 ⚠
+TITLE_MAX = 60
+#: ★★★ 自动兜底的上限（`D112`③）—— 系统替你想的，越短越像名字 ⚠
+TITLE_FALLBACK_MAX = 25
 #: ★ 一页最多多少篇
 NOTES_PAGE_MAX = 100
 
@@ -231,6 +234,8 @@ def _create(request: HttpRequest, project):
         kind=kind,
         title=title,
         body=text,
+        # ★★ 编号 = 该作者的第几篇（`D113`）—— ⚠ 单人站点，不必上锁 ⚠
+        seq=_next_seq(request.user),
         is_public=bool(body.get("is_public", True)),
         created_by=request.user,
     )
@@ -705,9 +710,56 @@ def _patch(request: HttpRequest, note: Note):
             return fail(f"kind 必须是 {KINDS} 之一", 400, code="bad_kind")
         note.kind, _ = kind, changed.append("kind")
 
+    # ★★★ 重挂锚点（`D125` · 2026-10-27）⚠
+    #
+    # 所有者原话（逐字）：
+    #   「**漂流笔记不要，会积的越来越多，就跟obsidian一样了，
+    #     每篇笔记必须有挂的明确的节点，哪怕是挂错了，也要有。**」
+    #
+    # ⚠ 既然「必须挂」，就必须让「挂错了能改」——否则错了就是永久的。
+    #   所以这里给一个改锚点的口子：`node_id` = stable_vid（和创建时同一个口径）⚠
+    if "node_id" in body:
+        from graph import kinds, scope
+
+        try:
+            want_vid = int(body.get("node_id"))
+        except (TypeError, ValueError):
+            return fail("node_id 必须是数字", 400, code="bad_node")
+
+        project = note.project
+        if project is None:
+            return fail("笔记没有关联项目，无法重挂", 400, code="no_project")
+        node = scope.readable_nodes_of(project.project_ref).filter(stable_vid=want_vid).first()
+        if node is None:
+            return fail("节点不存在", 404, code="node_not_found")
+
+        note.node = node
+        # ★ 锚点快照要**一起更新**（`B218`）—— 否则导出/回收站里显示的仍是旧节点 ⚠
+        note.node_vid = node.stable_vid
+        note.node_name = node.name[:512]
+        note.node_kind = kinds.kind_name(node.kind)[:32]
+        note.node_qname = (node.qname or "")[:512]
+        note.node_file_path = node.file_path[:1024]
+        note.node_line = node.line
+        note.node_line_end = node.line_end if node.line_end is not None else -1
+        changed.append("node")
+
     if "title" in body:
         # ⚠★ `title` **允许手改** ⇒ ★ 用户传了就用 ✅
-        note.title = str(body.get("title") or "").strip()[:TITLE_MAX]
+        #
+        # ★★★ 2026-10-27（`D112` 补口）：**清空 = 回到自动**，⛔ 不是变成空标题 ⚠
+        #
+        # 所有者原话（逐字）：「**标题是第一次创建时，才取首行做标题的吗？**」
+        # 之前的实际行为是：**新建留空 ⇒ 自动取名；编辑清空 ⇒ 真的变成空标题**
+        #   ⇒ 而编辑页的预览还写着「不填名字的话，这篇会叫：XXX」
+        #   ⇒ **预览承诺了自动，保存后却是空**（所有者确认的口径是 A：更新时也兜底）⚠
+        #
+        # ⚠★ 这里必须用**本次提交的正文**：`body` 分支在下面，
+        #   此刻 `note.body` 还是**旧的** ⇒ 用旧正文推导会得出过期的名字 ⚠
+        raw_title = str(body.get("title") or "").strip()[:TITLE_MAX]
+        src = body.get("body")
+        src_text = src if isinstance(src, str) and src.strip() else note.body
+        note.title = raw_title or _auto_title(src_text or "")
         changed.append("title")
 
     if "card_skin" in body:
@@ -746,19 +798,78 @@ def _patch(request: HttpRequest, note: Note):
 # ---------------------------------------------------------------------------
 
 
-def _auto_title(body: str) -> str:
-    """★★ **从正文推一个标题**（* 取第一段的前几个字）✅
+def _next_seq(user) -> int:
+    """★★ 该用户的下一篇编号（`D113`）⚠
 
-    ⚠★ 若开头是 markdown 标题（`# …`）⇒ ★ 优先用它 ⚠
-      （* 那是用户**明写**的标题，* 比"截断正文"更准）✅
+    ⚠ 用 `MAX(seq)+1` 而不是 `COUNT(*)+1` ——
+      删过笔记之后 `COUNT` 会和已用过的编号**撞车** ⚠
+    """
+    from django.db.models import Max
+
+    from core.models import Note
+
+    current = Note.objects.filter(created_by=user).aggregate(m=Max("seq"))["m"] or 0
+    return int(current) + 1
+
+
+#: ★ 兜底断句用的标点（`D112`③：25 字内优先在标点处断）⚠
+_TITLE_BREAKS = "，。！？；、,.!?;"
+
+
+def _strip_md(s: str) -> str:
+    """★★ 去掉行内 Markdown 记号（`D112`④）⚠
+
+    ⚠ 否则搜索列表里会出现 `**加粗**开头的半句话` 这种 ⚠
+    """
+    import re
+
+    s = re.sub(r"[*`_~]", "", s)                    # 强调 / 行内代码 / 删除线
+    s = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [文字](链接) ⇒ 文字
+    s = re.sub(r"<[^>]+>", "", s)                   # 裸 HTML 标签
+    return s.strip()
+
+
+def _auto_title(body: str) -> str:
+    """★★★ **从正文推一个名字**（`D112` · 2026-10-26）⚠
+
+    ## 所有者原话（逐字）
+
+    > 「**笔记是想到什么记什么，没有事先想好的标题**」
+    > 「**笔记每一个要有标题呀，不然以后谁知道这里面写的是什么东西，
+    >   截几个字到标题，也能分辨呀。**」
+    > 「**标题25个字差不多了吧？**」
+
+    ## 规则
+
+    ```\n    ① 取第一段（跳过空行）\n    ② 若该行是 markdown 标题（`# …`）⇒ 先去掉 `#` 号\n    ③ 去掉行内记号（`* ` _ ~`、`[文字](链接)`、HTML 标签）\n    ④ 前 25 字内有标点 ⇒ 断在【最后一个】标点处，**不加省略号**\n    ⑤ 没有标点 ⇒ 硬切 25 字 + `…`\n    ```\n
+    ⚠ 只影响**名字**（搜索列表 / 标签页用）；正文原样保留，⛔ 不删任何东西 ⚠
     """
     for line in (body or "").splitlines():
-        s = line.strip()
+        raw = line.strip()
+        if not raw:
+            continue
+        # ★ 行首的 markdown 记号：标题井号、引用、列表符号、有序列表序号 ⚠
+        raw = raw.lstrip("#>").strip()
+        raw = raw.lstrip("-*+").strip()
+        import re
+
+        raw = re.sub(r"^\d+[.)]\s*", "", raw)
+        s = _strip_md(raw)
         if not s:
             continue
-        if s.startswith("#"):
-            return s.lstrip("#").strip()[:TITLE_MAX]
-        return s[:TITLE_MAX]
+
+        if len(s) <= TITLE_FALLBACK_MAX:
+            return s
+
+        # ★ 25 字内找最后一个标点 ⇒ 断在那儿，不加省略号 ✅
+        window = s[:TITLE_FALLBACK_MAX]
+        cut = max(window.rfind(ch) for ch in _TITLE_BREAKS)
+        if cut > 0:
+            head = window[:cut].strip()
+            if head:
+                return head
+        # ★ 没标点 ⇒ 硬切 + 省略号 ⚠
+        return s[:TITLE_FALLBACK_MAX].rstrip() + "…"
     return ""
 
 
@@ -896,6 +1007,8 @@ def _note_json(n: Note, with_counts: bool = True) -> dict:
         },
         "kind": n.kind,
         "title": n.title,
+        # ★★ 编号（`D113`）—— 阅读页信息行显示 №001 ✅
+        "seq": int(n.seq or 0),
         "body": n.body,
         "card_skin": n.card_skin,
         "is_public": n.is_public,

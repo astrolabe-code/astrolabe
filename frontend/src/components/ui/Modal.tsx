@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 interface ModalProps {
@@ -38,7 +39,21 @@ export default function Modal({
 
   if (!open) return null
 
-  return (
+  /**
+   * ★★★ 2026-10-28：**弹窗必须挂到 `body`（portal），⛔ 不能就地渲染** ⚠
+   *
+   * 现象（所有者）：「保存这篇笔记这个弹窗是以纸张定位的，不是以页面定位的吗？
+   *   我点了保存，要往上翻到纸张中间，才能看见这个弹窗」
+   *
+   * 原因：`.dlg-mask` 是 `position: fixed`，但 **祖先只要有 transform，
+   *   `fixed` 就以那个祖先为参照，不再相对视口** ⚠
+   *   实测祖先链上 `.page.rise` 的动画结束值是 `transform: matrix(1,0,0,1,0,0)`
+   *   （视觉上等于没位移，但**不等于 `none`**）⇒ 弹窗被"框"在纸里 ⚠
+   *
+   * ⇒ 挂到 body：不受任何祖先的 transform / filter / contain 影响 ✅
+   *   （这也是 sticky 那个坑的同一类原因 —— 见 `D135`）
+   */
+  return createPortal(
     <div className="dlg-mask" onClick={onClose}>
       <div
         className="dlg"
@@ -69,6 +84,7 @@ export default function Modal({
         </div>
         {footer && <div className="dlg-actions mt-5">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

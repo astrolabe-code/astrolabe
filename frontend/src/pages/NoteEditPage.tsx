@@ -389,9 +389,15 @@ export default function NoteEditPage() {
           <span className="sub-name">
             留空则自动取正文第一行；名字只用于搜索列表，正文里的 <code>#</code> 才是章节标题。
           </span>
-          <span className="sub-kind" title={kindMeta(kind).hint} style={{ color: kindColor }}>
-            {kindMeta(kind).hint}
-          </span>
+        </div>
+
+        {/* ★★ 类别说明：**单独一行**，右对齐，正好在右上角徽标正下方（`D134` 二次修正）⚠
+            所有者：「为什么要把提示语放在『留空则自动取正文第一行…』这个提示同行？
+                    直接放在徽标下边不就行了？」
+            · · 不再和名字说明挤一行 —— 那是两件不同的事（名字 vs 类别）⚠
+            · · 右对齐 ⇒ 和徽标同一条竖线，一眼看出它是在解释那个徽标 ✅ */}
+        <div className="faint note-edit-kindhint" title={kindMeta(kind).hint}>
+          {kindMeta(kind).hint}
         </div>
 
         {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}

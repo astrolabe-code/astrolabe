@@ -624,11 +624,10 @@ a.profile-avatar:active {
 
 
 /* ============================================================================
-   ★★ 写作页「名字说明 + 类别说明」那一行（`D134` 修正 · 2026-10-28）⚠
+   ★★ 写作页「名字说明」那一行（`D134` · 2026-10-28）⚠
 
-   所有者：「你这个放在顶部不行吗？正好哪里也有一个徽标」
-   ⇒ 类别说明放到右上角徽标**下面那一行的右端**，和名字说明同一行、左右各一边，
-     ⛔ 不额外增加高度；窄屏时整行换到下一行（⛔ 不把句子劈开）⚠
+   ⚠ 类别说明**不在这行**：所有者两次纠正后定在徽标正下方、独立一行右对齐
+     （见下面 .note-edit-kindhint）——名字和类别是两件事，不共用一行 ⚠
    ========================================================================== */
 .note-edit-subline {
   display: flex;
@@ -636,28 +635,21 @@ a.profile-avatar:active {
   gap: 12px;
   flex-wrap: wrap;
   font-size: 11.5px;
-  margin-bottom: 16px;
+  margin-bottom: 2px;
 }
 .note-edit-subline .sub-name {
   flex: 1 1 260px;
   min-width: 0;
 }
-.note-edit-subline .sub-kind {
-  flex: 0 0 auto;
-  /* ★ 和右上角徽标右缘对齐（徽标 right:14，这行内边距 22）⚠ */
-  margin-right: -8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
 
-@media (max-width: 900px) {
-  .note-edit-subline .sub-kind {
-    /* ⚠ 窄屏整行独占 —— 否则会插进名字说明的句子里（实测「章节标 题。」被劈开）⚠ */
-    flex: 1 1 100%;
-    margin-right: 0;
-    padding-right: 0;
-    margin-top: -6px;
-  }
+
+/* ★★ 类别说明：单独一行、右对齐，正好在右上角徽标正下方（`D134` 二次修正）⚠
+   所有者：「直接放在徽标下边不就行了？」——
+   ⛔ 不和名字说明挤同一行（一个是"名字"、一个是"类别"，是两件事）⚠ */
+.note-edit-kindhint {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 11.5px;
+  margin: 0 -8px 16px 0;   /* 右端与徽标对齐（徽标 right:14，容器内边距 22）⚠ */
+  text-align: right;
 }

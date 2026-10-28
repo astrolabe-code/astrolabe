@@ -335,9 +335,12 @@ export default function NoteEditPage() {
             boxShadow: `0 0 0 3px ${kindColor}14, var(--shadow-card)`,
           }}
         >
-        {/* ★★ 右上角类别角标（`D132` 补充）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
-            · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠ */}
+        {/* ★★ 右上角类别角标（`D132` / `D134` 定稿）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
+            · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠
+            · · ⚠ 类别说明**只放在这里的悬浮提示里**（所有者：版面加一行太怪）——
+              因此**不能**再写 `pointer-events: none`，否则鼠标根本悬浮不上去 ⚠ */}
         <span
+          title={kindMeta(kind).hint}
           style={{
             position: 'absolute',
             top: 12,
@@ -351,7 +354,7 @@ export default function NoteEditPage() {
             background: `${kindColor}14`,
             border: `1px solid ${kindColor}66`,
             borderRadius: 999,
-            pointerEvents: 'none',
+            cursor: 'default',
           }}
         >
           {KIND_META[kind].label}
@@ -391,14 +394,6 @@ export default function NoteEditPage() {
           </span>
         </div>
 
-        {/* ★★ 类别说明：**单独一行**，右对齐，正好在右上角徽标正下方（`D134` 二次修正）⚠
-            所有者：「为什么要把提示语放在『留空则自动取正文第一行…』这个提示同行？
-                    直接放在徽标下边不就行了？」
-            · · 不再和名字说明挤一行 —— 那是两件不同的事（名字 vs 类别）⚠
-            · · 右对齐 ⇒ 和徽标同一条竖线，一眼看出它是在解释那个徽标 ✅ */}
-        <div className="faint note-edit-kindhint" title={kindMeta(kind).hint}>
-          {kindMeta(kind).hint}
-        </div>
 
         {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}
         {ready && (

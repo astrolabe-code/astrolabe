@@ -16,18 +16,7 @@ import AnchorPicker from '../components/notes/AnchorPicker'
 import type { SelectionInfo } from '../components/notes/MilkdownView'
 import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
-
-/** 从正文提取目录（`D114`）：只认 # / ## / ###，名字标题不参与 ⚠ */
-function extractToc(body: string): { level: number; text: string }[] {
-  const out: { level: number; text: string }[] = []
-  for (const raw of (body || '').split('\n')) {
-    const m = /^(#{1,3})\s+(.+)$/.exec(raw.trim())
-    if (!m) continue
-    const text = m[2].replace(/[*`_~]/g, '').trim()
-    if (text) out.push({ level: m[1].length, text })
-  }
-  return out
-}
+import { extractToc, scrollToHeading } from '../lib/toc'
 
 /** 标题字号按长度分档（`D112`⑥ 实测：25 字 22px = 624px，可用 712px）⚠ */
 function titleSize(len: number): number {
@@ -218,19 +207,8 @@ export default function NotePage() {
    *   所以在 `.ProseMirror` 里按「级别 + 文字」找那个元素再滚 ⚠
    *   · · 找不到就退回滚到正文顶部（至少有个反应）✅
    */
-  const jumpToHeading = (text: string, level: number) => {
-    const root = document.querySelector('.note-body-card .ProseMirror')
-    const body = document.getElementById('note-body')
-    if (!root) {
-      body?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      return
-    }
-    const all = Array.from(root.querySelectorAll('h1,h2,h3'))
-    const hit =
-      all.find((el) => el.tagName === `H${level}` && el.textContent?.trim() === text) ||
-      all.find((el) => el.textContent?.trim() === text)
-    ;(hit || body)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  const jumpToHeading = (text: string, level: number) =>
+    scrollToHeading(text, level, '.note-body-card .ProseMirror', 'note-body')
   const toc = extractToc(n.body || '')
   const displayName = n.created_by_display || n.created_by || ''
 

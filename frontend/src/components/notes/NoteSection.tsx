@@ -56,7 +56,6 @@ export default function NoteSection({
   onDeleteNote,
   autoThink,
 }: NoteSectionProps) {
-  const [showAll, setShowAll] = useState(false)
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
   const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
   // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
@@ -89,12 +88,23 @@ export default function NoteSection({
   const mine = (notes.data || []).filter((n) => n.node_id === nodeId)
 
   /** ★ 每种 kind 一组（`B201`：固定 5 种；顺序按 NOTE_KINDS，⛔ 不打乱） */
+  /**
+   * ★★★ 2026-10-28（`D134`）：**空盒子也保留** ⚠
+   *
+   * 所有者：「**突然明白的一件事这些提示只有写了笔记才能看到，没写笔记，
+   *   相应的盒子就没有提示，我感觉不行**」
+   *
+   * ⚠ 原来 `.filter(items.length > 0)` 会把空类别整组删掉 ⇒
+   *   某个节点只有「灵光一闪」，另外四个盒子（连同它们的说明）**从不出现** ⇒
+   *   用户只能靠记忆，而"不用记"正是这套分类的前提 ⚠
+   */
   const groups = NOTE_KINDS.map((kind: NoteKind) => ({
     kind,
     items: mine.filter((n) => n.kind === kind),
-  })).filter((g) => g.items.length > 0)
+  }))
+  const nonEmpty = groups.filter((g) => g.items.length > 0)
 
-  if (groups.length === 0) {
+  if (nonEmpty.length === 0) {
     return (
       <>
         <EmptyState
@@ -138,9 +148,7 @@ export default function NoteSection({
   // ★ 当前要展示的分组：* 全部 ⇒ 原分组（可折叠）；* 某类 ⇒ 只留那一组 ⚠
   const visibleGroups =
     activeKind === 'all'
-      ? showAll
-        ? groups
-        : groups.slice(0, 2)
+      ? groups   /* ★ 五个盒子全显示（`D134`）：空的只有一行，成本很低 ⚠ */
       : groups.filter((g) => g.kind === activeKind)
 
   const chip = (
@@ -154,7 +162,11 @@ export default function NoteSection({
       key={key}
       type="button"
       onClick={() => setActiveKind(active && key !== 'all' ? 'all' : key)}
-      title={key === 'all' ? '显示全部笔记' : `只看「${label}」`}
+      title={
+        key === 'all'
+          ? '显示全部笔记'
+          : `${KIND_META[key].hint}（点一下只看「${label}」）`
+      }
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -235,7 +247,12 @@ export default function NoteSection({
       <div className="flex flex-col gap-4">
         {visibleGroups.map((g) => (
           <div key={g.kind}>
-            <div className="flex items-center gap-2 mb-1.5">
+            {/* ⚠ 空盒子也显示这一行（`D134`）：说明文字必须在**没写笔记时**也看得到，
+                否则用户只能靠记 —— 而「不用记」正是这套分类成立的前提 ⚠ */}
+            <div
+              className="flex items-center gap-2 mb-1.5"
+              style={{ opacity: g.items.length === 0 ? 0.6 : 1 }}
+            >
               {/* ★★ 每组一个**类型色圆点** + 同色标题（* 五个盒子一眼区分）⚠ */}
               <span
                 style={{
@@ -254,11 +271,19 @@ export default function NoteSection({
               <span className="faint" style={{ fontSize: 11 }}>
                 {g.items.length}
               </span>
-              <span className="faint" style={{ fontSize: 11 }}>
+              <span
+                className="faint"
+                style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
                 · {KIND_META[g.kind].hint}
               </span>
+              {g.items.length === 0 && (
+                <span className="faint" style={{ fontSize: 10.5, marginLeft: 'auto', flexShrink: 0 }}>
+                  还没有
+                </span>
+              )}
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2" style={{ display: g.items.length ? undefined : 'none' }}>
               {g.items.map((n) => (
                 <NoteCard
                   key={n.id}
@@ -296,13 +321,6 @@ export default function NoteSection({
         onClose={() => setBatchOpen(false)}
       />
 
-      {activeKind === 'all' && groups.length > 2 && (
-        <div className="mt-3">
-          <Button block onClick={() => setShowAll((v) => !v)}>
-            {showAll ? '收起分组' : `展开其余 ${groups.length - 2} 个分组`}
-          </Button>
-        </div>
-      )}
     </div>
   )
 }

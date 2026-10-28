@@ -213,6 +213,12 @@ function Inner({
         //   · · 但默认 `languages: []` ⇒ 没有语法高亮 ⇒ 这里补上语言包
         //   · · 配色再接到站点 `--code-*`，* 与阅读页（Prism）视觉一致 ✅
         featureConfigs: {
+          // ★ Crepe 的默认占位文案是英文「Please enter...」——
+          //   所有者反复要求「不要整英文呀，用中文写」⇒ 换掉 ⚠
+          [CrepeFeature.Placeholder]: {
+            text: '写点什么…',
+            mode: 'doc',
+          },
           [CrepeFeature.CodeMirror]: {
             languages: CODE_LANGUAGES,
             // ★ theme 必须显式给：* 否则用 Crepe 默认的 oneDark ⚠

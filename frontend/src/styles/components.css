@@ -4,7 +4,21 @@
    ============================================================ */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html, body { overflow-x: hidden; }
+/* ⚠★★ 2026-10-28：**body 不能用 `overflow-x: hidden`** ⚠
+ *
+ * 原因：给 body 设了 `overflow-x: hidden` ⇒ 它会变成**滚动容器**，
+ *   于是 body 里所有 `position: sticky` 都以 body 的滚动视口为参照，
+ *   而 body 自己并不滚动（滚的是 viewport）⇒ **sticky 全部失效** ⚠
+ *
+ * 症状（实测）：
+ *   · 写作页底栏 `position: sticky; bottom: 0` 纹丝不动（barTop 1874，视口高 800）
+ *   · 阅读页左栏 `sticky; top: 16px` 跟着内容一起滚走
+ *
+ * 修法：`clip` 不创建滚动容器，作用等同"裁掉横向溢出" ✅
+ *   （`html` 那侧保留 `hidden` 无妨 —— 它本来就是滚动容器）
+ */
+html { overflow-x: hidden; }
+body { overflow-x: clip; }
 body {
   font-family: var(--font-ui);
   min-height: 100vh;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Lock, LockOpen, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import AppLayout from '../components/AppLayout'
@@ -10,6 +10,8 @@ import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/Milk
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
 import { markResume } from '../lib/resume'
+import { extractToc, scrollToHeading, type TocItem } from '../lib/toc'
+import { useCollapsed } from '../lib/useCollapsed'
 import { useCreateNote, useDeleteNote, useNote, useUpdateNote } from '../query/notes'
 
 /**
@@ -87,6 +89,19 @@ export default function NoteEditPage() {
   const [draftTitle, setDraftTitle] = useState('')
   const [suggested, setSuggested] = useState('')
   const [pendingText, setPendingText] = useState('')
+  // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
+  const [chars, setChars] = useState(0)
+  const countTimer = useRef<number | null>(null)
+  /**
+   * ★★★ 写作区目录（`D131` · 2026-10-27）⚠
+   *
+   * 所有者：「**写作区加个目录，可折叠的，更好一点**」
+   *
+   * ⚠ 目录跟着**字数那次 1 秒防抖**一起更新 —— 同一份 markdown，一次计算，
+   *   ⛔ 不为它单独再接一个 onChange（那会多一次整篇序列化）⚠
+   */
+  const [heads, setHeads] = useState<TocItem[]>([])
+  const { collapsed: tocFolded, toggle: toggleToc } = useCollapsed('edit-toc')
   /** ★ 初值灌进编辑器**只做一次**（* 否则一改就重建编辑器、光标丢失）⚠ */
   const [ready, setReady] = useState(!editing)
   const editorApi = useRef<MilkdownEditorApi | null>(null)
@@ -96,6 +111,31 @@ export default function NoteEditPage() {
   const del = useDeleteNote()
   const busy = create.isPending || update.isPending || del.isPending
 
+  /**
+   * ★★ 字数统计（`D129` · 2026-10-27）⚠
+   *
+   * ⚠ 所有者：「**要加字数统计，停止输入一秒后计数就行，不要弄出抖动**」
+   *
+   * ⚠ 这次接 `onChange` 是**安全**的，和 `D128` 那个抖动不是一回事：
+   *   · · 这里**只更新 `chars`**，⛔ 绝不回写 `body`
+   *   · · 而 `MilkdownEditor` 的 `initial={body}` 因此**永远不变**
+   *     ⇒ `useEditor` 的依赖不变 ⇒ 编辑器不会被重建 ✅
+   *   · · 再加上 1 秒防抖：长文连打时也不会频繁重渲染 ⚠
+   */
+  const scheduleCount = (md: string) => {
+    if (countTimer.current) window.clearTimeout(countTimer.current)
+    countTimer.current = window.setTimeout(() => {
+      setChars(md.replace(/\s/g, '').length)
+      setHeads(extractToc(md))
+    }, 1000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (countTimer.current) window.clearTimeout(countTimer.current)
+    }
+  }, [])
+
   // ★ 编辑模式：数据到了才灌初值
   useEffect(() => {
     if (!editing || ready || !note) return
@@ -103,6 +143,8 @@ export default function NoteEditPage() {
     setTitle(note.title ?? '')
     setBody(note.body ?? '')
     setIsPublic(note.is_public)
+    setChars((note.body ?? '').replace(/\s/g, '').length)
+    setHeads(extractToc(note.body ?? ''))
     setReady(true)
   }, [editing, ready, note])
 
@@ -227,139 +269,236 @@ export default function NoteEditPage() {
   //   「编辑页也是一样，有个黑色大字编辑笔记也去掉，解放这部分空间给纸张」）⚠
   //   · · 这个标题只是重复"你正在编辑"，没有信息量 ⚠
   //   · · 编辑态和新建态的切换，靠纸里的类型条和按钮文字已经能看出来 ✅
+  // ★★ 纸张描边跟着当前类别走（`D132`）—— 类别挪到底栏后，靠边框颜色自报身份 ⚠
+  const kindColor = KIND_META[kind].color
+
   return (
     <AppLayout>
-      <div className="card note-edit-card">
-        {/* ① kind 五选一（固定） */}
-        <div className="mb-4">
-          <div className="text-xs font-medium tracking-wide text-text-sub mb-1.5">类型</div>
-          <div className="flex flex-wrap gap-1.5">
-            {NOTE_KINDS.map((k) => {
-              const m = KIND_META[k]
-              const active = kind === k
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setKind(k)}
-                  title={m.hint}
-                  style={{
-                    padding: '5px 10px',
-                    borderRadius: 999,
-                    fontSize: 12.5,
-                    cursor: 'pointer',
-                    border: `1px solid ${active ? m.color : 'var(--card-border)'}`,
-                    background: active ? `${m.color}1f` : 'transparent',
-                    color: active ? m.color : 'var(--text-sub)',
-                  }}
-                >
-                  {m.label}
+      {/* ★★★ 写作区两栏（`D131`）：左目录（可折叠）＋ 纸 ⚠
+          · · 目录是正文里的 `#` / `##` / `###`（⛔ 不含名字）
+          · · 折叠状态记在本地，下次打开还是收着的 ⚠ */}
+      <div className={`note-edit-layout${tocFolded ? ' is-folded' : ''}`}>
+        <aside className={`note-edit-rail${tocFolded ? ' is-folded' : ''}`}>
+          {tocFolded ? (
+            <button
+              type="button"
+              className="note-edit-fold-btn"
+              onClick={toggleToc}
+              title="展开目录"
+            >
+              <ChevronRight size={13} />
+              <span className="v">目录</span>
+            </button>
+          ) : (
+            <div className="note-rail-card note-toc">
+              <div className="note-toc-head">
+                <h4>目录</h4>
+                <button type="button" onClick={toggleToc} title="收起目录">
+                  <ChevronLeft size={13} />
                 </button>
-              )
-            })}
-          </div>
-          <div className="faint mt-1.5" style={{ fontSize: 11.5 }}>
-            {kindMeta(kind).hint}
-          </div>
-        </div>
-
-        {/* ② 名字（可空）—— ★★ `D112`③：它不是「内容标题」，是**笔记的名字**
-            · · 所有者：「笔记是想到什么记什么，没有事先想好的标题」
-            · · 名字只用于搜索列表 / 浏览器标签页；正文里的 `#` 才是章节标题 ⚠ */}
-        <div className="mb-4">
-          <label
-            className="block text-xs font-medium tracking-wide text-text-sub mb-1.5"
-            htmlFor="note-title"
-          >
-            名字（可空）
-          </label>
-          <input
-            id="note-title"
-            className="input"
-            maxLength={60}
-            placeholder="不填就自动取正文第一行（25 字）"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
-            起个名字只是为了以后搜得到它；正文里的 <code>#</code> 才是章节标题。
-          </div>
-          {/* ⚠★ 2026-10-27：**这里不再做实时预览** ⚠
-              · · 所有者：「你那个写作页面，抖动太厉害了，不要每次输入都记录了，
-                否则遇到不兼容的浏览器就完蛋了。用户点击保存后，再弹出标题确认就好。」
-              · · 根因：`onChange` 每 300ms 把正文写回 `body` state，
-                而编辑器是 `<MilkdownEditor initial={body}>`、`useEditor` 又只依赖 `initial`
-                ⇒ **每敲几下就把编辑器销毁重建一次** ⇒ 抖动 + 光标丢失 ⚠
-              · · 现在改成：**保存时才读正文、才推导名字**，并在弹窗里让人确认 ✅ */}
-
-        </div>
-
-        {/* ③ 正文：Milkdown 所见即所得（* 高度吃满页面，* 不再是弹窗里的小格子）⚠ */}
-        <div className="mb-4">
-          <label
-            className="block text-xs font-medium tracking-wide text-text-sub mb-1.5"
-            htmlFor="note-body"
-          >
-            正文（markdown）
-          </label>
-          {ready && (
-            <MilkdownEditor
-              initial={body}
-              apiRef={editorApi}
-              onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
-            />
+              </div>
+              {heads.length === 0 ? (
+                <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
+                  还没有章节。
+                  <br />
+                  正文里用 <code>#</code> 开头写一行，就会出现在这里。
+                </div>
+              ) : (
+                heads.map((h, i) => (
+                  <button
+                    key={`${h.text}-${i}`}
+                    type="button"
+                    onClick={() => scrollToHeading(h.text, h.level, '.milkdown .ProseMirror')}
+                    className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
+                  >
+                    {h.text}
+                  </button>
+                ))
+              )}
+            </div>
           )}
-          {hint && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{hint}</div>}
-        </div>
+        </aside>
 
-        {/* ④ 公开 / 私有 */}
-        <button
-          type="button"
-          onClick={() => setIsPublic((v) => !v)}
-          className="flex items-center gap-2 w-full text-left"
+        {/* ★★★ 2026-10-27（`D132`）：**纸张描边 = 当前类别色** ⚠
+            所有者：「现在灵光一现等标签，放在底部了，不明显了，能不能给纸张加上
+                    对应颜色的描边？让用户能一眼知道，自己在写的什么。」
+            · · 2px 实线 + 一圈 3px 同色淡光 —— 有颜色但不刺眼 ✅
+            · · ⚠ 别写 1.5px：Chrome 会把边框宽度**向下取整到整数设备像素**，
+              1.5px 实际渲染成 1px（实测 computed 仍报 1px）⚠
+            · · 改类别时边框**立刻**变色（点底栏胶囊即时反馈）✅ */}
+        <div
+          className="card note-edit-card"
           style={{
-            padding: '8px 10px',
-            borderRadius: 8,
-            border: '1px solid var(--card-border)',
-            background: 'transparent',
-            cursor: 'pointer',
+            position: 'relative',
+            borderColor: kindColor,
+            borderWidth: 2,
+            boxShadow: `0 0 0 3px ${kindColor}14, var(--shadow-card)`,
           }}
         >
-          {isPublic ? <LockOpen size={14} /> : <Lock size={14} />}
-          <span style={{ fontSize: 12.5 }}>{isPublic ? '公开' : '私有'}</span>
-          <span className="faint" style={{ fontSize: 11.5 }}>
-            {isPublic ? '项目里其他人能看到这篇' : '只有作者本人能看到这篇'}
-          </span>
-        </button>
-
-        {/* ⑤ **唯一的操作栏**（⚠ 页头不再放按钮 —— 两套按钮所有者已指出太乱）⚠
-            删除（编辑态）· 取消 · 保存/写下 —— 写完正好在底部，顺手 ✅ */}
-        <div
-          className="flex items-center gap-2"
-          style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--card-border)' }}
+        {/* ★★ 右上角类别角标（`D132` 补充）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
+            · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠ */}
+        <span
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 14,
+            padding: '1px 9px',
+            fontSize: 11,
+            lineHeight: '18px',
+            fontFamily: 'var(--font-ui)',
+            whiteSpace: 'nowrap',
+            color: kindColor,
+            background: `${kindColor}14`,
+            border: `1px solid ${kindColor}66`,
+            borderRadius: 999,
+            pointerEvents: 'none',
+          }}
         >
+          {KIND_META[kind].label}
+        </span>
+
+        {/* ② 名字 —— ★★ 2026-10-27 依 CSDN 结构改版：提到**最上、大字** ⚠
+            · · 眼睛先落在「要写什么」，而不是「给这篇归哪类」⚠
+            · · 但**不强制填**（`D112`：名字只是身份，⛔ 不是文章标题）⚠ */}
+        <input
+          id="note-title"
+          maxLength={60}
+          placeholder="名字（可留空）"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          style={{
+            width: '100%',
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            fontSize: 22,
+            fontWeight: 600,
+            color: 'var(--text-main)',
+            fontFamily: 'var(--font-ui)',
+            padding: '2px 96px 10px 0',  /* ⚠ 右边留 96px 给类别角标，长名字不会压上去 ⚠ */
+            borderBottom: '1px solid var(--card-border)',
+            marginBottom: 6,
+          }}
+        />
+        {/* ★★ 说明行：左边讲「名字」，右边讲「当前类别」（`D134` 修正）⚠
+            · · 所有者：「你这个放在顶部不行吗？正好哪里也有一个徽标」
+            · · ⇒ 说明不再挤在底栏（那里有保存按钮，抢注意力），
+                改到**徽标下面这一行**的右端 —— 正好接住右上角那个角标 ✅
+            · · ⛔ 不额外增加高度：和名字说明**同一行**，左右各一边 ⚠ */}
+        <div className="faint note-edit-subline">
+          <span className="sub-name">
+            留空则自动取正文第一行；名字只用于搜索列表，正文里的 <code>#</code> 才是章节标题。
+          </span>
+          <span className="sub-kind" title={kindMeta(kind).hint} style={{ color: kindColor }}>
+            {kindMeta(kind).hint}
+          </span>
+        </div>
+
+        {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}
+        {ready && (
+          <MilkdownEditor
+            initial={body}
+            apiRef={editorApi}
+            onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
+            onChange={scheduleCount}
+          />
+        )}
+        {hint && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{hint}</div>}
+
+        {/* ④⑤ 底部常驻操作栏 —— ★★ 元信息（类型 / 公开）从正文上方**沉到这里** ⚠
+            · · CSDN 也是这么放的：上面写字，下面设置，底栏常驻 ⚠
+            · · `position: sticky` ⇒ 正文再长也不用滚到底找按钮 ✅ */}
+        <div className="note-edit-bar">
+          {/* 类型：默认灵光一闪，⛔ 不点也不影响（`D117` 零决策）⚠ */}
+          {NOTE_KINDS.map((k) => {
+            const m = KIND_META[k]
+            const active = kind === k
+            return (
+              <button
+                key={k}
+                type="button"
+                title={kindMeta(k).hint}
+                onClick={() => setKind(k)}
+                style={{
+                  padding: '1px 8px',
+                  borderRadius: 999,
+                  fontSize: 11,
+                  lineHeight: '17px',
+                  fontFamily: 'var(--font-ui)',
+                  whiteSpace: 'nowrap',
+                  cursor: 'pointer',
+                  border: `1px solid ${active ? m.color : 'var(--card-border)'}`,
+                  background: active ? `${m.color}1f` : 'transparent',
+                  color: active ? m.color : 'var(--text-faint)',
+                }}
+              >
+                {m.label}
+              </button>
+            )
+          })}
+
+          {/* 公开 / 私有：从一整行压成一个小开关 ⚠ */}
+          <button
+            type="button"
+            onClick={() => setIsPublic((v) => !v)}
+            title={isPublic ? '项目里其他人能看到这篇' : '只有作者本人能看到这篇'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '1px 8px',
+              borderRadius: 999,
+              fontSize: 11,
+              lineHeight: '17px',
+              fontFamily: 'var(--font-ui)',
+              cursor: 'pointer',
+              border: '1px solid var(--card-border)',
+              background: 'transparent',
+              color: isPublic ? 'var(--text-sub)' : 'var(--text-faint)',
+            }}
+          >
+            {isPublic ? <LockOpen size={11} /> : <Lock size={11} />}
+            {isPublic ? '公开' : '私有'}
+          </button>
+
+          {/* ★ 字数：固定宽度 + tabular-nums ⇒ 数字变化时**不推动布局** ⚠ */}
+          <span
+            className="faint"
+            style={{
+              fontSize: 11.5,
+              marginLeft: 'auto',
+              width: 62,
+              textAlign: 'right',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            共 {chars} 字
+          </span>
+
+          {err && (
+            <span style={{ color: 'var(--err)', fontSize: 11.5, lineHeight: 1.4 }}>{err}</span>
+          )}
+
           {editing && note && (
-            <Button
-              variant="danger"
-              icon={<Trash2 size={13} />}
+            <button
+              type="button"
+              className="link-btn"
               disabled={busy}
               onClick={remove}
+              title="删除这篇笔记（可从回收站恢复）"
+              style={{ color: 'var(--text-faint)' }}
             >
-              删除
-            </Button>
+              <Trash2 size={12} /> 删除
+            </button>
           )}
-          {/* ⚠★ 提示必须挨着按钮 —— 原来放在内容区下面，
-                内容空的时窗口没滚动，提示在视口外，点了像没反应 ⚠ */}
-          {err && (
-            <span style={{ color: 'var(--err)', fontSize: 12, lineHeight: 1.4 }}>{err}</span>
-          )}
-          <div style={{ marginLeft: 'auto' }} />
+
           <Button onClick={back} disabled={busy}>
             取消
           </Button>
           <Button variant="primary" loading={busy} onClick={requestSave}>
             {editing ? '保存' : '写下'}
           </Button>
+        </div>
         </div>
       </div>
 

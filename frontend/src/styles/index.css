@@ -531,3 +531,133 @@ a.profile-avatar:active {
     gap: 6px;
   }
 }
+
+
+/* ============================================================================
+   ★★★ 写作区两栏：左目录（可折叠）＋ 纸（`D131` · 2026-10-27）⚠
+
+   所有者：「写作区加个目录，可折叠的，更好一点」
+
+   · · 目录 = 正文里的 # / ## / ###（⛔ 不含「名字」，那是身份不是章节）
+   · · 跟着字数那次 1 秒防抖一起更新，⛔ 不额外接 onChange
+   · · 折叠状态存本地（useCollapsed），下次打开还是收着的
+   ========================================================================== */
+
+.note-edit-layout {
+  display: grid;
+  /* ⚠ 纸宽**固定** 820：折叠只收左栏，⛔ 不让正文重排（否则眼睛要重新找行）⚠ */
+  grid-template-columns: 220px minmax(0, 820px);
+  gap: 20px;
+  align-items: start;
+  /* ★ 和阅读页一致：整体居中，别让纸贴着屏幕左缘 ⚠ */
+  justify-content: center;
+}
+
+.note-edit-layout.is-folded {
+  grid-template-columns: 40px minmax(0, 820px);
+}
+
+.note-edit-rail {
+  position: sticky;
+  top: 16px;
+}
+
+/* 折叠后：一条竖排的「目录」＋ 箭头，占 40px */
+.note-edit-fold-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0 14px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  box-shadow: var(--shadow-card);
+}
+.note-edit-fold-btn:hover { color: var(--accent); border-color: var(--accent); }
+.note-edit-fold-btn .v {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 3px;
+}
+
+/* 目录标题行：左「目录」右「收起」箭头 */
+.note-toc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.note-toc-head h4 {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+.note-toc-head button {
+  /* ⚠ 必须 width:auto —— `.note-toc button` 那条给了 `width:100%`（给目录项用的），
+     不收窄的话「收起」按钮会占满整行，把「目录」两个字挤成竖排（踩过）⚠ */
+  width: auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.note-toc-head button:hover { color: var(--accent); background: var(--accent-dim); }
+
+/* 窄屏：目录整块不显示（写作时屏幕本来就窄，正文优先） */
+@media (max-width: 1100px) {
+  .note-edit-layout,
+  .note-edit-layout.is-folded { grid-template-columns: minmax(0, 1fr); }
+  .note-edit-rail { display: none; }
+}
+
+
+/* ============================================================================
+   ★★ 写作页「名字说明 + 类别说明」那一行（`D134` 修正 · 2026-10-28）⚠
+
+   所有者：「你这个放在顶部不行吗？正好哪里也有一个徽标」
+   ⇒ 类别说明放到右上角徽标**下面那一行的右端**，和名字说明同一行、左右各一边，
+     ⛔ 不额外增加高度；窄屏时整行换到下一行（⛔ 不把句子劈开）⚠
+   ========================================================================== */
+.note-edit-subline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  margin-bottom: 16px;
+}
+.note-edit-subline .sub-name {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.note-edit-subline .sub-kind {
+  flex: 0 0 auto;
+  /* ★ 和右上角徽标右缘对齐（徽标 right:14，这行内边距 22）⚠ */
+  margin-right: -8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+@media (max-width: 900px) {
+  .note-edit-subline .sub-kind {
+    /* ⚠ 窄屏整行独占 —— 否则会插进名字说明的句子里（实测「章节标 题。」被劈开）⚠ */
+    flex: 1 1 100%;
+    margin-right: 0;
+    padding-right: 0;
+    margin-top: -6px;
+  }
+}

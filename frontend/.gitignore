@@ -21,3 +21,6 @@ pnpm-debug.log*
 .DS_Store
 *.suo
 *.sln
+
+# ★ 个人版构建产物（`npm run build:personal`）—— 桌面壳加载它，⛔ 不入库
+dist-personal/

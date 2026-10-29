@@ -19,6 +19,9 @@ import Register from './pages/Register'
 import AdminInvites from './pages/AdminInvites'
 import InviteLanding from './pages/InviteLanding'
 import { setUnauthorizedHandler } from './api/client'
+import { IS_PERSONAL } from './lib/personal'
+import PersonalHome from './pages/PersonalHome'
+import PersonalBar from './components/PersonalBar'
 import { useAuthStore } from './store/authStore'
 
 /** ★★ `D98`：**图谱页懒加载** —— G6 是大件，* 只在打开图谱时才下载 ⚠ */
@@ -77,11 +80,41 @@ export default function App() {
 
   return (
     <>
-      <TopNav />
+      {/* ★★ 个人版：顶栏换成极简的一条（⛔ 没有登录 / 搜索 / 头像）⚠ */}
+      {IS_PERSONAL ? <PersonalBar /> : <TopNav />}
       {/* ★★ 顺手写（`D125` 配套）—— 全局常驻：右下角按钮 + 快捷键 n ⚠ */}
       <QuickNote />
       <Routes>
-        <Route path="/" element={<Home />} />
+        {/* ★★★ 个人版：只有「项目 → 图谱 → 阅读 → 写笔记」⚠
+            · · 所有者：「不要做用户登陆功能，就只有用户一个人用……
+                  还有首页这些花里胡哨的不需要的。」
+            · · ⚠ 编译期开关（`VITE_PERSONAL`）⇒ 个人版产物里**没有**首页/登录/搜索/管理 ⚠ */}
+        {IS_PERSONAL && (
+          <>
+            <Route path="/" element={<PersonalHome />} />
+            <Route path="/p/:projectRef" element={<ProjectPage />} />
+            <Route
+              path="/p/:projectRef/graph"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="faint" style={{ padding: 48, textAlign: 'center', fontSize: 13 }}>
+                      正在加载图谱引擎…
+                    </div>
+                  }
+                >
+                  <ProjectGraphPage />
+                </Suspense>
+              }
+            />
+            <Route path="/p/:projectRef/notes/new" element={<NoteEditPage />} />
+            <Route path="/p/:projectRef/notes/:noteId/edit" element={<NoteEditPage />} />
+            <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </>
+        )}
+
+        {!IS_PERSONAL && <Route path="/" element={<Home />} />}
         <Route path="/workspace" element={<Workspace />} />
         {/* ★ 用户空间（参考 B 站 · 2026-10-24）：/u/<username> 公开看，/me 是本人视角 ⚠ */}
         <Route path="/u/:username" element={<UserSpacePage />} />
@@ -138,7 +171,8 @@ export default function App() {
             ★ 暂时一律回首页 —— ❌ 不做"跳旧站"那种降级（本项目没有旧站） */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <SkyFx />
+      {/* ★★ 天空 / 星点 / 网格是社区版的"身份"装饰 ⇒ 个人版不要（`POSITIONING` 0.4）⚠ */}
+      {!IS_PERSONAL && <SkyFx />}
     </>
   )
 }

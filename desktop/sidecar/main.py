@@ -23,12 +23,48 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 VERSION = "0.1.0"
 
 
 def _data_dir() -> str:
     return os.environ.get("ASTROLABE_DATA_DIR") or os.path.join(os.getcwd(), "data")
+
+
+# ---------------------------------------------------------------- 扫描
+
+# ⚠ 只用于"看一眼能读多少"；真正的解析由解析器负责（下一步接进来）
+_EXTS = {
+    ".py": "Python", ".c": "C", ".h": "C/C++", ".cpp": "C++", ".cc": "C++",
+    ".java": "Java", ".js": "JS", ".ts": "TS", ".tsx": "TSX", ".jsx": "JSX",
+    ".go": "Go", ".rs": "Rust", ".md": "Markdown",
+}
+_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", "target"}
+
+
+def _scan(root: str, limit: int = 200000) -> dict:
+    t0 = time.time()
+    counts: dict[str, int] = {}
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        # ⚠ 原地改 dirnames 才能真的剪枝（listdir 之外最省的做法）
+        dirnames[:] = [d for d in dirnames if d not in _SKIP and not d.startswith(".")]
+        for fn in filenames:
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in _EXTS:
+                counts[ext] = counts.get(ext, 0) + 1
+                total += 1
+                if total >= limit:
+                    break
+        if total >= limit:
+            break
+    return {
+        "root": root,
+        "files": total,
+        "byExt": [{"ext": k, "n": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])],
+        "elapsedMs": int((time.time() - t0) * 1000),
+    }
 
 
 # ---------------------------------------------------------------- 路由
@@ -53,6 +89,13 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
 
     if path == "/api/projects/":
         return 200, {"ok": True, "data": {"items": [], "total": 0}}
+
+    if path == "/api/fs/scan" and method == "POST":
+        # ★ 选完目录立刻给**真实**反馈（文件数 / 语言分布），⛔ 不做假的进度条
+        root = str((body or {}).get("path") or "").strip()
+        if not root or not os.path.isdir(root):
+            return 400, {"ok": False, "error": "目录不存在或不可读"}
+        return 200, {"ok": True, "data": _scan(root)}
 
     if path == "/api/ping":
         return 200, {"ok": True, "data": {"pong": True, "version": VERSION, "dataDir": _data_dir()}}

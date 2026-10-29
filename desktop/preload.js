@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('astrolabe', {
   isDesktop: true,
   /** 版本 + 数据目录（都是只读事实） */
   info: () => ipcRenderer.invoke('app:info'),
+  /** ★ 原生目录选择（返回绝对路径，取消则 null）—— 浏览器做不到 */
+  pickDirectory: () => ipcRenderer.invoke('app:pick-dir'),
   /** 用系统文件管理器打开数据目录（备份用） */
   openDataDir: () => ipcRenderer.invoke('app:open-data-dir'),
 })

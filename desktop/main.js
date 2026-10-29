@@ -20,7 +20,7 @@
  *    · 不用 socket 文件 ⇒ Windows 上不用处理命名管道差异
  */
 
-const { app, BrowserWindow, protocol, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, protocol, ipcMain, shell, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { spawn } = require('node:child_process')
@@ -34,7 +34,11 @@ const EXE_DIR = path.dirname(app.getPath('exe'))
 /** 前端构建产物目录：打包后在 resources/dist，开发时在 ../frontend/dist */
 const DIST = IS_PACKAGED
   ? path.join(process.resourcesPath, 'dist')
-  : path.join(__dirname, '..', 'frontend', 'dist')
+  : (() => {
+      // ★ 本地开发：个人版产物（dist-personal）优先，没有才退回线上产物
+      const personal = path.join(__dirname, '..', 'frontend', 'dist-personal')
+      return fs.existsSync(personal) ? personal : path.join(__dirname, '..', 'frontend', 'dist')
+    })()
 
 /** 边车：打包后是 resources/sidecar/astrolabe-sidecar(.exe)，开发时是 python 脚本 */
 const SIDECAR_CMD = IS_PACKAGED
@@ -236,10 +240,22 @@ function createWindow() {
       const probe = `(async () => {
         const r = await fetch('/api/ping')
         const j = await r.json()
+        let scan = null
+        try {
+          const sr = await fetch('/api/fs/scan', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: ${JSON.stringify(process.env.ASTROLABE_SMOKE_SCAN || '')} }),
+          })
+          scan = (await sr.json()).data?.files ?? null
+        } catch (e) { scan = 'ERR' }
         const t = document.title
         const root = !!document.querySelector('#root')?.children.length
         return { title: t, apiOk: j.ok === true, pong: j.data?.pong, rootRendered: root,
-                 desktopFlag: !!window.astrolabe?.isDesktop }
+                 desktopFlag: !!window.astrolabe?.isDesktop,
+                 text: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 80),
+                 hasTopNav: !!document.querySelector('.topnav'),
+                 hasSky: !!document.querySelector('canvas, .skyfx'), scanFiles: scan }
       })()`
       try {
         const out = await win.webContents.executeJavaScript(probe)
@@ -270,6 +286,15 @@ ipcMain.handle('app:info', () => ({
   distDir: DIST,
   packaged: IS_PACKAGED,
 }))
+
+ipcMain.handle('app:pick-dir', async () => {
+  // ★ 原生目录对话框 —— 浏览器做不到这件事（安全限制），这也是要壳的原因之一
+  const r = await dialog.showOpenDialog({
+    title: '选择要读的代码目录',
+    properties: ['openDirectory'],
+  })
+  return r.canceled ? null : r.filePaths[0] || null
+})
 
 ipcMain.handle('app:open-data-dir', async () => {
   await shell.openPath(DATA_DIR)

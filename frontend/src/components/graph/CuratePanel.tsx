@@ -71,6 +71,11 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
   const [editKind, setEditKind] = useState('')
   const [newName, setNewName] = useState('')
   const [newFile, setNewFile] = useState('')
+  /** ★ 起止行号 —— vid 的组成部分，填真实行号才能和解析结果对齐 ⚠ */
+  const [newLine, setNewLine] = useState('')
+  const [newLineEnd, setNewLineEnd] = useState('')
+  const [editLine, setEditLine] = useState('')
+  const [editLineEnd, setEditLineEnd] = useState('')
 
   const hits = useMemo(() => {
     const kw = q.trim().toLowerCase()
@@ -97,6 +102,8 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
     if (sel) {
       setEditName(sel.name)
       setEditKind(sel.kind)
+      setEditLine(String((sel as { line?: number }).line ?? ''))
+      setEditLineEnd(String((sel as { line_end?: number | null }).line_end ?? ''))
       void loadEdges(sel.vid)
     } else {
       setEdges({ out: [], in: [] })
@@ -120,7 +127,18 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
     setBusy(true)
     setErr('')
     try {
-      await curate(projectRef, { action: pending.action, reason: reason.trim(), ...pending.payload })
+      if (pending.action === 'reparse') {
+        // ★ 重新解析 = 修复动作（`force` 才会重建），⛔ 不做日常入口
+        const r = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/parse`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ force: true, reason: reason.trim() }),
+        })
+        const j = await r.json()
+        if (!j.ok) throw new Error(j.error || '重新解析失败')
+      } else {
+        await curate(projectRef, { action: pending.action, reason: reason.trim(), ...pending.payload })
+      }
       setPending(null)
       onChanged()
       if (sel) await loadEdges(sel.vid)
@@ -277,6 +295,25 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
                 style={{ width: 92, fontSize: 12 }}
               />
             </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <input
+                className="input"
+                value={editLine}
+                onChange={(e) => setEditLine(e.target.value)}
+                placeholder="起始行"
+                style={{ width: 88, fontSize: 12 }}
+              />
+              <input
+                className="input"
+                value={editLineEnd}
+                onChange={(e) => setEditLineEnd(e.target.value)}
+                placeholder="结束行"
+                style={{ width: 88, fontSize: 12 }}
+              />
+              <span className="faint" style={{ fontSize: 10.5, alignSelf: 'center' }}>
+                ⚠ 改行号会换掉 vid（手补项和笔记的锚点会跟着变）
+              </span>
+            </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
               <button
                 type="button"
@@ -284,7 +321,13 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
                 onClick={() =>
                   ask(
                     'update_node',
-                    { vid: sel.vid, name: editName.trim() || undefined, kind: editKind.trim() || undefined },
+                    {
+                      vid: sel.vid,
+                      name: editName.trim() || undefined,
+                      kind: editKind.trim() || undefined,
+                      line: editLine.trim() === '' ? undefined : Number(editLine),
+                      line_end: editLineEnd.trim() === '' ? undefined : Number(editLineEnd),
+                    },
                     `改「${sel.name}」`,
                   )
                 }
@@ -341,6 +384,20 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
             placeholder="文件路径"
             style={{ flex: 1, fontSize: 12 }}
           />
+          <input
+            className="input"
+            value={newLine}
+            onChange={(e) => setNewLine(e.target.value)}
+            placeholder="起始行"
+            style={{ width: 74, fontSize: 12 }}
+          />
+          <input
+            className="input"
+            value={newLineEnd}
+            onChange={(e) => setNewLineEnd(e.target.value)}
+            placeholder="结束行"
+            style={{ width: 74, fontSize: 12 }}
+          />
           <button
             type="button"
             style={btn}
@@ -349,15 +406,52 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
                 setErr('先写个名字')
                 return
               }
+              // ⚠ 行号是 vid 的一部分：空着填 0，起止颠倒就当没填
+              const ln = Number(newLine) || 0
+              const le = Number(newLineEnd) || -1
+              if (ln < 0) {
+                setErr('起始行填正整数')
+                return
+              }
               ask(
                 'add_node',
-                { kind: 'function', name: newName.trim(), file_path: newFile.trim(), line: 0 },
+                {
+                  kind: 'function',
+                  name: newName.trim(),
+                  file_path: newFile.trim(),
+                  line: ln,
+                  line_end: le >= ln ? le : -1,
+                },
                 `加节点「${newName.trim()}」`,
               )
             }}
           >
             <Plus size={11} /> 加
           </button>
+        </div>
+
+        {/* ★★ 重新解析是**修复**，不是日常操作（所有者 2026-10-29）——
+            只给一行小字入口，而且必须先说理由 ⚠ */}
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => ask('reparse', {}, '重新解析整个项目')}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              fontSize: 10.5,
+              color: 'var(--text-faint)',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textDecoration: 'underline dotted',
+            }}
+          >
+            图不完整 / 解析出错？重新解析
+          </button>
+          <span className="faint" style={{ fontSize: 10.5, marginLeft: 6 }}>
+            （人手补的节点和边会保留）
+          </span>
         </div>
       </div>
 

@@ -199,6 +199,23 @@ def main() -> None:
         r = sc.call("GET", f"/api/projects/{proj['ref']}/manual/")
         check("修补历史有记录", len(r["body"]["data"]["log"]) >= 4, str(len(r["body"]["data"]["log"])))
 
+        # ★★ 回归：重新解析必须**保住**人补的节点
+        #   之前的 bug：replace_graph 无条件 DELETE ⇒ 手补的节点和边全被清光
+        if parsed:
+            sc.call(
+                "POST",
+                f"/api/projects/{proj['ref']}/curate/",
+                {"action": "add_node", "kind": "function", "name": "重解析保留测试",
+                 "file_path": "keep.py", "line": 1, "reason": "回归用例"},
+            )
+            sc.call("POST", f"/api/projects/{proj['ref']}/parse")
+            after = sc.call("GET", f"/api/projects/{proj['ref']}/nodes/", {"limit": 20000})["body"]["data"]["items"]
+            check(
+                "重解析后人补节点仍在",
+                any(n["name"] == "重解析保留测试" for n in after),
+                f"共 {len(after)} 个",
+            )
+
         st = sc.call("GET", f"/api/projects/{proj['ref']}/")
         check("统计", st["body"]["data"]["stats"]["summaryNodes"] == 1, json.dumps(st["body"]["data"]["stats"]))
     finally:

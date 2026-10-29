@@ -166,11 +166,16 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
     ⚠ 笔记的 `node_vid` 不受影响 —— 它指向 vid，而 vid 由代码内容决定（不是自增 id）。
     """
     with conn:
-        conn.execute("DELETE FROM edge WHERE project_id = ?", (project_id,))
-        conn.execute("DELETE FROM node WHERE project_id = ?", (project_id,))
+        # ★★★ 只删**解析出来的**，⛔ 不碰人手补的（`origin='manual'`）⚠
+        #
+        # 之前是无条件 DELETE ⇒ 重新解析一次，手补的节点和边全没了，
+        # 挂着它们的笔记还会变成「节点已不存在」。而改图恰恰是解析不准时的唯一兜底，
+        # 删掉它等于把用户的工作一笔勾销。
+        conn.execute("DELETE FROM edge WHERE project_id = ? AND origin = 'parsed'", (project_id,))
+        conn.execute("DELETE FROM node WHERE project_id = ? AND origin = 'parsed'", (project_id,))
         conn.executemany(
-            """INSERT INTO node (project_id, vid, kind, name, qname, file_path, line, line_end)
-               VALUES (?,?,?,?,?,?,?,?)""",
+            """INSERT OR REPLACE INTO node (project_id, vid, kind, name, qname, file_path, line, line_end, origin)
+               VALUES (?,?,?,?,?,?,?,?,'parsed')""",
             [
                 (
                     project_id,
@@ -302,6 +307,7 @@ CURATE_ACTIONS = (
     "add_edge",
     "update_edge",
     "remove_edge",
+    "reparse",
 )
 
 
@@ -363,28 +369,44 @@ def manual_vids(conn: sqlite3.Connection, project_id: int) -> dict:
 
 
 def add_manual_node(
-    conn: sqlite3.Connection, project_id: int, *, kind: str, name: str, file_path: str, line: int
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    kind: str,
+    name: str,
+    file_path: str,
+    line: int,
+    line_end: int = -1,
 ) -> int:
     """手补一个节点（解析器没识别出来的函数/文件）
 
-    ⚠ vid 必须**确定性**：这里用 `identity.canonical` 同一套算法，
-      否则重解析之后手补的节点会和解析结果对不上。
+    ★★ **必须填起止行号**（所有者 2026-10-29）：
+      vid = hash(kind|file|name|line|line_end)，行号是这个身份的一部分。
+      · · 填真实行号 ⇒ 将来解析器识别出这个函数时，**vid 一致、不会出现两个节点** ✅
+      · · 填 -1      ⇒ 永远对不上，会并存两个同名节点 ⚠
+      ⇒ 所以行号不是装饰，是**让两套来源能对齐**的唯一办法。
     """
     from graph import identity  # ⚠ 延迟导入：没有 app 目录时给明确错误
 
-    vid = identity.hash53(identity.canonical(kind, file_path, name, line, -1))
+    ln = line if isinstance(line, int) and line >= 0 else 0
+    end = line_end if isinstance(line_end, int) and line_end >= ln else -1
+    vid = identity.hash53(identity.canonical(kind, file_path, name, ln, end))
     with conn:
         conn.execute(
             """INSERT OR REPLACE INTO node (project_id, vid, kind, name, qname, file_path, line, line_end, origin)
                VALUES (?,?,?,?,?,?,?,?, 'manual')""",
-            (project_id, vid, kind, name, "", file_path, line, -1),
+            (project_id, vid, kind, name, "", file_path, ln, end),
         )
     return vid
 
 
 def update_node_fields(conn: sqlite3.Connection, project_id: int, vid: int, **fields) -> None:
     """改节点（名字/类型/文件/行）—— 改过的标成 manual"""
-    allowed = {k: v for k, v in fields.items() if k in ("name", "kind", "file_path", "line") and v is not None}
+    allowed = {
+        k: v
+        for k, v in fields.items()
+        if k in ("name", "kind", "file_path", "line", "line_end") and v is not None
+    }
     if not allowed:
         return
     sets = ", ".join(f"{k} = ?" for k in allowed)

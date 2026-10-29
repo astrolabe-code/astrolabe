@@ -148,6 +148,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"解析器不可用：{type(exc).__name__}: {exc}", 501)
 
+        # ★★★ 重新解析是**修复手段**，不是日常操作（所有者 2026-10-29）⚠
+        #   「只有解析出错了、没出完整的图，才能重新解析」
+        existing = CONN.execute(
+            "SELECT COUNT(*) AS c FROM node WHERE project_id = ? AND origin = 'parsed'", (p["id"],)
+        ).fetchone()["c"]
+        if existing and not body.get("force"):
+            return 409, {
+                "ok": False,
+                "code": "graph_exists",
+                "nodes": int(existing),
+                "error": (
+                    f"这个项目已经解析出 {existing} 个节点了。"
+                    "重新解析是用来修复「图不完整 / 解析出错」的，不是日常操作 —— "
+                    "确实要重建吗？（人手补的节点和边会保留）"
+                ),
+            }
+
         res = parser_bridge.parse_project(p["root"])
         if not res["nodes"]:
             return bad(
@@ -155,6 +172,19 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 422,
             )
         store.replace_graph(CONN, p["id"], res["nodes"], res["edges"])
+        # ★ 重建要留痕（它是修复动作，半年后要能看出"哪天重来过"）
+        if existing:
+            try:
+                store.log_curate(
+                    CONN,
+                    p["id"],
+                    "reparse",
+                    "graph",
+                    str(body.get("reason") or "重新解析（修复图不完整）"),
+                    {"nodes": res["stats"]["nodes"], "edges": res["stats"]["edges"]},
+                )
+            except ValueError:
+                pass
         return ok({"stats": res["stats"], "project": dict(store.find_project(CONN, p["ref"]))})
 
     # ------------------------------------------------ 项目
@@ -244,8 +274,16 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     name=str(body.get("name") or "").strip(),
                     file_path=str(body.get("file_path") or ""),
                     line=int(body.get("line") or 0),
+                    line_end=int(body.get("line_end") if body.get("line_end") is not None else -1),
                 )
-                store.log_curate(CONN, p["id"], action, str(vid), reason, {"name": body.get("name")})
+                store.log_curate(
+                    CONN,
+                    p["id"],
+                    action,
+                    str(vid),
+                    reason,
+                    {"name": body.get("name"), "line": body.get("line"), "line_end": body.get("line_end")},
+                )
                 return ok({"vid": vid})
 
             if action == "update_node":
@@ -258,6 +296,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     kind=body.get("kind"),
                     file_path=body.get("file_path"),
                     line=body.get("line"),
+                    line_end=body.get("line_end"),
                 )
                 store.log_curate(CONN, p["id"], action, str(vid), reason, {"fields": list(body)})
                 return ok({"vid": vid})

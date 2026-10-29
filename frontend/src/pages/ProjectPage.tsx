@@ -71,7 +71,11 @@ export default function ProjectPage() {
   }, [selected, projectRef, dwellMs])
 
   const p = project.data
-  const canWrite = !!p?.can_edit
+  // ★★★ 解析状态是**写笔记的门槛**（所有者 2026-10-29）：
+  //   解析出错 ⇒ 禁止写；只有重新解析成功、图完整了才放开
+  const parseState = (p as unknown as { parse_state?: string })?.parse_state || 'ok'
+  const parseOk = parseState !== 'failed'
+  const canWrite = !!p?.can_edit && parseOk
   const meUsername = me.data?.username
 
   // ★★ 存档指向的项目已经打不开 ⇒ 清掉存档（`D120` 防御）⚠
@@ -191,6 +195,29 @@ export default function ProjectPage() {
             overflow: 'hidden',
           }}
         >
+          {/* ★★★ 解析没成功 ⇒ 只能修图，不能写笔记（所有者 2026-10-29）⚠ */}
+          {!parseOk && (
+            <div
+              className="card"
+              style={{
+                padding: '8px 10px',
+                marginBottom: 10,
+                fontSize: 11.5,
+                lineHeight: 1.7,
+                borderColor: '#e5c9c9',
+                background: 'rgba(200,0,0,.04)',
+              }}
+            >
+              <b>解析没成功，先修好图</b>
+              <div className="faint" style={{ marginTop: 2 }}>
+                {String((p as unknown as { parse_error?: string })?.parse_error || '图不完整')}
+              </div>
+              <div className="faint" style={{ marginTop: 4 }}>
+                去 <b>图谱 → 改图</b> 底部点「重新解析」；成功后这里会自动放开。
+              </div>
+            </div>
+          )}
+
           {/* ★★★ 写作进度（覆盖率）—— 只有作者/协作者看得到（`D123`）⚠ */}
           {canWrite && <WritingProgress projectRef={projectRef} />}
 

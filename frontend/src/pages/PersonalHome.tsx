@@ -33,9 +33,15 @@ export default function PersonalHome() {
   const [err, setErr] = useState('')
   /** ★ 建项目 + 解析（个人版唯一的重活） */
   const [parsing, setParsing] = useState(false)
-  const [parsed, setParsed] = useState<{ ref: string; name: string; nodes: number; edges: number } | null>(
-    null,
-  )
+  const [parsed, setParsed] = useState<{
+    ref: string
+    name: string
+    nodes: number
+    edges: number
+    /** ★ 解析失败时带原因（此时**不许写笔记**，只能重试）*/
+    failed?: boolean
+    message?: string
+  } | null>(null)
 
   const pick = async () => {
     setErr('')
@@ -65,24 +71,35 @@ export default function PersonalHome() {
     }
   }
 
-  const startParse = async () => {
-    if (!picked) return
+  const startParse = async (force = false, ref0?: string) => {
+    if (!picked && !ref0) return
     setErr('')
     setParsing(true)
     try {
       const name = picked.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '未命名'
-      const cr = await fetch('/api/projects/', {
+      let ref = ref0 || ''
+      if (!ref) {
+        const cr = await fetch('/api/projects/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: picked, name }),
+        })
+        const cj = await cr.json()
+        if (!cj.ok) throw new Error(cj.error || '建项目失败')
+        ref = cj.data.project.ref
+      }
+
+      const pr = await fetch(`/api/projects/${encodeURIComponent(ref)}/parse`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path: picked, name }),
+        body: JSON.stringify(force ? { force: true, reason: '解析失败，重试' } : {}),
       })
-      const cj = await cr.json()
-      if (!cj.ok) throw new Error(cj.error || '建项目失败')
-      const ref = cj.data.project.ref
-
-      const pr = await fetch(`/api/projects/${encodeURIComponent(ref)}/parse`, { method: 'POST' })
       const pj = await pr.json()
-      if (!pj.ok) throw new Error(pj.error || '解析失败')
+      if (!pj.ok) {
+        // ★ 解析没成功 ⇒ 记住这个项目，但**只给"重新解析"**，不给写笔记
+        setParsed({ ref, name, nodes: 0, edges: 0, failed: true, message: pj.error || '解析失败' })
+        return
+      }
       const st = pj.data.stats
       setParsed({ ref, name, nodes: st.nodes, edges: st.edges })
     } catch (e) {
@@ -199,7 +216,7 @@ export default function PersonalHome() {
             </button>
           )}
 
-          {parsed && (
+          {parsed && !parsed.failed && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12.5, color: '#444' }}>
                 已建好：<b>{parsed.name}</b> · {parsed.nodes} 个节点 · {parsed.edges} 条关系
@@ -220,6 +237,36 @@ export default function PersonalHome() {
                 }}
               >
                 进入 →
+              </button>
+            </div>
+          )}
+
+          {/* ★★ 解析失败：**不许写笔记**，只给"重新解析"（所有者 2026-10-29）⚠ */}
+          {parsed?.failed && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12.5, color: '#b00', lineHeight: 1.7 }}>
+                解析没成功：{parsed.message}
+              </div>
+              <div style={{ fontSize: 11.5, color: '#888', marginTop: 4, lineHeight: 1.7 }}>
+                图不完整时写下的笔记会挂在不存在的锚点上 —— 先修好图，再写。
+              </div>
+              <button
+                type="button"
+                disabled={parsing}
+                onClick={() => void startParse(true, parsed.ref)}
+                style={{
+                  marginTop: 10,
+                  padding: '9px 20px',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  color: '#fff',
+                  background: parsing ? '#999' : '#111',
+                  border: 'none',
+                  borderRadius: 8,
+                  cursor: parsing ? 'default' : 'pointer',
+                }}
+              >
+                {parsing ? '重新解析中…' : '重新解析'}
               </button>
             </div>
           )}

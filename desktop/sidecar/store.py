@@ -40,7 +40,10 @@ CREATE TABLE IF NOT EXISTS project (
   dir         TEXT NOT NULL,           -- 库内子目录名
   created_at  TEXT NOT NULL,
   parsed_at   TEXT,
-  graph_rev   INTEGER NOT NULL DEFAULT 0
+  graph_rev   INTEGER NOT NULL DEFAULT 0,
+  -- ★★ 解析状态：none（还没解析）/ ok（图完整，可以写）/ failed（解析出错，禁止写）⚠
+  parse_state TEXT NOT NULL DEFAULT 'none',
+  parse_error TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS node (
@@ -109,6 +112,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for table, col, ddl in (
         ("node", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
         ("edge", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
+        ("project", "parse_state", "TEXT NOT NULL DEFAULT 'none'"),
+        ("project", "parse_error", "TEXT NOT NULL DEFAULT ''"),
     ):
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if col not in names:
@@ -146,6 +151,33 @@ def get_or_create_project(conn: sqlite3.Connection, root: str, name: str, code_r
         )
     os.makedirs(os.path.join(root, d), exist_ok=True)
     return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
+
+
+def set_parse_state(
+    conn: sqlite3.Connection, project_id: int, state: str, error: str = "", stats: dict | None = None
+) -> None:
+    """★★ 解析状态（**写笔记的门槛**）
+
+    ```\n * ok      图完整 ⇒ 可以写笔记
+ * failed  解析出错 / 没出节点 ⇒ **禁止写笔记**，只能重新解析
+ * none    还没解析过
+ ```\n
+    ⚠ 所有者口径（2026-10-29）：
+      「如果解析出错了，就不允许写笔记，只有用户点重新解析后，
+        解析未出错、出图完整后，才允许写笔记。」
+    """
+    with conn:
+        conn.execute(
+            "UPDATE project SET parse_state = ?, parse_error = ?, parsed_at = ? WHERE id = ?",
+            (state, (error or "")[:500], time.strftime("%Y-%m-%dT%H:%M:%S") if state != "none" else None, project_id),
+        )
+
+
+def parse_state_of(conn: sqlite3.Connection, project_id: int) -> tuple[str, str]:
+    r = conn.execute(
+        "SELECT parse_state, parse_error FROM project WHERE id = ?", (project_id,)
+    ).fetchone()
+    return (r["parse_state"], r["parse_error"]) if r else ("none", "")
 
 
 def list_projects(conn: sqlite3.Connection) -> list[dict]:

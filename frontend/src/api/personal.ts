@@ -101,6 +101,10 @@ export function toProjectSummary(raw: any, stats?: any): any {
     owner: 'me',
     owner_display: '我',
     mine: true,
+    /** ★ 个人版自己是作者 ⇒ 可写；真正的门槛在 parse_state（图不完整不给写）*/
+    can_edit: true,
+    parse_state: String(raw.parse_state || 'none'),
+    parse_error: String(raw.parse_error || ''),
     // ⚠ 个人版没有"排队/拉取"这些状态：有图就是 done
     status: String(raw.parsed_at ? 'done' : 'none'),
     progress: raw.parsed_at ? 100 : 0,

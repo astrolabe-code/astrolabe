@@ -166,11 +166,18 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             }
 
         res = parser_bridge.parse_project(p["root"])
-        if not res["nodes"]:
-            return bad(
-                "没有解析出任何节点 —— 目录可能不含支持的源码，或缺 tree-sitter 语法包",
-                422,
+        st = res["stats"]
+        # ★★ 什么算「解析成功、图完整」：出节点 且 没有解析错误 ⚠
+        #   ⇒ 不满足就置 failed，**写笔记会被拒**（见下面 POST notes 的门槛）
+        if not res["nodes"] or st.get("parseErrors", 0) > 0:
+            msg = (
+                "没有解析出任何节点 —— 目录可能不含支持的源码，或缺 tree-sitter 语法包"
+                if not res["nodes"]
+                else f"解析有 {st['parseErrors']} 处错误，图不完整"
             )
+            store.set_parse_state(CONN, p["id"], "failed", msg, st)
+            return bad(msg, 422)
+        store.set_parse_state(CONN, p["id"], "ok", "", st)
         mig = store.replace_graph(CONN, p["id"], res["nodes"], res["edges"])
 
         # ★ 迁移过的笔记，**文件里的 frontmatter 也要跟着改**（否则索引重建会退回去）
@@ -222,12 +229,11 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if not p:
             return bad("项目不存在", 404)
         if method == "GET":
-            return ok(
-                {
-                    "project": dict(p),
-                    "stats": store.stats(CONN, p["id"]),
-                }
-            )
+            pstate, perr = store.parse_state_of(CONN, p["id"])
+            d = dict(p)
+            d["parse_state"] = pstate
+            d["parse_error"] = perr
+            return ok({"project": d, "stats": store.stats(CONN, p["id"])})
 
     # ★ 写作进度：个人版没有"读者"，所以只有作者视角这一个数字
     m = R_WPROG.match(path)
@@ -423,6 +429,18 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok({"items": items, "total": len(items)})
 
         if method == "POST":
+            # ★★★ **解析没成功就不许写**（所有者 2026-10-29）——
+            #   图不完整时的笔记会挂在不存在的锚点上，等于白写
+            pstate, perr = store.parse_state_of(CONN, p["id"])
+            if pstate != "ok":
+                return 409, {
+                    "ok": False,
+                    "code": "parse_not_ok",
+                    "error": (
+                        "这个项目还没解析成功，先修好图再写笔记"
+                        + (f"：{perr}" if perr else "")
+                    ),
+                }
             node_vid = int(body.get("node_vid") or 0)
             node = store.node_by_vid(CONN, p["id"], node_vid)
             if node is None:

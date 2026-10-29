@@ -108,6 +108,17 @@ def main() -> None:
         r = sc.call("GET", f"/api/projects/{proj['ref']}/nodes/")
         check("节点列表", len(r["body"]["data"]["items"]) > 0)
 
+        # ★★ 解析没成功 ⇒ **禁止写笔记**（所有者 2026-10-29）
+        empty_dir = os.path.join(TMP, "empty-src")
+        os.makedirs(empty_dir, exist_ok=True)
+        open(os.path.join(empty_dir, "a.txt"), "w").write("no source here")
+        bad = sc.call("POST", "/api/projects/", {"path": empty_dir, "name": "空项目"})["body"]["data"]["project"]
+        sc.call("POST", f"/api/projects/{bad['ref']}/parse", {})
+        st = sc.call("GET", f"/api/projects/{bad['ref']}/")["body"]["data"]["project"]
+        check("解析失败 ⇒ 状态 failed", st.get("parse_state") == "failed", st.get("parse_error", "")[:40])
+        r = sc.call("POST", f"/api/projects/{bad['ref']}/notes/", {"node_vid": 1, "kind": "flash", "body": "x"})
+        check("解析失败 ⇒ 写笔记被拒", r["status"] == 409 and r["body"].get("code") == "parse_not_ok")
+
         r = sc.call(
             "POST",
             f"/api/projects/{proj['ref']}/notes/",

@@ -62,6 +62,8 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
   const [edges, setEdges] = useState<{ out: EdgeRow[]; in: EdgeRow[] }>({ out: [], in: [] })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  /** ★ 修复结果的一次性提示（如实报告锚点有没有丢） */
+  const [notice, setNotice] = useState('')
 
   /** 待确认的动作（点了先问理由，确认后才提交） */
   const [pending, setPending] = useState<{ action: string; payload: Record<string, unknown>; hint: string } | null>(null)
@@ -136,6 +138,18 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
         })
         const j = await r.json()
         if (!j.ok) throw new Error(j.error || '重新解析失败')
+        // ★ 修复后如实报告：有没有笔记的锚点找不回来了（改名/删函数导致）
+        const st = j.data?.stats || {}
+        if (st.notesMoved) {
+          setNotice(`已重建：${st.nodes} 个节点，${st.notesMoved} 篇笔记的锚点自动跟到了新位置`)
+        } else if (st.notesOrphan || st.notesAmbiguous) {
+          setNotice(
+            `已重建：${st.nodes} 个节点。⚠ ${st.notesOrphan + st.notesAmbiguous} 篇笔记的锚点没找回来` +
+              `（函数改名或被删），它们还在，但阅读页会显示「节点已不存在」`,
+          )
+        } else {
+          setNotice(`已重建：${st.nodes} 个节点，${st.edges} 条关系`)
+        }
       } else {
         await curate(projectRef, { action: pending.action, reason: reason.trim(), ...pending.payload })
       }
@@ -365,6 +379,28 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
         )}
 
         {err && <div style={{ color: '#c00', fontSize: 11.5, marginTop: 10 }}>{err}</div>}
+        {notice && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: '6px 8px',
+              fontSize: 11.5,
+              lineHeight: 1.6,
+              background: 'rgba(0,0,0,.03)',
+              border: '1px solid var(--card-border)',
+              borderRadius: 6,
+            }}
+          >
+            {notice}
+            <button
+              type="button"
+              onClick={() => setNotice('')}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-faint)', float: 'right' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 底部：加节点 */}

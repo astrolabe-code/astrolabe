@@ -1,0 +1,14 @@
+{
+  "name": "astrolabe-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Astrolabe 个人版（绿色版）—— 把笔记钉在代码结构上",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "start:dist": "ELECTRON_USE_DIST=1 electron . --no-sandbox"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}

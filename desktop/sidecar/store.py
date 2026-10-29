@@ -86,6 +86,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_note_no ON note (no);
 CREATE INDEX IF NOT EXISTS ix_note_node ON note (project_id, node_vid);
 
 -- ★★ 修补日志：谁 / 何时 / 改了什么 / **为什么**（`reason` 必填，见 `curate.py` 口径）
+-- ★ 键值元数据：目前只放 `next_no`（编号单调递增，**永不复用**）
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS curate_log (
   id          INTEGER PRIMARY KEY,
   project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -159,18 +165,42 @@ def find_project(conn: sqlite3.Connection, ref: str) -> sqlite3.Row | None:
 # ---------------------------------------------------------------- 图
 
 
-def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], edges: list[dict]) -> None:
-    """★ 整图替换（解析完一次性写入）
+def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], edges: list[dict]) -> dict:
+    """整图替换（解析完一次性写入）；★ **笔记按 (kind, 文件, 名字) 迁移到新 vid**
 
-    ⚠ 用"先删后插"而不是 diff：解析结果是全量的，diff 复杂度不值这个钱。
-    ⚠ 笔记的 `node_vid` 不受影响 —— 它指向 vid，而 vid 由代码内容决定（不是自增 id）。
+    ## 为什么需要迁移
+
+    ```\n * vid 是内容的函数 ⇒ 函数整体下移 10 行，vid 就变了 ⚠
+ * 如果什么都不做，老笔记全部变成「节点已不存在」—— 用户写的字就"断"了
+ * ```\n
+    ## 匹配规则（**宁可不动，也不挂错**）
+
+    ```
+    旧节点 (kind, file_path, name) → 新图里同名同文件的节点
+      · · 恰好 1 个   ⇒ 迁移 ✅
+      · · 0 个        ⇒ 保持孤儿（真删了/改名了），如实计数
+      · · 2 个以上    ⇒ **不迁移**（歧义 ⇒ 挂错更糟），如实计数
+    ```
+
+    ⚠★ 绝**不按名字单独匹配**：两个文件里都有 `init` 时，按名字迁移必然挂错位。
+
+    ⚠ 只删 `origin='parsed'`，人手补的节点与边原样保留。
     """
+    # ① 先把旧的两个映射拍下来（删掉就没了）
+    old_nodes = {
+        r["vid"]: {"kind": r["kind"], "file_path": r["file_path"], "name": r["name"]}
+        for r in conn.execute(
+            "SELECT vid, kind, file_path, name FROM node WHERE project_id = ?", (project_id,)
+        ).fetchall()
+    }
+    notes = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT ref, rel_path, node_vid FROM note WHERE project_id = ?", (project_id,)
+        ).fetchall()
+    ]
+
     with conn:
-        # ★★★ 只删**解析出来的**，⛔ 不碰人手补的（`origin='manual'`）⚠
-        #
-        # 之前是无条件 DELETE ⇒ 重新解析一次，手补的节点和边全没了，
-        # 挂着它们的笔记还会变成「节点已不存在」。而改图恰恰是解析不准时的唯一兜底，
-        # 删掉它等于把用户的工作一笔勾销。
         conn.execute("DELETE FROM edge WHERE project_id = ? AND origin = 'parsed'", (project_id,))
         conn.execute("DELETE FROM node WHERE project_id = ? AND origin = 'parsed'", (project_id,))
         conn.executemany(
@@ -202,6 +232,41 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
             (time.strftime("%Y-%m-%dT%H:%M:%S"), project_id),
         )
 
+    # ② 迁移锚点（新图已经就位，按内容找"同一个函数"）
+    new_index: dict[tuple[str, str, str], list[dict]] = {}
+    for r in conn.execute(
+        "SELECT vid, kind, file_path, name, line FROM node WHERE project_id = ?", (project_id,)
+    ).fetchall():
+        key = (r["kind"], r["file_path"], r["name"])
+        new_index.setdefault(key, []).append({"vid": r["vid"], "line": r["line"]})
+
+    live = {r["vid"] for r in conn.execute("SELECT vid FROM node WHERE project_id = ?", (project_id,))}
+    moved: list[dict] = []
+    orphan = 0
+    ambiguous = 0
+
+    for n in notes:
+        if n["node_vid"] in live:
+            continue  # 锚点还在，不用动
+        old = old_nodes.get(n["node_vid"])
+        if not old:
+            orphan += 1
+            continue
+        cands = new_index.get((old["kind"], old["file_path"], old["name"])) or []
+        if len(cands) == 1:
+            with conn:
+                conn.execute(
+                    "UPDATE note SET node_vid = ? WHERE project_id = ? AND ref = ?",
+                    (cands[0]["vid"], project_id, n["ref"]),
+                )
+            moved.append({"ref": n["ref"], "rel_path": n["rel_path"], "new_vid": cands[0]["vid"], "old_vid": n["node_vid"]})
+        elif len(cands) > 1:
+            ambiguous += 1
+        else:
+            orphan += 1
+
+    return {"moved": moved, "orphan": orphan, "ambiguous": ambiguous}
+
 
 def nodes_of(conn: sqlite3.Connection, project_id: int, limit: int = 500, offset: int = 0) -> list[dict]:
     rows = conn.execute(
@@ -225,8 +290,25 @@ def node_by_vid(conn: sqlite3.Connection, project_id: int, vid: int) -> dict | N
 
 
 def next_no(conn: sqlite3.Connection) -> int:
-    r = conn.execute("SELECT COALESCE(MAX(no), 0) + 1 AS n FROM note").fetchone()
-    return int(r["n"])
+    """★★ 下一个编号 —— **单调递增，永不复用**（`D…` 2026-10-29）⚠
+
+    ```\n * ⛔ 原来用 `MAX(no)+1`：删掉最后一篇之后再建，编号会被**回收**
+ *    ⇒ 文件可能和 `.trash/` 里的旧文件同名，恢复时容易挂错
+ * ✅ 改成 meta 里的计数器：只增不减，编号即身份的一部分
+ * ```\n
+    ⚠ 第一次跑（老库）要跟现有 `MAX(no)` 对齐，否则会重复。
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = 'next_no'").fetchone()
+    cur = int(row["value"]) if row else 0
+    floor = int(conn.execute("SELECT COALESCE(MAX(no), 0) AS n FROM note").fetchone()["n"])
+    nxt = max(cur, floor) + 1
+    with conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('next_no', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(nxt),),
+        )
+    return nxt
 
 
 def notes_of(conn: sqlite3.Connection, project_id: int, node_vid: int | None = None) -> list[dict]:
@@ -400,21 +482,96 @@ def add_manual_node(
     return vid
 
 
-def update_node_fields(conn: sqlite3.Connection, project_id: int, vid: int, **fields) -> None:
-    """改节点（名字/类型/文件/行）—— 改过的标成 manual"""
-    allowed = {
-        k: v
-        for k, v in fields.items()
-        if k in ("name", "kind", "file_path", "line", "line_end") and v is not None
-    }
-    if not allowed:
-        return
-    sets = ", ".join(f"{k} = ?" for k in allowed)
+def update_node_fields(
+    conn: sqlite3.Connection, project_id: int, vid: int, **fields
+) -> dict:
+    """★★★ 改节点字段 ⇒ **重算 vid ⇒ 级联迁移**（2026-10-29）⚠
+
+    ## 为什么必须级联
+
+    ```\n * vid = hash(kind|file|name|line|line_end) —— **它是内容的函数**
+ * 改了行号/名字 ⇒ vid 必须跟着变，否则身份与内容脱钩
+ *   ⇒ 重新解析时算出正确的 vid，图上会出现**两个同名节点** ⚠
+ * ```\n
+    ## 迁移什么
+
+    ```
+    ① note.node_vid        （库里的锚点）
+    ② .md 的 frontmatter   （文件里的锚点 —— 由调用方改写，文件是真相）
+    ③ edge.src_vid/dst_vid （关系跟着走）
+    ```
+
+    ⚠★ **新 vid 已存在 ⇒ 合并**：把笔记并过去、删掉旧节点，⛔ 不留两份。
+
+    ⚠★ **匹配必须精确**：迁移只发生在"这一个旧 vid → 这一个新 vid"之间，
+      绝不按名字猜 —— 两个文件里有同名函数时，按名字迁移必挂错位。
+    """
+    from graph import identity
+
+    row = conn.execute(
+        "SELECT * FROM node WHERE project_id = ? AND vid = ?", (project_id, vid)
+    ).fetchone()
+    if row is None:
+        return {"changed": False, "reason": "节点不存在"}
+
+    cur = dict(row)
+    for k in ("name", "kind", "file_path", "line", "line_end"):
+        if fields.get(k) is not None:
+            cur[k] = fields[k]
+
+    ln = int(cur["line"] or 0)
+    end = int(cur["line_end"] if cur["line_end"] is not None else -1)
+    if end >= 0 and end < ln:
+        end = -1
+
+    new_vid = identity.hash53(identity.canonical(cur["kind"], cur["file_path"], cur["name"], ln, end))
+
+    notes = conn.execute(
+        "SELECT ref, rel_path FROM note WHERE project_id = ? AND node_vid = ?", (project_id, vid)
+    ).fetchall()
+    merged = False
+
     with conn:
         conn.execute(
-            f"UPDATE node SET {sets}, origin = 'manual' WHERE project_id = ? AND vid = ?",
-            (*allowed.values(), project_id, vid),
+            """UPDATE node SET name = ?, kind = ?, file_path = ?, line = ?, line_end = ?, origin = 'manual'
+               WHERE project_id = ? AND vid = ?""",
+            (cur["name"], cur["kind"], cur["file_path"], ln, end, project_id, vid),
         )
+
+        if new_vid != vid:
+            # 新身份是否已被占用（比如解析器早就算出过同一个节点）
+            clash = conn.execute(
+                "SELECT 1 FROM node WHERE project_id = ? AND vid = ?", (project_id, new_vid)
+            ).fetchone()
+            if clash:
+                merged = True
+                conn.execute("DELETE FROM node WHERE project_id = ? AND vid = ?", (project_id, vid))
+            else:
+                conn.execute(
+                    "UPDATE node SET vid = ? WHERE project_id = ? AND vid = ?",
+                    (new_vid, project_id, vid),
+                )
+            # ★ 笔记与边无条件跟着走（合并时也过来）
+            conn.execute(
+                "UPDATE note SET node_vid = ? WHERE project_id = ? AND node_vid = ?",
+                (new_vid, project_id, vid),
+            )
+            conn.execute(
+                "UPDATE edge SET src_vid = ? WHERE project_id = ? AND src_vid = ?",
+                (new_vid, project_id, vid),
+            )
+            conn.execute(
+                "UPDATE edge SET dst_vid = ? WHERE project_id = ? AND dst_vid = ?",
+                (new_vid, project_id, vid),
+            )
+
+    return {
+        "changed": new_vid != vid,
+        "old_vid": vid,
+        "new_vid": new_vid,
+        "merged": merged,
+        "notes": [dict(n) for n in notes],
+    }
 
 
 def remove_node(conn: sqlite3.Connection, project_id: int, vid: int) -> int:

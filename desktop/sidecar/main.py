@@ -171,7 +171,21 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "没有解析出任何节点 —— 目录可能不含支持的源码，或缺 tree-sitter 语法包",
                 422,
             )
-        store.replace_graph(CONN, p["id"], res["nodes"], res["edges"])
+        mig = store.replace_graph(CONN, p["id"], res["nodes"], res["edges"])
+
+        # ★ 迁移过的笔记，**文件里的 frontmatter 也要跟着改**（否则索引重建会退回去）
+        for m in mig.get("moved", []):
+            abs_md = os.path.join(ROOT, m["rel_path"])
+            if not os.path.exists(abs_md):
+                continue
+            node = store.node_by_vid(CONN, p["id"], m["new_vid"]) or {}
+            meta, text = notefile.read_file(abs_md)
+            meta["node_vid"] = m["new_vid"]
+            meta["node"] = node.get("name") or meta.get("node", "")
+            meta["anchor"] = f"{node.get('file_path', '')}:{node.get('line', 0)}"
+            notefile.write_file(abs_md, meta, text)
+            st = os.stat(abs_md)
+            store.update_note(CONN, m["ref"], mtime=st.st_mtime, size=st.st_size)
         # ★ 重建要留痕（它是修复动作，半年后要能看出"哪天重来过"）
         if existing:
             try:
@@ -185,6 +199,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 )
             except ValueError:
                 pass
+        res["stats"]["notesMoved"] = len(mig.get("moved", []))
+        res["stats"]["notesOrphan"] = mig.get("orphan", 0)
+        res["stats"]["notesAmbiguous"] = mig.get("ambiguous", 0)
         return ok({"stats": res["stats"], "project": dict(store.find_project(CONN, p["ref"]))})
 
     # ------------------------------------------------ 项目
@@ -288,7 +305,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
 
             if action == "update_node":
                 vid = int(body.get("vid") or 0)
-                store.update_node_fields(
+                res = store.update_node_fields(
                     CONN,
                     p["id"],
                     vid,
@@ -298,8 +315,30 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     line=body.get("line"),
                     line_end=body.get("line_end"),
                 )
-                store.log_curate(CONN, p["id"], action, str(vid), reason, {"fields": list(body)})
-                return ok({"vid": vid})
+                # ★★ vid 变了 ⇒ **笔记的 frontmatter 也要改**（文件是真相，
+                #    只改库的话，下次索引重建会从文件里读回旧锚点）
+                if res.get("changed"):
+                    node = store.node_by_vid(CONN, p["id"], res["new_vid"]) or {}
+                    for n in res.get("notes", []):
+                        abs_md = os.path.join(ROOT, n["rel_path"])
+                        if not os.path.exists(abs_md):
+                            continue
+                        meta, text = notefile.read_file(abs_md)
+                        meta["node_vid"] = res["new_vid"]
+                        meta["node"] = node.get("name") or meta.get("node", "")
+                        meta["anchor"] = f"{node.get('file_path','')}:{node.get('line',0)}"
+                        notefile.write_file(abs_md, meta, text)
+                        st = os.stat(abs_md)
+                        store.update_note(CONN, n["ref"], mtime=st.st_mtime, size=st.st_size)
+                store.log_curate(
+                    CONN,
+                    p["id"],
+                    action,
+                    str(vid),
+                    reason,
+                    {"fields": list(body), "vidChanged": res.get("changed"), "newVid": res.get("new_vid")},
+                )
+                return ok({"vid": res.get("new_vid", vid), **res})
 
             if action == "remove_node":
                 vid = int(body.get("vid") or 0)
@@ -392,9 +431,14 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             if not text.strip():
                 return bad("正文不能为空")
 
-            no = store.next_no(CONN)
-            fname = notefile.file_name(no, node["name"] or node["file_path"] or "note")
-            rel = f"{p['dir']}/{fname}"
+            # ★ 编号单调 + 文件名再兜一层：万一磁盘上已经有同名文件，继续往后取号
+            #   （⛔ 绝不覆盖已有笔记 —— 那是用户写的东西）
+            for _ in range(50):
+                no = store.next_no(CONN)
+                fname = notefile.file_name(no, node["name"] or node["file_path"] or "note")
+                rel = f"{p['dir']}/{fname}"
+                if not os.path.exists(os.path.join(ROOT, rel)):
+                    break
             abs_path = os.path.join(ROOT, rel)
 
             meta = {

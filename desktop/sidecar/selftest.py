@@ -130,6 +130,48 @@ def main() -> None:
         r = sc.call("GET", f"/api/projects/{proj['ref']}/notes/")
         check("项目笔记列表", len(r["body"]["data"]["items"]) == 1)
 
+        # ★★ 同名笔记：文件名必须不同（⛔ 绝不覆盖）
+        for i in range(3):
+            sc.call(
+                "POST",
+                f"/api/projects/{proj['ref']}/notes/",
+                {"node_vid": vid, "kind": "flash", "title": "同名笔记", "body": f"第 {i} 篇"},
+            )
+        rows = sc.call("GET", f"/api/projects/{proj['ref']}/notes/")["body"]["data"]["items"]
+        same = [x["rel_path"] for x in rows if x["title"] == "同名笔记"]
+        check("同名笔记文件名互不相同", len(set(same)) == 3, ", ".join(same))
+
+        # ★★ 编号不复用：删最后一篇再建，编号要往后走
+        last = rows[-1]
+        sc.call("DELETE", f"/api/notes/{last['ref']}/")
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/notes/",
+            {"node_vid": vid, "kind": "flash", "title": "删了再建", "body": "x"},
+        )
+        check("编号不复用", r["body"]["data"]["note"]["no"] > last["no"], f'{last["no"]} → {r["body"]["data"]["note"]["no"]}')
+
+        # ★★ 改 vid（改行号）⇒ 笔记必须跟着走，且文件里的 frontmatter 同步
+        before_note = sc.call("GET", f"/api/notes/{note['ref']}/")["body"]["data"]["note"]
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/curate/",
+            {"action": "update_node", "vid": vid, "line": (before_note["line"] or 0) + 7,
+             "line_end": (before_note["line"] or 0) + 30, "reason": "行号纠错"},
+        )
+        migrated = r["body"]["data"]
+        after_note = sc.call("GET", f"/api/notes/{note['ref']}/")["body"]["data"]["note"]
+        check(
+            "改 vid 后笔记跟着走",
+            migrated.get("changed") is True
+            and after_note["node_vid"] == migrated["new_vid"]
+            and after_note["node_name"] == before_note["node_name"],
+            f'{migrated.get("old_vid")} → {migrated.get("new_vid")}',
+        )
+        md = open(os.path.join(lib, after_note["rel_path"]), encoding="utf-8").read()
+        check("frontmatter 里的 node_vid 同步", ("node_vid: %s" % migrated["new_vid"]) in md)
+        vid = migrated["new_vid"]  # ★ 身份已经变了，后面的用例都用新 vid
+
         # ★ 第二个笔记：编号必须递增，文件名不同
         r = sc.call(
             "POST",
@@ -137,14 +179,18 @@ def main() -> None:
             {"node_vid": vid, "kind": "summary", "body": "整条连接建立流程", "title": "init"},
         )
         n2 = r["body"]["data"]["note"]
-        check("编号递增", n2["no"] == 2, n2["rel_path"])
+        check("编号递增", n2["no"] > note["no"], "%s -> %s" % (note["no"], n2["no"]))
         check("文件名不同", n2["rel_path"] != note["rel_path"])
 
-        # ★ 索引重建：删掉 DB 后应能从文件恢复（这是"文件是真相"的核心验证）
+        # ★ 索引重建：删掉 DB 后应能**从文件恢复**（"文件是真相"的核心验证）
+        before_count = sc.call("GET", "/api/library/")["body"]["data"]["notes"]
         os.remove(os.path.join(lib, ".astrolabe", "index.db"))
-        r = sc.call("GET", "/api/library/")
-        note_count = r["body"]["data"]["notes"]
-        check("重建索引后仍有 2 篇", note_count == 2, f"notes={note_count}")
+        after_count = sc.call("GET", "/api/library/")["body"]["data"]["notes"]
+        check(
+            "重建索引后笔记数不变",
+            after_count == before_count and before_count > 0,
+            "%s -> %s" % (before_count, after_count),
+        )
 
         r = sc.call("DELETE", f"/api/notes/{note['ref']}/")
         check("删除", r["body"]["ok"] is True)

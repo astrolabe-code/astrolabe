@@ -10,6 +10,7 @@ import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/Milk
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
 import { markResume } from '../lib/resume'
+import { IS_PERSONAL } from '../lib/personal'
 import { extractToc, scrollToHeading, type TocItem } from '../lib/toc'
 import { useCollapsed } from '../lib/useCollapsed'
 import { useCreateNote, useDeleteNote, useNote, useUpdateNote } from '../query/notes'
@@ -438,7 +439,8 @@ export default function NoteEditPage() {
             )
           })}
 
-          {/* 公开 / 私有：从一整行压成一个小开关 ⚠ */}
+          {/* ★ 公开 / 私有：个人版只有你一个人 ⇒ 没有"别人能不能看"这回事，整块不渲染 ⚠ */}
+          {!IS_PERSONAL && (
           <button
             type="button"
             onClick={() => setIsPublic((v) => !v)}
@@ -461,6 +463,7 @@ export default function NoteEditPage() {
             {isPublic ? <LockOpen size={11} /> : <Lock size={11} />}
             {isPublic ? '公开' : '私有'}
           </button>
+          )}
 
           {/* ★ 字数：固定宽度 + tabular-nums ⇒ 数字变化时**不推动布局** ⚠ */}
           <span

@@ -265,7 +265,27 @@ function createWindow() {
       } catch (e) {
         console.log('SMOKE ' + JSON.stringify({ error: String(e.message || e) }))
       }
-      const deepPath = process.env.ASTROLABE_SMOKE_PATH
+      /**
+       * ★ 自检动作脚本（`ASTROLABE_SMOKE_JS=<文件>`）——
+       *   用来驱动真实交互（打字 / 点保存），跑完把结果打回主进程。
+       *   ⚠ 仅自检用，普通启动不读这个变量。
+       */
+      if (process.env.ASTROLABE_SMOKE_JS) {
+        const deep = process.env.ASTROLABE_SMOKE_PATH
+        if (deep) {
+          await win.loadURL('app://local/app' + deep)
+          await new Promise((r) => setTimeout(r, 2200))
+        }
+        try {
+          const src = fs.readFileSync(process.env.ASTROLABE_SMOKE_JS, 'utf8')
+          const out = await win.webContents.executeJavaScript(src)
+          console.log('SMOKE_ACTION ' + JSON.stringify(out))
+        } catch (e) {
+          console.log('SMOKE_ACTION ' + JSON.stringify({ error: String(e.message || e) }))
+        }
+      }
+
+      const deepPath = process.env.ASTROLABE_SMOKE_JS ? null : process.env.ASTROLABE_SMOKE_PATH
       if (deepPath) {
         await win.loadURL('app://local/app' + deepPath)
         await new Promise((r) => setTimeout(r, 2500))

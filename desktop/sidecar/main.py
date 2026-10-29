@@ -33,6 +33,7 @@ import sys
 import time
 import urllib.parse
 
+import autotitle
 import indexer
 import library
 import notefile
@@ -241,7 +242,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "kind": str(body.get("kind") or "flash"),
                 "node": node["name"] or "",
                 "anchor": f"{node['file_path']}:{node['line']}" if node["file_path"] else "",
-                "title": str(body.get("title") or "").strip(),
+                # ★ 名字留空 ⇒ 从正文推（`D112`）；用户写了就用用户的
+                "title": str(body.get("title") or "").strip() or autotitle.auto_title(text),
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "project": p["dir"],
                 "node_vid": node_vid,
@@ -283,15 +285,20 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             meta, text = notefile.read_file(abs_path)
             if "body" in body:
                 text = str(body.get("body") or "")
-            for k in ("title", "kind"):
+            # ★ `title` 传空串 = **回到自动**（`D124`），⛔ 不是变成空标题
+            if "title" in body:
+                t = str(body.get("title") or "").strip()
+                meta["title"] = t or autotitle.auto_title(text)
+            for k in ("kind",):
                 if k in body:
                     meta[k] = str(body.get(k) or "")
             notefile.write_file(abs_path, meta, text)
             st = os.stat(abs_path)
             upd = {"mtime": st.st_mtime, "size": st.st_size}
-            for k in ("title", "kind"):
-                if k in body:
-                    upd[k] = str(body.get(k) or "")
+            if "title" in body:
+                upd["title"] = meta.get("title") or ""
+            if "kind" in body:
+                upd["kind"] = str(body.get("kind") or "")
             store.update_note(CONN, ref, **upd)
             return ok({"note": store.find_note(CONN, ref)})
 

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@antv/g6": "^5.1.1",
+    "@milkdown/crepe": "^7.22.3",
     "@milkdown/kit": "^7.22.3",
     "@milkdown/preset-commonmark": "^7.22.3",
     "@milkdown/react": "^7.22.3",

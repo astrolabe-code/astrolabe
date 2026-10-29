@@ -101,6 +101,9 @@ def main() -> None:
                     (proj["id"], 1002, "function", "init", "tcp.init", "src/net/tcp.c", 12, 30),
                 ],
             )
+            # ★ 没有 tree-sitter 时手工塞节点 ⇒ 同时把状态改成 ok
+            #   （否则"解析没成功不许写笔记"的门槛会挡住后面的用例 —— 这是对的）
+            db.execute("UPDATE project SET parse_state = 'ok', parse_error = '' WHERE id = ?", (proj["id"],))
             db.commit()
             db.close()
             vid = 1001

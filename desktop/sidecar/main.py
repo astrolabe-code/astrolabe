@@ -206,9 +206,6 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 )
             except ValueError:
                 pass
-        res["stats"]["notesMoved"] = len(mig.get("moved", []))
-        res["stats"]["notesOrphan"] = mig.get("orphan", 0)
-        res["stats"]["notesAmbiguous"] = mig.get("ambiguous", 0)
         return ok({"stats": res["stats"], "project": dict(store.find_project(CONN, p["ref"]))})
 
     # ------------------------------------------------ 项目

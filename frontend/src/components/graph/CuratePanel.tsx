@@ -138,18 +138,9 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
         })
         const j = await r.json()
         if (!j.ok) throw new Error(j.error || '重新解析失败')
-        // ★ 修复后如实报告：有没有笔记的锚点找不回来了（改名/删函数导致）
+        // ★ 修复后给一句结果（简单直接，不铺开统计）
         const st = j.data?.stats || {}
-        if (st.notesMoved) {
-          setNotice(`已重建：${st.nodes} 个节点，${st.notesMoved} 篇笔记的锚点自动跟到了新位置`)
-        } else if (st.notesOrphan || st.notesAmbiguous) {
-          setNotice(
-            `已重建：${st.nodes} 个节点。⚠ ${st.notesOrphan + st.notesAmbiguous} 篇笔记的锚点没找回来` +
-              `（函数改名或被删），它们还在，但阅读页会显示「节点已不存在」`,
-          )
-        } else {
-          setNotice(`已重建：${st.nodes} 个节点，${st.edges} 条关系`)
-        }
+        setNotice(`已重建：${st.nodes ?? '?'} 个节点，${st.edges ?? '?'} 条关系`)
       } else {
         await curate(projectRef, { action: pending.action, reason: reason.trim(), ...pending.payload })
       }

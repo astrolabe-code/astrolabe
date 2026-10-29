@@ -274,30 +274,26 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
 
     live = {r["vid"] for r in conn.execute("SELECT vid FROM node WHERE project_id = ?", (project_id,))}
     moved: list[dict] = []
-    orphan = 0
-    ambiguous = 0
 
     for n in notes:
         if n["node_vid"] in live:
             continue  # 锚点还在，不用动
         old = old_nodes.get(n["node_vid"])
         if not old:
-            orphan += 1
             continue
         cands = new_index.get((old["kind"], old["file_path"], old["name"])) or []
-        if len(cands) == 1:
-            with conn:
-                conn.execute(
-                    "UPDATE note SET node_vid = ? WHERE project_id = ? AND ref = ?",
-                    (cands[0]["vid"], project_id, n["ref"]),
-                )
-            moved.append({"ref": n["ref"], "rel_path": n["rel_path"], "new_vid": cands[0]["vid"], "old_vid": n["node_vid"]})
-        elif len(cands) > 1:
-            ambiguous += 1
-        else:
-            orphan += 1
+        if len(cands) != 1:
+            continue  # ⚠ 找不到 / 有歧义 ⇒ 不猜（挂错更糟）
+        with conn:
+            conn.execute(
+                "UPDATE note SET node_vid = ? WHERE project_id = ? AND ref = ?",
+                (cands[0]["vid"], project_id, n["ref"]),
+            )
+        moved.append(
+            {"ref": n["ref"], "rel_path": n["rel_path"], "new_vid": cands[0]["vid"], "old_vid": n["node_vid"]}
+        )
 
-    return {"moved": moved, "orphan": orphan, "ambiguous": ambiguous}
+    return {"moved": moved}
 
 
 def nodes_of(conn: sqlite3.Connection, project_id: int, limit: int = 500, offset: int = 0) -> list[dict]:

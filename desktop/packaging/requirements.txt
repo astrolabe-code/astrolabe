@@ -1,0 +1,17 @@
+# ★★ 打「Python 边车」需要的依赖（个人版）
+#
+# ⚠ 这些包**必须装在你用来打包的那个 Python 里**：
+#   PyInstaller 只会把"装了的模块"打进 exe —— 少装一个语法包，
+#   打出来的程序运行时就会说"没有解析器"，而打包过程一点错都不报。
+#
+# 版本与社区版 app/requirements.txt 保持一致，避免两边解析行为不同。
+
+# 打包器
+pyinstaller>=6.10,<7
+
+# 解析器（与 app/requirements.txt 同版本）
+tree-sitter==0.23.2
+tree-sitter-python==0.23.6
+tree-sitter-c==0.23.4
+tree-sitter-cpp==0.23.4
+tree-sitter-java==0.23.5

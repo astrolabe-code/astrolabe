@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import {
-  ChevronDown,
+import {ChevronDown,
   ChevronUp,
   List,
   Loader2,
@@ -14,9 +13,12 @@ import {
   Trash2,
   Workflow,
   X,
+  GitBranch,
 } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
+import CuratePanel from '../components/graph/CuratePanel'
+import { IS_PERSONAL } from '../lib/personal'
 import { useFullGraph } from '../query/graph'
 import { useProject } from '../query/projects'
 import { useUserSettings } from '../query/settings'
@@ -125,6 +127,8 @@ export default function ProjectGraphPage() {
   const [pathOpen, setPathOpen] = useState(false)
   // ★ 悬浮工具条：* 默认收起，* 点开才展开（* 不占图谱高度）⚠
   const [barOpen, setBarOpen] = useState(false)
+  /** ★★ 改图抽屉（个人版核心兜底能力）⚠ */
+  const [curateOpen, setCurateOpen] = useState(false)
   // ★ 搜索胶囊是否展开
   const [searchOpen, setSearchOpen] = useState(false)
   // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
@@ -471,6 +475,27 @@ export default function ProjectGraphPage() {
               onMouseLeave={() => setBarOpen(false)}
               style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}
             >
+              {IS_PERSONAL && (
+                <button
+                  type="button"
+                  className="card"
+                  onClick={() => setCurateOpen(true)}
+                  title="改图：解析不准的地方在这里补"
+                  style={{
+                    padding: isNarrow ? '4px 9px' : '5px 12px',
+                    fontSize: isNarrow ? 11.5 : 12.5,
+                    borderRadius: 999,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(15,23,42,.14)',
+                  }}
+                >
+                  <GitBranch size={13} />
+                  <span>改图</span>
+                </button>
+              )}
               <button
                 type="button"
                 className="card"
@@ -890,6 +915,15 @@ export default function ProjectGraphPage() {
           </span>
         </div>
       </div>
+
+      {/* ★★ 改图抽屉（`IS_PERSONAL` 才有入口）⚠ */}
+      <CuratePanel
+        open={curateOpen}
+        projectRef={projectRef}
+        nodes={graph.data?.nodes ?? []}
+        onClose={() => setCurateOpen(false)}
+        onChanged={() => void graph.refetch()}
+      />
     </AppLayout>
   )
 }

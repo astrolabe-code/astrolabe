@@ -133,6 +133,11 @@ export function useFullGraph(projectRef?: string | null) {
     // ★ 图谱是重查询 ⇒ 30 秒内不重取（* `graph_rev` 变了会自然失效）
     staleTime: 30_000,
     queryFn: async (): Promise<EffectiveGraph & { graph_rev: number }> => {
+      // ★★ 个人版：一次拿全图（边车不做分页，也没有补丁概念）
+      if (IS_PERSONAL) {
+        const g = await personalApi.fullGraph(projectRef!)
+        return { ...mergeGraph(g.nodes, g.edges, []), graph_rev: g.rev }
+      }
       const ref = encodeURIComponent(projectRef!)
 
       // ① 节点（② 型扁平：`ok_flat`，没有 data 包一层）

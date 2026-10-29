@@ -75,6 +75,10 @@ R_SCAN = re.compile(r"^/api/fs/scan$")
 R_PARSE = re.compile(r"^/api/projects/([^/]+)/parse$")
 R_WPROG = re.compile(r"^/api/projects/([^/]+)/writing-progress/$")
 R_RPATH = re.compile(r"^/api/projects/([^/]+)/reading-path/$")
+R_GRAPH = re.compile(r"^/api/projects/([^/]+)/graph/$")
+R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
+R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
+R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 
 
 def _split_query(path: str) -> tuple[str, dict]:
@@ -196,6 +200,123 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if not _project(m.group(1)):
             return bad("项目不存在", 404)
         return ok({"total": 0, "items": [], "stale": []})
+
+    # ★★ 整张图（一次给全）—— 图谱页用，⛔ 不分页（个人版一个项目最多几千节点）
+    m = R_GRAPH.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        nodes = CONN.execute(
+            "SELECT vid, kind, name, qname, file_path, line, line_end, origin FROM node WHERE project_id = ?",
+            (p["id"],),
+        ).fetchall()
+        edges = CONN.execute(
+            "SELECT id, src_vid, dst_vid, kind, origin FROM edge WHERE project_id = ?", (p["id"],)
+        ).fetchall()
+        return ok(
+            {
+                "rev": int(p["graph_rev"] or 0),
+                "nodes": [dict(r) for r in nodes],
+                "edges": [
+                    {"id": r["id"], "from": r["src_vid"], "to": r["dst_vid"], "type": r["kind"], "origin": r["origin"]}
+                    for r in edges
+                ],
+            }
+        )
+
+    # ------------------------------------------------ 手工改图（六种动作）
+    m = R_CURATE.match(path)
+    if m and method == "POST":
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        action = str(body.get("action") or "")
+        reason = str(body.get("reason") or "").strip()
+        if not reason:
+            return bad("必须填一句理由（改了什么、为什么）")
+        try:
+            if action == "add_node":
+                vid = store.add_manual_node(
+                    CONN,
+                    p["id"],
+                    kind=str(body.get("kind") or "function"),
+                    name=str(body.get("name") or "").strip(),
+                    file_path=str(body.get("file_path") or ""),
+                    line=int(body.get("line") or 0),
+                )
+                store.log_curate(CONN, p["id"], action, str(vid), reason, {"name": body.get("name")})
+                return ok({"vid": vid})
+
+            if action == "update_node":
+                vid = int(body.get("vid") or 0)
+                store.update_node_fields(
+                    CONN,
+                    p["id"],
+                    vid,
+                    name=body.get("name"),
+                    kind=body.get("kind"),
+                    file_path=body.get("file_path"),
+                    line=body.get("line"),
+                )
+                store.log_curate(CONN, p["id"], action, str(vid), reason, {"fields": list(body)})
+                return ok({"vid": vid})
+
+            if action == "remove_node":
+                vid = int(body.get("vid") or 0)
+                n = store.remove_node(CONN, p["id"], vid)
+                store.log_curate(CONN, p["id"], action, str(vid), reason, {"edgesRemoved": n})
+                return ok({"removed": vid, "edges": n})
+
+            if action == "add_edge":
+                src, dst = int(body.get("from") or 0), int(body.get("to") or 0)
+                if not src or not dst or src == dst:
+                    return bad("两端的节点不对")
+                eid = store.add_manual_edge(CONN, p["id"], src, dst, str(body.get("type") or "call"))
+                store.log_curate(CONN, p["id"], action, str(eid), reason, {"from": src, "to": dst})
+                return ok({"id": eid})
+
+            if action == "update_edge":
+                # ⚠ 个人版只允许改类型（改端点 = 删了重加，语义更清楚）
+                eid = int(body.get("id") or 0)
+                with CONN:
+                    CONN.execute(
+                        "UPDATE edge SET kind = ?, origin = 'manual' WHERE project_id = ? AND id = ?",
+                        (str(body.get("type") or "call"), p["id"], eid),
+                    )
+                store.log_curate(CONN, p["id"], action, str(eid), reason, {"type": body.get("type")})
+                return ok({"id": eid})
+
+            if action == "remove_edge":
+                eid = int(body.get("id") or 0)
+                okk = store.remove_edge(CONN, p["id"], eid)
+                store.log_curate(CONN, p["id"], action, str(eid), reason)
+                return ok({"removed": eid, "ok": okk})
+
+            return bad(f"不认识的动作：{action}")
+        except ValueError as exc:
+            return bad(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"{type(exc).__name__}: {exc}", 500)
+
+    # ★ 哪些是人手补的（图上打标）+ 修补历史
+    m = R_MANUAL.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        return ok({**store.manual_vids(CONN, p["id"]), "log": store.curate_history(CONN, p["id"], 20)})
+
+    # ★ 某节点的出入边（改图面板用）
+    m = R_EDGES.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        vid = int(body.get("vid") or 0)
+        if not vid:
+            return bad("缺少 vid")
+        return ok(store.edges_of_node(CONN, p["id"], vid))
 
     m = R_NODES.match(path)
     if m:

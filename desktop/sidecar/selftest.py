@@ -150,6 +150,55 @@ def main() -> None:
         check("删除", r["body"]["ok"] is True)
         check("文件移到 .trash", os.path.exists(os.path.join(lib, ".trash", os.path.basename(abs_md))))
 
+        # ★★ 手工改图（六种动作走一遍）
+        r = sc.call("POST", f"/api/projects/{proj['ref']}/curate/", {"action": "add_node"})
+        check("改图缺 reason 被拒", r["body"].get("ok") is False)
+
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/curate/",
+            {"action": "add_node", "kind": "function", "name": "手补函数", "file_path": "x.py", "line": 9,
+             "reason": "解析器没识别出来"},
+        )
+        new_vid = r["body"]["data"]["vid"]
+        check("加节点", bool(new_vid), str(new_vid))
+
+        r = sc.call("GET", f"/api/projects/{proj['ref']}/nodes/", {"limit": 20000})
+        added = [n for n in r["body"]["data"]["items"] if n["vid"] == new_vid]
+        check("手补节点能查到", len(added) == 1, added[0]["name"] if added else "")
+
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/curate/",
+            {"action": "add_edge", "from": new_vid, "to": vid, "type": "call", "reason": "补一条调用"},
+        )
+        eid = r["body"]["data"]["id"]
+        check("加边", bool(eid), str(eid))
+
+        r = sc.call("GET", f"/api/projects/{proj['ref']}/edges/?vid={new_vid}")
+        check("边的出入表", len(r["body"]["data"]["out"]) == 1)
+
+        r = sc.call("GET", f"/api/projects/{proj['ref']}/manual/")
+        m = r["body"]["data"]
+        check("人工项被标记", new_vid in m["nodes"] and eid in m["edges"], json.dumps(m["nodes"]))
+
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/curate/",
+            {"action": "remove_edge", "id": eid, "reason": "连错了"},
+        )
+        check("删边", r["body"].get("ok") is True)
+
+        r = sc.call(
+            "POST",
+            f"/api/projects/{proj['ref']}/curate/",
+            {"action": "remove_node", "vid": new_vid, "reason": "多余节点"},
+        )
+        check("删节点", r["body"].get("ok") is True)
+
+        r = sc.call("GET", f"/api/projects/{proj['ref']}/manual/")
+        check("修补历史有记录", len(r["body"]["data"]["log"]) >= 4, str(len(r["body"]["data"]["log"])))
+
         st = sc.call("GET", f"/api/projects/{proj['ref']}/")
         check("统计", st["body"]["data"]["stats"]["summaryNodes"] == 1, json.dumps(st["body"]["data"]["stats"]))
     finally:

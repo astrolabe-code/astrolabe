@@ -26,15 +26,7 @@ from __future__ import annotations
 import os
 import sys
 
-_APP_CANDIDATES = [
-    os.environ.get("ASTROLABE_APP_DIR") or "",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "app")),
-]
-
-for _p in _APP_CANDIDATES:
-    if _p and os.path.isdir(os.path.join(_p, "codeparser")) and _p not in sys.path:
-        sys.path.insert(0, _p)
-        break
+import paths  # noqa: F401 —— ★ 统一把 `app/` 挂到 sys.path（见 paths.py）
 
 from codeparser.scanner import scan_and_parse  # noqa: E402
 from graph import identity  # noqa: E402

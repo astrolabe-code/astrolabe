@@ -49,7 +49,7 @@ function toGraphNode(n: any): GraphNode {
     line: Number(n.line || 0),
     line_end: Number(n.line_end ?? -1),
     lang: '',
-    origin: 'parsed',
+    origin: String(n.origin || 'parsed'),
     parent_uid: '',
   } as unknown as GraphNode
 }
@@ -138,6 +138,24 @@ export const personalApi = {
       `/api/projects/${encodeURIComponent(ref)}/nodes/?limit=${limit}&offset=${offset}`,
     )
     return { total: Number(d.total || 0), items: (d.items || []).map(toGraphNode) }
+  },
+
+  /** ★★ 整张图（个人版一次给全，不走分页）⚠ */
+  fullGraph: async (ref: string) => {
+    const d = await get<{ rev: number; nodes: any[]; edges: any[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/graph/`,
+    )
+    const nodes = (d.nodes || []).map(toGraphNode)
+    const edges = (d.edges || []).map((e) => ({
+      id: Number(e.id),
+      from: Number(e.from),
+      to: Number(e.to),
+      type: String(e.type || ''),
+      line: null,
+      origin: String(e.origin || 'parsed'),
+      confidence: 'syntax',
+    }))
+    return { rev: Number(d.rev || 0), nodes, edges }
   },
 
   // ---- 笔记

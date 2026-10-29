@@ -26,6 +26,7 @@ import sqlite3
 import time
 
 import library
+import paths  # noqa: F401 —— ★ 让 `graph.identity` 可导入（手补节点要用）
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -52,6 +53,8 @@ CREATE TABLE IF NOT EXISTS node (
   file_path   TEXT,
   line        INTEGER DEFAULT 0,
   line_end    INTEGER DEFAULT -1,
+  -- ★ 来源：parsed（解析器给的）/ manual（人手补的）—— 图上要标出来
+  origin      TEXT NOT NULL DEFAULT 'parsed',
   UNIQUE (project_id, vid)
 );
 CREATE INDEX IF NOT EXISTS ix_node_name ON node (project_id, name);
@@ -61,7 +64,8 @@ CREATE TABLE IF NOT EXISTS edge (
   project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   src_vid     INTEGER NOT NULL,
   dst_vid     INTEGER NOT NULL,
-  kind        TEXT NOT NULL            -- call / include / ...
+  kind        TEXT NOT NULL,           -- call / include / ...
+  origin      TEXT NOT NULL DEFAULT 'parsed'
 );
 CREATE INDEX IF NOT EXISTS ix_edge_src ON edge (project_id, src_vid);
 
@@ -80,7 +84,30 @@ CREATE TABLE IF NOT EXISTS note (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ix_note_no ON note (no);
 CREATE INDEX IF NOT EXISTS ix_note_node ON note (project_id, node_vid);
+
+-- ★★ 修补日志：谁 / 何时 / 改了什么 / **为什么**（`reason` 必填，见 `curate.py` 口径）
+CREATE TABLE IF NOT EXISTS curate_log (
+  id          INTEGER PRIMARY KEY,
+  project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  action      TEXT NOT NULL,
+  target      TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  detail      TEXT NOT NULL DEFAULT '',
+  at          TEXT NOT NULL
+);
 """
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """★ 老库补列（`CREATE TABLE IF NOT EXISTS` 不会给已存在的表加列）⚠"""
+    for table, col, ddl in (
+        ("node", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
+        ("edge", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
+    ):
+        names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in names:
+            with conn:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 def connect(root: str) -> sqlite3.Connection:
@@ -88,6 +115,7 @@ def connect(root: str) -> sqlite3.Connection:
     conn = sqlite3.connect(library.db_path(root))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _ensure_columns(conn)
     return conn
 
 
@@ -262,3 +290,151 @@ def stats(conn: sqlite3.Connection, project_id: int) -> dict:
         ).fetchall()
     }
     return {"nodes": int(total), "summaryNodes": int(done), "notesByKind": by_kind}
+
+
+# ---------------------------------------------------------------- 手工改图（`D127` 口径）
+
+#: ★ 允许的动作 —— 与社区版 `web/views/curate.py` 的六种对齐
+CURATE_ACTIONS = (
+    "add_node",
+    "update_node",
+    "remove_node",
+    "add_edge",
+    "update_edge",
+    "remove_edge",
+)
+
+
+def log_curate(
+    conn: sqlite3.Connection,
+    project_id: int,
+    action: str,
+    target: str,
+    reason: str,
+    detail: dict | None = None,
+) -> None:
+    """★ 每次修补都要留痕（谁/何时/改了什么/为什么）⚠
+
+    ⚠ `reason` **必填** —— 社区版的原话是：
+      「用户全权负责」的技术前提是「可追溯」；没有审计，全权负责就变成没人负责。
+      个人版虽然只有一个人，但半年后你自己也想知道"这条边当初为什么加上"。
+    """
+    if action not in CURATE_ACTIONS:
+        raise ValueError(f"不认识的动作：{action}")
+    if not (reason or "").strip():
+        raise ValueError("reason 必填")
+    with conn:
+        conn.execute(
+            "INSERT INTO curate_log (project_id, action, target, reason, detail, at) VALUES (?,?,?,?,?,?)",
+            (
+                project_id,
+                action,
+                target,
+                reason.strip(),
+                json.dumps(detail or {}, ensure_ascii=False),
+                time.strftime("%Y-%m-%dT%H:%M:%S"),
+            ),
+        )
+
+
+def curate_history(conn: sqlite3.Connection, project_id: int, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM curate_log WHERE project_id = ? ORDER BY id DESC LIMIT ?",
+        (project_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def manual_vids(conn: sqlite3.Connection, project_id: int) -> dict:
+    """★ 哪些是人补的（图上要打标：`§2.3.12` 规则 2）"""
+    nodes = [
+        r["vid"]
+        for r in conn.execute(
+            "SELECT vid FROM node WHERE project_id = ? AND origin = 'manual'", (project_id,)
+        ).fetchall()
+    ]
+    edges = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND origin = 'manual'", (project_id,)
+        ).fetchall()
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def add_manual_node(
+    conn: sqlite3.Connection, project_id: int, *, kind: str, name: str, file_path: str, line: int
+) -> int:
+    """手补一个节点（解析器没识别出来的函数/文件）
+
+    ⚠ vid 必须**确定性**：这里用 `identity.canonical` 同一套算法，
+      否则重解析之后手补的节点会和解析结果对不上。
+    """
+    from graph import identity  # ⚠ 延迟导入：没有 app 目录时给明确错误
+
+    vid = identity.hash53(identity.canonical(kind, file_path, name, line, -1))
+    with conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO node (project_id, vid, kind, name, qname, file_path, line, line_end, origin)
+               VALUES (?,?,?,?,?,?,?,?, 'manual')""",
+            (project_id, vid, kind, name, "", file_path, line, -1),
+        )
+    return vid
+
+
+def update_node_fields(conn: sqlite3.Connection, project_id: int, vid: int, **fields) -> None:
+    """改节点（名字/类型/文件/行）—— 改过的标成 manual"""
+    allowed = {k: v for k, v in fields.items() if k in ("name", "kind", "file_path", "line") and v is not None}
+    if not allowed:
+        return
+    sets = ", ".join(f"{k} = ?" for k in allowed)
+    with conn:
+        conn.execute(
+            f"UPDATE node SET {sets}, origin = 'manual' WHERE project_id = ? AND vid = ?",
+            (*allowed.values(), project_id, vid),
+        )
+
+
+def remove_node(conn: sqlite3.Connection, project_id: int, vid: int) -> int:
+    """删节点 + 它的所有边（返回删掉的边数）"""
+    with conn:
+        n = conn.execute(
+            "DELETE FROM edge WHERE project_id = ? AND (src_vid = ? OR dst_vid = ?)",
+            (project_id, vid, vid),
+        ).rowcount
+        conn.execute("DELETE FROM node WHERE project_id = ? AND vid = ?", (project_id, vid))
+    return int(n)
+
+
+def add_manual_edge(conn: sqlite3.Connection, project_id: int, src: int, dst: int, kind: str) -> int:
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO edge (project_id, src_vid, dst_vid, kind, origin) VALUES (?,?,?,?, 'manual')",
+            (project_id, src, dst, kind),
+        )
+    return int(cur.lastrowid or 0)
+
+
+def remove_edge(conn: sqlite3.Connection, project_id: int, edge_id: int) -> bool:
+    with conn:
+        n = conn.execute("DELETE FROM edge WHERE project_id = ? AND id = ?", (project_id, edge_id)).rowcount
+    return n > 0
+
+
+def edges_of_node(conn: sqlite3.Connection, project_id: int, vid: int) -> dict:
+    """某节点的出边/入边（带对端名字，供改图面板显示）"""
+    out = conn.execute(
+        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin,
+                  nd.name AS to_name, nd.file_path AS to_file
+           FROM edge e LEFT JOIN node nd ON nd.project_id = e.project_id AND nd.vid = e.dst_vid
+           WHERE e.project_id = ? AND e.src_vid = ? ORDER BY e.id""",
+        (project_id, vid),
+    ).fetchall()
+    inn = conn.execute(
+        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin,
+                  nd.name AS from_name, nd.file_path AS from_file
+           FROM edge e LEFT JOIN node nd ON nd.project_id = e.project_id AND nd.vid = e.src_vid
+           WHERE e.project_id = ? AND e.dst_vid = ? ORDER BY e.id""",
+        (project_id, vid),
+    ).fetchall()
+    return {"out": [dict(r) for r in out], "in": [dict(r) for r in inn]}

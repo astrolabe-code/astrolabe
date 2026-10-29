@@ -121,12 +121,30 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
+def _backfill_parse_state(conn: sqlite3.Connection) -> None:
+    """★★ 老库补状态（`parse_state` 是新加的列）⚠
+
+    ```\n * 新列默认 'none' ⇒ 老项目全变成"没解析过" ⇒ **写笔记被门槛拦住**
+ * 但它们明明有解析出来的节点 ⇒ 补成 'ok'
+ * ```\n
+    ⚠ 只在 `parse_state = 'none'` 时补，⛔ 不覆盖 failed（那是真的失败过）。
+    """
+    with conn:
+        conn.execute(
+            """UPDATE project SET parse_state = 'ok'
+               WHERE parse_state = 'none'
+                 AND EXISTS (SELECT 1 FROM node n
+                             WHERE n.project_id = project.id AND n.origin = 'parsed')"""
+        )
+
+
 def connect(root: str) -> sqlite3.Connection:
     library.ensure_root(root)
     conn = sqlite3.connect(library.db_path(root))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     _ensure_columns(conn)
+    _backfill_parse_state(conn)
     return conn
 
 

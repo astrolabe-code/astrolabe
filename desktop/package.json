@@ -6,9 +6,62 @@
   "main": "main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
-    "start:dist": "ELECTRON_USE_DIST=1 electron . --no-sandbox"
+    "build:web": "cd ../frontend && npm run build:personal",
+    "build:sidecar": "pyinstaller --clean --noconfirm --distpath packaging/out --workpath packaging/work packaging/sidecar.spec",
+    "dist:linux": "npm run build:web && npm run build:sidecar && electron-builder --linux dir",
+    "dist:win": "npm run build:web && npm run build:sidecar && electron-builder --win dir"
   },
   "devDependencies": {
-    "electron": "^31.7.7"
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.astrolabe.personal",
+    "productName": "Astrolabe",
+    "directories": {
+      "output": "dist_electron",
+      "buildResources": "packaging"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist-personal",
+        "to": "dist"
+      },
+      {
+        "from": "packaging/out",
+        "to": "sidecar",
+        "filter": [
+          "astrolabe-sidecar*"
+        ]
+      },
+      {
+        "from": "../THIRD-PARTY-NOTICES.txt",
+        "to": "THIRD-PARTY-NOTICES.txt"
+      }
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "artifactName": "${productName}-${version}-win-x64.${ext}"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "category": "Development"
+    },
+    "asar": true,
+    "asarUnpack": [],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "compression": "maximum"
   }
 }

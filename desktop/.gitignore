@@ -10,3 +10,7 @@ data/
 # ★ 打包产物
 dist_electron/
 out/
+
+# ★ 打包中间产物（PyInstaller 的 dist/work 也在这）
+packaging/out/
+packaging/work/

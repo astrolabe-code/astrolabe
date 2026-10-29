@@ -28,6 +28,8 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { apiGet } from '../api/client'
+import { IS_PERSONAL } from '../lib/personal'
+import { personalApi } from '../api/personal'
 import { unwrap } from '../api/errors'
 import { mergeGraph } from '../lib/mergeGraph'
 import type { EffectiveGraph, GraphEdge, GraphNode, GraphPatch } from '../lib/mergeGraph'
@@ -46,6 +48,8 @@ export function useGraphNodes(
     queryKey: ['graph', 'nodes', projectRef, limit, offset],
     enabled: !!projectRef && enabled,
     queryFn: async (): Promise<{ total: number; items: GraphNode[] }> => {
+      // ★★ 个人版：走本地边车（`api/personal.ts` 负责形状翻译）⚠
+      if (IS_PERSONAL) return personalApi.graphNodes(projectRef!, limit, offset)
       // ⚠★ `'spread'` —— ★ 这个端点是**平铺**的（`ok_flat`），❌ 没有 `data` 包一层 ⚠
       return unwrap(
         await apiGet<{ total: number; items: GraphNode[] }>(

@@ -31,6 +31,7 @@ import re
 import shutil
 import sys
 import time
+import urllib.parse
 
 import indexer
 import library
@@ -71,6 +72,17 @@ R_PNOTES = re.compile(r"^/api/projects/([^/]+)/notes/$")
 R_NOTE = re.compile(r"^/api/notes/([^/]+)/$")
 R_SCAN = re.compile(r"^/api/fs/scan$")
 R_PARSE = re.compile(r"^/api/projects/([^/]+)/parse$")
+R_WPROG = re.compile(r"^/api/projects/([^/]+)/writing-progress/$")
+R_RPATH = re.compile(r"^/api/projects/([^/]+)/reading-path/$")
+
+
+def _split_query(path: str) -> tuple[str, dict]:
+    """拆出 query（⚠ 边车拿到的是 `/api/x/?a=1` 这种完整路径）"""
+    if "?" not in path:
+        return path, {}
+    pure, qs = path.split("?", 1)
+    q = urllib.parse.parse_qs(qs)
+    return pure, {k: v[0] for k, v in q.items()}
 
 
 def _project(ref: str):
@@ -80,8 +92,12 @@ def _project(ref: str):
     return p
 
 
-def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
-    body = body or {}
+def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
+    body = dict(body or {})
+    path, query = _split_query(raw_path)
+    # ★ GET 没有 body ⇒ 把 query 合进 body，后面的分支只认 body 一种取法
+    for k, v in query.items():
+        body.setdefault(k, v)
 
     # ------------------------------------------------ 固定几个
     if path == "/api/site-config/":
@@ -161,12 +177,35 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
                 }
             )
 
+    # ★ 写作进度：个人版没有"读者"，所以只有作者视角这一个数字
+    m = R_WPROG.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        st = store.stats(CONN, p["id"])
+        noted = CONN.execute(
+            "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ?", (p["id"],)
+        ).fetchone()["c"]
+        return ok({"nodes": st["nodes"], "summary": st["summaryNodes"], "noted": int(noted)})
+
+    # ★ 导读路径：个人版暂时没有排序功能 ⇒ 空列表（组件会显示"还没排"，不报错）
+    m = R_RPATH.match(path)
+    if m:
+        if not _project(m.group(1)):
+            return bad("项目不存在", 404)
+        return ok({"total": 0, "items": [], "stale": []})
+
     m = R_NODES.match(path)
     if m:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
-        return ok({"items": store.nodes_of(CONN, p["id"], int(body.get("limit") or 500))})
+        limit = min(int(body.get("limit") or 500), 20000)
+        offset = int(body.get("offset") or 0)
+        items = store.nodes_of(CONN, p["id"], limit, offset)
+        total = CONN.execute("SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (p["id"],)).fetchone()["c"]
+        return ok({"total": int(total), "limit": limit, "offset": offset, "items": items})
 
     # ------------------------------------------------ 笔记
     m = R_PNOTES.match(path)
@@ -176,8 +215,12 @@ def handle(method: str, path: str, body: dict | None) -> tuple[int, dict]:
             return bad("项目不存在", 404)
 
         if method == "GET":
-            nv = body.get("node_vid")
-            return ok({"items": store.notes_of(CONN, p["id"], int(nv) if nv else None)})
+            nv = body.get("node_vid") or body.get("node_id")
+            kind = (body.get("kind") or "").strip()
+            items = store.notes_of(CONN, p["id"], int(nv) if nv else None)
+            if kind:
+                items = [n for n in items if n["kind"] == kind]
+            return ok({"items": items, "total": len(items)})
 
         if method == "POST":
             node_vid = int(body.get("node_vid") or 0)

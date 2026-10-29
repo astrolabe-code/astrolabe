@@ -7,6 +7,20 @@ import App from './App'
 //   ⚠ 顺序不能反 —— Tailwind 只做布局工具类，外观一律由语义类决定
 import './styles/index.css'
 
+/**
+ * ★★★ 个人版 = **全白**（`POSITIONING` 0.4）
+ *
+ * ```
+ * 社区版  天青渐变 / 星点 / 网格 / 玻璃卡 —— 那是站点的"身份"
+ * 个人版  白底黑字，只留结构 —— 这是"我的工具"
+ * ```
+
+ * ⚠ 只在 `VITE_PERSONAL` 构建里打这个标记；社区版不受影响。
+ */
+if (import.meta.env.VITE_PERSONAL === '1') {
+  document.documentElement.dataset.theme = 'plain'
+}
+
 // ★ SPA 挂 /app/ 前缀（D26/D27）—— basename 必须与 vite base 一致
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '')
 

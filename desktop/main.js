@@ -159,7 +159,9 @@ function serveFile(file) {
 function registerProtocol() {
   protocol.handle('app', async (request) => {
     const url = new URL(request.url)
-    const p = decodeURIComponent(url.pathname || '/')
+    // ⚠★ 必须带上 query（`?limit=&offset=` 这些参数全在 search 里）——
+    //   只传 pathname 的话，边车收到的是"没有参数的路径"，分页/筛选全部失效
+    const p = decodeURIComponent(url.pathname || '/') + (url.search || '')
 
     // ★ /api/* ⇒ 交给边车（⛔ 不走网络，没有端口）
     if (p.startsWith('/api/')) {
@@ -262,6 +264,20 @@ function createWindow() {
         console.log('SMOKE ' + JSON.stringify(out))
       } catch (e) {
         console.log('SMOKE ' + JSON.stringify({ error: String(e.message || e) }))
+      }
+      const deepPath = process.env.ASTROLABE_SMOKE_PATH
+      if (deepPath) {
+        await win.loadURL('app://local/app' + deepPath)
+        await new Promise((r) => setTimeout(r, 2500))
+        try {
+          const info = await win.webContents.executeJavaScript(
+            `({ url: location.pathname + location.search,
+                text: (document.body.innerText||'').replace(/\\s+/g,' ').slice(0,160) })`,
+          )
+          console.log('SMOKE_PAGE ' + JSON.stringify(info))
+        } catch (e) {
+          console.log('SMOKE_PAGE ' + JSON.stringify({ error: String(e.message || e) }))
+        }
       }
       setTimeout(async () => {
         try {

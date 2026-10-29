@@ -31,6 +31,11 @@ export default function PersonalHome() {
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  /** ★ 建项目 + 解析（个人版唯一的重活） */
+  const [parsing, setParsing] = useState(false)
+  const [parsed, setParsed] = useState<{ ref: string; name: string; nodes: number; edges: number } | null>(
+    null,
+  )
 
   const pick = async () => {
     setErr('')
@@ -57,6 +62,33 @@ export default function PersonalHome() {
       setErr(String(e))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const startParse = async () => {
+    if (!picked) return
+    setErr('')
+    setParsing(true)
+    try {
+      const name = picked.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '未命名'
+      const cr = await fetch('/api/projects/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: picked, name }),
+      })
+      const cj = await cr.json()
+      if (!cj.ok) throw new Error(cj.error || '建项目失败')
+      const ref = cj.data.project.ref
+
+      const pr = await fetch(`/api/projects/${encodeURIComponent(ref)}/parse`, { method: 'POST' })
+      const pj = await pr.json()
+      if (!pj.ok) throw new Error(pj.error || '解析失败')
+      const st = pj.data.stats
+      setParsed({ ref, name, nodes: st.nodes, edges: st.edges })
+    } catch (e) {
+      setErr(String((e as Error).message || e))
+    } finally {
+      setParsing(false)
     }
   }
 
@@ -146,11 +178,58 @@ export default function PersonalHome() {
 
           {err && <div style={{ color: '#c00', fontSize: 12.5, marginTop: 8 }}>{err}</div>}
 
+          {!parsed && (
+            <button
+              type="button"
+              disabled={parsing}
+              onClick={() => void startParse()}
+              style={{
+                marginTop: 14,
+                padding: '9px 20px',
+                fontSize: 13,
+                fontFamily: 'inherit',
+                color: '#fff',
+                background: parsing ? '#999' : '#111',
+                border: 'none',
+                borderRadius: 8,
+                cursor: parsing ? 'default' : 'pointer',
+              }}
+            >
+              {parsing ? '正在解析…' : '开始读这本书'}
+            </button>
+          )}
+
+          {parsed && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12.5, color: '#444' }}>
+                已建好：<b>{parsed.name}</b> · {parsed.nodes} 个节点 · {parsed.edges} 条关系
+              </div>
+              <button
+                type="button"
+                onClick={() => nav(`/p/${encodeURIComponent(parsed.ref)}`)}
+                style={{
+                  marginTop: 10,
+                  padding: '9px 20px',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  color: '#fff',
+                  background: '#111',
+                  border: 'none',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                }}
+              >
+                进入 →
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => {
               setPicked('')
               setScan(null)
+              setParsed(null)
               nav('/')
             }}
             style={{

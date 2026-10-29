@@ -1,6 +1,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, getCsrfToken, upload } from '../api/client'
 import { unwrap } from '../api/errors'
+import { IS_PERSONAL } from '../lib/personal'
+import { personalApi } from '../api/personal'
 import type {
   DeletedNote,
   ImportResult,
@@ -36,6 +38,8 @@ export function useNotes(
     queryKey: ['notes', projectRef, { kind, limit: opts.limit, offset: opts.offset }],
     enabled: !!projectRef,
     queryFn: async (): Promise<Note[]> => {
+      // ★★ 个人版：本地边车（列表里没有正文，正文按需再取）
+      if (IS_PERSONAL) return personalApi.notes(projectRef!, { kind: kind || undefined })
       const q = new URLSearchParams()
       if (kind) q.set('kind', kind)
       if (opts.limit != null) q.set('limit', String(opts.limit))
@@ -58,7 +62,9 @@ export function useNote(noteId?: string | null) {
     queryKey: ['note', noteId],
     enabled: !!noteId,
     queryFn: async (): Promise<NoteDetailData> =>
-      unwrap(await apiGet<NoteDetailData>(`/api/notes/${noteId!}/`, 'spread')),
+      IS_PERSONAL
+        ? (personalApi.note(noteId!) as unknown as Promise<NoteDetailData>)
+        : unwrap(await apiGet<NoteDetailData>(`/api/notes/${noteId!}/`, 'spread')),
   })
 }
 
@@ -75,13 +81,15 @@ export function useCreateNote(projectRef?: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (body: CreateNoteBody): Promise<NoteDetailData> =>
-      unwrap(
-        await apiPost<NoteDetailData>(
-          `/api/projects/${encodeURIComponent(projectRef!)}/notes/`,
-          body,
-          'spread',
-        ),
-      ),
+      IS_PERSONAL
+        ? (personalApi.createNote(projectRef!, body) as unknown as Promise<NoteDetailData>)
+        : unwrap(
+            await apiPost<NoteDetailData>(
+              `/api/projects/${encodeURIComponent(projectRef!)}/notes/`,
+              body,
+              'spread',
+            ),
+          ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['notes', projectRef] })
     },
@@ -134,7 +142,9 @@ export function useUpdateNote(noteId?: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (body: UpdateNoteBody): Promise<NoteDetailData> =>
-      unwrap(await apiPatch<NoteDetailData>(`/api/notes/${noteId!}/`, body, 'spread')),
+      IS_PERSONAL
+        ? (personalApi.updateNote(noteId!, body) as unknown as Promise<NoteDetailData>)
+        : unwrap(await apiPatch<NoteDetailData>(`/api/notes/${noteId!}/`, body, 'spread')),
     onSuccess: (data) => {
       qc.setQueryData(['note', noteId], data)
       void qc.invalidateQueries({ queryKey: ['notes'] })
@@ -152,7 +162,9 @@ export function useDeleteNote() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (noteId: string): Promise<{ deleted: boolean }> =>
-      unwrap(await apiDelete<{ deleted: boolean }>(`/api/notes/${noteId}/`, undefined, 'spread')),
+      IS_PERSONAL
+        ? personalApi.deleteNote(noteId).then(() => ({ deleted: true }))
+        : unwrap(await apiDelete<{ deleted: boolean }>(`/api/notes/${noteId}/`, undefined, 'spread')),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['notes'] })
       void qc.invalidateQueries({ queryKey: ['deleted-notes'] })

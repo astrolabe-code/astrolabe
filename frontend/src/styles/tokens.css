@@ -147,3 +147,54 @@
 body, .topnav, .card, .btn, .input, .dlg, table.data th, table.data td {
   transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
+
+/* ============================================================================
+ * ★★★ 个人版主题（`data-theme="plain"`）—— 全白，只留结构
+ *
+ * 所有者（逐字）：「个人版就一个软件，什么花里胡哨的天青色这些都不要，
+ *   全是白的就完了。」
+ *
+ * ```\n * 去掉  天青 accent · 天空渐变 · 星点 · 玻璃感 · 大圆角 · 发光阴影\n * 保留  两栏布局 / 目录 / 编号 / 五类色 / 进度条（结构不是装饰）\n ```\n *
+ * ⚠★ 五类颜色**必须保留**：全白之后它是"这是哪一类"的唯一载体，
+ *   去了它读者就分不出踩坑还是灵光 —— 那不是简洁，是丢信息。
+ * ⚠★ 卡片与背景同为白色 ⇒ **只能靠 1px 边框分层**，⛔ 不能再依赖阴影。
+ * ========================================================================== */
+
+[data-theme='plain'] {
+  --bg: #ffffff;
+  --bg-deep: #fafafa;
+  --card: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.12);
+  --card-border-hover: rgba(0, 0, 0, 0.35);
+
+  --text-main: #111111;
+  --text-sub: #555555;
+  --text-faint: #999999;
+
+  --accent: #111111;
+  --accent-strong: #000000;
+  --accent-dim: rgba(0, 0, 0, 0.05);
+
+  --shadow-card: none;
+  --shadow-card-hover: none;
+  --shadow-btn-accent: none;
+  --shadow-dlg: 0 8px 28px rgba(0, 0, 0, 0.12);
+
+  --radius: 8px;
+  --radius-sm: 6px;
+}
+
+/* ★ 天空 / 星点 / 网格一律关掉（组件里已经不渲染了，这里再兜一层） */
+[data-theme='plain'] body::before {
+  display: none !important;
+}
+
+/* ★ 纯白下没有阴影 ⇒ 交互反馈只能靠边框变深 + 极淡底色，否则"看不出来能点" */
+[data-theme='plain'] .card:hover {
+  border-color: var(--card-border-hover);
+}
+
+[data-theme='plain'] .nav-btn:hover,
+[data-theme='plain'] .link-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}

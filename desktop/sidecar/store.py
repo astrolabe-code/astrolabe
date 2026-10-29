@@ -227,7 +227,15 @@ def update_note(conn: sqlite3.Connection, ref: str, **fields) -> None:
 
 
 def find_note(conn: sqlite3.Connection, ref: str) -> dict | None:
-    r = conn.execute("SELECT * FROM note WHERE ref = ?", (ref,)).fetchone()
+    """⚠ 带上节点信息（阅读页左栏要显示「挂在 xxx」）——
+    单表查是拿不到 name/file_path 的，必须 join。"""
+    r = conn.execute(
+        """SELECT n.*, COALESCE(nd.name,'') AS node_name, COALESCE(nd.file_path,'') AS file_path,
+                  COALESCE(nd.line,0) AS line
+           FROM note n LEFT JOIN node nd ON nd.project_id = n.project_id AND nd.vid = n.node_vid
+           WHERE n.ref = ?""",
+        (ref,),
+    ).fetchone()
     return dict(r) if r else None
 
 

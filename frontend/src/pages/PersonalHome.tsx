@@ -8,7 +8,7 @@
  *
  * ## 这一页有两块
  *
- * ```\n * 已经读过的书  ⇒ 卡片网格，点一下直接进（**默认屏就是它**）\n * ＋ 读一本新的  ⇒ 选目录 → 扫描 → 解析\n * ```\n *
+ * ```\n * 已经导入的源码 ⇒ 卡片网格，点一下直接进（**默认屏就是它**）\n * ＋ 导入新源码  ⇒ 选目录 → 扫描 → 解析\n * ```\n *
  * ⚠ 没有营销文案、没有登录、没有搜索框 —— 全白（`POSITIONING.md` 0.4）。
  * ⚠ 解析失败的项目也在列表里（❌ 不隐藏）：卡片标红，点进去修图。
  */
@@ -204,21 +204,21 @@ export default function PersonalHome() {
               onClick={() => void startParse()}
               style={{ ...primary, marginTop: 14, background: parsing ? '#999' : '#111' }}
             >
-              {parsing ? '正在解析…' : '开始读这本书'}
+              {parsing ? '正在解析…' : '开始解析'}
             </button>
           )}
 
           {parsed && !parsed.failed && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12.5, color: '#444' }}>
-                已建好：<b>{parsed.name}</b> · {parsed.nodes} 个节点 · {parsed.edges} 条关系
+                解析完成：<b>{parsed.name}</b> · {parsed.nodes} 个节点 · {parsed.edges} 条关系
               </div>
               <button
                 type="button"
                 onClick={() => nav(`/p/${encodeURIComponent(parsed.ref)}`)}
                 style={{ ...primary, marginTop: 10 }}
               >
-                进入 →
+                打开
               </button>
             </div>
           )}
@@ -266,14 +266,15 @@ export default function PersonalHome() {
     <div style={page}>
       <Shell wide>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 18 }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>我的书</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>已导入的源码</div>
           <span style={{ fontSize: 12, color: '#999' }}>
-            {projects.length ? `${projects.length} 本书` : '还没有书'}
+            {/* ★ 只有一个时不显示数量（「1 个目录」读着别扭）⚠ */}
+            {projects.length > 1 ? `共 ${projects.length} 个` : projects.length === 0 ? '还没有导入' : ''}
           </span>
           {/* ★ 空态时中间那个大按钮就是唯一入口，这里不再重复出现第二个（所有者：「每次只能出现一个」）⚠ */}
           {projects.length > 0 && (
             <button type="button" onClick={() => void pick()} style={{ ...secondary, marginLeft: 'auto' }}>
-              <Plus size={12} /> 读一本新的
+              <Plus size={12} /> 导入新源码
             </button>
           )}
         </div>
@@ -284,14 +285,14 @@ export default function PersonalHome() {
         {!loading && projects.length === 0 && (
           <div style={{ textAlign: 'center', padding: '56px 0 40px' }}>
             <div style={{ fontSize: 13.5, color: '#666', marginBottom: 18 }}>
-              选一个你想读的代码目录，解析成结构，就能在函数旁边写笔记了
+              选择一个源码目录，解析出结构后，就能在函数旁边写笔记
             </div>
             <button
               type="button"
               onClick={() => void pick()}
               style={{ ...primary, fontSize: 15, padding: '14px 32px', gap: 10 }}
             >
-              <FolderOpen size={18} /> 选择一个代码目录
+              <FolderOpen size={18} /> 选择源码目录
             </button>
             <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 18, lineHeight: 1.7 }}>
               代码不会被上传，所有数据都留在你本机的 data/ 文件夹里。

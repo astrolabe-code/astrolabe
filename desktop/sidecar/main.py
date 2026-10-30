@@ -111,6 +111,7 @@ def bad(msg: str, code: int = 400) -> tuple[int, dict]:
 # ---------------------------------------------------------------- 路由
 
 R_PROJECT = re.compile(r"^/api/projects/([^/]+)/$")
+R_PSET = re.compile(r"^/api/projects/([^/]+)/settings/$")
 R_NODES = re.compile(r"^/api/projects/([^/]+)/nodes/$")
 R_PNOTES = re.compile(r"^/api/projects/([^/]+)/notes/$")
 R_NOTE = re.compile(r"^/api/notes/([^/]+)/$")
@@ -408,11 +409,47 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             p = store.get_or_create_project(CONN, name, code_root, ref=entry["ref"])
             return ok({"project": dict(p)})
 
+    # ★★ 项目设置（个人版没有"权限/可见性"这些项，只有事实）
+    m = R_PSET.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        entry = projectstore.get(m.group(1)) or {}
+        st = store.stats(CONN, p["id"])
+        pstate = store.parse_state_of(CONN, p["id"])
+        notes = CONN.execute(
+            "SELECT COUNT(*) AS c FROM note WHERE project_id = ?", (p["id"],)
+        ).fetchone()["c"]
+        manual = store.manual_vids(CONN, p["id"])
+        return ok(
+            {
+                "name": p["name"],
+                "root": p["root"],
+                "data": entry.get("data") or ROOT,
+                "nodes": st["nodes"],
+                "notes": int(notes),
+                "summary": st["summaryNodes"],
+                "parseState": pstate[0],
+                "parseError": pstate[1],
+                "parsedAt": p["parsed_at"],
+                "manualNodes": len(manual["nodes"]),
+                "manualEdges": len(manual["edges"]),
+                "curateLog": store.curate_history(CONN, p["id"], 30),
+            }
+        )
+
     m = R_PROJECT.match(path)
     if m:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
+        if method == "DELETE":
+            entry = projectstore.get(m.group(1)) or {}
+            projectstore.remove(m.group(1))
+            # ⚠ 只从清单里移走，笔记和索引**原样留在磁盘上**（绝不代用户删数据）
+            return ok({"removed": m.group(1), "kept": entry.get("data") or ROOT})
+
         if method == "GET":
             pstate, perr = store.parse_state_of(CONN, p["id"])
             d = dict(p)

@@ -17,6 +17,8 @@ import StoragePanel from '../components/settings/StoragePanel'
 import ProfileForm from '../components/profile/ProfileForm'
 import { usePatchUserSettings, useUserSettings } from '../query/settings'
 import { useLogout } from '../query/auth'
+import { IS_PERSONAL } from '../lib/personal'
+import PersonalUserSettings from '../components/settings/PersonalUserSettings'
 
 /**
  * ★★ **我的设置**（参考 B 站 · 2026-10-24）⚠
@@ -40,6 +42,15 @@ const CATS: { key: Cat; label: string; icon: typeof User }[] = [
 ]
 
 export default function UserSettingsPage() {
+  // ★★★ 个人版：没有资料/外观/存储/账号 ⇒ 只显示「关于 + 数据在哪」⚠
+  if (IS_PERSONAL) {
+    return (
+      <AppLayout title="设置">
+        <PersonalUserSettings />
+      </AppLayout>
+    )
+  }
+
   const [cat, setCat] = useState<Cat>('profile')
   const settings = useUserSettings()
   const patch = usePatchUserSettings()

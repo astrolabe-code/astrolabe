@@ -321,6 +321,10 @@ ipcMain.handle('app:info', () => ({
   dataDir: DATA_DIR,
   distDir: DIST,
   packaged: IS_PACKAGED,
+  // ★ 许可证声明：打包后在 resources/ 下，开发时在仓库根
+  notices: IS_PACKAGED
+    ? path.join(process.resourcesPath, 'THIRD-PARTY-NOTICES.txt')
+    : path.join(__dirname, '..', 'THIRD-PARTY-NOTICES.txt'),
 }))
 
 ipcMain.handle('app:pick-dir', async () => {
@@ -333,6 +337,13 @@ ipcMain.handle('app:pick-dir', async () => {
     properties: ['openDirectory'],
   })
   return r.canceled ? null : r.filePaths[0] || null
+})
+
+ipcMain.handle('app:open-path', async (_e, target) => {
+  // ★ 打开任意目录/文件（设置页里「打开笔记目录」「看第三方声明」用）
+  if (!target || typeof target !== 'string') return false
+  await shell.openPath(target)
+  return true
 })
 
 ipcMain.handle('app:open-data-dir', async () => {

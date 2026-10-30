@@ -6,6 +6,8 @@ import Button from '../components/ui/Button'
 import SettingsForm from '../components/settings/SettingsForm'
 import CollaboratorSection from '../components/settings/CollaboratorSection'
 import { useProject } from '../query/projects'
+import { IS_PERSONAL } from '../lib/personal'
+import PersonalProjectSettings from '../components/settings/PersonalProjectSettings'
 import {
   usePatchProjectSettings,
   useProjectSettings,
@@ -23,6 +25,16 @@ import {
  */
 export default function ProjectSettingsPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
+
+  // ★★★ 个人版：没有可见性/许可证/协作者这些项 ⇒ 换成「事实 + 危险操作」那一版 ⚠
+  if (IS_PERSONAL) {
+    return (
+      <AppLayout title="项目设置">
+        <PersonalProjectSettings projectRef={projectRef} />
+      </AppLayout>
+    )
+  }
+
   const settings = useProjectSettings(projectRef)
   const project = useProject(projectRef)
   const patch = usePatchProjectSettings(projectRef)

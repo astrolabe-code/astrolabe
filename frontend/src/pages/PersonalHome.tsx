@@ -1,22 +1,21 @@
 /**
- * ★★★ **个人版首页**（绿色版桌面应用的首屏）
+ * ★★★ **个人版首页**
  *
  * ## 所有者原话（逐字）
  *
- * > 「不要做用户登陆功能，就只有用户一个人用，我这是给我邀请的用户之外、
- * >   想体验的用户准备的，还有首页这些花里胡哨的不需要的。」
+ * > 「个人版怎么没有在首页显示已经解析的项目卡片？网页版首页有项目窗口，
+ * >   可以点击进入创建的项目卡片，但个人版没有，你直接首页就出现这个项目窗口就可以了。」
  *
- * ## 所以这一页只有一件事
+ * ## 这一页有两块
  *
- * ```\n * 没有项目 ⇒ 一个大按钮：「选择一个代码目录」\n * 有项目   ⇒ 一个列表：点进去接着读\n * ```\n *
- * ⚠ 没有营销文案、没有登录、没有搜索框、没有滚动动画 —— 全白（见 `POSITIONING.md` 0.4）。
- * ⚠ 选完目录**立刻给出真实反馈**（扫描出多少个文件、几种语言），
- *   ⛔ 不做一个"看起来在干活"的假进度条。
+ * ```\n * 已经读过的书  ⇒ 卡片网格，点一下直接进（**默认屏就是它**）\n * ＋ 读一本新的  ⇒ 选目录 → 扫描 → 解析\n * ```\n *
+ * ⚠ 没有营销文案、没有登录、没有搜索框 —— 全白（`POSITIONING.md` 0.4）。
+ * ⚠ 解析失败的项目也在列表里（❌ 不隐藏）：卡片标红，点进去修图。
  */
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, Plus } from 'lucide-react'
 
 interface ScanResult {
   root: string
@@ -25,23 +24,54 @@ interface ScanResult {
   elapsedMs: number
 }
 
+interface ProjectRow {
+  ref: string
+  name: string
+  root: string
+  created_at: string
+  parsed_at: string | null
+  parse_state?: string
+  node_count?: number
+  note_count?: number
+}
+
 export default function PersonalHome() {
   const nav = useNavigate()
+
+  // ---- 已有项目
+  const [projects, setProjects] = useState<ProjectRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // ---- 新建流程
   const [picked, setPicked] = useState<string>('')
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  /** ★ 建项目 + 解析（个人版唯一的重活） */
   const [parsing, setParsing] = useState(false)
   const [parsed, setParsed] = useState<{
     ref: string
     name: string
     nodes: number
     edges: number
-    /** ★ 解析失败时带原因（此时**不许写笔记**，只能重试）*/
     failed?: boolean
     message?: string
   } | null>(null)
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const r = await fetch('/api/projects/')
+      const j = await r.json()
+      if (j.ok) setProjects((j.data.items || []) as ProjectRow[])
+    } catch {
+      /* 读不到就当空列表 */
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadProjects()
+  }, [loadProjects])
 
   const pick = async () => {
     setErr('')
@@ -98,10 +128,12 @@ export default function PersonalHome() {
       if (!pj.ok) {
         // ★ 解析没成功 ⇒ 记住这个项目，但**只给"重新解析"**，不给写笔记
         setParsed({ ref, name, nodes: 0, edges: 0, failed: true, message: pj.error || '解析失败' })
+        void loadProjects()
         return
       }
       const st = pj.data.stats
       setParsed({ ref, name, nodes: st.nodes, edges: st.edges })
+      void loadProjects()
     } catch (e) {
       setErr(String((e as Error).message || e))
     } finally {
@@ -109,59 +141,27 @@ export default function PersonalHome() {
     }
   }
 
-  return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 18,
-        padding: 40,
-        background: '#fff',
-        color: '#111',
-        fontFamily: 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
-      }}
-    >
-      <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: 0.5 }}>Astrolabe</div>
+  const page: React.CSSProperties = {
+    minHeight: '100vh',
+    background: '#fff',
+    color: '#111',
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
+    padding: '48px 40px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+  }
 
-      {!picked && (
-        <>
-          <div style={{ fontSize: 13, color: '#888' }}>选一个你想读的代码目录</div>
-          <button
-            type="button"
-            onClick={() => void pick()}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '10px 20px',
-              fontSize: 13.5,
-              fontFamily: 'inherit',
-              color: '#fff',
-              background: '#111',
-              border: 'none',
-              borderRadius: 8,
-              cursor: 'pointer',
-            }}
-          >
-            <FolderOpen size={15} />
-            选择一个代码目录
-          </button>
-          <div style={{ fontSize: 11.5, color: '#aaa', maxWidth: 420, textAlign: 'center', lineHeight: 1.7 }}>
-            代码不会被上传，所有数据都留在你本机的 <code>data/</code> 文件夹里。
-          </div>
-        </>
-      )}
-
-      {picked && (
-        <div style={{ width: 520, maxWidth: '90vw' }}>
+  // ---------------------------------------------------------------- 新建流程
+  if (picked) {
+    return (
+      <div style={page}>
+        <Shell>
           <div
             style={{
-              fontSize: 11.5,
+              fontSize: 12,
               color: '#888',
-              marginBottom: 8,
+              marginBottom: 10,
               wordBreak: 'break-all',
               fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
             }}
@@ -169,26 +169,15 @@ export default function PersonalHome() {
             {picked}
           </div>
 
-          {busy && <div style={{ fontSize: 12.5, color: '#666' }}>正在扫描…</div>}
+          {busy && <div style={{ fontSize: 13, color: '#666' }}>正在扫描…</div>}
 
           {scan && !busy && (
-            <div
-              style={{
-                border: '1px solid #e5e5e5',
-                borderRadius: 8,
-                padding: 14,
-                fontSize: 12.5,
-                lineHeight: 1.9,
-              }}
-            >
+            <div style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 14, fontSize: 12.5, lineHeight: 1.9 }}>
               <div>
                 找到 <b>{scan.files}</b> 个可读文件 · 用时 {scan.elapsedMs} ms
               </div>
               <div style={{ color: '#666' }}>
-                {scan.byExt
-                  .slice(0, 6)
-                  .map((x) => `${x.ext} ${x.n}`)
-                  .join(' · ')}
+                {scan.byExt.slice(0, 6).map((x) => `${x.ext} ${x.n}`).join(' · ')}
               </div>
             </div>
           )}
@@ -200,17 +189,7 @@ export default function PersonalHome() {
               type="button"
               disabled={parsing}
               onClick={() => void startParse()}
-              style={{
-                marginTop: 14,
-                padding: '9px 20px',
-                fontSize: 13,
-                fontFamily: 'inherit',
-                color: '#fff',
-                background: parsing ? '#999' : '#111',
-                border: 'none',
-                borderRadius: 8,
-                cursor: parsing ? 'default' : 'pointer',
-              }}
+              style={{ ...primary, marginTop: 14, background: parsing ? '#999' : '#111' }}
             >
               {parsing ? '正在解析…' : '开始读这本书'}
             </button>
@@ -224,24 +203,14 @@ export default function PersonalHome() {
               <button
                 type="button"
                 onClick={() => nav(`/p/${encodeURIComponent(parsed.ref)}`)}
-                style={{
-                  marginTop: 10,
-                  padding: '9px 20px',
-                  fontSize: 13,
-                  fontFamily: 'inherit',
-                  color: '#fff',
-                  background: '#111',
-                  border: 'none',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                }}
+                style={{ ...primary, marginTop: 10 }}
               >
                 进入 →
               </button>
             </div>
           )}
 
-          {/* ★★ 解析失败：**不许写笔记**，只给"重新解析"（所有者 2026-10-29）⚠ */}
+          {/* ★★ 解析失败：**不许写笔记**，只给"重新解析" */}
           {parsed?.failed && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12.5, color: '#b00', lineHeight: 1.7 }}>
@@ -254,17 +223,7 @@ export default function PersonalHome() {
                 type="button"
                 disabled={parsing}
                 onClick={() => void startParse(true, parsed.ref)}
-                style={{
-                  marginTop: 10,
-                  padding: '9px 20px',
-                  fontSize: 13,
-                  fontFamily: 'inherit',
-                  color: '#fff',
-                  background: parsing ? '#999' : '#111',
-                  border: 'none',
-                  borderRadius: 8,
-                  cursor: parsing ? 'default' : 'pointer',
-                }}
+                style={{ ...primary, marginTop: 10, background: parsing ? '#999' : '#111' }}
               >
                 {parsing ? '重新解析中…' : '重新解析'}
               </button>
@@ -277,24 +236,129 @@ export default function PersonalHome() {
               setPicked('')
               setScan(null)
               setParsed(null)
-              nav('/')
+              setErr('')
+              void loadProjects()
             }}
-            style={{
-              marginTop: 14,
-              padding: '6px 14px',
-              fontSize: 12.5,
-              fontFamily: 'inherit',
-              color: '#555',
-              background: '#fff',
-              border: '1px solid #ddd',
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
+            style={{ ...secondary, marginTop: 16 }}
           >
-            换一个目录
+            返回
+          </button>
+        </Shell>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------- 首页（项目列表）
+  return (
+    <div style={page}>
+      <Shell wide>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>我的书</div>
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {projects.length ? `${projects.length} 本书` : '还没有书'}
+          </span>
+          <button type="button" onClick={() => void pick()} style={{ ...secondary, marginLeft: 'auto' }}>
+            <Plus size={12} /> 读一本新的
           </button>
         </div>
-      )}
+
+        {loading && <div style={{ fontSize: 13, color: '#888' }}>读取中…</div>}
+
+        {/* 空状态：直接给选目录 */}
+        {!loading && projects.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <div style={{ fontSize: 13, color: '#888', marginBottom: 14 }}>选一个你想读的代码目录</div>
+            <button type="button" onClick={() => void pick()} style={primary}>
+              <FolderOpen size={15} /> 选择一个代码目录
+            </button>
+            <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 14, lineHeight: 1.7 }}>
+              代码不会被上传，所有数据都留在你本机的 data/ 文件夹里。
+            </div>
+          </div>
+        )}
+
+        {/* 项目卡片 */}
+        {projects.length > 0 && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: 12,
+            }}
+          >
+            {projects.map((p) => {
+              const failed = p.parse_state === 'failed'
+              return (
+                <button
+                  key={p.ref}
+                  type="button"
+                  onClick={() => nav(`/p/${encodeURIComponent(p.ref)}`)}
+                  style={{
+                    textAlign: 'left',
+                    fontFamily: 'inherit',
+                    padding: '14px 16px',
+                    background: '#fff',
+                    border: `1px solid ${failed ? '#e5c9c9' : '#e5e5e5'}`,
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>{p.name}</div>
+                  <div style={{ fontSize: 11.5, color: '#888' }}>
+                    {p.node_count ?? 0} 个节点 · {p.note_count ?? 0} 篇笔记
+                  </div>
+                  <div style={{ fontSize: 11, color: failed ? '#b00' : '#aaa' }}>
+                    {failed ? '解析失败 · 点进去修图' : p.parsed_at ? '已解析' : '还没解析'}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {err && <div style={{ color: '#c00', fontSize: 12.5, marginTop: 12 }}>{err}</div>}
+      </Shell>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- 小积木
+
+const primary: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '9px 20px',
+  fontSize: 13,
+  fontFamily: 'inherit',
+  color: '#fff',
+  background: '#111',
+  border: 'none',
+  borderRadius: 8,
+  cursor: 'pointer',
+}
+
+const secondary: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  padding: '4px 12px',
+  fontSize: 12,
+  fontFamily: 'inherit',
+  color: '#555',
+  background: '#fff',
+  border: '1px solid #ddd',
+  borderRadius: 7,
+  cursor: 'pointer',
+}
+
+function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div style={{ width: wide ? 760 : 520, maxWidth: '92vw', display: 'flex', flexDirection: 'column' }}>
+      {children}
     </div>
   )
 }

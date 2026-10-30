@@ -257,21 +257,30 @@ export default function PersonalHome() {
           <span style={{ fontSize: 12, color: '#999' }}>
             {projects.length ? `${projects.length} 本书` : '还没有书'}
           </span>
-          <button type="button" onClick={() => void pick()} style={{ ...secondary, marginLeft: 'auto' }}>
-            <Plus size={12} /> 读一本新的
-          </button>
+          {/* ★ 空态时中间那个大按钮就是唯一入口，这里不再重复出现第二个（所有者：「每次只能出现一个」）⚠ */}
+          {projects.length > 0 && (
+            <button type="button" onClick={() => void pick()} style={{ ...secondary, marginLeft: 'auto' }}>
+              <Plus size={12} /> 读一本新的
+            </button>
+          )}
         </div>
 
         {loading && <div style={{ fontSize: 13, color: '#888' }}>读取中…</div>}
 
         {/* 空状态：直接给选目录 */}
         {!loading && projects.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <div style={{ fontSize: 13, color: '#888', marginBottom: 14 }}>选一个你想读的代码目录</div>
-            <button type="button" onClick={() => void pick()} style={primary}>
-              <FolderOpen size={15} /> 选择一个代码目录
+          <div style={{ textAlign: 'center', padding: '56px 0 40px' }}>
+            <div style={{ fontSize: 13.5, color: '#666', marginBottom: 18 }}>
+              选一个你想读的代码目录，解析成结构，就能在函数旁边写笔记了
+            </div>
+            <button
+              type="button"
+              onClick={() => void pick()}
+              style={{ ...primary, fontSize: 15, padding: '14px 32px', gap: 10 }}
+            >
+              <FolderOpen size={18} /> 选择一个代码目录
             </button>
-            <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 14, lineHeight: 1.7 }}>
+            <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 18, lineHeight: 1.7 }}>
               代码不会被上传，所有数据都留在你本机的 data/ 文件夹里。
             </div>
           </div>

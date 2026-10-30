@@ -448,7 +448,9 @@ export default function PersonalHome() {
               </button>
             </div>
             <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 14, lineHeight: 1.7 }}>
-              数据都留在你本机的 data/ 文件夹里，不会上传。
+              {/* ★ 提示语要跟着存储结构走：笔记在**你选的那个目录**的 .astrolabe/ 里，
+                  不是程序目录的 data/（所有者 2026-10-30 指出这句过时了）⚠ */}
+              笔记存在你选的那个目录里（.astrolabe/），不会上传。
             </div>
           </div>
         )}

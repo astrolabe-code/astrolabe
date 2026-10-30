@@ -29,6 +29,8 @@ interface Props {
   onChanged: () => void
   /** ★ 空白结构（无源码）⇒ 不显示「重新解析」（没有东西可解析）*/
   canReparse?: boolean
+  /** ★ 空白结构：节点只填名字和类型（⛔ 不问文件、不问行号）*/
+  blank?: boolean
 }
 
 interface EdgeRow {
@@ -58,7 +60,15 @@ async function curate(projectRef: string, payload: Record<string, unknown>) {
   return j.data
 }
 
-export default function CuratePanel({ open, projectRef, nodes, onClose, onChanged, canReparse = true }: Props) {
+export default function CuratePanel({
+  open,
+  projectRef,
+  nodes,
+  onClose,
+  onChanged,
+  canReparse = true,
+  blank = false,
+}: Props) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState<GraphNode | null>(null)
   const [edges, setEdges] = useState<{ out: EdgeRow[]; in: EdgeRow[] }>({ out: [], in: [] })
@@ -78,6 +88,7 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
   /** ★ 起止行号 —— vid 的组成部分，填真实行号才能和解析结果对齐 ⚠ */
   const [newLine, setNewLine] = useState('')
   const [newLineEnd, setNewLineEnd] = useState('')
+  const [newKind, setNewKind] = useState('')
   const [editLine, setEditLine] = useState('')
   const [editLineEnd, setEditLineEnd] = useState('')
 
@@ -238,7 +249,7 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
             >
               {n.name}
               <span className="faint" style={{ marginLeft: 6, fontSize: 10.5 }}>
-                {n.file_path}:{n.line}
+                {n.file_path ? `${n.file_path}:${n.line}` : n.kind}
               </span>
               {sel && sel.vid !== n.vid && (
                 <span
@@ -282,7 +293,7 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
           <>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{sel.name}</div>
             <div className="faint" style={{ fontSize: 11, marginBottom: 10 }}>
-              {sel.file_path}:{sel.line} · {sel.kind}
+              {sel.file_path ? `${sel.file_path}:${sel.line} · ${sel.kind}` : sel.kind}
             </div>
 
             {/* 改名 / 改类型（内联，不用 prompt） */}
@@ -406,27 +417,40 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
             placeholder="新节点名"
             style={{ flex: 1, fontSize: 12 }}
           />
-          <input
-            className="input"
-            value={newFile}
-            onChange={(e) => setNewFile(e.target.value)}
-            placeholder="文件路径"
-            style={{ flex: 1, fontSize: 12 }}
-          />
-          <input
-            className="input"
-            value={newLine}
-            onChange={(e) => setNewLine(e.target.value)}
-            placeholder="起始行"
-            style={{ width: 74, fontSize: 12 }}
-          />
-          <input
-            className="input"
-            value={newLineEnd}
-            onChange={(e) => setNewLineEnd(e.target.value)}
-            placeholder="结束行"
-            style={{ width: 74, fontSize: 12 }}
-          />
+          {/* ★ 空白结构：只有名字和类型，⛔ 不问文件、不问行号 ⚠ */}
+          {blank ? (
+            <input
+              className="input"
+              value={newKind}
+              onChange={(e) => setNewKind(e.target.value)}
+              placeholder="类型（人物/概念…）"
+              style={{ width: 118, fontSize: 12 }}
+            />
+          ) : (
+            <>
+              <input
+                className="input"
+                value={newFile}
+                onChange={(e) => setNewFile(e.target.value)}
+                placeholder="文件路径"
+                style={{ flex: 1, fontSize: 12 }}
+              />
+              <input
+                className="input"
+                value={newLine}
+                onChange={(e) => setNewLine(e.target.value)}
+                placeholder="起始行"
+                style={{ width: 74, fontSize: 12 }}
+              />
+              <input
+                className="input"
+                value={newLineEnd}
+                onChange={(e) => setNewLineEnd(e.target.value)}
+                placeholder="结束行"
+                style={{ width: 74, fontSize: 12 }}
+              />
+            </>
+          )}
           <button
             type="button"
             style={btn}
@@ -435,7 +459,16 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
                 setErr('先写个名字')
                 return
               }
-              // ⚠ 行号是 vid 的一部分：空着填 0，起止颠倒就当没填
+              // ★ 空白结构：只传名字和类型（身份是自增号，不看文件行号）
+              if (blank) {
+                ask(
+                  'add_node',
+                  { kind: newKind.trim() || '概念', name: newName.trim() },
+                  `加节点「${newName.trim()}」`,
+                )
+                return
+              }
+              // ⚠ 代码项目：行号是 vid 的一部分：空着填 0，起止颠倒就当没填
               const ln = Number(newLine) || 0
               const le = Number(newLineEnd) || -1
               if (ln < 0) {

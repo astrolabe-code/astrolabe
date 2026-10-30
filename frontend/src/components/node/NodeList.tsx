@@ -188,9 +188,12 @@ export default function NodeList({
                         {n.kind}
                       </span>
                     </div>
-                    <div className="faint mono" style={{ fontSize: 11, marginTop: 2 }}>
-                      {n.file_path}:{n.line}
-                    </div>
+                    {/* ★ 空白结构没有文件/行号 ⇒ **整行不渲染**（类型上面那个 tag 已经显示过了）⚠ */}
+                    {n.file_path && (
+                      <div className="faint mono" style={{ fontSize: 11, marginTop: 2 }}>
+                        {n.file_path}:{n.line}
+                      </div>
+                    )}
                   </button>
                 </li>
               )

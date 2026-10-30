@@ -235,7 +235,8 @@ export default function ProjectPage() {
           )}
 
           {/* ★★★ 写作进度（覆盖率）—— 只有作者/协作者看得到（`D123`）⚠ */}
-          {canWrite && <WritingProgress projectRef={projectRef} />}
+          {/* ★ 空白结构**不显示进度**（所有者：「这种空白的就不要显示进度了」）⚠ */}
+          {canWrite && !isBlank && <WritingProgress projectRef={projectRef} />}
 
           {/* ★★ 导读路径 —— 阅读顺序（* 读者看这个，⛔ 不是"进度"）⚠ */}
           <PathProgress projectRef={projectRef} />

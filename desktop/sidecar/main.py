@@ -308,6 +308,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     file_path=str(body.get("file_path") or ""),
                     line=int(body.get("line") or 0),
                     line_end=int(body.get("line_end") if body.get("line_end") is not None else -1),
+                    # ★ 空白结构（无源码）⇒ 自增号身份，不问文件行号
+                    local=not (p["root"] or "").strip(),
                 )
                 store.log_curate(
                     CONN,
@@ -330,6 +332,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     file_path=body.get("file_path"),
                     line=body.get("line"),
                     line_end=body.get("line_end"),
+                    local=not (p["root"] or "").strip(),
                 )
                 # ★★ vid 变了 ⇒ **笔记的 frontmatter 也要改**（文件是真相，
                 #    只改库的话，下次索引重建会从文件里读回旧锚点）

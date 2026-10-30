@@ -392,6 +392,26 @@ def node_by_vid(conn: sqlite3.Connection, project_id: int, vid: int) -> dict | N
 # ---------------------------------------------------------------- 笔记
 
 
+def _next_local_vid(conn: sqlite3.Connection) -> int:
+    """★ 空白结构的节点身份：**自增号**，不是内容哈希 ⚠
+
+    ```\n * 非代码主题没有 file 和 line，哈希算出来的身份会强迫"同名合并"
+ * 自增号 ⇒ 可以重名、改名不改身份、文档永远跟着走
+ * ```\n
+    ⚠ 空白项目里不存在解析出来的节点 ⇒ 不会和哈希 vid 撞车。
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = 'next_local_vid'").fetchone()
+    cur = int(row["value"]) if row else 0
+    nxt = cur + 1
+    with conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('next_local_vid', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(nxt),),
+        )
+    return nxt
+
+
 def next_no(conn: sqlite3.Connection) -> int:
     """★★ 下一个编号 —— **单调递增，永不复用**（`D…` 2026-10-29）⚠
 
@@ -464,9 +484,10 @@ def delete_note(conn: sqlite3.Connection, ref: str) -> None:
 
 def stats(conn: sqlite3.Connection, project_id: int) -> dict:
     """覆盖率统计（个人版的「写作进度」）"""
+    # ★ 不再按 kind 过滤：空白结构的类型是自由文本（人物/概念/…），
+    #   写死 file/function/type 会让它的节点数恒为 0 ⚠
     total = conn.execute(
-        "SELECT COUNT(*) AS c FROM node WHERE project_id = ? AND kind IN ('file','function','type')",
-        (project_id,),
+        "SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (project_id,)
     ).fetchone()["c"]
     done = conn.execute(
         """SELECT COUNT(DISTINCT node_vid) AS c FROM note
@@ -562,6 +583,7 @@ def add_manual_node(
     file_path: str,
     line: int,
     line_end: int = -1,
+    local: bool = False,
 ) -> int:
     """手补一个节点（解析器没识别出来的函数/文件）
 
@@ -571,6 +593,17 @@ def add_manual_node(
       · · 填 -1      ⇒ 永远对不上，会并存两个同名节点 ⚠
       ⇒ 所以行号不是装饰，是**让两套来源能对齐**的唯一办法。
     """
+    # ★ 空白结构：自增号 + 允许重名（⛔ 不用 INSERT OR REPLACE）
+    if local:
+        vid = _next_local_vid(conn)
+        with conn:
+            conn.execute(
+                """INSERT INTO node (project_id, vid, kind, name, qname, file_path, line, line_end, origin)
+                   VALUES (?,?,?,?,?,?,?,?, 'manual')""",
+                (project_id, vid, kind, name, "", "", -1, -1),
+            )
+        return vid
+
     from graph import identity  # ⚠ 延迟导入：没有 app 目录时给明确错误
 
     ln = line if isinstance(line, int) and line >= 0 else 0
@@ -586,7 +619,7 @@ def add_manual_node(
 
 
 def update_node_fields(
-    conn: sqlite3.Connection, project_id: int, vid: int, **fields
+    conn: sqlite3.Connection, project_id: int, vid: int, local: bool = False, **fields
 ) -> dict:
     """★★★ 改节点字段 ⇒ **重算 vid ⇒ 级联迁移**（2026-10-29）⚠
 
@@ -609,6 +642,23 @@ def update_node_fields(
     ⚠★ **匹配必须精确**：迁移只发生在"这一个旧 vid → 这一个新 vid"之间，
       绝不按名字猜 —— 两个文件里有同名函数时，按名字迁移必挂错位。
     """
+    if local:
+        # ★ 空白结构：**改名不换身份**（自增号是它的身份），所以不走哈希那条路
+        row = conn.execute(
+            "SELECT * FROM node WHERE project_id = ? AND vid = ?", (project_id, vid)
+        ).fetchone()
+        if row is None:
+            return {"changed": False, "reason": "节点不存在"}
+        allowed = {k: v for k, v in fields.items() if k in ("name", "kind") and v is not None}
+        if allowed:
+            sets = ", ".join(f"{k} = ?" for k in allowed)
+            with conn:
+                conn.execute(
+                    f"UPDATE node SET {sets}, origin = 'manual' WHERE project_id = ? AND vid = ?",
+                    (*allowed.values(), project_id, vid),
+                )
+        return {"changed": False, "old_vid": vid, "new_vid": vid, "merged": False, "notes": []}
+
     from graph import identity
 
     row = conn.execute(

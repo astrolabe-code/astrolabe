@@ -924,6 +924,7 @@ export default function ProjectGraphPage() {
         onClose={() => setCurateOpen(false)}
         onChanged={() => void graph.refetch()}
         canReparse={!(project.data as unknown as { is_blank?: boolean })?.is_blank}
+        blank={!!(project.data as unknown as { is_blank?: boolean })?.is_blank}
       />
     </AppLayout>
   )

@@ -130,10 +130,15 @@ def main() -> None:
             full = os.path.join(gitdir, rel)
             os.makedirs(os.path.dirname(full), exist_ok=True) if os.path.dirname(full) else None
             open(full, "w", encoding="utf-8").write("def f():\n    pass\n")
+        # ★ 子目录 .gitignore 也要生效（git 语义：每个目录一份）
+        os.makedirs(os.path.join(gitdir, "pkg", "sub"), exist_ok=True)
+        open(os.path.join(gitdir, "pkg", ".gitignore"), "w", encoding="utf-8").write("sub/\n")
+        open(os.path.join(gitdir, "pkg", "inner.py"), "w", encoding="utf-8").write("def x():\n    pass\n")
+        open(os.path.join(gitdir, "pkg", "sub", "deep.py"), "w", encoding="utf-8").write("def y():\n    pass\n")
         kept = sorted(r for r, _s in filefilter.iter_code_files(gitdir))
         check(
             "文件过滤（.gitignore / 隐藏项 / node_modules）",
-            kept == ["main.py", "src/net/util.py"],
+            kept == ["main.py", "pkg/inner.py", "src/net/util.py"],
             str(kept),
         )
 

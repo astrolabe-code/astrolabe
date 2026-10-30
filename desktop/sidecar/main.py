@@ -854,17 +854,26 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
     """
     t0 = time.time()
     counts: dict[str, int] = {}
+    other: dict[str, int] = {}
     total = 0
+    other_total = 0
     for rel, _size in filefilter.iter_code_files(root):
         ext = os.path.splitext(rel)[1].lower()
-        counts[ext] = counts.get(ext, 0) + 1
-        total += 1
-        if total >= limit:
+        if ext in filefilter.PARSABLE_EXTS:
+            counts[ext] = counts.get(ext, 0) + 1
+            total += 1
+        else:
+            # ⚠ 是代码，但这一版解析器不支持（Go/Rust/TS…）⇒ 单独报，⛔ 不能混进"可读"
+            other[ext] = other.get(ext, 0) + 1
+            other_total += 1
+        if total + other_total >= limit:
             break
     return {
         "root": root,
         "files": total,
         "byExt": [{"ext": k, "n": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])],
+        "otherFiles": other_total,
+        "otherByExt": [{"ext": k, "n": v} for k, v in sorted(other.items(), key=lambda x: -x[1])][:6],
         "elapsedMs": int((time.time() - t0) * 1000),
     }
 

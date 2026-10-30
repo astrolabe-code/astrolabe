@@ -21,6 +21,9 @@ interface ScanResult {
   root: string
   files: number
   byExt: { ext: string; n: number }[]
+  /** ★ 是代码、但这一版解析器还不支持的语言（⛔ 不能混进"可读"里）*/
+  otherFiles?: number
+  otherByExt?: { ext: string; n: number }[]
   elapsedMs: number
 }
 
@@ -255,6 +258,12 @@ export default function PersonalHome() {
               <div style={{ color: '#666' }}>
                 {scan.byExt.slice(0, 6).map((x) => `${x.ext} ${x.n}`).join(' · ')}
               </div>
+              {!!scan.otherFiles && (
+                <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+                  另有 {scan.otherFiles} 个代码文件这一版还解析不了
+                  {scan.otherByExt?.length ? `（${scan.otherByExt.map((x) => `${x.ext} ${x.n}`).join(' · ')}）` : ''}
+                </div>
+              )}
             </div>
           )}
 

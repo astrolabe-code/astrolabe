@@ -75,19 +75,27 @@ def save_pref(**kv) -> None:
 
 
 def resolve_root() -> str:
-    """★★ 库根的三级取值：环境变量 → 用户指定 → 默认 ⚠
+    """★★ 库根取值（**用户设置 > 环境变量 > 默认**）⚠
 
-    ```\n * ASTROLABE_LIBRARY   调试/测试用（最高优先）
- * config.json 里的值    用户在界面里选过的位置
- * <数据目录>/notes      没指定过时的默认
+    ## 本项目的通用配置优先级（所有者 2026-10-30 定）
+
+    ```\n * 项目设置  >  用户设置  >  环境变量   （越具体的越优先）
+ ```\n
+    ⚠ 但**库位置是个例外**：项目本身就住在库里（`<库根>/<项目目录>/`），
+      让项目再指定库根是循环依赖 ⇒ 库位置只有「用户设置 > 环境变量 > 默认」。
+
+    ```\n * config.json 的 library_root   用户在界面里选的（最高）
+ * ASTROLABE_LIBRARY            环境变量（打包/调试用的基线）
+ * <数据目录>/notes             都没有时的默认
  ```\n
     """
-    env = (os.environ.get("ASTROLABE_LIBRARY") or "").strip()
-    if env:
-        return os.path.abspath(env)
     saved = str(load_pref().get("library_root") or "").strip()
     if saved:
         return os.path.abspath(saved)
+
+    env = (os.environ.get("ASTROLABE_LIBRARY") or "").strip()
+    if env:
+        return os.path.abspath(env)
 
     # ⚠ 向后兼容：老版本把库放在 `<数据目录>/books/main`。
     #   默认改成 `<数据目录>/notes` 之后，老用户的笔记不能"消失" ⚠

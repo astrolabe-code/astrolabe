@@ -130,32 +130,34 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             }
         )
 
-    # ★★ 换笔记存放位置（用户指定；⛔ 不是只能靠环境变量）
+    # ★★ 搬走笔记库（用户指定位置；⛔ 不是只能靠环境变量）⚠
     if path == "/api/library/switch" and method == "POST":
         target = str(body.get("path") or "").strip()
-        copy = bool(body.get("copy"))
         if not target:
             return bad("要指定一个目录")
         target = os.path.abspath(target)
         if target == ROOT:
             return bad("这就是当前的位置")
 
+        # ⚠ 不能搬到自己里面（会把源目录搬进它自己，直接炸）
+        if target == ROOT or target.startswith(ROOT + os.sep):
+            return bad("不能把笔记库搬到它自己里面")
+
+        # ⚠ 目标里已经有库 ⇒ 拒绝（两份库混在一起，索引会自己打架）
+        if os.path.isdir(os.path.join(target, library.INDEX_DIR)):
+            return bad("那个位置已经是一份笔记库了，换个空目录，或者先把旧的挪走")
+
         try:
             os.makedirs(target, exist_ok=True)
-            if copy:
-                # 把现有笔记整个搬过去（⚠ 只搬 .md 和 .astrolabe，不搬别的）
-                for name in os.listdir(ROOT):
-                    if name.startswith(".") and name != library.INDEX_DIR:
-                        continue
-                    src = os.path.join(ROOT, name)
-                    dst = os.path.join(target, name)
-                    if os.path.isdir(src):
-                        shutil.copytree(src, dst, dirs_exist_ok=True)
-                    elif not os.path.exists(dst):
-                        shutil.copy2(src, dst)
+            # ★★★ **搬，不是复制**（所有者：「要移动，不要复制，万一用户忘记了，
+            #   那里不是全都是垃圾数据了」）⚠
+            # ★ 连 `.astrolabe`（索引）和 `.trash`（回收站）一起搬 ——
+            #   只搬项目目录的话，旧库会剩一个回收站，新库里回收站是空的 ⚠
+            for name in os.listdir(ROOT):
+                shutil.move(os.path.join(ROOT, name), os.path.join(target, name))
+
             library.save_pref(library_root=target)
 
-            # ★ 切库：关旧连接、建新库、重建索引
             old = CONN
             ROOT = target
             library.ensure_root(ROOT)
@@ -168,14 +170,13 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok(
                 {
                     "root": ROOT,
-                    "copied": copy,
                     "projects": len(store.list_projects(CONN)),
                     "notes": CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"],
-                "defaultRoot": library.default_root(),
+                    "defaultRoot": library.default_root(),
                 }
             )
         except Exception as exc:  # noqa: BLE001
-            return bad(f"切换失败：{type(exc).__name__}: {exc}", 500)
+            return bad(f"搬迁失败：{type(exc).__name__}: {exc}", 500)
 
     if path == "/api/library/rescan" and method == "POST":
         return ok(indexer.rescan(ROOT, CONN))

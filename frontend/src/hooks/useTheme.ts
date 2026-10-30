@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { IS_PERSONAL } from '../lib/personal'
 
 export type Theme = 'light' | 'dark'
 
@@ -30,10 +31,17 @@ function systemTheme(): Theme {
 }
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => readSaved() ?? systemTheme())
+  // ★★★ 个人版**没有明暗主题**：界面恒为白（`POSITIONING` 0.4）⚠
+  //   ⚠ 这里必须短路：否则下面的 effect 会把 <html data-theme="plain">
+  //     改回 light/dark ⇒ `[data-theme='plain']` 那套全白覆盖立刻失效，
+  //     而且系统开了深色模式时，白底 + 深色文字会变得不可读 ⚠
+  const [theme, setTheme] = useState<Theme>(() => (IS_PERSONAL ? 'light' : readSaved() ?? systemTheme()))
 
   // 初始化:未手动选择过则跟随系统变化(与旧站行为一致)
   useEffect(() => {
+    // ★ 个人版：不写 data-theme、不跟随系统、不响应切换（白就是白）
+    if (IS_PERSONAL) return
+
     const saved = readSaved()
     const initial = saved ?? systemTheme()
     document.documentElement.setAttribute('data-theme', initial)
@@ -64,6 +72,8 @@ export function useTheme() {
   }, [])
 
   const toggle = useCallback(() => {
+    // ★ 个人版没有明暗切换（顶栏里也不渲染按钮），这里直接无视
+    if (IS_PERSONAL) return
     setTheme((cur) => {
       const next: Theme = cur === 'dark' ? 'light' : 'dark'
       applyTheme(next)

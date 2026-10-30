@@ -26,7 +26,7 @@ export default function PersonalBar() {
   const nav = useNavigate()
   const [dataDir, setDataDir] = useState('')
   const [libRoot, setLibRoot] = useState('')
-  /** 待确认的切换目标（选完目录先问：复制还是空着开始）*/
+  /** 待确认的搬迁目标（选完目录再确认一次）*/
   const [pending, setPending] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -58,7 +58,7 @@ export default function PersonalBar() {
     setPending(dir)
   }
 
-  const doSwitch = async (copy: boolean) => {
+  const doSwitch = async () => {
     if (!pending) return
     setBusy(true)
     setErr('')
@@ -66,7 +66,7 @@ export default function PersonalBar() {
       const r = await fetch('/api/library/switch', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path: pending, copy }),
+        body: JSON.stringify({ path: pending }),
       })
       const j = await r.json()
       if (!j.ok) throw new Error(j.error || '切换失败')
@@ -147,7 +147,7 @@ export default function PersonalBar() {
         )}
       </div>
 
-      {/* ★ 换位置：先问「现有的笔记要不要一起搬过去」⚠ */}
+      {/* ★ 搬位置：选完目录先确认（会清空原位置，不能点错了没提示）⚠ */}
       {pending && (
         <div
           style={{
@@ -172,7 +172,7 @@ export default function PersonalBar() {
               fontFamily: 'inherit',
             }}
           >
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>把笔记换到这儿？</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>把笔记搬到这儿？</div>
             <div
               style={{
                 fontSize: 11.5,
@@ -185,26 +185,25 @@ export default function PersonalBar() {
               {pending}
             </div>
             <div style={{ fontSize: 12, color: '#444', lineHeight: 1.8, marginBottom: 14 }}>
-              现在的笔记：
-              <span style={{ color: '#999' }}>{libRoot}</span>
+              现在的位置：<span style={{ color: '#999' }}>{libRoot}</span>
               <br />
-              搬过去 = 复制一份到新位置（原处保留）；空着开始 = 只换到新位置，旧的不动。
+              {/* ★ 是**搬**不是复制（所有者：「要移动，不要复制，万一用户忘记了，
+                  那里不是全都是垃圾数据了」）⚠ */}
+              会连同笔记、索引、回收站一起**搬过去**，原位置会清空 ——
+              不留副本，免得以后两边各改各的。
             </div>
             {err && <div style={{ color: '#c00', fontSize: 11.5, marginBottom: 10 }}>{err}</div>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" disabled={busy} onClick={() => setPending('')} style={btn}>
                 取消
               </button>
-              <button type="button" disabled={busy} onClick={() => void doSwitch(false)} style={btn}>
-                空着开始
-              </button>
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void doSwitch(true)}
+                onClick={() => void doSwitch()}
                 style={{ ...btn, background: '#111', color: '#fff', border: 'none' }}
               >
-                {busy ? '处理中…' : '把笔记复制过去'}
+                {busy ? '搬移中…' : '搬过去'}
               </button>
             </div>
           </div>

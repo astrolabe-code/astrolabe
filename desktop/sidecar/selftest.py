@@ -114,8 +114,28 @@ def main() -> None:
             db.close()
             vid = 1001
 
-        r = sc.call("GET", f"/api/projects/{proj['ref']}/nodes/")
+        r = sc.call("GET", f"/api/projects/{proj['ref']}/nodes/", {"limit": 20000})
         check("节点列表", len(r["body"]["data"]["items"]) > 0)
+
+        # ★★ 文件过滤（.gitignore / 隐藏项 / node_modules）—— 移植所有者那份规则
+        import filefilter
+
+        gitdir = os.path.join(TMP, "filt")
+        os.makedirs(os.path.join(gitdir, "generated"), exist_ok=True)
+        os.makedirs(os.path.join(gitdir, "node_modules", "x"), exist_ok=True)
+        os.makedirs(os.path.join(gitdir, "src", "net"), exist_ok=True)
+        open(os.path.join(gitdir, ".gitignore"), "w", encoding="utf-8").write("generated/\n*.tmp.py\n")
+        for rel in ("main.py", "src/net/util.py", "generated/gen.py", "skip.tmp.py",
+                    "node_modules/x/n.py", ".hidden.py"):
+            full = os.path.join(gitdir, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True) if os.path.dirname(full) else None
+            open(full, "w", encoding="utf-8").write("def f():\n    pass\n")
+        kept = sorted(r for r, _s in filefilter.iter_code_files(gitdir))
+        check(
+            "文件过滤（.gitignore / 隐藏项 / node_modules）",
+            kept == ["main.py", "src/net/util.py"],
+            str(kept),
+        )
 
         # ★★ 解析没成功 ⇒ **禁止写笔记**（所有者 2026-10-29）
         empty_dir = os.path.join(TMP, "empty-src")

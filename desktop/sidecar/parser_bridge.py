@@ -28,6 +28,7 @@ import sys
 
 import paths  # noqa: F401 —— ★ 统一把 `app/` 挂到 sys.path（见 paths.py）
 
+import filefilter  # noqa: E402
 from codeparser.scanner import scan_and_parse  # noqa: E402
 from graph import identity  # noqa: E402
 
@@ -95,7 +96,13 @@ def parse_project(root: str, max_files: int = 5000) -> dict:
 
     ⚠ 节点、边的字段名与 `store.replace_graph` 对齐；调用方只管落库。
     """
-    result, scan = scan_and_parse(root, max_files=max_files)
+    # ★★★ 文件过滤（移植所有者那份 `ignore.py` + `code_scanner.py`）⚠
+    #   · 默认忽略 + 仓库 .gitignore + 隐藏项 + 软链/硬链 + 300KB 上限 + 扩展名白名单
+    #   · ⛔ 不改变节点身份（vid 只由 kind|file|name|line|line_end 决定）
+    accept_dir, accept_file = filefilter.make_acceptors(root)
+    result, scan = scan_and_parse(
+        root, max_files=max_files, accept_dir=accept_dir, accept_file=accept_file
+    )
 
     records: list[tuple[dict, str]] = []
     canons: list[str] = []
@@ -145,5 +152,60 @@ def parse_project(root: str, max_files: int = 5000) -> dict:
         seen.add(key)
         edges.append({"src_vid": src, "dst_vid": dst, "kind": str(pe.type)})
 
+    # ---------------------------------------------------------------- 路径节点
+    # ★★ 目录树也是结构（所有者那份 `process_path_struct.py` 的做法）⚠
+    #   用途：在图上能顺着文件夹走，而不是一屏散落的函数
+    #   · 每个中间目录一个 `dir` 节点，父子之间一条 `contains` 边
+    #   · vid 仍走 canonical（kind=dir，name=相对目录，无文件无行号）⇒ 确定性
+    dir_nodes: dict[str, dict] = {}
+    tree_edges: list[dict] = []
+
+    def _ensure_dir(rel_dir: str) -> int | None:
+        """建（或取）一个目录节点，返回 vid；rel_dir 为空表示根，返回 None"""
+        if not rel_dir:
+            return None
+        if rel_dir in dir_nodes:
+            return dir_nodes[rel_dir]["vid"]
+        canon = identity.canonical("dir", "", rel_dir, 0, -1)
+        vid = identity.hash53(canon)
+        dir_nodes[rel_dir] = {
+            "kind": "dir",
+            "name": os.path.basename(rel_dir),
+            "qname": rel_dir,
+            "file_path": "",
+            "line": 0,
+            "line_end": -1,
+            "vid": vid,
+        }
+        parent = rel_dir.rsplit("/", 1)[0] if "/" in rel_dir else ""
+        pv = _ensure_dir(parent)
+        if pv is not None:
+            tree_edges.append({"src_vid": pv, "dst_vid": vid, "kind": "contains"})
+        return vid
+
+    file_vid: dict[str, int] = {}
+    for rec, _uid in records:
+        if rec["kind"] == "file" and rec["file_path"]:
+            file_vid.setdefault(rec["file_path"], rec["vid"])
+
+    for path in sorted(file_vid):
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        pv = _ensure_dir(parent)
+        if pv is not None:
+            tree_edges.append({"src_vid": pv, "dst_vid": file_vid[path], "kind": "contains"})
+
+    for e in tree_edges:
+        key = (e["src_vid"], e["dst_vid"], e["kind"])
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append(e)
+
+    stats["dirNodes"] = len(dir_nodes)
+    stats["treeEdges"] = len(tree_edges)
     stats["edges"] = len(edges)
-    return {"nodes": [r for r, _u in records], "edges": edges, "stats": stats}
+    return {
+        "nodes": [r for r, _u in records] + list(dir_nodes.values()),
+        "edges": edges,
+        "stats": stats,
+    }

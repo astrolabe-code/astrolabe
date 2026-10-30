@@ -483,8 +483,10 @@ def stats(conn: sqlite3.Connection, project_id: int) -> dict:
     """覆盖率统计（个人版的「写作进度」）"""
     # ★ 不再按 kind 过滤：空白结构的类型是自由文本（人物/概念/…），
     #   写死 file/function/type 会让它的节点数恒为 0 ⚠
+    # ⚠ 目录节点（kind='dir'）**不算**进写作进度：它是导航用的骨架，
+    #   不是"该写笔记的地方"，算进去会让分母虚高、完成度永远上不去
     total = conn.execute(
-        "SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (project_id,)
+        "SELECT COUNT(*) AS c FROM node WHERE project_id = ? AND kind <> 'dir'", (project_id,)
     ).fetchone()["c"]
     done = conn.execute(
         """SELECT COUNT(DISTINCT node_vid) AS c FROM note

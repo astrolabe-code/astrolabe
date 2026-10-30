@@ -60,6 +60,8 @@ def scan_and_parse(
     max_files: int = DEFAULT_MAX_FILES,
     extra_excludes: set[str] | None = None,
     on_file: Callable[[int, int, str], None] | None = None,
+    accept_dir: Callable[[str], bool] | None = None,
+    accept_file: Callable[[str], bool] | None = None,
 ) -> tuple[ParseResult, ScanStats]:
     """扫描目录并逐文件解析。
 
@@ -68,6 +70,8 @@ def scan_and_parse(
         max_files: 文件数上限（超出即停止，并把原因记进 `errors`）
         extra_excludes: 追加的排除目录名
         on_file: 每解析一个文件后的回调 `(已完成, 总数, 相对路径)` —— 供作业回写进度
+        accept_dir: 可选，`(相对路径) -> bool`；返回 False 的目录整棵跳过
+        accept_file: 可选，`(相对路径) -> bool`；返回 False 的文件跳过
 
     Returns:
         `(汇总的 ParseResult, ScanStats)`
@@ -91,9 +95,19 @@ def scan_and_parse(
     for dirpath, dirnames, filenames in os.walk(root_path):
         # ★ 原地修改 dirnames ⇒ os.walk 不会进入这些目录（比事后过滤高效得多）
         dirnames[:] = [d for d in dirnames if d not in excludes]
+        # ★★ 外部可插拔的目录判定（个人版用它接 `.gitignore` / 硬链接 / 扩展名白名单）⚠
+        if accept_dir is not None:
+            kept = []
+            for d in dirnames:
+                rel_d = str(Path(dirpath, d).relative_to(root_path)).replace("\\", "/")
+                if accept_dir(rel_d):
+                    kept.append(d)
+            dirnames[:] = kept
         for filename in sorted(filenames):
             abs_path = Path(dirpath, filename)
             rel = str(abs_path.relative_to(root_path)).replace("\\", "/")
+            if accept_file is not None and not accept_file(rel):
+                continue
             if detect_lang(rel) is None:
                 continue
             candidates.append((abs_path, rel))

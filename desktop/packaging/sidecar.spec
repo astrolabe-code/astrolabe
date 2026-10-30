@@ -30,6 +30,8 @@ HIDDEN = [
     "tree_sitter_c",
     "tree_sitter_cpp",
     "tree_sitter_java",
+    # 文件过滤（.gitignore 语义）；⚠ 没装时边车会退化成简版匹配
+    "pathspec",
     # 我们自己按目录名 import 的模块
     "library",
     "store",
@@ -38,6 +40,8 @@ HIDDEN = [
     "autotitle",
     "parser_bridge",
     "paths",
+    "filefilter",
+    "projectstore",
 ]
 
 a = Analysis(

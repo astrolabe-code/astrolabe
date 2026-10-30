@@ -1,15 +1,27 @@
-# ★★ 打「Python 边车」需要的依赖（个人版）
+# Sidecar build dependencies (personal edition)
 #
-# ⚠ 这些包**必须装在你用来打包的那个 Python 里**：
-#   PyInstaller 只会把"装了的模块"打进 exe —— 少装一个语法包，
-#   打出来的程序运行时就会说"没有解析器"，而打包过程一点错都不报。
+# WARNING: this file must stay pure ASCII.
+#   pip reads requirements files using the system locale encoding
+#   (GBK on Chinese Windows) -> non-ASCII comments crash with
+#   "UnicodeDecodeError: 'gbk' codec can't decode byte ...".
+#   Chinese docs live in desktop/BUILD.md instead.
 #
-# 版本与社区版 app/requirements.txt 保持一致，避免两边解析行为不同。
+# These packages MUST be installed in the Python used for packaging:
+#   PyInstaller only bundles modules that are actually importable.
+#   Miss one grammar package and the built exe fails at runtime with
+#   "no parser available" - while packaging itself reports success.
+#
+# Versions are kept identical to app/requirements.txt so both the
+# community server and the desktop sidecar parse code the same way.
 
-# 打包器
+# packager
 pyinstaller>=6.10,<7
 
-# 解析器（与 app/requirements.txt 同版本）
+# file filtering: gitignore semantics (MIT). Without it the sidecar falls
+# back to a simplified matcher, so this is a quality upgrade, not a hard dep.
+pathspec>=0.12,<1
+
+# parser (same versions as app/requirements.txt)
 tree-sitter==0.23.2
 tree-sitter-python==0.23.6
 tree-sitter-c==0.23.4

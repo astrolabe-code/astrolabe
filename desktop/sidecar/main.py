@@ -34,6 +34,7 @@ import time
 import urllib.parse
 
 import autotitle
+import filefilter
 import indexer
 import library
 import projectstore
@@ -847,18 +848,17 @@ _SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"
 
 
 def _scan_dir(root: str, limit: int = 200000) -> dict:
+    """★ 选目录后"看一眼能读多少" —— ⚠ 过滤规则与解析器**完全一致**
+    （默认忽略 + .gitignore + 隐藏项 + 软链/硬链 + 300KB + 扩展名白名单）
+    ⇒ 这里报的数字就是真正会被解析的文件数，⛔ 不给假数字
+    """
     t0 = time.time()
     counts: dict[str, int] = {}
     total = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP and not d.startswith(".")]
-        for fn in filenames:
-            ext = os.path.splitext(fn)[1].lower()
-            if ext in _EXTS:
-                counts[ext] = counts.get(ext, 0) + 1
-                total += 1
-                if total >= limit:
-                    break
+    for rel, _size in filefilter.iter_code_files(root):
+        ext = os.path.splitext(rel)[1].lower()
+        counts[ext] = counts.get(ext, 0) + 1
+        total += 1
         if total >= limit:
             break
     return {

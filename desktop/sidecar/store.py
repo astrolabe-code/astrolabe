@@ -138,9 +138,10 @@ def _backfill_parse_state(conn: sqlite3.Connection) -> None:
         )
 
 
-def connect(root: str) -> sqlite3.Connection:
-    library.ensure_root(root)
-    conn = sqlite3.connect(library.db_path(root))
+def connect(data_dir: str) -> sqlite3.Connection:
+    """⚠ 参数是**项目的数据目录**（`<项目根>/.astrolabe/`），不是库根"""
+    os.makedirs(data_dir, exist_ok=True)
+    conn = sqlite3.connect(library.db_path(data_dir))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     _ensure_columns(conn)
@@ -151,42 +152,28 @@ def connect(root: str) -> sqlite3.Connection:
 # ---------------------------------------------------------------- 项目
 
 
-def get_or_create_project(conn: sqlite3.Connection, root: str, name: str, code_root: str) -> sqlite3.Row:
-    """★★ 一个**目录** = 一本书（按目录认，⛔ 不按名字）⚠
+def get_or_create_project(
+    conn: sqlite3.Connection, name: str, code_root: str, ref: str | None = None
+) -> sqlite3.Row:
+    """取或建本库里的项目行（**每个数据目录只有一个项目**）
 
-    ```\n * 同一个目录再点新建 ⇒ 返回已有的那本（前端直接进入，⛔ 不显示"重新解析"）
- * 不同目录但同名       ⇒ **另建一本**，名字加编号 codeparser1 / codeparser2
- * 不同目录、代码相同   ⇒ 无所谓，本来就该是两本书（所有者：「目录不同，代码相同，有什么影响」）
- ```\n
-    ⚠ 之前踩过的坑：用「名字推出的目录名」做匹配 ⇒ 两个不同仓库同名时会**合并成一本**。
+    ★ 个人版没有"库"，一个源码目录 = 一个数据目录 = 一个 sqlite。
+      ⇒ 这张表实际上只有一行，"按目录/名字去重"那套逻辑已经不需要了。
+
+    ⚠ `ref` 由调用方给（存在全局清单里），⛔ 这里不再自己编 ——
+      否则清单里的 ref 和库里的 ref 对不上（踩过：TypeError: NoneType）。
     """
-    abs_root = os.path.abspath(code_root)
-    row = conn.execute("SELECT * FROM project WHERE root = ?", (abs_root,)).fetchone()
+    row = conn.execute("SELECT * FROM project LIMIT 1").fetchone()
     if row:
         return row
 
-    # ★ 名字不能重：重了就往后面加 1、2、3……
-    base = (name or "project").strip() or "project"
-    nm = base
-    d = library.project_dir_name(nm)
-    i = 1
-    while conn.execute("SELECT 1 FROM project WHERE name = ? OR dir = ?", (nm, d)).fetchone():
-        nm = f"{base}{i}"
-        d = library.project_dir_name(nm)
-        i += 1
-
-    ref = "p_" + d.lower().replace(" ", "-")[:40]
-    base_ref, j = ref, 1
-    while conn.execute("SELECT 1 FROM project WHERE ref = ?", (ref,)).fetchone():
-        j += 1
-        ref = f"{base_ref}-{j}"
-
+    d = library.project_dir_name(name)
+    ref = ref or ("p_" + d.lower().replace(" ", "-")[:40])
     with conn:
         conn.execute(
             "INSERT INTO project (ref, name, root, dir, created_at) VALUES (?,?,?,?,?)",
-            (ref, nm, abs_root, d, time.strftime("%Y-%m-%dT%H:%M:%S")),
+            (ref, name, os.path.abspath(code_root) if code_root else "", d, time.strftime("%Y-%m-%dT%H:%M:%S")),
         )
-    os.makedirs(os.path.join(root, d), exist_ok=True)
     return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
 
 
@@ -251,7 +238,6 @@ def create_blank_project(conn: sqlite3.Connection, root: str, name: str) -> sqli
             "INSERT INTO project (ref, name, root, dir, created_at) VALUES (?,?,?,?,?)",
             (ref, nm, "", d, time.strftime("%Y-%m-%dT%H:%M:%S")),
         )
-    os.makedirs(os.path.join(root, d), exist_ok=True)
     return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
 
 

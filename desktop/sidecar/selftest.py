@@ -27,7 +27,6 @@ class Sidecar:
     def __init__(self) -> None:
         env = {
             **os.environ,
-            "ASTROLABE_LIBRARY": os.path.join(TMP, "lib"),
             "ASTROLABE_DATA_DIR": TMP,
             "PYTHONIOENCODING": "utf-8",
         }
@@ -74,15 +73,22 @@ def main() -> None:
         check("ping", r["body"].get("ok") is True, r["body"].get("data", {}).get("library", ""))
 
         r = sc.call("GET", "/api/library/")
-        check("库初始化", r["body"]["data"]["projects"] == [])
+        check("清单为空", r["body"]["data"]["projects"] == [])
 
-        code_root = os.path.abspath(os.path.join(HERE, "..", "..", "app"))
+        # ★ 用临时目录当"源码目录"（⚠ 数据会写进它里面的 .astrolabe/，
+        #   所以绝不能指向真实仓库）
+        code_root = os.path.join(TMP, "src")
+        os.makedirs(code_root, exist_ok=True)
+        shutil.copy(
+            os.path.join(HERE, "..", "..", "app", "codeparser", "scanner.py"),
+            os.path.join(code_root, "scanner.py"),
+        )
         r = sc.call("POST", "/api/projects/", {"path": code_root, "name": "itsdangerous"})
         proj = r["body"]["data"]["project"]
         check("建项目", proj["ref"].startswith("p_"), proj["dir"])
 
         # ★★ 真解析（需要 tree-sitter；没有就退化成手工塞两个节点）
-        lib = os.path.join(TMP, "lib")
+        lib = os.path.join(code_root, ".astrolabe")  # 数据跟着源码目录
         r = sc.call("POST", f"/api/projects/{proj['ref']}/parse")
         parsed = r["body"].get("ok") is True
         if parsed:
@@ -93,7 +99,7 @@ def main() -> None:
             vid = int(next(n for n in nodes if n["kind"] != "file")["vid"])
         else:
             print("  ⏭ 跳过真解析（" + str(r["body"].get("error"))[:40] + "）")
-            db = sqlite3.connect(os.path.join(lib, ".astrolabe", "index.db"))
+            db = sqlite3.connect(os.path.join(lib, "index.db"))
             db.executemany(
                 "INSERT INTO node (project_id, vid, kind, name, qname, file_path, line, line_end) VALUES (?,?,?,?,?,?,?,?)",
                 [
@@ -198,7 +204,7 @@ def main() -> None:
 
         # ★ 索引重建：删掉 DB 后应能**从文件恢复**（"文件是真相"的核心验证）
         before_count = sc.call("GET", "/api/library/")["body"]["data"]["notes"]
-        os.remove(os.path.join(lib, ".astrolabe", "index.db"))
+        os.remove(os.path.join(lib, "index.db"))
         after_count = sc.call("GET", "/api/library/")["body"]["data"]["notes"]
         check(
             "重建索引后笔记数不变",
@@ -208,7 +214,7 @@ def main() -> None:
 
         r = sc.call("DELETE", f"/api/notes/{note['ref']}/")
         check("删除", r["body"]["ok"] is True)
-        check("文件移到 .trash", os.path.exists(os.path.join(lib, ".trash", os.path.basename(abs_md))))
+        check("文件移到 .trash", os.path.exists(os.path.join(lib, "trash", os.path.basename(abs_md))))
 
         # ★★ 手工改图（六种动作走一遍）
         r = sc.call("POST", f"/api/projects/{proj['ref']}/curate/", {"action": "add_node"})

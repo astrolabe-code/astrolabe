@@ -36,25 +36,68 @@ import urllib.parse
 import autotitle
 import indexer
 import library
+import projectstore
 import notefile
 import store
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
-ROOT = library.resolve_root()
+# ★★★ 个人版**没有"库"这一层**（所有者 2026-10-30）：
+#   一个源码目录 = 一本书，数据就在 `<源码>/.astrolabe/`。
+#   ROOT 现在的含义 = **当前项目的数据目录**（不是库根）。
+ROOT = ""
 CONN = None
-
-
 def _data_dir() -> str:
-    return os.environ.get("ASTROLABE_DATA_DIR") or os.path.join(os.getcwd(), "data")
+    """全局数据目录（exe 旁的 data/）：只放项目清单和空白结构的数据"""
+    return library.data_dir()
 
 
 def init() -> None:
-    global CONN
-    library.ensure_root(ROOT)
-    CONN = store.connect(ROOT)
-    # ★ 启动即对齐磁盘（几百个文件 = 几十毫秒）
-    indexer.rescan(ROOT, CONN)
+    """启动：把清单里每个项目的索引跟磁盘对齐一遍（几百篇 = 几十毫秒）"""
+    for entry in projectstore.list_all():
+        try:
+            _activate(entry)
+            indexer.rescan(entry["data"], CONN, entry.get("name") or "")
+        except Exception:  # noqa: BLE001 —— 某个项目坏了不能挡住启动
+            continue
+
+
+def _activate(entry: dict) -> None:
+    """★ 把全局上下文切到这个项目（单线程 stdio ⇒ 切换是安全的）
+
+    ⚠★ 每次都校验**索引文件还在不在**：
+      · 文件被删/被换掉 ⇒ 旧连接指向的是已删除的 inode（幽灵库），
+        继续用它会"看起来有数据"，实际写进去的是没人读的鬼文件
+      · 所以这里重连 + 重建索引 —— 这正是"索引可丢可重建"的兑现
+    """
+    global ROOT, CONN
+    data = entry["data"]
+    db = library.db_path(data)
+    if CONN is not None and ROOT == data and os.path.exists(db):
+        return
+    if CONN is not None:
+        try:
+            CONN.close()
+        except Exception:  # noqa: BLE001
+            pass
+    ROOT = data
+    fresh = not os.path.exists(db)
+    CONN = store.connect(data)
+
+    # ★ 索引重建时，项目行也在库里（一个数据目录只有一个项目）⇒ 得补回来
+    if CONN.execute("SELECT 1 FROM project LIMIT 1").fetchone() is None:
+        row = store.get_or_create_project(
+            CONN, entry.get("name") or "", entry.get("root") or "", ref=entry["ref"]
+        )
+        # 空白结构没有解析这回事；源码项目则回到"未解析"（节点表也丢了）
+        if not (entry.get("root") or "").strip():
+            store.set_parse_state(CONN, row["id"], "ok", "")
+
+    if fresh:
+        try:
+            indexer.rescan(data, CONN, entry.get("name") or "")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def ok(data) -> tuple[int, dict]:
@@ -91,10 +134,16 @@ def _split_query(path: str) -> tuple[str, dict]:
 
 
 def _project(ref: str):
-    p = store.find_project(CONN, ref)
-    if p is None:
+    """★ 按 ref 找到项目并把上下文切过去（数据跟着项目走）"""
+    entry = projectstore.get(ref)
+    if entry is None:
         return None
-    return p
+    try:
+        _activate(entry)
+    except Exception:  # noqa: BLE001
+        return None
+    row = store.find_project(CONN, ref)
+    return row
 
 
 def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
@@ -118,68 +167,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         return ok({"pong": True, "version": VERSION, "library": ROOT, "dataDir": _data_dir()})
 
     if path == "/api/library/":
-        cfg = library.load_config(ROOT)
-        items = store.list_projects(CONN)
-        return ok(
-            {
-                "root": ROOT,
-                "name": cfg.get("name") or os.path.basename(ROOT),
-                "projects": items,
-                "notes": CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"],
-                "defaultRoot": library.default_root(),
-            }
-        )
-
-    # ★★ 搬走笔记库（用户指定位置；⛔ 不是只能靠环境变量）⚠
-    if path == "/api/library/switch" and method == "POST":
-        target = str(body.get("path") or "").strip()
-        if not target:
-            return bad("要指定一个目录")
-        target = os.path.abspath(target)
-        if target == ROOT:
-            return bad("这就是当前的位置")
-
-        # ⚠ 不能搬到自己里面（会把源目录搬进它自己，直接炸）
-        if target == ROOT or target.startswith(ROOT + os.sep):
-            return bad("不能把笔记库搬到它自己里面")
-
-        # ⚠ 目标里已经有库 ⇒ 拒绝（两份库混在一起，索引会自己打架）
-        if os.path.isdir(os.path.join(target, library.INDEX_DIR)):
-            return bad("那个位置已经是一份笔记库了，换个空目录，或者先把旧的挪走")
-
-        try:
-            os.makedirs(target, exist_ok=True)
-            # ★★★ **搬，不是复制**（所有者：「要移动，不要复制，万一用户忘记了，
-            #   那里不是全都是垃圾数据了」）⚠
-            # ★ 连 `.astrolabe`（索引）和 `.trash`（回收站）一起搬 ——
-            #   只搬项目目录的话，旧库会剩一个回收站，新库里回收站是空的 ⚠
-            for name in os.listdir(ROOT):
-                shutil.move(os.path.join(ROOT, name), os.path.join(target, name))
-
-            library.save_pref(library_root=target)
-
-            old = CONN
-            ROOT = target
-            library.ensure_root(ROOT)
-            CONN = store.connect(ROOT)
-            indexer.rescan(ROOT, CONN)
+        # ★ 个人版没有"库"：这里只回全局数据目录 + 项目清单（只记路径）
+        items = projectstore.list_all()
+        total_notes = 0
+        for it in items:
             try:
-                old.close()
-            except Exception:
-                pass
-            return ok(
-                {
-                    "root": ROOT,
-                    "projects": len(store.list_projects(CONN)),
-                    "notes": CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"],
-                    "defaultRoot": library.default_root(),
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            return bad(f"搬迁失败：{type(exc).__name__}: {exc}", 500)
+                _activate(it)
+                total_notes += CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"]
+            except Exception:  # noqa: BLE001
+                continue
+        return ok({"dataDir": _data_dir(), "projects": items, "notes": total_notes})
 
-    if path == "/api/library/rescan" and method == "POST":
-        return ok(indexer.rescan(ROOT, CONN))
+    m = re.compile(r"^/api/projects/([^/]+)/rescan$").match(path)
+    if m and method == "POST":
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        return ok(indexer.rescan(ROOT, CONN, p["name"]))
 
     # ------------------------------------------------ 扫描目录（建项目前先看一眼）
     if R_SCAN.match(path) and method == "POST":
@@ -265,23 +269,78 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
     # ------------------------------------------------ 项目
     if path == "/api/projects/":
         if method == "GET":
-            return ok({"items": store.list_projects(CONN)})
+            # ★ 清单 + 每个项目自己的统计（各开各的 DB）
+            items = []
+            for it in projectstore.list_all():
+                try:
+                    _activate(it)
+                    row = store.find_project(CONN, it["ref"])
+                    if row is None:
+                        continue
+                    d = dict(row)
+                    d["root"] = it.get("root") or ""
+                    d["data"] = it.get("data") or ""
+                    st = store.parse_state_of(CONN, row["id"])
+                    d["parse_state"] = st[0]
+                    d["parse_error"] = st[1]
+                    d["node_count"] = CONN.execute(
+                        "SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (row["id"],)
+                    ).fetchone()["c"]
+                    d["note_count"] = CONN.execute(
+                        "SELECT COUNT(*) AS c FROM note WHERE project_id = ?", (row["id"],)
+                    ).fetchone()["c"]
+                    items.append(d)
+                except Exception:  # noqa: BLE001
+                    continue
+            return ok({"items": items})
+
         if method == "POST":
             code_root = str(body.get("path") or "").strip()
             blank = bool(body.get("blank")) or not code_root
 
-            # ★★★ 空白项目：**不用源码，就是写节点**（`B184` 所有者原话）
-            #   非代码主题的结构化尝试 —— 节点和连线全靠手补，状态直接给 ok
+            # ★★★ 空白结构：**不用源码，就是写节点**（`B184`）
+            #   它的数据放 `<数据目录>/structures/<名字>/`
             if blank:
-                name = str(body.get("name") or "").strip() or "新结构"
-                p = store.create_blank_project(CONN, ROOT, name)
+                name = projectstore.unique_name(str(body.get("name") or "新结构"))
+                root = library.blank_root(name)
+                entry = {
+                    "ref": projectstore.unique_ref("b_" + name.lower().replace(" ", "-")[:40]),
+                    "name": name,
+                    "root": "",
+                    "data": library.ensure_data_dir(root),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+                projectstore.upsert(entry)
+                _activate(entry)
+                p = store.get_or_create_project(CONN, name, "", ref=entry["ref"])
                 store.set_parse_state(CONN, p["id"], "ok", "")
-                return ok({"project": dict(store.find_project(CONN, p["ref"]))})
+                fresh = store.find_project(CONN, entry["ref"]) or p
+                return ok({"project": {**dict(fresh), "root": ""}})
 
             if not os.path.isdir(code_root):
                 return bad("代码目录不存在")
-            name = str(body.get("name") or os.path.basename(code_root.rstrip("/\\")) or "未命名")
-            p = store.get_or_create_project(CONN, ROOT, name, code_root)
+            code_root = os.path.abspath(code_root)
+
+            # ★ 同一个**源码目录**只建一次（数据就在那个目录里，天然唯一）
+            for it in projectstore.list_all():
+                if os.path.abspath(it.get("root") or "") == code_root:
+                    _activate(it)
+                    return ok({"project": dict(store.find_project(CONN, it["ref"]))})
+
+            name = projectstore.unique_name(
+                str(body.get("name") or os.path.basename(code_root.rstrip("/\\")) or "未命名")
+            )
+            entry = {
+                "ref": projectstore.unique_ref("p_" + name.lower().replace(" ", "-")[:40]),
+                "name": name,
+                "root": code_root,
+                # ★★ 数据就放在源码目录里的 `.astrolabe/`（⛔ 不占 `data/`）
+                "data": library.ensure_data_dir(code_root),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            projectstore.upsert(entry)
+            _activate(entry)
+            p = store.get_or_create_project(CONN, name, code_root, ref=entry["ref"])
             return ok({"project": dict(p)})
 
     m = R_PROJECT.match(path)
@@ -518,13 +577,17 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             for _ in range(50):
                 no = store.next_no(CONN)
                 fname = notefile.file_name(no, node["name"] or node["file_path"] or "note")
-                rel = f"{p['dir']}/{fname}"
+                # ★ 笔记统一放 `<数据目录>/notes/`（数据跟着项目走，不再有"库/项目目录"那层）
+                rel = f"notes/{fname}"
                 if not os.path.exists(os.path.join(ROOT, rel)):
                     break
             abs_path = os.path.join(ROOT, rel)
 
+            ref = f"n{no:04d}"
             meta = {
                 "no": no,
+                # ★ ref 也写进文件：否则索引重建后 ref 会变（URL 全失效）
+                "ref": ref,
                 "kind": str(body.get("kind") or "flash"),
                 "node": node["name"] or "",
                 "anchor": f"{node['file_path']}:{node['line']}" if node["file_path"] else "",
@@ -537,7 +600,6 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             # ★ 先写文件（真相），再写索引 —— 顺序不能反
             notefile.write_file(abs_path, meta, text)
             st = os.stat(abs_path)
-            ref = f"n{no:04d}"
             store.insert_note(
                 CONN,
                 {
@@ -558,7 +620,17 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
     m = R_NOTE.match(path)
     if m:
         ref = m.group(1)
-        note = store.find_note(CONN, ref)
+        # ★★★ 笔记 URL 里**没有项目信息**（`/api/notes/<ref>/`）⇒ 得挨个库里找 ⚠
+        #   之前直接查全局 CONN，有多个项目时会查到别的项目的库里去（踩过：404）
+        note = None
+        for entry in projectstore.list_all():
+            try:
+                _activate(entry)
+            except Exception:  # noqa: BLE001
+                continue
+            note = store.find_note(CONN, ref)
+            if note is not None:
+                break
         if note is None:
             return bad("笔记不存在", 404)
         abs_path = os.path.join(ROOT, note["rel_path"])
@@ -589,8 +661,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok({"note": store.find_note(CONN, ref)})
 
         if method == "DELETE":
-            # ★ 删除 = 移到 .trash（可恢复），不是抹掉
-            trash = os.path.join(ROOT, ".trash")
+            # ★ 删除 = 移到 trash/（可恢复），不是抹掉
+            #   （数据目录现在是 `<项目根>/.astrolabe/`，回收站在它下面）
+            trash = os.path.join(ROOT, "trash")
             os.makedirs(trash, exist_ok=True)
             if os.path.exists(abs_path):
                 shutil.move(abs_path, os.path.join(trash, os.path.basename(abs_path)))

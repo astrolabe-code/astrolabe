@@ -117,6 +117,12 @@ export default function PersonalHome() {
         const cj = await cr.json()
         if (!cj.ok) throw new Error(cj.error || '建项目失败')
         ref = cj.data.project.ref
+        // ★★ 这个目录已经读过了 ⇒ **直接进去**，⛔ 根本不发解析请求
+        //   （所有者：「不允许重新解析」—— 连尝试都不该发生）
+        if (cj.data.project.parse_state === 'ok') {
+          nav(`/p/${encodeURIComponent(ref)}`)
+          return
+        }
       }
 
       const pr = await fetch(`/api/projects/${encodeURIComponent(ref)}/parse`, {
@@ -126,7 +132,14 @@ export default function PersonalHome() {
       })
       const pj = await pr.json()
       if (!pj.ok) {
-        // ★ 解析没成功 ⇒ 记住这个项目，但**只给"重新解析"**，不给写笔记
+        // ★★★ 「这本已经读过了」不是失败（所有者：「不允许重新解析」）⚠
+        //   同一个目录再点新建 ⇒ 边车回 graph_exists ⇒ **直接进去**，
+        //   ⛔ 不显示「重新解析」（那个只在真失败时出现）
+        if (pj.code === 'graph_exists') {
+          nav(`/p/${encodeURIComponent(ref)}`)
+          return
+        }
+        // ★ 真的解析失败 ⇒ 记住这个项目，只给"重新解析"，不给写笔记
         setParsed({ ref, name, nodes: 0, edges: 0, failed: true, message: pj.error || '解析失败' })
         void loadProjects()
         return

@@ -152,50 +152,42 @@ def connect(root: str) -> sqlite3.Connection:
 
 
 def get_or_create_project(conn: sqlite3.Connection, root: str, name: str, code_root: str) -> sqlite3.Row:
-    d = library.project_dir_name(name)
-    row = conn.execute("SELECT * FROM project WHERE dir = ?", (d,)).fetchone()
+    """★★ 一个**目录** = 一本书（按目录认，⛔ 不按名字）⚠
+
+    ```\n * 同一个目录再点新建 ⇒ 返回已有的那本（前端直接进入，⛔ 不显示"重新解析"）
+ * 不同目录但同名       ⇒ **另建一本**，名字加编号 codeparser1 / codeparser2
+ * 不同目录、代码相同   ⇒ 无所谓，本来就该是两本书（所有者：「目录不同，代码相同，有什么影响」）
+ ```\n
+    ⚠ 之前踩过的坑：用「名字推出的目录名」做匹配 ⇒ 两个不同仓库同名时会**合并成一本**。
+    """
+    abs_root = os.path.abspath(code_root)
+    row = conn.execute("SELECT * FROM project WHERE root = ?", (abs_root,)).fetchone()
     if row:
         return row
-    ref = "p_" + d.lower().replace(" ", "-")[:40]
-    # ⚠ ref 可能撞（两个不同目录同名）⇒ 加后缀
-    base, i = ref, 1
-    while conn.execute("SELECT 1 FROM project WHERE ref = ?", (ref,)).fetchone():
+
+    # ★ 名字不能重：重了就往后面加 1、2、3……
+    base = (name or "project").strip() or "project"
+    nm = base
+    d = library.project_dir_name(nm)
+    i = 1
+    while conn.execute("SELECT 1 FROM project WHERE name = ? OR dir = ?", (nm, d)).fetchone():
+        nm = f"{base}{i}"
+        d = library.project_dir_name(nm)
         i += 1
-        ref = f"{base}-{i}"
+
+    ref = "p_" + d.lower().replace(" ", "-")[:40]
+    base_ref, j = ref, 1
+    while conn.execute("SELECT 1 FROM project WHERE ref = ?", (ref,)).fetchone():
+        j += 1
+        ref = f"{base_ref}-{j}"
+
     with conn:
         conn.execute(
             "INSERT INTO project (ref, name, root, dir, created_at) VALUES (?,?,?,?,?)",
-            (ref, name, code_root, d, time.strftime("%Y-%m-%dT%H:%M:%S")),
+            (ref, nm, abs_root, d, time.strftime("%Y-%m-%dT%H:%M:%S")),
         )
     os.makedirs(os.path.join(root, d), exist_ok=True)
     return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
-
-
-def set_parse_state(
-    conn: sqlite3.Connection, project_id: int, state: str, error: str = "", stats: dict | None = None
-) -> None:
-    """★★ 解析状态（**写笔记的门槛**）
-
-    ```\n * ok      图完整 ⇒ 可以写笔记
- * failed  解析出错 / 没出节点 ⇒ **禁止写笔记**，只能重新解析
- * none    还没解析过
- ```\n
-    ⚠ 所有者口径（2026-10-29）：
-      「如果解析出错了，就不允许写笔记，只有用户点重新解析后，
-        解析未出错、出图完整后，才允许写笔记。」
-    """
-    with conn:
-        conn.execute(
-            "UPDATE project SET parse_state = ?, parse_error = ?, parsed_at = ? WHERE id = ?",
-            (state, (error or "")[:500], time.strftime("%Y-%m-%dT%H:%M:%S") if state != "none" else None, project_id),
-        )
-
-
-def parse_state_of(conn: sqlite3.Connection, project_id: int) -> tuple[str, str]:
-    r = conn.execute(
-        "SELECT parse_state, parse_error FROM project WHERE id = ?", (project_id,)
-    ).fetchone()
-    return (r["parse_state"], r["parse_error"]) if r else ("none", "")
 
 
 def list_projects(conn: sqlite3.Connection) -> list[dict]:

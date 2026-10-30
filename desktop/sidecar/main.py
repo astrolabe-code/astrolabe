@@ -188,6 +188,59 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         # ★ 个人版没有登录：永远是「本机用户」
         return ok({"authenticated": True, "username": "我", "display": "我", "is_staff": True})
 
+    # ★★ 搜索（个人版：SQLite FTS5，进程内，无第二个服务）
+    #   ⚠ 跨项目搜：笔记分散在各项目的 .astrolabe 里，逐个库查再合并
+    if path == "/api/search/":
+        q = str(body.get("q") or "").strip()
+        if not q:
+            return ok({"q": q, "notes": [], "nodes": []})
+
+        notes: list[dict] = []
+        nodes: list[dict] = []
+        like = f"%{q}%"
+
+        for entry in projectstore.list_all():
+            try:
+                _activate(entry)
+            except Exception:  # noqa: BLE001
+                continue
+            try:
+                for h in store.fts_search(CONN, q, 10):
+                    n = store.find_note(CONN, h["ref"])
+                    if not n:
+                        continue
+                    notes.append(
+                        {
+                            "ref": n["ref"],
+                            "no": n["no"],
+                            "title": h["title"] or n["title"],
+                            "kind": n["kind"],
+                            "node": n.get("node_name") or "",
+                            "node_vid": n["node_vid"],
+                            "snippet": h["snippet"],
+                            "project": entry.get("name") or "",
+                            "project_ref": entry.get("ref") or "",
+                        }
+                    )
+                for r in CONN.execute(
+                    """SELECT vid, kind, name, file_path, line FROM node
+                       WHERE name LIKE ? OR qname LIKE ? OR file_path LIKE ?
+                       ORDER BY (CASE WHEN name LIKE ? THEN 0 ELSE 1 END), length(name)
+                       LIMIT 8""",
+                    (like, like, like, like),
+                ).fetchall():
+                    nodes.append(
+                        {
+                            **dict(r),
+                            "project": entry.get("name") or "",
+                            "project_ref": entry.get("ref") or "",
+                        }
+                    )
+            except Exception:  # noqa: BLE001
+                continue
+
+        return ok({"q": q, "notes": notes[:20], "nodes": nodes[:15]})
+
     if path == "/api/ping":
         return ok({"pong": True, "version": VERSION, "library": ROOT, "dataDir": _data_dir()})
 
@@ -702,6 +755,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             # ★ 先写文件（真相），再写索引 —— 顺序不能反
             notefile.write_file(abs_path, meta, text)
             st = os.stat(abs_path)
+            store.fts_sync(CONN, ref, meta["title"], text)
             store.insert_note(
                 CONN,
                 {
@@ -760,6 +814,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             if "kind" in body:
                 upd["kind"] = str(body.get("kind") or "")
             store.update_note(CONN, ref, **upd)
+            if "body" in body:
+                try:
+                    meta2, text2 = notefile.read_file(abs_path)
+                    store.fts_sync(CONN, ref, str(meta2.get("title") or ""), text2)
+                except OSError:
+                    pass
             return ok({"note": store.find_note(CONN, ref)})
 
         if method == "DELETE":
@@ -770,6 +830,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             if os.path.exists(abs_path):
                 shutil.move(abs_path, os.path.join(trash, os.path.basename(abs_path)))
             store.delete_note(CONN, ref)
+            store.fts_remove(CONN, ref)
             return ok({"deleted": ref})
 
     return bad(f"未实现：{method} {path}", 404)

@@ -85,21 +85,24 @@ def rescan(data_dir: str, conn: sqlite3.Connection, project_name: str = "") -> d
 
         if cur:
             store.update_note(conn, cur["ref"], **fields)
+            store.fts_sync(conn, cur["ref"], str(meta.get("title") or ""), _body or "")
             updated += 1
             continue
 
         if not isinstance(no, int):
             no = store.next_no(conn)
+        ref = str(meta.get("ref") or f"n{no:04d}-{os.urandom(3).hex()}")
         store.insert_note(
             conn,
             {
                 **fields,
                 "no": no,
-                "ref": str(meta.get("ref") or f"n{no:04d}-{os.urandom(3).hex()}"),
+                "ref": ref,
                 "rel_path": rel,
                 "created_at": str(meta.get("time") or time.strftime("%Y-%m-%dT%H:%M:%S")),
             },
         )
+        store.fts_sync(conn, ref, str(meta.get("title") or ""), _body or "")
         added += 1
 
     known = {r["rel_path"] for r in conn.execute("SELECT rel_path FROM note").fetchall()}

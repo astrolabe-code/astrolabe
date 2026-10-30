@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, Settings } from 'lucide-react'
+import { FolderOpen, Search, Settings } from 'lucide-react'
 
 interface DesktopApi {
   isDesktop?: boolean
@@ -76,6 +76,17 @@ export default function PersonalBar() {
       </button>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* ★ 触发 Ctrl+K 面板（面板自己监听键盘，这里只是让它可发现）⚠ */}
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}
+          style={btn}
+          title="搜索笔记和节点（Ctrl+K）"
+        >
+          <Search size={12} />
+          搜索
+          <span className="faint" style={{ fontSize: 10, marginLeft: 2 }}>Ctrl+K</span>
+        </button>
         <button type="button" onClick={() => nav('/me/settings')} style={btn}>
           <Settings size={12} />
           设置

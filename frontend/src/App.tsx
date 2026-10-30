@@ -22,6 +22,7 @@ import { setUnauthorizedHandler } from './api/client'
 import { IS_PERSONAL } from './lib/personal'
 import PersonalHome from './pages/PersonalHome'
 import PersonalBar from './components/PersonalBar'
+import CommandPalette from './components/CommandPalette'
 import { useAuthStore } from './store/authStore'
 
 /** ★★ `D98`：**图谱页懒加载** —— G6 是大件，* 只在打开图谱时才下载 ⚠ */
@@ -82,6 +83,8 @@ export default function App() {
     <>
       {/* ★★ 个人版：顶栏换成极简的一条（⛔ 没有登录 / 搜索 / 头像）⚠ */}
       {IS_PERSONAL ? <PersonalBar /> : <TopNav />}
+      {/* ★ Ctrl+K 搜索面板（个人版：本地 SQLite FTS5，⛔ 不依赖外部搜索服务）⚠ */}
+      {IS_PERSONAL && <CommandPalette />}
       {/* ★★ 顺手写（`D125` 配套）—— 全局常驻：右下角按钮 + 快捷键 n ⚠ */}
       <QuickNote />
       <Routes>

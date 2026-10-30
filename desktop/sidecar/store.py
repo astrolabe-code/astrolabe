@@ -95,6 +95,17 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- ★★ 全文检索索引（`note_fts`）—— 只做检索用，⛔ 不是真相
+--   ⚠ 正文在这里有一份副本；但它是**派生数据**：
+--     删掉整个 index.db，重扫 md 就能重建（"文件是真相"没变）
+--   ⚠ trigram：中文没有空格，按"三字片段"切，子串匹配最贴近"我记得那句话"
+CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
+  ref UNINDEXED,
+  title,
+  body,
+  tokenize='trigram'
+);
+
 CREATE TABLE IF NOT EXISTS curate_log (
   id          INTEGER PRIMARY KEY,
   project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -756,3 +767,71 @@ def edges_of_node(conn: sqlite3.Connection, project_id: int, vid: int) -> dict:
         (project_id, vid),
     ).fetchall()
     return {"out": [dict(r) for r in out], "in": [dict(r) for r in inn]}
+
+
+# ---------------------------------------------------------------- 全文检索
+
+_FTS_OK: dict[int, bool] = {}
+
+
+def fts_available(conn: sqlite3.Connection) -> bool:
+    """FTS5 是否可用（不可用时调用方退化成扫描文件）"""
+    key = id(conn)
+    if key not in _FTS_OK:
+        try:
+            conn.execute("SELECT 1 FROM note_fts LIMIT 1").fetchone()
+            _FTS_OK[key] = True
+        except sqlite3.Error:
+            _FTS_OK[key] = False
+    return _FTS_OK[key]
+
+
+def fts_sync(conn: sqlite3.Connection, ref: str, title: str, body: str) -> None:
+    """把一篇笔记写进检索索引（⚠ 先删后插，避免残留旧正文）"""
+    if not fts_available(conn):
+        return
+    with conn:
+        conn.execute("DELETE FROM note_fts WHERE ref = ?", (ref,))
+        conn.execute(
+            "INSERT INTO note_fts (ref, title, body) VALUES (?,?,?)", (ref, title or "", body or "")
+        )
+
+
+def fts_remove(conn: sqlite3.Connection, ref: str) -> None:
+    if not fts_available(conn):
+        return
+    with conn:
+        conn.execute("DELETE FROM note_fts WHERE ref = ?", (ref,))
+
+
+def fts_search(conn: sqlite3.Connection, q: str, limit: int = 20) -> list[dict]:
+    """★★ 搜笔记正文/标题（返回命中片段）
+
+    ⚠ 用 `LIKE '%q%'` 而不是 `MATCH`：
+      · trigram 索引能加速 3 字以上的 LIKE（SQLite 会自动走索引）
+      · 两个字的中文词（「退化」）MATCH 命中不了，LIKE 可以
+      · 用户记得的是"那几个字"，不是"词" ⇒ 子串匹配才是对路的
+    """
+    if not fts_available(conn) or not q.strip():
+        return []
+    like = f"%{q.strip()}%"
+    rows = conn.execute(
+        """SELECT ref, title, body FROM note_fts
+           WHERE body LIKE ? OR title LIKE ?
+           ORDER BY (CASE WHEN title LIKE ? THEN 0 ELSE 1 END), length(body)
+           LIMIT ?""",
+        (like, like, like, limit),
+    ).fetchall()
+
+    out = []
+    for r in rows:
+        body = r["body"] or ""
+        pos = body.find(q.strip())
+        if pos < 0:
+            snippet = body[:60]
+        else:
+            a = max(0, pos - 26)
+            b = min(len(body), pos + len(q.strip()) + 34)
+            snippet = ("…" if a > 0 else "") + body[a:b].replace("\n", " ") + ("…" if b < len(body) else "")
+        out.append({"ref": r["ref"], "title": r["title"], "snippet": snippet})
+    return out

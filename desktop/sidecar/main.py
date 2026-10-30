@@ -41,7 +41,7 @@ import store
 
 VERSION = "0.2.0"
 
-ROOT = os.path.abspath(os.environ.get("ASTROLABE_LIBRARY") or library.default_root())
+ROOT = library.resolve_root()
 CONN = None
 
 
@@ -98,6 +98,8 @@ def _project(ref: str):
 
 
 def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
+    # ★ 换库要改这两个全局量 ⇒ global 声明必须放在函数最前面（Python 规则）
+    global ROOT, CONN
     body = dict(body or {})
     path, query = _split_query(raw_path)
     # ★ GET 没有 body ⇒ 把 query 合进 body，后面的分支只认 body 一种取法
@@ -124,8 +126,56 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "name": cfg.get("name") or os.path.basename(ROOT),
                 "projects": items,
                 "notes": CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"],
+                "defaultRoot": library.default_root(),
             }
         )
+
+    # ★★ 换笔记存放位置（用户指定；⛔ 不是只能靠环境变量）
+    if path == "/api/library/switch" and method == "POST":
+        target = str(body.get("path") or "").strip()
+        copy = bool(body.get("copy"))
+        if not target:
+            return bad("要指定一个目录")
+        target = os.path.abspath(target)
+        if target == ROOT:
+            return bad("这就是当前的位置")
+
+        try:
+            os.makedirs(target, exist_ok=True)
+            if copy:
+                # 把现有笔记整个搬过去（⚠ 只搬 .md 和 .astrolabe，不搬别的）
+                for name in os.listdir(ROOT):
+                    if name.startswith(".") and name != library.INDEX_DIR:
+                        continue
+                    src = os.path.join(ROOT, name)
+                    dst = os.path.join(target, name)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                    elif not os.path.exists(dst):
+                        shutil.copy2(src, dst)
+            library.save_pref(library_root=target)
+
+            # ★ 切库：关旧连接、建新库、重建索引
+            old = CONN
+            ROOT = target
+            library.ensure_root(ROOT)
+            CONN = store.connect(ROOT)
+            indexer.rescan(ROOT, CONN)
+            try:
+                old.close()
+            except Exception:
+                pass
+            return ok(
+                {
+                    "root": ROOT,
+                    "copied": copy,
+                    "projects": len(store.list_projects(CONN)),
+                    "notes": CONN.execute("SELECT COUNT(*) AS c FROM note").fetchone()["c"],
+                "defaultRoot": library.default_root(),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"切换失败：{type(exc).__name__}: {exc}", 500)
 
     if path == "/api/library/rescan" and method == "POST":
         return ok(indexer.rescan(ROOT, CONN))

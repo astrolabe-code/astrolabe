@@ -40,10 +40,62 @@ DB_NAME = "index.db"
 CONF_NAME = "config.json"
 
 
+def data_dir() -> str:
+    """程序的数据目录（`userData`，绿色版 ⇒ exe 同目录的 data/）"""
+    return os.environ.get("ASTROLABE_DATA_DIR") or os.path.join(os.getcwd(), "data")
+
+
 def default_root() -> str:
-    """默认库根：`<数据目录>/books/main`（绿色版 ⇒ 程序旁边）"""
-    base = os.environ.get("ASTROLABE_DATA_DIR") or os.getcwd()
-    return os.path.join(base, "books", "main")
+    """默认库根：`<数据目录>/notes`（绿色版 ⇒ 程序旁边）
+
+    ⚠ 路径浅一点：用户可能真去文件管理器里翻它，`books/main` 这种嵌套没必要。
+    """
+    return os.path.join(data_dir(), "notes")
+
+
+def pref_path() -> str:
+    """★ 库位置的偏好文件 —— ⚠ **不能存在库里**（换库时鸡生蛋）"""
+    return os.path.join(data_dir(), "config.json")
+
+
+def load_pref() -> dict:
+    try:
+        with open(pref_path(), "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_pref(**kv) -> None:
+    cur = load_pref()
+    cur.update(kv)
+    os.makedirs(os.path.dirname(pref_path()), exist_ok=True)
+    with open(pref_path(), "w", encoding="utf-8") as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+
+
+def resolve_root() -> str:
+    """★★ 库根的三级取值：环境变量 → 用户指定 → 默认 ⚠
+
+    ```\n * ASTROLABE_LIBRARY   调试/测试用（最高优先）
+ * config.json 里的值    用户在界面里选过的位置
+ * <数据目录>/notes      没指定过时的默认
+ ```\n
+    """
+    env = (os.environ.get("ASTROLABE_LIBRARY") or "").strip()
+    if env:
+        return os.path.abspath(env)
+    saved = str(load_pref().get("library_root") or "").strip()
+    if saved:
+        return os.path.abspath(saved)
+
+    # ⚠ 向后兼容：老版本把库放在 `<数据目录>/books/main`。
+    #   默认改成 `<数据目录>/notes` 之后，老用户的笔记不能"消失" ⚠
+    legacy = os.path.join(data_dir(), "books", "main")
+    if os.path.isdir(os.path.join(legacy, INDEX_DIR)):
+        return os.path.abspath(legacy)
+
+    return os.path.abspath(default_root())
 
 
 def ensure_root(root: str) -> str:

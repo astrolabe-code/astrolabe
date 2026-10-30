@@ -41,6 +41,10 @@ export default function PersonalHome() {
   // ---- 已有项目
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [loading, setLoading] = useState(true)
+  /** ★ 从零建一个结构（不用源码，自己加节点和连线）*/
+  const [blankOpen, setBlankOpen] = useState(false)
+  const [blankName, setBlankName] = useState('新结构')
+  const [blankBusy, setBlankBusy] = useState(false)
 
   // ---- 新建流程
   const [picked, setPicked] = useState<string>('')
@@ -72,6 +76,25 @@ export default function PersonalHome() {
   useEffect(() => {
     void loadProjects()
   }, [loadProjects])
+
+  const createBlank = async () => {
+    setBlankBusy(true)
+    setErr('')
+    try {
+      const r = await fetch('/api/projects/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ blank: true, name: blankName.trim() || '新结构' }),
+      })
+      const j = await r.json()
+      if (!j.ok) throw new Error(j.error || '创建失败')
+      nav(`/p/${encodeURIComponent(j.data.project.ref)}`)
+    } catch (e) {
+      setErr(String((e as Error).message || e))
+    } finally {
+      setBlankBusy(false)
+    }
+  }
 
   const pick = async () => {
     setErr('')
@@ -294,8 +317,26 @@ export default function PersonalHome() {
             >
               <FolderOpen size={18} /> 选择源码目录
             </button>
-            <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 18, lineHeight: 1.7 }}>
-              代码不会被上传，所有数据都留在你本机的 data/ 文件夹里。
+            <div style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setBlankOpen(true)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  fontSize: 12,
+                  fontFamily: 'inherit',
+                  color: '#666',
+                  cursor: 'pointer',
+                  textDecoration: 'underline dotted',
+                }}
+              >
+                或者：从零建一个结构（不用源码，自己加节点和连线）
+              </button>
+            </div>
+            <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 14, lineHeight: 1.7 }}>
+              数据都留在你本机的 data/ 文件夹里，不会上传。
             </div>
           </div>
         )}
@@ -334,15 +375,68 @@ export default function PersonalHome() {
                     {p.node_count ?? 0} 个节点 · {p.note_count ?? 0} 篇笔记
                   </div>
                   <div style={{ fontSize: 11, color: failed ? '#b00' : '#aaa' }}>
-                    {failed ? '解析失败 · 点进去修图' : p.parsed_at ? '已解析' : '还没解析'}
+                    {failed
+                      ? '解析失败 · 点进去修图'
+                      : !p.root
+                        ? '手动结构'
+                        : p.parsed_at
+                          ? '已解析'
+                          : '还没解析'}
                   </div>
                 </button>
               )
             })}
+
+            {/* ★ 从零建一个结构（不用源码）—— 非代码主题的结构化尝试 ⚠ */}
+            <button
+              type="button"
+              onClick={() => setBlankOpen(true)}
+              style={{
+                padding: '14px 16px',
+                background: '#fff',
+                border: '1px dashed #ddd',
+                borderRadius: 10,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: 12.5,
+                color: '#888',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                minHeight: 92,
+              }}
+            >
+              <Plus size={13} /> 新结构
+            </button>
           </div>
         )}
 
         {err && <div style={{ color: '#c00', fontSize: 12.5, marginTop: 12 }}>{err}</div>}
+
+        {/* ★ 从零建一个结构：不用源码，自己加节点和连线（`B184`）⚠ */}
+        {blankOpen && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+            <input
+              className="input"
+              autoFocus
+              value={blankName}
+              onChange={(e) => setBlankName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void createBlank()
+                if (e.key === 'Escape') setBlankOpen(false)
+              }}
+              placeholder="给它起个名字，比如「小说人物关系」"
+              style={{ flex: 1, fontSize: 13 }}
+            />
+            <button type="button" disabled={blankBusy} onClick={() => void createBlank()} style={primary}>
+              {blankBusy ? '创建中…' : '创建'}
+            </button>
+            <button type="button" onClick={() => setBlankOpen(false)} style={secondary}>
+              取消
+            </button>
+          </div>
+        )}
       </Shell>
     </div>
   )

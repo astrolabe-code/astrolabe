@@ -923,6 +923,7 @@ export default function ProjectGraphPage() {
         nodes={graph.data?.nodes ?? []}
         onClose={() => setCurateOpen(false)}
         onChanged={() => void graph.refetch()}
+        canReparse={!(project.data as unknown as { is_blank?: boolean })?.is_blank}
       />
     </AppLayout>
   )

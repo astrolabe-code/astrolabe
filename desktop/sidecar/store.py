@@ -190,6 +190,71 @@ def get_or_create_project(conn: sqlite3.Connection, root: str, name: str, code_r
     return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
 
 
+def set_parse_state(
+    conn: sqlite3.Connection, project_id: int, state: str, error: str = "", stats: dict | None = None
+) -> None:
+    """★★ 解析状态（**写笔记的门槛**）
+
+    ```\n * ok      图可用 ⇒ 可以写笔记（空白项目建完直接给 ok）
+ * failed  解析出错 / 没出节点 ⇒ **禁止写笔记**，只能重新解析
+ * none    还没解析过
+ ```\n
+    ⚠ 所有者口径（2026-10-29）：
+      「如果解析出错了，就不允许写笔记，只有用户点重新解析后，
+        解析未出错、出图完整后，才允许写笔记。」
+    """
+    with conn:
+        conn.execute(
+            "UPDATE project SET parse_state = ?, parse_error = ?, parsed_at = ? WHERE id = ?",
+            (
+                state,
+                (error or "")[:500],
+                time.strftime("%Y-%m-%dT%H:%M:%S") if state != "none" else None,
+                project_id,
+            ),
+        )
+
+
+def parse_state_of(conn: sqlite3.Connection, project_id: int) -> tuple[str, str]:
+    r = conn.execute(
+        "SELECT parse_state, parse_error FROM project WHERE id = ?", (project_id,)
+    ).fetchone()
+    return (r["parse_state"], r["parse_error"]) if r else ("none", "")
+
+
+def create_blank_project(conn: sqlite3.Connection, root: str, name: str) -> sqlite3.Row:
+    """★★ 空白项目 —— **不用源码，就是写节点**（`B184`）⚠
+
+    ```\n * 用途：把「锚定结构」这件事用到非代码主题上（小说人物 / 论文概念 / 业务模块…）
+ * root 留空串 ⇒ 表示"没有源码"，解析端点会拒绝解析它
+ * 节点与连线全靠手补（`curate` 的 add_node / add_edge）
+ * ```\n
+    ⚠ 空白项目**不去重**（每次都新建一本）：没有目录可当身份，用户可能就是想要两张板。
+    """
+    base = (name or "新结构").strip() or "新结构"
+    nm = base
+    d = library.project_dir_name(nm)
+    i = 1
+    while conn.execute("SELECT 1 FROM project WHERE name = ? OR dir = ?", (nm, d)).fetchone():
+        nm = f"{base}{i}"
+        d = library.project_dir_name(nm)
+        i += 1
+
+    ref = "b_" + d.lower().replace(" ", "-")[:40]
+    base_ref, j = ref, 1
+    while conn.execute("SELECT 1 FROM project WHERE ref = ?", (ref,)).fetchone():
+        j += 1
+        ref = f"{base_ref}-{j}"
+
+    with conn:
+        conn.execute(
+            "INSERT INTO project (ref, name, root, dir, created_at) VALUES (?,?,?,?,?)",
+            (ref, nm, "", d, time.strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+    os.makedirs(os.path.join(root, d), exist_ok=True)
+    return conn.execute("SELECT * FROM project WHERE ref = ?", (ref,)).fetchone()
+
+
 def list_projects(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         """SELECT p.*,

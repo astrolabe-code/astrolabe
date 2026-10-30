@@ -143,6 +143,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
+        if not (p["root"] or "").strip():
+            return bad("这个项目没有源码目录（空白结构），不需要解析", 400)
+
         try:
             import parser_bridge  # ⚠ 延迟导入：缺 tree-sitter 时给明确错误，而不是起不来
         except Exception as exc:  # noqa: BLE001
@@ -214,7 +217,17 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok({"items": store.list_projects(CONN)})
         if method == "POST":
             code_root = str(body.get("path") or "").strip()
-            if not code_root or not os.path.isdir(code_root):
+            blank = bool(body.get("blank")) or not code_root
+
+            # ★★★ 空白项目：**不用源码，就是写节点**（`B184` 所有者原话）
+            #   非代码主题的结构化尝试 —— 节点和连线全靠手补，状态直接给 ok
+            if blank:
+                name = str(body.get("name") or "").strip() or "新结构"
+                p = store.create_blank_project(CONN, ROOT, name)
+                store.set_parse_state(CONN, p["id"], "ok", "")
+                return ok({"project": dict(store.find_project(CONN, p["ref"]))})
+
+            if not os.path.isdir(code_root):
                 return bad("代码目录不存在")
             name = str(body.get("name") or os.path.basename(code_root.rstrip("/\\")) or "未命名")
             p = store.get_or_create_project(CONN, ROOT, name, code_root)

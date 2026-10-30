@@ -75,6 +75,8 @@ export default function ProjectPage() {
   //   解析出错 ⇒ 禁止写；只有重新解析成功、图完整了才放开
   const parseState = (p as unknown as { parse_state?: string })?.parse_state || 'ok'
   const parseOk = parseState !== 'failed'
+  /** ★ 没有源码目录 = 手动结构（节点与连线全靠手补）*/
+  const isBlank = !!(p as unknown as { is_blank?: boolean })?.is_blank
   const canWrite = !!p?.can_edit && parseOk
   const meUsername = me.data?.username
 
@@ -214,6 +216,20 @@ export default function ProjectPage() {
               </div>
               <div className="faint" style={{ marginTop: 4 }}>
                 去 <b>图谱 → 改图</b> 底部点「重新解析」；成功后这里会自动放开。
+              </div>
+            </div>
+          )}
+
+          {/* ★ 空白结构（不用源码）还没有节点 ⇒ 指路去改图里加 ⚠ */}
+          {isBlank && (p?.node_count ?? 0) === 0 && (
+            <div
+              className="card"
+              style={{ padding: '9px 11px', marginBottom: 10, fontSize: 11.5, lineHeight: 1.8 }}
+            >
+              <b>这是手动结构</b>
+              <div className="faint" style={{ marginTop: 2 }}>
+                去 <b>图谱 → 改图</b>：底部加一个节点，再点列表里的「连」把关系接起来。
+                有了节点就能在它下面写笔记。
               </div>
             </div>
           )}

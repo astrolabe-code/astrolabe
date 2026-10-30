@@ -27,6 +27,8 @@ interface Props {
   onClose: () => void
   /** 改完之后让图谱重取 */
   onChanged: () => void
+  /** ★ 空白结构（无源码）⇒ 不显示「重新解析」（没有东西可解析）*/
+  canReparse?: boolean
 }
 
 interface EdgeRow {
@@ -56,7 +58,7 @@ async function curate(projectRef: string, payload: Record<string, unknown>) {
   return j.data
 }
 
-export default function CuratePanel({ open, projectRef, nodes, onClose, onChanged }: Props) {
+export default function CuratePanel({ open, projectRef, nodes, onClose, onChanged, canReparse = true }: Props) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState<GraphNode | null>(null)
   const [edges, setEdges] = useState<{ out: EdgeRow[]; in: EdgeRow[] }>({ out: [], in: [] })
@@ -458,7 +460,9 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
         </div>
 
         {/* ★★ 重新解析是**修复**，不是日常操作（所有者 2026-10-29）——
-            只给一行小字入口，而且必须先说理由 ⚠ */}
+            只给一行小字入口，而且必须先说理由 ⚠
+            空白结构没有源码可解析 ⇒ 整块不显示 */}
+        {canReparse && (
         <div style={{ marginTop: 8 }}>
           <button
             type="button"
@@ -480,6 +484,7 @@ export default function CuratePanel({ open, projectRef, nodes, onClose, onChange
             （人手补的节点和边会保留）
           </span>
         </div>
+        )}
       </div>
 
       {/* 理由弹窗（⚠ reason 必填 —— 半年后你会感谢现在的自己） */}

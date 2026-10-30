@@ -323,15 +323,36 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             blank = bool(body.get("blank")) or not code_root
 
             # ★★★ 空白结构：**不用源码，就是写节点**（`B184`）
-            #   它的数据放 `<数据目录>/structures/<名字>/`
+            #   ⚠ 也必须**先选一个目录**当数据的家 —— 否则用户不知道笔记存哪了
+            #   结构：<选中目录>/.astrolabe/{index.db, notes/, trash/}
             if blank:
+                home = str(body.get("path") or body.get("data_dir") or "").strip()
+                if not home:
+                    return 400, {
+                        "ok": False,
+                        "code": "need_dir",
+                        "error": "请先选一个目录，笔记会存在那个目录里",
+                    }
+                home = os.path.abspath(home)
+                os.makedirs(home, exist_ok=True)
+                data_dir = library.data_subdir(home)
+
+                # 那个 .astrolabe 不是我们的 ⇒ 问用户（和源码项目同一套规则）
+                if os.path.isdir(data_dir) and not body.get("adopt"):
+                    if not _data_dir_is_ours(data_dir, ""):
+                        return 409, {
+                            "ok": False,
+                            "code": "data_exists",
+                            "path": data_dir,
+                            "error": "这个目录里已经有一个 .astrolabe/ 了，看起来不是本程序建的",
+                        }
+
                 name = projectstore.unique_name(str(body.get("name") or "新结构"))
-                root = library.blank_root(name)
                 entry = {
                     "ref": projectstore.unique_ref("b_" + name.lower().replace(" ", "-")[:40]),
                     "name": name,
                     "root": "",
-                    "data": library.ensure_data_dir(root),
+                    "data": library.ensure_dir_at(data_dir),
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 }
                 projectstore.upsert(entry)
@@ -339,7 +360,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 p = store.get_or_create_project(CONN, name, "", ref=entry["ref"])
                 store.set_parse_state(CONN, p["id"], "ok", "")
                 fresh = store.find_project(CONN, entry["ref"]) or p
-                return ok({"project": {**dict(fresh), "root": ""}})
+                return ok({"project": {**dict(fresh), "root": "", "data": entry["data"]}})
 
             if not os.path.isdir(code_root):
                 return bad("代码目录不存在")

@@ -33,6 +33,8 @@ interface ProjectRow {
   parse_state?: string
   node_count?: number
   note_count?: number
+  /** ★ 数据目录（悬停卡片能看到笔记存哪）*/
+  data?: string
 }
 
 export default function PersonalHome() {
@@ -44,6 +46,8 @@ export default function PersonalHome() {
   /** ★ 从零建一个结构（不用源码，自己加节点和连线）*/
   const [blankOpen, setBlankOpen] = useState(false)
   const [blankName, setBlankName] = useState('新结构')
+  /** ★ 空白结构也要先选目录：笔记就存在那儿，用户得知道在哪 */
+  const [blankDir, setBlankDir] = useState('')
   const [blankBusy, setBlankBusy] = useState(false)
 
   // ---- 新建流程
@@ -79,14 +83,32 @@ export default function PersonalHome() {
     void loadProjects()
   }, [loadProjects])
 
+  /** ★ 开始建空白结构：**先选目录**（数据存那儿），再填名字 */
+  const startBlank = async () => {
+    setErr('')
+    const api = (window as unknown as { astrolabe?: { pickDirectory: () => Promise<string | null> } })
+      .astrolabe
+    if (!api?.pickDirectory) {
+      setErr('只有在桌面版里才能选目录')
+      return
+    }
+    const dir = await api.pickDirectory()
+    if (!dir) return
+    const base = dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '新结构'
+    setBlankDir(dir)
+    setBlankName(base)
+    setBlankOpen(true)
+  }
+
   const createBlank = async () => {
+    if (!blankDir) return
     setBlankBusy(true)
     setErr('')
     try {
       const r = await fetch('/api/projects/', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ blank: true, name: blankName.trim() || '新结构' }),
+        body: JSON.stringify({ blank: true, name: blankName.trim() || '新结构', path: blankDir }),
       })
       const j = await r.json()
       if (!j.ok) throw new Error(j.error || '创建失败')
@@ -410,7 +432,7 @@ export default function PersonalHome() {
             <div style={{ marginTop: 16 }}>
               <button
                 type="button"
-                onClick={() => setBlankOpen(true)}
+                onClick={() => void startBlank()}
                 style={{
                   border: 'none',
                   background: 'transparent',
@@ -446,6 +468,7 @@ export default function PersonalHome() {
                 <button
                   key={p.ref}
                   type="button"
+                  title={p.data ? `笔记存在：${p.data}` : undefined}
                   onClick={() => nav(`/p/${encodeURIComponent(p.ref)}`)}
                   style={{
                     textAlign: 'left',
@@ -480,7 +503,7 @@ export default function PersonalHome() {
             {/* ★ 从零建一个结构（不用源码）—— 非代码主题的结构化尝试 ⚠ */}
             <button
               type="button"
-              onClick={() => setBlankOpen(true)}
+              onClick={() => void startBlank()}
               style={{
                 padding: '14px 16px',
                 background: '#fff',
@@ -506,7 +529,18 @@ export default function PersonalHome() {
 
         {/* ★ 从零建一个结构：不用源码，自己加节点和连线（`B184`）⚠ */}
         {blankOpen && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div
+              className="faint"
+              style={{
+                width: '100%',
+                fontSize: 11,
+                wordBreak: 'break-all',
+                fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+              }}
+            >
+              笔记会存在这个目录里（.astrolabe/）：{blankDir}
+            </div>
             <input
               className="input"
               autoFocus

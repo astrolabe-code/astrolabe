@@ -48,11 +48,15 @@ def data_subdir(project_root: str) -> str:
     """
     return os.path.join(project_root, DATA_SUBDIR)
 
+def ensure_dir_at(data_dir: str) -> str:
+    """★ 直接给数据目录（用户自己选的位置），不再拼 `.astrolabe` ⚠"""
+    os.makedirs(os.path.join(data_dir, "notes"), exist_ok=True)
+    os.makedirs(os.path.join(data_dir, "trash"), exist_ok=True)
+    return data_dir
+
+
 def ensure_data_dir(project_root: str) -> str:
-    d = data_subdir(project_root)
-    os.makedirs(os.path.join(d, "notes"), exist_ok=True)
-    os.makedirs(os.path.join(d, "trash"), exist_ok=True)
-    return d
+    return ensure_dir_at(data_subdir(project_root))
 
 def db_path(data_dir: str) -> str:
     return os.path.join(data_dir, DB_NAME)

@@ -324,6 +324,9 @@ ipcMain.handle('app:info', () => ({
 }))
 
 ipcMain.handle('app:pick-dir', async () => {
+  // ★ 自检用：`ASTROLABE_SMOKE_PICK` 指定目录就跳过原生对话框
+  //   （无头环境点不了系统对话框；⚠ 普通启动不设这个变量）
+  if (process.env.ASTROLABE_SMOKE_PICK) return process.env.ASTROLABE_SMOKE_PICK
   // ★ 原生目录对话框 —— 浏览器做不到这件事（安全限制），这也是要壳的原因之一
   const r = await dialog.showOpenDialog({
     title: '选择要读的代码目录',

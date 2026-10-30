@@ -124,6 +124,30 @@ R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 
 
+def _data_dir_is_ours(data_dir: str, code_root: str) -> bool:
+    """★ 那个 `.astrolabe/` 是不是**本程序为这个仓库**建的 ⚠
+
+    ```\n * 有 index.db 且里面 project.root == 当前源码目录 ⇒ 是我们的 ⇒ 直接打开
+ * 没有 index.db / root 对不上 / 打不开          ⇒ 不是（或认不出）⇒ 要问用户
+ ```\n
+    ⚠ 宁可多问一句，也不要往别人的数据目录里写东西。
+    """
+    db = os.path.join(data_dir, "index.db")
+    if not os.path.isfile(db):
+        return False
+    try:
+        import sqlite3 as _s
+
+        c = _s.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = c.execute("SELECT root FROM project LIMIT 1").fetchone()
+        finally:
+            c.close()
+        return bool(row) and os.path.abspath(str(row[0] or "")) == os.path.abspath(code_root)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _split_query(path: str) -> tuple[str, dict]:
     """拆出 query（⚠ 边车拿到的是 `/api/x/?a=1` 这种完整路径）"""
     if "?" not in path:
@@ -327,6 +351,26 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     _activate(it)
                     return ok({"project": dict(store.find_project(CONN, it["ref"]))})
 
+            # ★★★ 建之前先看：源码目录里**已经有个 `.astrolabe/`** ⇒ 必须问用户 ⚠
+            #   （所有者 2026-10-30：「建的时候还是要查一下……提示用户覆盖还是换个地方」）
+            data_dir = str(body.get("data_dir") or "").strip()
+            if data_dir:
+                data_dir = os.path.abspath(data_dir)
+            else:
+                data_dir = library.data_subdir(code_root)
+                if os.path.isdir(data_dir) and not body.get("adopt"):
+                    ours = _data_dir_is_ours(data_dir, code_root)
+                    if not ours:
+                        return 409, {
+                            "ok": False,
+                            "code": "data_exists",
+                            "path": data_dir,
+                            "error": (
+                                "这个源码目录里已经有一个 .astrolabe/ 了，"
+                                "但看起来不是本程序为这个仓库建的 —— 要接管它，还是换个地方放笔记？"
+                            ),
+                        }
+
             name = projectstore.unique_name(
                 str(body.get("name") or os.path.basename(code_root.rstrip("/\\")) or "未命名")
             )
@@ -335,7 +379,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "name": name,
                 "root": code_root,
                 # ★★ 数据就放在源码目录里的 `.astrolabe/`（⛔ 不占 `data/`）
-                "data": library.ensure_data_dir(code_root),
+                "data": library.ensure_dir_at(data_dir),
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             projectstore.upsert(entry)

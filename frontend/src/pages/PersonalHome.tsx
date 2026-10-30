@@ -52,6 +52,8 @@ export default function PersonalHome() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [parsing, setParsing] = useState(false)
+  /** ★ 源码目录里已有 `.astrolabe/` 且不是本程序建的 ⇒ 先问用户 */
+  const [conflict, setConflict] = useState<{ path: string; name: string } | null>(null)
   const [parsed, setParsed] = useState<{
     ref: string
     name: string
@@ -124,7 +126,11 @@ export default function PersonalHome() {
     }
   }
 
-  const startParse = async (force = false, ref0?: string) => {
+  const startParse = async (
+    force = false,
+    ref0?: string,
+    extra?: { adopt?: boolean; dataDir?: string },
+  ) => {
     if (!picked && !ref0) return
     setErr('')
     setParsing(true)
@@ -135,10 +141,22 @@ export default function PersonalHome() {
         const cr = await fetch('/api/projects/', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ path: picked, name }),
+          body: JSON.stringify({
+            path: picked,
+            name,
+            ...(extra?.adopt ? { adopt: true } : {}),
+            ...(extra?.dataDir ? { data_dir: extra.dataDir } : {}),
+          }),
         })
         const cj = await cr.json()
-        if (!cj.ok) throw new Error(cj.error || '建项目失败')
+        if (!cj.ok) {
+          // ★ 那个 .astrolabe/ 不是我们建的 ⇒ 停下来问用户，⛔ 不擅自接管
+          if (cj.code === 'data_exists') {
+            setConflict({ path: String(cj.path || ''), name })
+            return
+          }
+          throw new Error(cj.error || '建项目失败')
+        }
         ref = cj.data.project.ref
         // ★★ 这个目录已经读过了 ⇒ **直接进去**，⛔ 根本不发解析请求
         //   （所有者：「不允许重新解析」—— 连尝试都不该发生）
@@ -266,12 +284,84 @@ export default function PersonalHome() {
             </div>
           )}
 
+          {/* ★★ 源码目录里已有 `.astrolabe/`（且不是我们建的）⇒ 三选一 ⚠ */}
+          {conflict && (
+            <div
+              style={{
+                marginTop: 16,
+                border: '1px solid #e5c9c9',
+                background: 'rgba(200,0,0,.03)',
+                borderRadius: 8,
+                padding: 14,
+                fontSize: 12,
+                lineHeight: 1.8,
+              }}
+            >
+              <b>这个源码目录里已经有一个 .astrolabe/ 了</b>
+              <div
+                className="faint"
+                style={{
+                  marginTop: 4,
+                  wordBreak: 'break-all',
+                  fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+                }}
+              >
+                {conflict.path}
+              </div>
+              <div className="faint" style={{ marginTop: 6 }}>
+                它看起来不是本程序为这个仓库建的。要么接管它（里面的笔记会出现在这里），
+                要么把笔记放到别的地方去。
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  disabled={parsing}
+                  onClick={() => {
+                    setConflict(null)
+                    void startParse(false, undefined, { adopt: true })
+                  }}
+                  style={{ ...primary, fontSize: 12.5, padding: '7px 14px' }}
+                >
+                  用这个目录里的数据
+                </button>
+                <button
+                  type="button"
+                  disabled={parsing}
+                  onClick={async () => {
+                    const api = (
+                      window as unknown as { astrolabe?: { pickDirectory: () => Promise<string | null> } }
+                    ).astrolabe
+                    const dir = await api?.pickDirectory?.()
+                    if (!dir) return
+                    setConflict(null)
+                    void startParse(false, undefined, { dataDir: dir })
+                  }}
+                  style={{ ...secondary, fontSize: 12.5, padding: '7px 14px' }}
+                >
+                  笔记放到别处…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConflict(null)
+                    setPicked('')
+                    setScan(null)
+                  }}
+                  style={{ ...secondary, fontSize: 12.5, padding: '7px 14px' }}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => {
               setPicked('')
               setScan(null)
               setParsed(null)
+              setConflict(null)
               setErr('')
               void loadProjects()
             }}

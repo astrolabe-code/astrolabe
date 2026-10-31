@@ -39,6 +39,8 @@ interface EdgeRow {
   dst_vid: number
   kind: string
   origin: string
+  /** ★ 这条边发生在第几行（调用点）*/
+  line?: number
   to_name?: string
   from_name?: string
   to_file?: string
@@ -151,9 +153,12 @@ export default function CuratePanel({
         })
         const j = await r.json()
         if (!j.ok) throw new Error(j.error || '重新解析失败')
-        // ★ 修复后给一句结果（简单直接，不铺开统计）
-        const st = j.data?.stats || {}
-        setNotice(`已重建：${st.nodes ?? '?'} 个节点，${st.edges ?? '?'} 条关系`)
+        const tr = j.data?.stats?.truncated
+        setNotice(
+          tr
+            ? `已重建，但没读完全部文件：${tr}`
+            : `已重建：${j.data?.stats?.nodes ?? '?'} 个节点，${j.data?.stats?.edges ?? '?'} 条关系`,
+        )
       } else {
         await curate(projectRef, { action: pending.action, reason: reason.trim(), ...pending.payload })
       }
@@ -368,14 +373,22 @@ export default function CuratePanel({
 
             <div style={label}>出边（{edges.out.length}）</div>
             {edges.out.map((e) => (
-              <Row key={e.id} text={`→ ${e.to_name || e.dst_vid}`} file={e.to_file} origin={e.origin}
+              <Row
+                key={e.id}
+                text={`—${e.kind === 'calls' ? '调用' : e.kind === 'extends' ? '继承' : e.kind === 'implements' ? '实现' : e.kind === 'contains' ? '包含' : e.kind}→ ${e.to_name || e.dst_vid}${e.line ? ` · 第 ${e.line} 行` : ''}`}
+                file={e.to_file}
+                origin={e.origin}
                 onDel={() => ask('remove_edge', { id: e.id }, '去掉这条关系')} />
             ))}
             {edges.out.length === 0 && <div className="faint" style={{ fontSize: 11, marginBottom: 10 }}>没有</div>}
 
             <div style={{ ...label, marginTop: 12 }}>入边（{edges.in.length}）</div>
             {edges.in.map((e) => (
-              <Row key={e.id} text={`← ${e.from_name || e.src_vid}`} file={e.from_file} origin={e.origin}
+              <Row
+                key={e.id}
+                text={`←${e.kind === 'calls' ? '调用' : e.kind === 'extends' ? '继承' : e.kind === 'implements' ? '实现' : e.kind === 'contains' ? '包含' : e.kind}— ${e.from_name || e.src_vid}${e.line ? ` · 第 ${e.line} 行` : ''}`}
+                file={e.from_file}
+                origin={e.origin}
                 onDel={() => ask('remove_edge', { id: e.id }, '去掉这条关系')} />
             ))}
             {edges.in.length === 0 && <div className="faint" style={{ fontSize: 11 }}>没有</div>}

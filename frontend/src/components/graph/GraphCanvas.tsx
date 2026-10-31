@@ -3,6 +3,7 @@ import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
 import { useTheme } from '../../hooks/useTheme'
 import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
+import { kindColor } from '../../lib/kindLabel'
 
 /**
  * ★ 图谱画布（`D98` · AntV G6 v5）
@@ -32,17 +33,9 @@ import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
  * ```
  */
 
-const KIND_COLOR: Record<string, string> = {
-  function: '#4db8d6',
-  class: '#f59e0b',
-  method: '#ec4899',
-  module: '#a78bfa',
-  file: '#22c55e',
-  package: '#a78bfa',
-  type: '#f59e0b',
-}
+// ★ 颜色统一来自 lib/kindLabel（图谱 / 列表 / 面板三处必须一致）
 
-const colorOf = (n: GraphNode) => KIND_COLOR[n.kind] || '#94a3b8'
+const colorOf = (n: GraphNode) => kindColor(n.kind)
 
 /** ★★ 环形按钮几何（Neo4j 风格）：* 内径 24、外径 42、画布 96 ——
  *   环绕节点一圈，分左右两段弧形扇区 ⚠ */

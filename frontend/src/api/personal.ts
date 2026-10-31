@@ -48,6 +48,8 @@ function toGraphNode(n: any): GraphNode {
     file_path: String(n.file_path || ''),
     line: Number(n.line || 0),
     line_end: Number(n.line_end ?? -1),
+    // ★ 签名（`static int f(int a)`）—— 面板上显示，帮人少点开一次文件
+    signature: String(n.signature || ''),
     lang: '',
     origin: String(n.origin || 'parsed'),
     parent_uid: '',
@@ -157,11 +159,20 @@ export const personalApi = {
       from: Number(e.from),
       to: Number(e.to),
       type: String(e.type || ''),
-      line: null,
+      // ★ 调用点行号（"这一行调了它"）
+      line: Number(e.line || 0) || null,
       origin: String(e.origin || 'parsed'),
       confidence: 'syntax',
     }))
     return { rev: Number(d.rev || 0), nodes, edges }
+  },
+
+  /** ★ 结构体/类的字段（只在详情面板显示，⛔ 不进图） */
+  nodeFields: async (ref: string, vid: number) => {
+    const d = await get<{ items: { name: string; type_text: string; line: number }[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/fields/?vid=${vid}`,
+    )
+    return d.items || []
   },
 
   // ---- 笔记

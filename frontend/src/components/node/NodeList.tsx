@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Search } from 'lucide-react'
+import { GitBranch, Loader2, Search } from 'lucide-react'
 import type { GraphNode } from '../../lib/mergeGraph'
+import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
+import { entriesFirst, isEntryNode } from '../../lib/entry'
 import { useGraphNodes } from '../../query/graph'
 import Button from '../ui/Button'
 import EmptyState from '../ui/EmptyState'
@@ -24,6 +26,8 @@ interface NodeListProps {
   /** 当前选中的节点 uid（受控） */
   selectedUid?: string | null
   onSelect: (node: GraphNode) => void
+  /** ★★ 点一行就去图谱里看它 + 它的直接邻居（⛔ 不再是"只在右栏预览"）⚠ */
+  onOpenGraph?: (node: GraphNode) => void
   /** ★ `?think=1`：* 列表就绪后自动选中第一个节点（* 让思考白板有节点可开）⚠ */
   autoSelectFirst?: boolean
   /**
@@ -41,6 +45,7 @@ export default function NodeList({
   projectRef,
   selectedUid,
   onSelect,
+  onOpenGraph,
   autoSelectFirst,
   selectVid,
 }: NodeListProps) {
@@ -61,13 +66,15 @@ export default function NodeList({
 
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase()
-    return items.filter((n) => {
+    const hit = items.filter((n) => {
       if (kind && n.kind !== kind) return false
       if (!kw) return true
       return (
         n.name.toLowerCase().includes(kw) || (n.qname || '').toLowerCase().includes(kw)
       )
     })
+    // ★★ 入口排第一排（main / __main__ / main.*）—— 学习者第一个问题是"从哪开始"
+    return entriesFirst(hit)
   }, [items, q, kind])
 
   /**
@@ -167,9 +174,11 @@ export default function NodeList({
             {filtered.map((n) => {
               const active = selectedUid === n.uid
               return (
-                <li key={n.uid}>
+                <li key={n.uid} style={{ position: 'relative' }}>
                   <button
                     type="button"
+                    // ★★ 点行 = **只选中**（右栏预览 / 写笔记）
+                    //   ⛔ 不再顺手跳图谱 —— 那样太容易误触（所有者 2026-10-31）
                     onClick={() => onSelect(n)}
                     className="w-full text-left"
                     style={{
@@ -178,14 +187,53 @@ export default function NodeList({
                       border: `1px solid ${active ? 'var(--accent)' : 'transparent'}`,
                       background: active ? 'var(--accent-dim)' : 'transparent',
                       cursor: 'pointer',
+                      // 给右侧的「图谱」按钮留位置，免得多行时压住文字
+                      paddingRight: onOpenGraph ? 34 : 10,
                     }}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="mono" style={{ fontSize: 12.5, color: 'var(--text-main)' }}>
-                        {n.name}
+                      {/* ★★ 有作用域时显示**限定名**（`A.run` / `ns::Class::m`）⚠
+                          否则同一个类里两个 `run` 在列表上完全一样，分不出谁是谁 */}
+                      <span
+                        className="mono"
+                        style={{ fontSize: 12.5, color: 'var(--text-main)' }}
+                        title={n.qname || n.name}
+                      >
+                        {n.qname && n.qname !== n.name ? n.qname : n.name}
                       </span>
-                      <span className="tag" style={{ fontSize: 10.5 }}>
-                        {n.kind}
+                      {/* ★★ 入口徽标：只标 main / __main__ / main.*（⛔ 不猜"重要程度"）⚠ */}
+                      {isEntryNode(n) && (
+                        <span
+                          title="入口：建议从这里开始读"
+                          style={{
+                            fontSize: 10,
+                            flexShrink: 0,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            lineHeight: '15px',
+                            color: '#fff',
+                            background: 'var(--accent, #2563eb)',
+                          }}
+                        >
+                          入口
+                        </span>
+                      )}
+                      {/* ★ 徽标颜色 = 该类型的颜色（与图谱节点、右侧面板同源）⚠ */}
+                      <span
+                        title={n.kind}
+                        style={{
+                          fontSize: 10,
+                          flexShrink: 0,
+                          padding: '1px 6px',
+                          borderRadius: 999,
+                          lineHeight: '15px',
+                          color: kindColor(n.kind),
+                          // ★ 没登记的类型用虚线边框 —— 光靠颜色分不出"灰色"和"没配色"⚠
+                          border: `1px ${kindKnown(n.kind) ? 'solid' : 'dashed'} ${kindColor(n.kind)}`,
+                          background: 'transparent',
+                        }}
+                      >
+                        {kindLabel(n.kind)}
                       </span>
                     </div>
                     {/* ★ 空白结构没有文件/行号 ⇒ **整行不渲染**（类型上面那个 tag 已经显示过了）⚠ */}
@@ -195,6 +243,38 @@ export default function NodeList({
                       </div>
                     )}
                   </button>
+                  {/* ★★ 显式的「图谱」按钮（⛔ 不嵌套在行按钮里 —— 那是非法 HTML）⚠
+                      点它才跳转：先选中（保证跳过去右栏还是这个节点），再开图谱 */}
+                  {onOpenGraph && (
+                    <button
+                      type="button"
+                      title="在图谱里看它和它的直接邻居"
+                      aria-label="在图谱里查看"
+                      onClick={() => {
+                        onSelect(n)
+                        onOpenGraph(n)
+                      }}
+                      style={{
+                        position: 'absolute',
+                        right: 6,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        borderRadius: 6,
+                        border: '1px solid var(--card-border)',
+                        background: 'var(--card-bg, transparent)',
+                        color: 'var(--text-sub)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <GitBranch size={12} />
+                    </button>
+                  )}
                 </li>
               )
             })}

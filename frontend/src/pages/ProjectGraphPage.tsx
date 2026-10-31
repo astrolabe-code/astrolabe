@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {ChevronDown,
   ChevronUp,
   List,
@@ -55,25 +55,7 @@ import NodePanel from '../components/node/NodePanel'
  * ★★ 搜索定位到未展示的节点 ⇒* 先把它加进视图，* ⛔ 不静默失败 ✅
  * ```
  */
-const KIND_LABEL: Record<string, string> = {
-  function: '函数',
-  class: '类',
-  method: '方法',
-  module: '模块',
-  file: '文件',
-  package: '包',
-  type: '类型',
-}
-
-const KIND_COLOR: Record<string, string> = {
-  function: '#4db8d6',
-  class: '#f59e0b',
-  method: '#ec4899',
-  module: '#a78bfa',
-  file: '#22c55e',
-  package: '#a78bfa',
-  type: '#f59e0b',
-}
+// ★ 类型名与颜色统一来自 `lib/kindLabel`（⛔ 页面里不再另写一份）
 
 /** ★ `D105`：按画布面积算初始批量（* 12~24）⚠ */
 function initialBatch() {
@@ -110,7 +92,13 @@ export default function ProjectGraphPage() {
   // ★ 节点直径（* 流星光晕随之等比缩放）⚠
   const nodeSizePx = Number(meteorConf['graph.node.size'] ?? 14)
 
-  const [selectedVid, setSelectedVid] = useState<number | null>(null)
+  // ★★ 从节点列表点过来时带着 `?node=<vid>`：
+  //    要**以它为焦点**展示（它 + 直接邻居），⛔ 不是默认那 16 个 ⚠
+  const [sp] = useSearchParams()
+  const deepVid = Number(sp.get('node') || 0) || null
+  const navigate = useNavigate()
+
+  const [selectedVid, setSelectedVid] = useState<number | null>(deepVid)
   // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
   // ★ 默认跟用户设置走；* 工具栏开关只是本次会话的临时覆盖 ⚠
   const [meteors, setMeteors] = useState(true)
@@ -264,19 +252,56 @@ export default function ProjectGraphPage() {
       deg.set(e.to, (deg.get(e.to) || 0) + 1)
     }
     const inGraph = new Set(g.nodes.map((n) => n.vid))
-    const head = hasPath ? pathVids.filter((v) => inGraph.has(v)) : []
+
+    // ★★ 焦点：`?node=` 指定时，它和**直接相连的节点**排最前
+    //   （所有者：「点击列表，就跳转到展示相应节点，以及其直接连接节点的图谱」）
+    const focus: number[] = []
+    if (deepVid != null && inGraph.has(deepVid)) {
+      focus.push(deepVid)
+      for (const e of g.edges) {
+        if (e.from === deepVid && inGraph.has(e.to)) focus.push(e.to)
+        else if (e.to === deepVid && inGraph.has(e.from)) focus.push(e.from)
+      }
+    }
+
+    const head = [
+      ...(hasPath ? pathVids.filter((v) => inGraph.has(v)) : []),
+      ...focus,
+    ]
     const headSet = new Set(head)
     const tail = [...g.nodes]
       .filter((n) => !headSet.has(n.vid))
       .sort((a, b) => (deg.get(b.vid) || 0) - (deg.get(a.vid) || 0) || a.vid - b.vid)
       .map((n) => n.vid)
     return [...head, ...tail]
-  }, [g, hasPath, pathVids])
+  }, [g, hasPath, pathVids, deepVid])
 
   const shownVids = useMemo(
     () => new Set(orderVids.slice(0, shownCount ?? initialBatch())),
     [orderVids, shownCount],
   )
+
+  /** ★★ 焦点视图：`?node=` 给的节点 + **直接邻居**（⛔ 不多拉无关节点）⚠
+   *  · · 否则补满 16 个时，一屏全是它 import 的头文件，反而看不清主干 */
+  const focusVids = useMemo(() => {
+    if (!g || deepVid == null) return [] as number[]
+    const inGraph = new Set(g.nodes.map((n) => n.vid))
+    if (!inGraph.has(deepVid)) return []
+    const out = [deepVid]
+    for (const e of g.edges) {
+      if (e.from === deepVid && inGraph.has(e.to)) out.push(e.to)
+      else if (e.to === deepVid && inGraph.has(e.from)) out.push(e.from)
+    }
+    return [...new Set(out)]
+  }, [g, deepVid])
+
+  // ★ 深链焦点：只展示「它 + 直接邻居」（正好这么多，不多也不少）
+  useEffect(() => {
+    if (deepVid == null || !g) return
+    if (focusVids.length) setShownCount(focusVids.length)
+    setSelectedVid(deepVid)
+  }, [deepVid, g, focusVids.length])
+
 
   /** ★★ `D105`：交给画布的**子集**（* 边只留两端都在集合里的）⚠ */
   const view = useMemo(() => {
@@ -431,6 +456,27 @@ export default function ProjectGraphPage() {
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
           <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: 6 }}>
+            {/* ---- 回节点列表（图谱 ⇄ 列表 一键互跳）⚠ ---- */}
+            <button
+              type="button"
+              className="card"
+              onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
+              title="回到节点列表（可以从头找）"
+              style={{
+                padding: isNarrow ? '4px 9px' : '5px 12px',
+                fontSize: isNarrow ? 11.5 : 12.5,
+                borderRadius: 999,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(15,23,42,.14)',
+              }}
+            >
+              <List size={13} />
+              {!isNarrow && <span>列表</span>}
+            </button>
+
             {/* ---- 搜索 ---- */}
             <div
               onMouseLeave={() => setSearchOpen(false)}

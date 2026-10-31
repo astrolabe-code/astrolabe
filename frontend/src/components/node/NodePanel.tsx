@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
@@ -6,19 +6,14 @@ import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
 
 import { errorMessage } from '../../api/errors'
+import { personalApi } from '../../api/personal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteSection from '../notes/NoteSection'
 
 // ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
-const KIND_COLOR: Record<string, string> = {
-  function: '#4db8d6',
-  class: '#f59e0b',
-  method: '#ec4899',
-  module: '#a78bfa',
-  file: '#22c55e',
-  package: '#a78bfa',
-  type: '#f59e0b',
-}
+import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
+
+// ★ 颜色统一来自 lib/kindLabel（⛔ 不在组件里另写一份）
 
 /**
  * ★ 节点面板（`F2` · D92）——* 双栏的右栏
@@ -94,6 +89,30 @@ export default function NodePanel({
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
   const [delErr, setDelErr] = useState('')
+  // ★★ 结构体/类的字段（`HAS_PROPERTY` 那种信息）—— 只在这里显示，⛔ 不进图
+  const [fields, setFields] = useState<{ name: string; type_text: string; line: number }[]>([])
+  const [fieldsOpen, setFieldsOpen] = useState(true)
+
+  useEffect(() => {
+    const kind = node?.kind || ''
+    if (!node || !['struct', 'union', 'class', 'interface', 'record', 'type'].includes(kind)) {
+      setFields([])
+      return
+    }
+    let alive = true
+    void personalApi
+      .nodeFields(projectRef, node.vid)
+      .then((items) => {
+        if (alive) setFields(items)
+      })
+      .catch(() => {
+        if (alive) setFields([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [node?.vid, node?.kind, projectRef])
+
   const del = useDeleteNote()
 
   if (!node) {
@@ -121,7 +140,7 @@ export default function NodePanel({
   }
 
   // ★ 节点类型色（* 圆点 / 徽章共用）⚠
-  const kc = KIND_COLOR[node.kind] || '#94a3b8'
+  const kc = kindColor(node.kind)
 
   return (
     // ★★★ **整块一张卡**（* 所有者：「文件信息卡片不要与下面的写作区分离了，
@@ -227,11 +246,12 @@ export default function NodePanel({
               // ★★ 照原型 `.code-panel-type`：* 只有文字色 + 1px 同色边框，
               //   ⛔ **背景透明**（* 背后是什么色就透什么色，* 不要淡灰底）⚠
               color: kc,
-              border: `1px solid ${kc}`,
+              // ★ 未登记类型虚线（与左侧列表一致）
+              border: `1px ${kindKnown(node.kind) ? 'solid' : 'dashed'} ${kc}`,
               background: 'transparent',
             }}
           >
-            {node.kind}
+            {kindLabel(node.kind)}
           </span>
           {/* ★★ 收起 / 展开（* 收起后只留这一行，* 笔记区自动变大）⚠ */}
           <button
@@ -255,6 +275,60 @@ export default function NodePanel({
         </div>
         {infoOpen && (
         <>
+        {/* ★★ 函数签名 —— 读源码时最想知道"它要什么参数、返回什么" ⚠
+            （解析时顺手取的，⛔ 不存在于源码外的地方） */}
+        {node.signature && node.signature !== node.name && (
+          <div
+            className="mono faint"
+            style={{
+              fontSize: 11,
+              marginTop: 6,
+              lineHeight: 1.6,
+              wordBreak: 'break-word',
+              borderLeft: '2px solid var(--card-border)',
+              paddingLeft: 6,
+            }}
+          >
+            {node.signature}
+          </div>
+        )}
+        {/* ★ 字段列表：读源码时"这个结构体里有什么"比"它叫什么"更常被问 */}
+        {fields.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setFieldsOpen((v) => !v)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                fontSize: 11,
+                color: 'var(--text-faint)',
+              }}
+            >
+              {fieldsOpen ? '▾' : '▸'} 字段 {fields.length} 个
+            </button>
+            {fieldsOpen && (
+              <div className="mono" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 2 }}>
+                {fields.slice(0, 40).map((f) => (
+                  <div key={`${f.name}-${f.line}`} style={{ display: 'flex', gap: 6 }}>
+                    <span style={{ color: 'var(--text-faint)', minWidth: 34, textAlign: 'right' }}>
+                      {f.line}
+                    </span>
+                    <span style={{ color: 'var(--text-main)' }}>{f.name}</span>
+                    {f.type_text && <span style={{ color: 'var(--text-faint)' }}>{f.type_text}</span>}
+                  </div>
+                ))}
+                {fields.length > 40 && (
+                  <div className="faint" style={{ paddingLeft: 40 }}>
+                    … 还有 {fields.length - 40} 个
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {node.qname && node.qname !== node.name && (
           <div
             className="mono faint"

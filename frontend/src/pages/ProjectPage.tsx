@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { EyeOff, Lock, Settings, ShieldAlert, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
@@ -40,6 +40,7 @@ export default function ProjectPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
   const project = useProject(projectRef)
   // ★ `?think=1` ⇒ 自动选中首个节点并打开思考白板（* 首页「思考模式」卡片直达）⚠
+  const navigate = useNavigate()
   const [sp] = useSearchParams()
   const autoThink = sp.get('think') === '1'
   /**
@@ -254,6 +255,10 @@ export default function ProjectPage() {
               selectedUid={selected?.uid ?? null}
               onSelect={setSelected}
               autoSelectFirst={autoThink}
+              // ★★ 点一行 → 图谱里看它 + 直接邻居（图谱页有同一个右栏，能继续写笔记）⚠
+              onOpenGraph={(n) =>
+                navigate(`/p/${encodeURIComponent(projectRef)}/graph?node=${n.vid}`)
+              }
               selectVid={deepVid}
             />
           </div>

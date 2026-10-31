@@ -68,6 +68,8 @@ export default function PersonalHome() {
     edges: number
     failed?: boolean
     message?: string
+    /** ★ 达到预算提前停止（时间/文件数/字节）—— 图可能不完整，但**不算失败** */
+    truncated?: string
   } | null>(null)
 
   const loadProjects = useCallback(async () => {
@@ -211,7 +213,7 @@ export default function PersonalHome() {
         return
       }
       const st = pj.data.stats
-      setParsed({ ref, name, nodes: st.nodes, edges: st.edges })
+      setParsed({ ref, name, nodes: st.nodes, edges: st.edges, truncated: st.truncated || '' })
       void loadProjects()
     } catch (e) {
       setErr(String((e as Error).message || e))

@@ -77,10 +77,23 @@ def build_parsers() -> dict[str, Parser]:
         )
     else:
         for lang in ("c", "cpp", "python", "java"):
+            # ★★ 有 `.scm` + 处理模块的语言走**查询驱动**（无递归，成本可预估）
+            #   ⛔ 失败就退回原来的递归遍历 ⇒ 一种语言坏了不拖累别的
+            parser = None
             try:
-                parsers[lang] = TreeSitterParser(lang)
-            except Exception as exc:  # noqa: BLE001  —— 某一语言坏掉不该拖累其它语言
-                log.warning("语言 %s 的 tree-sitter 语法包不可用，已跳过：%s", lang, exc)
+                from .queryparser import QueryParser
+
+                parser = QueryParser(lang)
+            except Exception as exc:  # noqa: BLE001
+                log.info("语言 %s 暂无查询集，使用遍历式解析器：%s", lang, exc)
+
+            if parser is None:
+                try:
+                    parser = TreeSitterParser(lang)
+                except Exception as exc:  # noqa: BLE001 —— 某一语言坏掉不该拖累其它语言
+                    log.warning("语言 %s 的 tree-sitter 语法包不可用，已跳过：%s", lang, exc)
+                    continue
+            parsers[lang] = parser
 
     # ---- 汇编：★ 一期用轻量符号提取（B116 方案 A）----
     parsers["asm"] = AsmSymbolParser()

@@ -144,7 +144,8 @@ class AsmSymbolParser(Parser):
             )
 
         # ---- ⑥ 文件 → 符号 的包含边 ----
-        file_uid = f"file#{path}#{path.rsplit('/', 1)[-1]}"
+        # ★ uid 从**文件节点本身**取（格式里带行号 `…@1`），⛔ 不能手拼
+        file_uid = next((n.uid for n in result.nodes if n.kind == "file"), "")
         for node in result.nodes:
             if node.kind == "function":
                 result.edges.append(

@@ -67,12 +67,20 @@ class ParsedNode:
 
     @property
     def uid(self) -> str:
-        """★ 人类可读标签（`<kind>#<path>#<名字>`）。
+        """★ 人类可读标签（`<kind>#<path>#<限定名>`）
 
-        ⚠ `uid` **允许偶发重复**（`B117`）—— 它只用于【展示与匹配】，
+        ★★ **必须带作用域**（2026-10-30 修正）⚠
+          原来只拼 `name` ⇒ 同一个文件里 `A.run` 和 `B.run` 算出**同一个 uid**
+          ⇒ 索引里只剩第一个，后面的边全指错（实测：类里两个同名方法就撞）。
+          改为优先用 `qname`（`A.run` / `ns::Class::method`），
+          没有 qname 时退回 `name`（与旧行为一致，兼容不产生 qname 的解析器）。
+
+        ⚠ `uid` 仍**允许偶发重复**（`B117`）—— 它只用于【展示与匹配】，
           ❌ **不得作为挂载依据**（挂载靠入库后的 `vid`）。
         """
-        return f"{self.kind}#{self.file_path}#{self.name}"
+        # ★★ 末尾带行号：**重载**（Java/C++ 同名同参数不同签名）的 qname 相同，
+        #    不带行号就会撞成一个 uid ⇒ 其中一条的包含边被去重吞掉（实测丢边）
+        return f"{self.kind}#{self.file_path}#{self.qname or self.name}@{self.line}"
 
 
 # ============================================================ 边
@@ -80,7 +88,7 @@ class ParsedNode:
 #: 边 type —— 与 `graph/models.py` 的常量保持一致（GRAPH-SCHEMA.md S3）
 EdgeType = Literal[
     "calls", "imports", "includes", "defines",
-    "contains", "overrides", "implements",
+    "contains", "overrides", "implements", "extends",
 ]
 
 
@@ -112,6 +120,21 @@ Confidence = Literal["syntax", "semantic"]
 
 
 @dataclass(slots=True)
+class ParsedField:
+    """★ 结构体 / 类的**字段**（`HAS_PROPERTY` 的那种信息）
+
+    ⚠ 刻意**不建节点、不建边**（GitNexus 会把字段做成 241 个节点）：
+      字段上写笔记没有意义，但"这个结构体有哪些字段"对读源码有用
+      ⇒ 只进「节点详情」，⛔ 不进图（所有者定的取舍：图要保持能看）
+    """
+
+    owner_uid: str
+    name: str
+    type_text: str = ""
+    line: int = 0
+
+
+@dataclass(slots=True)
 class ParseResult:
     """★ 统一产出结构 —— **所有 Parser 实现都必须返回它**。
 
@@ -122,6 +145,8 @@ class ParseResult:
 
     nodes: list[ParsedNode] = field(default_factory=list)
     edges: list[ParsedEdge] = field(default_factory=list)
+    #: 结构体/类的字段（只用于详情面板，⛔ 不进图）
+    fields: list["ParsedField"] = field(default_factory=list)
 
     # ★ 诊断信息（不落图，只用于日志 / 排查；⚠ 不要往这里塞业务数据）
     errors: list[str] = field(default_factory=list)

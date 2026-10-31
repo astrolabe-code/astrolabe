@@ -36,6 +36,17 @@ KIND_IDS: dict[str, int] = {
     "module": 10,
     "package": 11,
     "class": 12,
+    # ★★ 2026-10-31 追加：把 `type` 拆细 —— 读 C/C++/Java 时
+    #   struct / union / enum / typedef / interface 是完全不同的东西，
+    #   混成 "type" 会让人分不清（所有者：「细一点没关系，是有限的，
+    #   换来的却是更好的阅读体验」）
+    #   ⚠ 规则不变：**只增不改 id**，上面 12 个的 id 一个都不动
+    "struct": 13,
+    "union": 14,
+    "enum": 15,
+    "typedef": 16,
+    "interface": 17,
+    "record": 18,
 }
 
 #: ★★ 未登记类型的兜底 id（* `other`）—— ⛔ 不参与写入校验的“合法类型”⚠

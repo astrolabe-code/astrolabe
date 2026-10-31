@@ -114,6 +114,7 @@ def bad(msg: str, code: int = 400) -> tuple[int, dict]:
 R_PROJECT = re.compile(r"^/api/projects/([^/]+)/$")
 R_PSET = re.compile(r"^/api/projects/([^/]+)/settings/$")
 R_NODES = re.compile(r"^/api/projects/([^/]+)/nodes/$")
+R_FIELDS = re.compile(r"^/api/projects/([^/]+)/fields/$")
 R_PNOTES = re.compile(r"^/api/projects/([^/]+)/notes/$")
 R_NOTE = re.compile(r"^/api/notes/([^/]+)/$")
 R_SCAN = re.compile(r"^/api/fs/scan$")
@@ -315,7 +316,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             store.set_parse_state(CONN, p["id"], "failed", msg, st)
             return bad(msg, 422)
         store.set_parse_state(CONN, p["id"], "ok", "", st)
-        mig = store.replace_graph(CONN, p["id"], res["nodes"], res["edges"])
+        mig = store.replace_graph(
+            CONN, p["id"], res["nodes"], res["edges"], res.get("fields")
+        )
 
         # ★ 迁移过的笔记，**文件里的 frontmatter 也要跟着改**（否则索引重建会退回去）
         for m in mig.get("moved", []):
@@ -680,6 +683,20 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if not vid:
             return bad("缺少 vid")
         return ok(store.edges_of_node(CONN, p["id"], vid))
+
+    # ★ 某节点的字段（结构体/类成员）—— 只给详情面板用，⛔ 不进图
+    m = R_FIELDS.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        vid = int(body.get("vid") or 0)
+        rows = CONN.execute(
+            """SELECT name, type_text, line FROM node_field
+               WHERE project_id = ? AND owner_vid = ? ORDER BY line, id""",
+            (p["id"], vid),
+        ).fetchall()
+        return ok({"vid": vid, "items": [dict(r) for r in rows]})
 
     m = R_NODES.match(path)
     if m:

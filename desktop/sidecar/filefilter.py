@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import time
 
 #: 默认忽略。带前导 `/` 的只匹配根，其余匹配任意层级
 DEFAULT_IGNORE_PATTERNS = [
@@ -59,6 +60,8 @@ PARSABLE_EXTS = {
 
 DEFAULT_MAX_BYTES = 300_000
 DEFAULT_MAX_FILES = 200_000
+DEFAULT_MAX_SECONDS = 30.0   # UI 的"看一眼能读多少"，⛔ 不能让人干等
+DEFAULT_MAX_DEPTH = 64
 
 
 class _FallbackSpec:
@@ -222,6 +225,8 @@ def iter_code_files(
     root: str,
     max_file_size: int = DEFAULT_MAX_BYTES,
     max_files: int = DEFAULT_MAX_FILES,
+    max_seconds: float | None = DEFAULT_MAX_SECONDS,
+    max_depth: int = DEFAULT_MAX_DEPTH,
 ):
     """`yield (rel_path, size)` —— 哪些文件算代码
 
@@ -232,11 +237,18 @@ def iter_code_files(
     flt = Filter(root, max_file_size)
     stack: list[tuple[str, str]] = [(root, "")]
     count = 0
+    t_end = (time.monotonic() + max_seconds) if max_seconds else None
     while stack:
+        if t_end is not None and time.monotonic() > t_end:
+            return
         cur, rel_dir = stack.pop()
+        if rel_dir and rel_dir.count("/") + 1 >= max_depth:
+            continue
         try:
             with os.scandir(cur) as entries:
                 for e in sorted(entries, key=lambda x: x.name):
+                    if t_end is not None and time.monotonic() > t_end:
+                        return
                     rel = (f"{rel_dir}/{e.name}" if rel_dir else e.name).replace(os.sep, "/")
                     if e.is_symlink():
                         continue

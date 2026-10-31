@@ -32,6 +32,14 @@ HIDDEN = [
     "tree_sitter_java",
     # 文件过滤（.gitignore 语义）；⚠ 没装时边车会退化成简版匹配
     "pathspec",
+    # ★ 每种语言的处理模块是 importlib 动态导入的，静态分析看不到
+    "codeparser.langs",
+    "codeparser.langs.base",
+    "codeparser.langs.c",
+    "codeparser.langs.cpp",
+    "codeparser.langs.python",
+    "codeparser.langs.java",
+    "codeparser.queryparser",
     # 我们自己按目录名 import 的模块
     "library",
     "store",
@@ -48,7 +56,11 @@ a = Analysis(
     [os.path.join(SIDECAR_DIR, "main.py")],
     pathex=[SIDECAR_DIR, APP_DIR],
     binaries=[],
-    datas=[],
+    # ★★ 查询文件必须打进去 —— 运行时按 `codeparser/queries/*.scm` 相对路径读
+    #   ⚠ 漏了它：打包"成功"，运行时所有语言都退回遍历式解析器（无错但慢）
+    datas=[
+        (os.path.join(APP_DIR, "codeparser", "queries", "*.scm"), "codeparser/queries"),
+    ],
     hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},

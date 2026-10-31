@@ -56,11 +56,26 @@ CREATE TABLE IF NOT EXISTS node (
   file_path   TEXT,
   line        INTEGER DEFAULT 0,
   line_end    INTEGER DEFAULT -1,
+  -- ★ 签名（`static int f(int a)`）—— 给读源码的人看，⛔ 不算身份
+  signature   TEXT NOT NULL DEFAULT '',
   -- ★ 来源：parsed（解析器给的）/ manual（人手补的）—— 图上要标出来
   origin      TEXT NOT NULL DEFAULT 'parsed',
   UNIQUE (project_id, vid)
 );
 CREATE INDEX IF NOT EXISTS ix_node_name ON node (project_id, name);
+
+-- ★★ 结构体/类的字段（`HAS_PROPERTY` 那种信息）⚠
+--   ⛔ **不建节点、不建边**：字段上写笔记没有意义，但"它有哪些字段"对读源码有用
+--   ⇒ 只在节点详情里列出来，图不受影响
+CREATE TABLE IF NOT EXISTS node_field (
+  id        INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  owner_vid INTEGER NOT NULL,
+  name      TEXT NOT NULL,
+  type_text TEXT NOT NULL DEFAULT '',
+  line      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_field_owner ON node_field (project_id, owner_vid);
 
 CREATE TABLE IF NOT EXISTS edge (
   id          INTEGER PRIMARY KEY,
@@ -124,6 +139,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         ("node", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
         ("edge", "origin", "TEXT NOT NULL DEFAULT 'parsed'"),
         ("project", "parse_state", "TEXT NOT NULL DEFAULT 'none'"),
+        ("node", "signature", "TEXT NOT NULL DEFAULT ''"),
+        ("edge", "line", "INTEGER NOT NULL DEFAULT 0"),
         ("project", "parse_error", "TEXT NOT NULL DEFAULT ''"),
     ):
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -269,7 +286,13 @@ def find_project(conn: sqlite3.Connection, ref: str) -> sqlite3.Row | None:
 # ---------------------------------------------------------------- 图
 
 
-def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], edges: list[dict]) -> dict:
+def replace_graph(
+    conn: sqlite3.Connection,
+    project_id: int,
+    nodes: list[dict],
+    edges: list[dict],
+    fields: list[dict] | None = None,
+) -> dict:
     """整图替换（解析完一次性写入）；★ **笔记按 (kind, 文件, 名字) 迁移到新 vid**
 
     ## 为什么需要迁移
@@ -308,8 +331,9 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
         conn.execute("DELETE FROM edge WHERE project_id = ? AND origin = 'parsed'", (project_id,))
         conn.execute("DELETE FROM node WHERE project_id = ? AND origin = 'parsed'", (project_id,))
         conn.executemany(
-            """INSERT OR REPLACE INTO node (project_id, vid, kind, name, qname, file_path, line, line_end, origin)
-               VALUES (?,?,?,?,?,?,?,?,'parsed')""",
+            """INSERT OR REPLACE INTO node
+               (project_id, vid, kind, name, qname, file_path, line, line_end, signature, origin)
+               VALUES (?,?,?,?,?,?,?,?,?,'parsed')""",
             [
                 (
                     project_id,
@@ -320,17 +344,41 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
                     str(n.get("file_path") or ""),
                     int(n.get("line") or 0),
                     int(n.get("line_end") or -1),
+                    str(n.get("signature") or "")[:200],
                 )
                 for n in nodes
             ],
         )
         conn.executemany(
-            "INSERT INTO edge (project_id, src_vid, dst_vid, kind) VALUES (?,?,?,?)",
+            "INSERT INTO edge (project_id, src_vid, dst_vid, kind, line) VALUES (?,?,?,?,?)",
             [
-                (project_id, int(e.get("src_vid") or 0), int(e.get("dst_vid") or 0), str(e.get("kind") or "call"))
+                (
+                    project_id,
+                    int(e.get("src_vid") or 0),
+                    int(e.get("dst_vid") or 0),
+                    str(e.get("kind") or "call"),
+                    # ★ 调用点行号（没有就 0）
+                    int(e.get("line") or 0),
+                )
                 for e in edges
             ],
         )
+        # ★ 字段表随图一起换（旧的一次清掉，避免残留）
+        conn.execute("DELETE FROM node_field WHERE project_id = ?", (project_id,))
+        if fields:
+            conn.executemany(
+                "INSERT INTO node_field (project_id, owner_vid, name, type_text, line) VALUES (?,?,?,?,?)",
+                [
+                    (
+                        project_id,
+                        int(f.get("owner_vid") or 0),
+                        str(f.get("name") or ""),
+                        str(f.get("type_text") or ""),
+                        int(f.get("line") or 0),
+                    )
+                    for f in fields
+                ],
+            )
         conn.execute(
             "UPDATE project SET graph_rev = graph_rev + 1, parsed_at = ? WHERE id = ?",
             (time.strftime("%Y-%m-%dT%H:%M:%S"), project_id),
@@ -370,9 +418,19 @@ def replace_graph(conn: sqlite3.Connection, project_id: int, nodes: list[dict], 
 
 def nodes_of(conn: sqlite3.Connection, project_id: int, limit: int = 500, offset: int = 0) -> list[dict]:
     rows = conn.execute(
-        """SELECT vid, kind, name, qname, file_path, line, line_end
+        """SELECT vid, kind, name, qname, file_path, line, line_end, signature
            FROM node WHERE project_id = ?
-           ORDER BY file_path, line LIMIT ? OFFSET ?""",
+           -- ★★ 入口排第一排（main / __main__ / main.*）⚠
+           --   ⚠ 必须排在**后端**：列表是分页的，前端只能排已加载的那 100 条
+           --     （踩到：main 在 init/main.c，按 file_path 排在 100 名之外，永远看不见）
+           ORDER BY
+             CASE
+               WHEN kind IN ('function','method') AND name IN ('main','__main__') THEN 0
+               WHEN kind = 'file' AND lower(name) LIKE 'main.%' THEN 0
+               ELSE 1
+             END,
+             file_path, line
+           LIMIT ? OFFSET ?""",
         (project_id, limit, offset),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -380,7 +438,8 @@ def nodes_of(conn: sqlite3.Connection, project_id: int, limit: int = 500, offset
 
 def node_by_vid(conn: sqlite3.Connection, project_id: int, vid: int) -> dict | None:
     r = conn.execute(
-        "SELECT vid, kind, name, qname, file_path, line, line_end FROM node WHERE project_id = ? AND vid = ?",
+        """SELECT vid, kind, name, qname, file_path, line, line_end, signature
+           FROM node WHERE project_id = ? AND vid = ?""",
         (project_id, vid),
     ).fetchone()
     return dict(r) if r else None
@@ -755,14 +814,14 @@ def remove_edge(conn: sqlite3.Connection, project_id: int, edge_id: int) -> bool
 def edges_of_node(conn: sqlite3.Connection, project_id: int, vid: int) -> dict:
     """某节点的出边/入边（带对端名字，供改图面板显示）"""
     out = conn.execute(
-        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin,
+        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin, e.line,
                   nd.name AS to_name, nd.file_path AS to_file
            FROM edge e LEFT JOIN node nd ON nd.project_id = e.project_id AND nd.vid = e.dst_vid
            WHERE e.project_id = ? AND e.src_vid = ? ORDER BY e.id""",
         (project_id, vid),
     ).fetchall()
     inn = conn.execute(
-        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin,
+        """SELECT e.id, e.src_vid, e.dst_vid, e.kind, e.origin, e.line,
                   nd.name AS from_name, nd.file_path AS from_file
            FROM edge e LEFT JOIN node nd ON nd.project_id = e.project_id AND nd.vid = e.src_vid
            WHERE e.project_id = ? AND e.dst_vid = ? ORDER BY e.id""",

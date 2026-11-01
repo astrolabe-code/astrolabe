@@ -82,12 +82,33 @@ class QueryParser:
         {"class", "struct", "union", "interface", "record", "type"}
     )
 
+    def set_parse_timeout(self, seconds: float) -> None:
+        """★ 给**单个文件**设 C 层超时（容器/CLI 由扫描器每文件设一次）⚠
+
+        ⚠ 为什么必须在 C 层：墙钟预算只在"文件之间"检查，
+          一个文件卡在 tree-sitter 里时 Python 侧根本没有插话的机会。
+        ⚠ 超时表现为 `parse()` 抛 `ValueError` —— 调用方按"这个文件跳过"处理。
+        """
+        try:
+            self._parser.timeout_micros = max(1, int(seconds * 1_000_000))
+        except Exception:  # noqa: BLE001 —— 旧版 binding 没有这个属性就忽略
+            pass
+
     def parse(self, source: bytes, path: str) -> ParseResult:
         result = ParseResult()
+        self.last_timed_out = False
         try:
             tree = self._parser.parse(source)
         except Exception as exc:  # noqa: BLE001
-            result.errors.append(f"解析失败 {path}: {exc}")
+            # ★★ C 层超时（`set_parse_timeout`）也走这条路 ⚠
+            #   py-tree-sitter 超时抛 `ValueError("Parsing failed")`；
+            #   ⚠ 不区分出来的话，扫描器看到的是"解析成功但 0 个节点"，
+            #     统计里会显示成一堆空文件，而不是"这个文件超时被跳过"
+            if isinstance(exc, ValueError) and "Parsing failed" in str(exc):
+                self.last_timed_out = True
+                result.errors.append(f"解析超时 {path}")
+            else:
+                result.errors.append(f"解析失败 {path}: {exc}")
             return result
 
         file_name = path.rsplit("/", 1)[-1]

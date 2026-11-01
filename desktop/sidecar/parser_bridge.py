@@ -41,6 +41,10 @@ def _index(nodes_with_vid):
     by_uid: dict[str, int] = {}
     by_name: dict[str, list[tuple[int, str, int]]] = {}
     by_qname: dict[str, list[int]] = {}
+    # ★★ 末段 → [(qname, vid)]：限定调用的"后缀匹配"以前要遍历**全部** qname ⚠
+    #   实测 fmt：38,690,889 次 endswith / 14.9 秒 ⇒ 用一个普通对手就能拖住解析
+    #   现在只在"同名末段"的小桶里比，量级从 O(边×节点) 降到 O(边×同名数)
+    by_qtail: dict[str, list[tuple[str, int]]] = {}
     by_basename: dict[str, list[int]] = {}
     by_stem: dict[str, list[int]] = {}
 
@@ -48,19 +52,26 @@ def _index(nodes_with_vid):
         vid = rec["vid"]
         by_uid.setdefault(uid, vid)
         if rec.get("qname"):
-            by_qname.setdefault(rec["qname"], []).append(vid)
+            qn = rec["qname"]
+            by_qname.setdefault(qn, []).append(vid)
+            for sep in ("::", "."):
+                if sep in qn:
+                    by_qtail.setdefault(qn.rpartition(sep)[2], []).append((qn, vid))
+                    break
+            else:
+                by_qtail.setdefault(qn, []).append((qn, vid))
         by_name.setdefault(rec["name"], []).append((vid, rec["file_path"], rec["line"]))
         base = os.path.basename(rec["file_path"] or "")
         if base:
             by_basename.setdefault(base, []).append(vid)
             by_stem.setdefault(os.path.splitext(base)[0], []).append(vid)
-    return by_uid, by_name, by_qname, by_basename, by_stem
+    return by_uid, by_name, by_qname, by_basename, by_stem, by_qtail
 
 
 def _resolve(
     ref: str, idx, stats: dict, caller_qname: str = "", caller_lang: str = "", lang_of=None
 ) -> int | None:
-    by_uid, by_name, by_qname, by_basename, by_stem = idx
+    by_uid, by_name, by_qname, by_basename, by_stem, by_qtail = idx
     if not ref:
         return None
 
@@ -105,7 +116,9 @@ def _resolve(
             return cands[0]
 
         # 次级：限定名是路径后缀（`mod.A.run` 对 `A.run`），唯一才算
-        suffix = [v for k, vs in by_qname.items() if k.endswith(sep + target) for v in vs]
+        # ★ 只在"末段同名"的桶里比后缀（⛔ 不再遍历全部 qname）
+        bucket = by_qtail.get(tail) or []
+        suffix = [v for qn, v in bucket if qn.endswith(sep + target)]
         if len(suffix) == 1:
             return suffix[0]
 
@@ -185,11 +198,12 @@ def parse_project(
 
     # ★★ 类外定义归位（C++: `void C::f(){}` 挂回 C 下）—— 两版共用同一份规则 ⚠
     #   必须在这里做：类在 .h、方法在 .cc ⇒ 只有整项目解析完才查得到那个类
-    scope_stats = reparent_contains(result)
+    _deadline = getattr(scan, "deadline_at", 0.0) or None
+    scope_stats = reparent_contains(result, deadline=_deadline)
     # ★★ 导入/包含按**文件级**解析（两版共用 `codeparser/imports.py`）⚠
     #   · 只在"项目里存在且唯一"时连；外部依赖连不上 = 正确
     #   · 同一对文件只留一条边（import 五次不该画五条线）
-    import_stats = resolve_imports(result)
+    import_stats = resolve_imports(result, deadline=_deadline)
 
     records: list[tuple[dict, str]] = []
     canons: list[str] = []

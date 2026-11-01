@@ -46,6 +46,8 @@ Java / Python 不受影响（方法只能写在类体内），**只有 C++ 的�
 
 from __future__ import annotations
 
+import time
+
 from .base import ParseResult
 
 #: 能"装下"别的定义的容器种类（只有它们才能当 contains 的父级）
@@ -92,7 +94,7 @@ def split_scope(qname: str, sep: str) -> str:
     return qname[:last] if last >= 0 else ""
 
 
-def reparent_contains(result: ParseResult) -> dict[str, int]:
+def reparent_contains(result: ParseResult, deadline: float | None = None) -> dict[str, int]:
     """★ 把 `contains` 边从"词法父级"改挂到"名字所指的类"下（原地修改）
 
     Args:
@@ -102,7 +104,7 @@ def reparent_contains(result: ParseResult) -> dict[str, int]:
         `{"moved":…, "ambiguous":…, "unresolved":…, "dropped":…}`
         —— ⚠ 只做统计，不改任何节点身份（vid 与 canonical 完全不受影响）
     """
-    stats = {"moved": 0, "ambiguous": 0, "unresolved": 0, "dropped": 0}
+    stats = {"moved": 0, "ambiguous": 0, "unresolved": 0, "dropped": 0, "truncated": 0}
     if not result.nodes or not result.edges:
         return stats
 
@@ -124,7 +126,11 @@ def reparent_contains(result: ParseResult) -> dict[str, int]:
     # 已有边（用于去重：挪过去之后可能和另一条重复）
     existing = {(e.from_uid, e.to_uid, e.type) for e in result.edges}
 
-    for edge in result.edges:
+    for _i, edge in enumerate(result.edges):
+        # ★ 与解析共享同一份预算：超时就不再做归位（* 图不完整 ≠ 解析失败）
+        if deadline is not None and _i % 500 == 0 and time.monotonic() > deadline:
+            stats["truncated"] = 1
+            break
         if edge.type != "contains":
             continue
 

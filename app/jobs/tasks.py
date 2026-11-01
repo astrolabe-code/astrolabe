@@ -14,6 +14,7 @@ import logging
 import os
 
 from codeparser.scanner import scan_and_parse
+from core import appsettings
 from graph.writer import EmptyGraph, GraphImmutable, write_graph
 from jobs.models import Job
 
@@ -156,7 +157,20 @@ def run_parse_job(job: Job) -> None:
             last_percent = percent
             _progress(job, percent, f"解析 {rel}")
 
-    result, scan = scan_and_parse(root, on_file=_on_file)
+    # ★★★ 解析预算来自**用户配额**（档位默认 → 后台参数 → 用户覆盖，三级）⚠
+    #   超了就停并记原因 —— 图不完整 ≠ 解析失败（⛔ 不能因此禁止写笔记）
+    quota = appsettings.quota_for(
+        getattr(owner, "profile", None).tier if getattr(owner, "profile", None) else "free",
+        getattr(owner, "profile", None),
+    )
+    result, scan = scan_and_parse(
+        root,
+        on_file=_on_file,
+        max_files=int(quota.get("parse_files_max") or 5000),
+        max_seconds=float(quota.get("parse_seconds_max") or 120),
+        max_nodes=int(quota.get("parse_nodes_max") or 300_000),
+        file_timeout_s=float(quota.get("parse_file_seconds") or 5),
+    )
 
     log.info(
         "解析完成 root=%s 文件=%d/%d 节点=%d 边=%d 语言=%s",
@@ -195,7 +209,7 @@ def run_parse_job(job: Job) -> None:
     try:
         # ★★★ `B179`：写进【基图】（★ 不再挂项目）——
         #   ★★ 同一个 sha 的项目**共用这一份** ⚠
-        stats = write_graph(base_graph, result)
+        stats = write_graph(base_graph, result, deadline_at=scan.deadline_at)
     except EmptyGraph:
         # ★ 最后防线（* 实际到不了：上面已保证有节点）——
         #   ⚠ 2026-10-17：**不做“建了再删”**（所有者裁定：源头杜绝，别善后删除）⚠

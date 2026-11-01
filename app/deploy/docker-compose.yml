@@ -143,6 +143,8 @@ services:
       target: public                      # ★ 公开版构建目标
     restart: unless-stopped
     env_file: [.env]
+    # ★ 与 worker 同口径的内存上限（Web 进程本身不该吃这么多）
+    mem_limit: 1g
     volumes:
       # ★ 源码挂出来 —— 可直接看 / 直接改（DEPLOYMENT.md D1）
       - /home/ma/astrolabe/app:/app
@@ -169,6 +171,12 @@ services:
     image: astrolabe-web                  # ★ 复用 web 的镜像（见上方纪律）
     restart: unless-stopped
     command: python manage.py run_worker
+    # ★★★ **内存硬上限**（2026-11-01）：解析是全量驻留内存的 ⚠
+    #   实测：2MB C 文件 → 8.9 万节点 / 300MB；几千个文件就能把宿主机吃光。
+    #   ⛔ 没有上限时 OOM 会打到宿主机，可能连带 db / nginx 一起挂（整站不可用）。
+    #   ✅ 有上限时最坏结果是**这一个任务失败**，其它服务照常。
+    mem_limit: 1500m
+    pids_limit: 256
     env_file: [.env]
     volumes:
       - /home/ma/astrolabe/app:/app

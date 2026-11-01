@@ -38,6 +38,13 @@ DEFAULT_QUOTA_FREE: dict[str, Any] = {
     #   ★ 这是"VIP 空间更大"的**落地处**：★ 单仓库上限一样，但**能放的总量不同**。
     "storage_bytes_max": 512 * 1024 * 1024,        # ★ 512 MB
     "storage_files_max": 20_000,                    # ★ 所有项目加起来最多多少个文件
+    # ★★★ **解析预算**（2026-11-01）—— ★ 防"很多文件 / 一个病态文件"把服务器拖住 ⚠
+    #   ⚠ 每一条都是**硬闸**：超了就停下来并记原因，⛔ 不是"解析失败"
+    #     （截断只让图不完整，绝不能因此禁止写笔记）
+    "parse_files_max": 5_000,       # ★ 一次最多解析多少个文件
+    "parse_seconds_max": 120,       # ★ 整次解析的墙钟预算（秒）
+    "parse_nodes_max": 300_000,     # ★ 最多产出多少个节点（防内存爆掉）
+    "parse_file_seconds": 5,        # ★ **单个文件**的解析上限（含 C 层超时）
     "parse_concurrency": 1,         # ★ 同时排队几个解析
     "queue_priority": 0,            # ★ 队列优先级
     "ugc_per_hour": 30,             # ★ UGC 写入频率
@@ -57,6 +64,10 @@ QUOTA_FIELDS: dict[str, str] = {
     "repo_bytes_max": "单个仓库的源码大小上限（字节）",
     "storage_bytes_max": "所有项目加起来能占多少存储（字节）",
     "storage_files_max": "所有项目加起来最多多少个文件",
+    "parse_files_max": "一次最多解析多少个文件（超了就停，图不完整但不失败）",
+    "parse_seconds_max": "整次解析最多跑多少秒（★ 防长时间占着服务器）",
+    "parse_nodes_max": "最多产出多少个节点（★ 防内存被撑爆）",
+    "parse_file_seconds": "单个文件最多解析多少秒（★ 防一个病态文件卡死整次解析）",
     "parse_concurrency": "同时排队几个解析任务（★ 越大出图越快）",
     "queue_priority": "队列优先级（★ 数值越大越先出图）",
     "ugc_per_hour": "每小时最多写多少条笔记 / 评论（★ 防刷）",

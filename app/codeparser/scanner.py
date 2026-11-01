@@ -43,6 +43,12 @@ DEFAULT_MAX_FILES = 5000
 DEFAULT_MAX_SECONDS = 120.0            # 墙钟时间
 DEFAULT_MAX_TOTAL_BYTES = 256 << 20    # 累计读取 256MB
 DEFAULT_MAX_DEPTH = 64                 # 目录嵌套深度（防病态结构）
+#: ★★ 单次解析最多产出多少节点（防"一个 2MB 文件 8.9 万节点"把内存撑爆）⚠
+#:   实测：2MB C 文件 → 89,044 节点 / 300MB 内存
+DEFAULT_MAX_NODES = 300_000
+#: ★★ **单个文件**的解析上限（秒）—— 走 tree-sitter 的 C 层超时 ⚠
+#:   为什么必需：墙钟预算只在"文件之间"检查，一个文件卡在 C 层时 Python 收不到信号
+DEFAULT_FILE_TIMEOUT_S = 5.0
 
 
 def _human_bytes(n: int) -> str:
@@ -67,6 +73,9 @@ class ScanStats:
     #: ⚠ 它**不是错误**：截断说明图可能不完整，但不代表解析失败，
     #:   更不能因此禁止用户写笔记（两者语义完全不同）
     stop_reason: str = ""
+    #: ★★ 本次解析的**截止时刻**（`time.monotonic()`）—— 后处理（作用域归位 / 导入解析）
+    #:   也要吃同一份预算，否则它们能在预算之外一直跑 ⚠；0 = 不限
+    deadline_at: float = 0.0
 
     def skip(self, reason: str) -> None:
         self.files_skipped += 1
@@ -84,6 +93,8 @@ def scan_and_parse(
     max_seconds: float | None = DEFAULT_MAX_SECONDS,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    max_nodes: int = DEFAULT_MAX_NODES,
+    file_timeout_s: float = DEFAULT_FILE_TIMEOUT_S,
 ) -> tuple[ParseResult, ScanStats]:
     """扫描目录并逐文件解析。
 
@@ -118,6 +129,7 @@ def scan_and_parse(
 
     excludes = EXCLUDE_DIRS | (extra_excludes or set())
     t_end = (time.monotonic() + max_seconds) if max_seconds else None
+    stats.deadline_at = t_end or 0.0
     stop_reason = ""
 
     # ---------------------------------------------------------------- ① 收集候选
@@ -206,7 +218,22 @@ def scan_and_parse(
             stats.skip("读取失败")
             continue
 
-        one = parser.parse(source, rel)
+        # ★★ 单文件 C 层超时：超了 tree-sitter 抛 ValueError ⇒ 只损失这一个文件 ⚠
+        set_timeout = getattr(parser, "set_parse_timeout", None)
+        if set_timeout is not None and file_timeout_s:
+            set_timeout(file_timeout_s)
+
+        try:
+            one = parser.parse(source, rel)
+        except ValueError:
+            # ⚠ 只有 tree-sitter 的"超时"会走到这里（语法错误不会抛，会记 errors）
+            stats.skip("单文件解析超时")
+            continue
+
+        # ★ 超时在 `QueryParser` 里被兜住了（返回空结果）⇒ 看它的标记再记一次跳过
+        if getattr(parser, "last_timed_out", False):
+            stats.skip("单文件解析超时")
+            continue
         merged.nodes.extend(one.nodes)
         merged.edges.extend(one.edges)
         # ★★ 字段也要合并 —— 漏了这一行，结构体成员在整项目解析里会**全部消失**
@@ -217,6 +244,13 @@ def scan_and_parse(
             merged.errors.extend(one.errors)
 
         stats.files_parsed += 1
+
+        # ★★ 节点上限：超了就停（* 图不完整 ≠ 解析失败）
+        if max_nodes and len(merged.nodes) > max_nodes:
+            stats.stop_reason = (
+                f"节点数超过 {max_nodes} 上限，剩余 {total - idx + 1} 个文件未处理"
+            )
+            break
         stats.by_lang[lang] = stats.by_lang.get(lang, 0) + 1
 
         if on_file is not None:

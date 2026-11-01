@@ -137,7 +137,9 @@ class GraphImmutable(Exception):
     """
 
 
-def write_graph(base_graph: BaseGraph, result: ParseResult) -> WriteStats:
+def write_graph(
+    base_graph: BaseGraph, result: ParseResult, *, deadline_at: float = 0.0
+) -> WriteStats:
     """★★ **把一份解析产物写进【基图】**（★ `B179` · 2026-10-13）。
 
     ## ⚠★★ `B179` 改了什么（★ 这一条是本函数的全部变化）
@@ -173,9 +175,10 @@ def write_graph(base_graph: BaseGraph, result: ParseResult) -> WriteStats:
     # ★★ 类外定义归位（`void C::f(){}` 应挂在 C 下，而不是词法父级）⚠
     #   ⚠ 与个人版 `parser_bridge` 调的是**同一份规则**（app/codeparser/postpass.py），
     #     避免两版各写一套、结果不一致
-    scope_stats = reparent_contains(result)
+    _deadline = deadline_at or None
+    scope_stats = reparent_contains(result, deadline=_deadline)
     # ★★ 导入/包含按文件级解析（与个人版**同一个函数**，避免两版口径不同）
-    import_stats = resolve_imports(result)
+    import_stats = resolve_imports(result, deadline=_deadline)
 
     stats = WriteStats()
     stats.scope_moved = scope_stats["moved"]

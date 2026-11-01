@@ -55,19 +55,32 @@ class _Index:
     """引用索引 —— 由已写入的节点构建，供边的引用解析使用。"""
 
     by_uid: dict[str, Node]
+    by_qname: dict[str, list[Node]]
     by_name: dict[str, list[Node]]
     by_file_path: dict[str, Node]
     by_file_basename: dict[str, list[Node]]
     by_file_stem: dict[str, list[Node]]
 
     @classmethod
-    def build(cls, nodes: dict[str, Node]) -> "_Index":
+    def build(
+        cls, nodes: dict[str, Node], qname_by_uid: dict[str, str] | None = None
+    ) -> "_Index":
+        """★ 建索引 —— `qname` 优先取**本次解析产物**（`qname_by_uid`）⚠
+
+        ⛔ 不取 `Node.qname`：那是"基准值"，可能属于别的版本；
+          用它建名字索引会让跨版本的限定调用接错节点。
+        """
+        by_qname: dict[str, list[Node]] = {}
         by_name: dict[str, list[Node]] = {}
         by_file_path: dict[str, Node] = {}
         by_file_basename: dict[str, list[Node]] = {}
         by_file_stem: dict[str, list[Node]] = {}
 
-        for node in nodes.values():
+        qname_by_uid = qname_by_uid or {}
+        for uid, node in nodes.items():
+            qname = qname_by_uid.get(uid) or node.qname
+            if qname:
+                by_qname.setdefault(qname, []).append(node)
             if node.kind in _CALLABLE_KINDS:
                 by_name.setdefault(node.name, []).append(node)
             elif node.kind == kinds.KIND_IDS["file"]:
@@ -80,6 +93,7 @@ class _Index:
 
         return cls(
             by_uid=nodes,
+            by_qname=by_qname,
             by_name=by_name,
             by_file_path=by_file_path,
             by_file_basename=by_file_basename,
@@ -118,13 +132,7 @@ class GraphImmutable(Exception):
     """
 
 
-def write_graph(
-    base_graph: BaseGraph,
-    result: ParseResult,
-    *,
-    replace: bool = False,
-    replace_reason: str = "",
-) -> WriteStats:
+def write_graph(base_graph: BaseGraph, result: ParseResult) -> WriteStats:
     """★★ **把一份解析产物写进【基图】**（★ `B179` · 2026-10-13）。
 
     ## ⚠★★ `B179` 改了什么（★ 这一条是本函数的全部变化）
@@ -148,15 +156,14 @@ def write_graph(
       全挂在「文件 + 行区间」上**（`B98` 的 L0）；⚠ 重新解析会让那些行号**全部错位**
       —— ★★ 而**没有任何机制能自动发现**。
 
-    ⚠★★ **`replace=True` 的杀伤面变大了**（★ 如实说明）：★ 以前它只影响**一个项目**；
-      ★★ 现在它影响**所有绑在这份基图上的项目** ⚠ ⇒ ★★ **生产路径上绝不能用** ⚠
-      （★ 只留给调试，★ 且必须给 `replace_reason` —— ★ 让"谁覆盖过"留得下痕迹）
+    ⚠★★ **没有"重新解析"这条路**（2026-11-01 所有者重申：「**我说了，不允许重新解析**」）：
+      曾经的 `replace=True`（"仅调试"后门）**已整段删除** ——
+      ★ 它一按下去就把**所有绑在这份基图上的项目**的行区间全部打错，且没人能发现 ⚠
+      ★ 要另一个版本 ⇒ **新建基图/项目**；质量差 ⇒ **删了重建**。
 
     Args:
         base_graph: ★ 要写哪一份基图（★ 由调用方按【仓库 + sha】取好 —— 见 `jobs/tasks.py`）
         result: 解析产物（可能来自多个文件，已汇总）
-        replace: ⚠★ **仅供调试** —— 见上（★ 生产路径一律用默认值 `False`）
-        replace_reason: ★ `replace=True` 时必填（⚠ 会写进审计日志）
     """
     # ★★ 类外定义归位（`void C::f(){}` 应挂在 C 下，而不是词法父级）⚠
     #   ⚠ 与个人版 `parser_bridge` 调的是**同一份规则**（app/codeparser/postpass.py），
@@ -177,22 +184,19 @@ def write_graph(
         if bg is None:
             raise GraphImmutable("这份基图已经不在了（可能被并发删掉了）。")
 
-        # ★★ 定版闸门（`B220` 之后节点不再挂基图 ⇒* 用 `built_at` 判）⚠
+        # ★★★ 定版闸门（`B220` 之后节点不再挂基图 ⇒* 用 `built_at` 判）⚠
+        #
+        # ⚠★★ **没有 replace / force 这条路**（2026-11-01 所有者重申：
+        #   「**我说了，不允许重新解析**」）——
+        #   曾经的 `replace=True`（"仅调试"）已**整段删除**：
+        #   · ★ 它是一扇"一不小心就把整份基图换掉"的后门，而且换掉之后
+        #     **解释里的行区间全部错位，没人能发现** ⚠
+        #   · ★ 要另一个版本 ⇒ **新建项目/新基图**；质量差 ⇒ 删了重建
         if bg.built_at is not None:
-            if not replace:
-                raise GraphImmutable(
-                    "这份基图已经建好了，不会重新生成。"
-                    "★ 要看别的版本，请换一个分支 / tag 再拉一次。"
-                )
-            if not (replace_reason or "").strip():
-                raise ValueError("replace=True 必须给出 replace_reason（⚠ 会写进审计日志）")
-            # ⚠ 覆盖（* 仅调试）：* 把本版本从 versions 里摘掉，* ⛔ 不动其它版本 ⚠
-            for n in Node.objects.filter(versions__contains=[bg.pk]).only("node_id", "versions"):
-                n.versions = [v for v in n.versions if v != bg.pk]
-                n.save(update_fields=["versions", "updated_at"])
-            for e in Edge.objects.filter(versions__contains=[bg.pk]).only("id", "versions"):
-                e.versions = [v for v in e.versions if v != bg.pk]
-                e.save(update_fields=["versions", "updated_at"])
+            raise GraphImmutable(
+                "这份基图已经建好了，不会重新生成。"
+                "★ 要看别的版本，请换一个分支 / tag 再拉一次。"
+            )
 
         # ---------------------------------------------------------- ⓪-1 ★★ 仓库（`B220`）
         repo, _ = Repo.objects.get_or_create(
@@ -239,17 +243,58 @@ def write_graph(
                 to_create.append(node)
                 existing[vid] = node
             else:
-                # ★★ 复用：* 把这个版本追加进它的 `versions`（* 同一个节点，* 不重复存）⚠
+                # ★★ 复用：* 这个版本里也有同一个节点（* 内容身份相同）⇒ 共用一行，省存储 ⚠
+                #
+                # ★★★ 会随版本变的东西**一律进 `version_attrs`**（`{bg_id: {...}}`）⚠
+                #   为什么不能直接改 `signature` / `qname` 这两列：
+                #   · 这两列是**基准值**（最早写这个节点的那份），其它版本都靠它兜底
+                #   · 改了基准 ⇒ 先写的那个版本（它没有 map 键）会显示后写版本的值
+                #     ⇒ 看起来合理、其实是串版本，最难发现的那种错
+                fields: list[str] = []
                 if bg.pk not in node.versions:
                     node.versions = sorted(set(node.versions) | {bg.pk})
-                    node.save(update_fields=["versions", "updated_at"])
+                    fields.append("versions")
+
+                new_sig = (pn.signature or "")[:512]
+                new_qname = (pn.qname or "")[:512]
+
+                # 老数据：基准是空的 ⇒ 用本次值补上（这不算"差异"）
+                if not (node.signature or "") and new_sig:
+                    node.signature = new_sig
+                    fields.append("signature")
+                if not (node.qname or "") and new_qname:
+                    node.qname = new_qname
+                    fields.append("qname")
+
+                # 再把"与基准不同"的部分记进这个版本的键里（相同就不写，省存储）
+                diff: dict[str, str] = {}
+                if new_sig and new_sig != (node.signature or ""):
+                    diff["sig"] = new_sig
+                if new_qname and new_qname != (node.qname or ""):
+                    diff["qname"] = new_qname
+
+                attrs = dict(node.version_attrs or {})
+                key = str(bg.pk)
+                if diff:
+                    attrs[key] = diff
+                else:
+                    attrs.pop(key, None)   # 与基准相同 ⇒ 不留空壳
+                if (node.version_attrs or {}) != attrs:
+                    node.version_attrs = attrs
+                    fields.append("version_attrs")
+
+                if fields:
+                    node.save(update_fields=[*fields, "updated_at"])
             seen[pn.uid] = node
 
         # ★ PostgreSQL 上 bulk_create 会回填主键（* 边解析要用）✅
         Node.objects.bulk_create(to_create, batch_size=1000)
         stats.nodes_written = len(parsed)
 
-        index = _Index.build(seen)
+        # ★★ 名字索引必须用**本次解析产物**的 qname ⚠
+        #   ⛔ 不能读 `Node.qname`：那是基准值，可能属于别的版本
+        #   ⇒ 用错的话，跨版本的限定调用（`self.f()` / `A.f()`）会接到错的节点上
+        index = _Index.build(seen, qname_by_uid={pn.uid: pn.qname for pn in parsed})
 
         # ---------------------------------------------------------- ② 边
         # ★★★ `B176` ④：**传染性许可（GPL 等）⇒ 只出节点、不生成调用关系** ⚠
@@ -332,21 +377,6 @@ def write_graph(
         except Exception:
             pass
 
-        if replace:
-            # ⚠ 覆盖是**例外** ⇒ ★ 必须留痕（★ 见函数文档）
-            from core.models import AuditLog
-
-            AuditLog.objects.create(
-                action="base_graph.replaced",
-                target_kind="BaseGraph",
-                target_id=str(bg.pk),
-                detail={
-                    "repo": f"{bg.provider}:{bg.repo_full_name}@{bg.sha[:12]}",
-                    "reason": replace_reason[:500],
-                    "nodes": len(result.nodes),
-                },
-            )
-
         # ⚠★★ 邻域缓存的失效**挪到了"项目绑定基图"那一步**（★ `B179`）——
         #   ★ 缓存命名空间是【按项目】的（`GraphRevision.project_ref`）⚠
         #   ★★ 而基图是**共享**的 ⇒ ★ 在这里 bump 会**不知道该 bump 谁** ⚠
@@ -394,6 +424,20 @@ def _resolve(ref: str, index: _Index, stats: WriteStats) -> Node | None:
             return None
         # ★ 同名多个（重载 / 跨文件同名）⇒ 取路径最短的，保证同一输入结果稳定
         return min(candidates, key=lambda n: (len(n.file_path), n.file_path, n.line))
+
+    if what in ("qcall", "type"):
+        # ★★ 限定调用（`a.run` / `ns::f`）与基类（`extends` / `implements`）⚠
+        #   ⚠ 这两种引用以前**只有个人版认识**（`parser_bridge`），网页版走到这里
+        #     会落到 `_note(stats, ref)` 被丢掉 ⇒ 网页版一条限定调用、一条继承边都没有（踩到）
+        #   判准与个人版一致：限定名精确唯一 ⇒ 连；否则退到"名字唯一"；再不行就不连。
+        exact = index.by_qname.get(value) or []
+        if len(exact) == 1:
+            return exact[0]
+        plain = index.by_name.get(value.rsplit("::", 1)[-1].rsplit(".", 1)[-1]) or []
+        if len(plain) == 1:
+            return plain[0]
+        _note(stats, ref)
+        return None
 
     if what == "include":
         raw = value.strip().strip('<>"').strip()

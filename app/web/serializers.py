@@ -67,6 +67,18 @@ def node_json(
         # ⚠ 兜底（★ 单节点场景可用；★ **列表端点别走这里** —— 那是 N+1）
         #   ⚠★ `B220`：* 节点跨版本共用 ⇒* 拿它所属的**最新版本**当锚（* 只为拼 blob 链接）⚠
         bg = BaseGraph.objects.filter(pk=max(node.versions)).first()
+
+    # ★★★ 会随版本变的解析产物：按**当前基图**取，取不到就用基准（`version_attrs`）⚠
+    #   · 节点跨版本共用一行 ⇒ 基准值可能属于别的版本
+    #   · 只有"这个版本与基准不同"时才存了键 ⇒ 绝大多数节点这里什么都不做
+    #   · ⛔ 不回落到别的版本的值（那等于给用户看错的签名）
+    if bg is not None:
+        attrs = (node.version_attrs or {}).get(str(bg.pk)) or {}
+        if attrs.get("sig"):
+            data["signature"] = attrs["sig"]
+        if attrs.get("qname"):
+            data["qname"] = attrs["qname"]
+
     blob = scope.blob_url_of(node, bg)
     if blob:
         data["blob_url"] = blob

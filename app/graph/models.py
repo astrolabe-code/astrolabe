@@ -74,6 +74,7 @@ class Repo(TimeStampedModel):
             ),
         ]
         verbose_name = "仓库"
+        verbose_name_plural = "仓库"
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.repo_full_name}"
@@ -222,6 +223,7 @@ class BaseGraph(TimeStampedModel):
             models.Index(fields=["provider", "repo_full_name"]),
         ]
         verbose_name = "基图"
+        verbose_name_plural = "基图"
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.repo_full_name}@{self.sha[:12]}"
@@ -420,6 +422,23 @@ class Node(UidMixin, TimeStampedModel):
 
     lang = models.CharField(max_length=32)
     signature = models.CharField(max_length=512, blank=True, default="")
+    #: ★★★ **会随版本变**的解析产物（`{"190": {"sig": "...", "qname": "..."}}`）⚠
+    #:
+    #: ```
+    #: 为什么需要它：
+    #:   · 节点跨版本共用一行（`B220`，省存储）⇒ 但 signature / qname 在
+    #:     不同版本里可能不同（改参数、外层类改名）⇒ 单列只能存一份 ⇒ 互相覆盖
+    #:   · 折中：`signature` / `qname` 两列 = **基准值**（最早写这个节点的那份），
+    #:     这里只存**与基准不同**的版本 ⇒ 绝大多数节点这个字段是 `{}`（零成本）
+    #:
+    #: 键 = base_graph_id（⛔ 不用"按 versions 顺序的数组"：删版本要移位，
+    #:      漏一处就整体错位，而且错位后显示的是别的版本的值 —— 最难发现的那种）
+    #: 写入：只在解析那一版时写；⛔ 永不改基准（改了会让先写的版本显示后写的值）
+    #: 读取：按「项目 → 当前基图」取键，取不到回落基准
+    #: 扩展：以后再有"会变"的字段（docstring / 注解 / 复杂度…）在这里加键即可，
+    #:      ⛔ 不用加列、不用建表
+    #: ```
+    version_attrs = models.JSONField(default=dict, blank=True)
     # ⚠★★ `B176`（2026-10-12）：**本处曾有一个 `doc = TextField()`（注释 / 文档串）** ——
     #   ★★ 它是节点里**唯一逐字的代码内容**（★ 前导注释可能整段被抄下来）⚠
     #   ★ 所有者裁定：「**节点里只保存函数签名以及他所在的文件**，
@@ -696,6 +715,7 @@ class GraphPatch(TimeStampedModel):
             ),
         ]
         verbose_name = "图修改"
+        verbose_name_plural = "图修改"
 
     def __str__(self) -> str:
         return f"{self.project_ref}:{self.action}"
@@ -752,6 +772,7 @@ class GraphRevision(models.Model):
 
     class Meta:
         verbose_name = "图版本号"
+        verbose_name_plural = "图版本号"
 
     def __str__(self) -> str:
         return f"{self.project_ref}@r{self.rev}"
@@ -820,6 +841,7 @@ class NodeHeat(models.Model):
             models.Index(fields=["project_ref", "metric", "-value"]),
         ]
         verbose_name = "节点热度"
+        verbose_name_plural = "节点热度"
 
     def __str__(self) -> str:
         return f"{self.uid}@{self.metric}={self.value}"
@@ -873,6 +895,7 @@ class HeatFlush(models.Model):
     class Meta:
         indexes = [models.Index(fields=["project_ref", "metric"])]
         verbose_name = "热度合并批次"
+        verbose_name_plural = "热度合并批次"
 
     def __str__(self) -> str:
         return self.flush_key

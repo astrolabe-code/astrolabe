@@ -10,6 +10,9 @@ from .base import LangSpec
 
 
 class PythonSpec(LangSpec):
+    """★ `def.function` 只表示"这是个函数定义" —— 它在类体内还是方法，
+    由 `queryparser` 按**父定义是不是容器**统一改判成 `method`（⛔ 不看 self）。
+    """
     language = "python"
     query_file = "python.scm"
     sep = "."

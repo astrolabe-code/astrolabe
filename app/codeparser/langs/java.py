@@ -3,9 +3,13 @@
 """★ **Java**的处理口径（配合 `queries/java.scm`）
 
 ```\n class/interface/enum/record → type     method/constructor → method\n a.m() / this.m() / Class.m() → qcall   裸 m() → call\n ```\n *
-⚠ 与旧的遍历式实现保持一致：Java 的方法类型是 `method`（kinds.py 里有 id=4），
-  而 Python/C++ 的方法仍是 `function` —— 这是历史口径，暂不改（改了会让
-  存量项目的节点类型漂移）。
+⚠ 四种语言**口径已统一**（2026-11-01）：**类体内定义的函数一律是 `method`**。
+  该判定不在这里做，而在 `queryparser` 按「父定义是不是容器」统一处理 ——
+  所以 Python 的 `def run(self)`、C++ 的类内方法、Java 的 method 都给 `method`，
+  而类外的自由函数仍是 `function`。
+  ⚠ 判据是**定义位置**，⛔ 不是参数里有没有 `self`
+    （`@staticmethod def util(x)` 没有 self 但仍是方法；
+      `def inner(self)` 嵌在方法里、名字叫 self 也不是方法）。
 """
 
 from __future__ import annotations

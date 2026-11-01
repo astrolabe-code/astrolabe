@@ -77,6 +77,11 @@ class QueryParser:
 
     # ------------------------------------------------------------------
 
+    #: 能"装下"方法/字段的容器种类（父级是它 ⇒ 子函数算方法）
+    CONTAINER_KINDS = frozenset(
+        {"class", "struct", "union", "interface", "record", "type"}
+    )
+
     def parse(self, source: bytes, path: str) -> ParseResult:
         result = ParseResult()
         try:
@@ -124,6 +129,7 @@ class QueryParser:
 
         uid_of_node: dict[int, int] = {}
         qname_of_uid: dict[int, str] = {}
+        kind_of_uid: dict[str, str] = {}
 
         for _pos, cname, kind, name, outer, caps in defs:
             # 父定义：沿 parent 链上溯（每层一次指针跟随）
@@ -135,6 +141,15 @@ class QueryParser:
                     parent_uid = got
                     break
                 cur = cur.parent
+
+            # ★★ 类内定义的函数 ⇒ **method**（不看 `self`）⚠
+            #   理由（所有者 2026-11-01 提问：「Python 参数有 self 是不是该算方法？」）：
+            #   · `self` 只是**约定**，不是语法：`@staticmethod def util(x)` 没有 self 但仍是方法；
+            #     `@classmethod def make(cls)` 是 cls；类外的 `def f(self)` 反而**不是**方法
+            #   · 唯一可靠的结构信号是**定义位置**：父定义是 class / struct / interface / record
+            #   · 同一套规则对四种语言成立（Java 本来就直接给 method，这里不会重复改）
+            if kind == "function" and kind_of_uid.get(parent_uid) in self.CONTAINER_KINDS:
+                kind = "method"
 
             prefix = spec.def_scope(cname, caps, source)
             parts = [p for p in (qname_of_uid.get(parent_uid, ""), prefix, name) if p]
@@ -154,6 +169,7 @@ class QueryParser:
             result.nodes.append(parsed)
             uid_of_node[outer.id] = parsed.uid
             qname_of_uid[parsed.uid] = qname
+            kind_of_uid[parsed.uid] = kind
             stats["defs"] += 1
 
             # 包含边：父符号 → 子符号（顶层连文件）

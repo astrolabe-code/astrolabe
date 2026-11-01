@@ -38,13 +38,10 @@ DEFAULT_QUOTA_FREE: dict[str, Any] = {
     #   ★ 这是"VIP 空间更大"的**落地处**：★ 单仓库上限一样，但**能放的总量不同**。
     "storage_bytes_max": 512 * 1024 * 1024,        # ★ 512 MB
     "storage_files_max": 20_000,                    # ★ 所有项目加起来最多多少个文件
-    # ★★★ **解析预算**（2026-11-01）—— ★ 防"很多文件 / 一个病态文件"把服务器拖住 ⚠
-    #   ⚠ 每一条都是**硬闸**：超了就停下来并记原因，⛔ 不是"解析失败"
-    #     （截断只让图不完整，绝不能因此禁止写笔记）
-    "parse_files_max": 5_000,       # ★ 一次最多解析多少个文件
-    "parse_seconds_max": 120,       # ★ 整次解析的墙钟预算（秒）
-    "parse_nodes_max": 300_000,     # ★ 最多产出多少个节点（防内存爆掉）
-    "parse_file_seconds": 5,        # ★ **单个文件**的解析上限（含 C 层超时）
+    # ⚠★★ 解析预算**不在档位配额里**（2026-11-01 所有者裁定）：
+    #   「这些关系系统安全的设置，是**管理员的设置**优先级最高，不是默认设置，
+    #     而是**底线**」⇒ 它是**站点级门禁参数**，见下方 `KEYS` 的"解析安全"一节 ⚠
+    #   档位 / 用户可以更严，但⛔ 绝不允许把管理员定的底线顶高
     "parse_concurrency": 1,         # ★ 同时排队几个解析
     "queue_priority": 0,            # ★ 队列优先级
     "ugc_per_hour": 30,             # ★ UGC 写入频率
@@ -64,10 +61,6 @@ QUOTA_FIELDS: dict[str, str] = {
     "repo_bytes_max": "单个仓库的源码大小上限（字节）",
     "storage_bytes_max": "所有项目加起来能占多少存储（字节）",
     "storage_files_max": "所有项目加起来最多多少个文件",
-    "parse_files_max": "一次最多解析多少个文件（超了就停，图不完整但不失败）",
-    "parse_seconds_max": "整次解析最多跑多少秒（★ 防长时间占着服务器）",
-    "parse_nodes_max": "最多产出多少个节点（★ 防内存被撑爆）",
-    "parse_file_seconds": "单个文件最多解析多少秒（★ 防一个病态文件卡死整次解析）",
     "parse_concurrency": "同时排队几个解析任务（★ 越大出图越快）",
     "queue_priority": "队列优先级（★ 数值越大越先出图）",
     "ugc_per_hour": "每小时最多写多少条笔记 / 评论（★ 防刷）",
@@ -122,6 +115,68 @@ KEYS: dict[str, KeySpec] = {
         "★ 打开后【所有人】（含已登录）都被拦；⚠ 这是重锤，不要当普通开关用",
         gated=True,
     ),
+    # ---------------------------------------------------------- 解析安全（★ 硬底线）
+    # ⚠★★ 所有者原话（2026-11-01）：
+    #   「这些关系系统安全的设置，是**管理员的设置**优先级最高，
+    #     **不是默认设置，而是底线**」
+    #   ⇒ ★ 它们是**站点级、门禁类**（`gated=True`）：只有 superuser 能改，改动必留审计；
+    #     ★ 档位 / 用户只能**更严**（取 min），⛔ 绝不能把这条底线顶高 ⚠
+    #   ⇒ ★ 超限只让图不完整并记原因，⛔ **不是解析失败**（更不能因此禁止写笔记）
+    "parse_files_max": KeySpec(
+        "parse_files_max",
+        int,
+        5_000,
+        "解析文件数底线",
+        "★ 一次解析最多扫多少个文件；超过即停（图不完整，但不判失败）",
+        gated=True,
+    ),
+    "parse_seconds_max": KeySpec(
+        "parse_seconds_max",
+        int,
+        120,
+        "解析墙钟底线（秒）",
+        "★ 整次解析最多跑多久；⚠ 防「许多文件长时间解析，一直拖着服务器」",
+        gated=True,
+    ),
+    "parse_nodes_max": KeySpec(
+        "parse_nodes_max",
+        int,
+        300_000,
+        "解析节点数底线",
+        "★ 最多产出多少节点；⚠ 实测 2MB C 文件 = 8.9 万节点 / 300MB 内存，无上限会 OOM",
+        gated=True,
+    ),
+    "parse_file_seconds": KeySpec(
+        "parse_file_seconds",
+        int,
+        5,
+        "单文件解析底线（秒）",
+        "★ 单个文件最多解析多久（C 层硬超时）；⚠ 防一个病态文件卡死整次解析",
+        gated=True,
+    ),
+
+    # ---------------------------------------------------------- 队列公平（★ 硬底线）
+    # ⚠★★ 为什么需要：单 worker 串行 ⇒ **一个人刷满队列 = 所有人干等** ⚠
+    #   · 全局上限：队列里最多躺多少条作业（超了新提交直接拒，给出明确文案）
+    #   · 单用户硬顶：即使档位给了 3，也不能超过管理员这条线
+    #   ⚠ 档位 `parse_concurrency` 只是"特权"，⛔ 不能突破这里的管理员底线
+    "queue_max_jobs": KeySpec(
+        "queue_max_jobs",
+        int,
+        50,
+        "解析队列长度底线",
+        "★ 队列里最多排多少条作业；满了 ⇒ 新提交直接拒绝（★ 防一个人把队列刷爆）",
+        gated=True,
+    ),
+    "queue_user_max": KeySpec(
+        "queue_user_max",
+        int,
+        3,
+        "单用户排队底线",
+        "★ 一个用户最多同时排几条；⚠ 档位只能更小，⛔ 不能突破这条",
+        gated=True,
+    ),
+
     # ---------------------------------------------------------- 注册 / 登录（U4.6）
     "registration_open": KeySpec(
         "registration_open",
@@ -290,6 +345,66 @@ def get(key: str) -> Any:
 
 def get_bool(key: str) -> bool:
     return bool(get(key))
+
+
+#: ★★ 解析预算的四个键（**顺序**即优先级：都只允许"更严"，不允许更松）⚠
+PARSE_LIMIT_KEYS = (
+    "parse_files_max",
+    "parse_seconds_max",
+    "parse_nodes_max",
+    "parse_file_seconds",
+)
+
+#: 映射到 `scan_and_parse` 的参数名（一处声明，调用方不用记）
+PARSE_LIMIT_ARGS = {
+    "parse_files_max": "max_files",
+    "parse_seconds_max": "max_seconds",
+    "parse_nodes_max": "max_nodes",
+    "parse_file_seconds": "file_timeout_s",
+}
+
+
+def parse_limits(stricter: dict[str, Any] | None = None) -> dict[str, Any]:
+    """★★ **解析安全底线**（`{max_files, max_seconds, max_nodes, file_timeout_s}`）
+
+    ## 为什么不是"默认值"，而是"底线"
+
+    所有者原话（2026-11-01）：
+
+    > 「这些关系系统安全的设置，是**管理员的设置**优先级最高，
+    >  **不是默认设置，而是底线**」
+
+    ```
+    取值      只认站点参数（`KEYS` 里那四个 `gated=True` 的键）
+              ⛔ 不读档位配额、不读用户覆盖 —— 它们是特权，不是安全边界
+    stricter  允许调用方传「更严」的值（如某个档位想更保守）⇒ **取 min**
+              ⛔ 传更松的值无效：底线不会被顶高
+    ```
+
+    ⚠ 非正数（0 / 负数 / 空）一律回落到代码里的常量 —— ⛔ 不允许"设 0 就等于不限制"，
+      那等于把底线变成一个空开关。
+    """
+    out: dict[str, Any] = {}
+    stricter = stricter or {}
+    for key in PARSE_LIMIT_KEYS:
+        spec = KEYS[key]
+        hard = int(spec.default)                    # ★ 代码里的常量 = 最后兜底
+        try:
+            admin = int(get(key))                   # ★ 管理员在后台设的值
+        except Exception:  # noqa: BLE001
+            admin = hard
+        if admin <= 0:
+            admin = hard                            # ⛔ 0 不是"不限"，是"没设"
+        value = admin
+        if key in stricter:
+            try:
+                want = int(stricter[key])
+            except (TypeError, ValueError):
+                want = value
+            if want > 0:
+                value = min(value, want)            # ★ 只能更严
+        out[PARSE_LIMIT_ARGS[key]] = float(value) if key == "parse_file_seconds" else value
+    return out
 
 
 # ===========================================================================

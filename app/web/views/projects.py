@@ -641,8 +641,10 @@ def start_fetch(request: HttpRequest, project_ref: str) -> JsonResponse:
         # ★★ 解析不出 sha ⇒ ★★ **把真实原因给用户** ⚠
         #   ★ 以前这里一律"投递失败"—— ★ 而真实原因常常是**传了私有仓库** ⚠
         #     （★ 所有者原话：「**没有公开的仓库，去拉他干什么？……直接拒了他**」）
+        # ★ 队列满 / 排得太多 ⇒ **429**（让前端知道"等会儿再来"而不是"你错了"）
+        status = 429 if out.fail_code == "queue_busy" else 400
         return fail(
-            out.fail_message or "拉取失败，请稍后再试。", 400, code=out.fail_code or "dispatch_failed"
+            out.fail_message or "拉取失败，请稍后再试。", status, code=out.fail_code or "dispatch_failed"
         )
 
     if out.reused:

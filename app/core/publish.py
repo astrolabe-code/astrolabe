@@ -409,6 +409,7 @@ def dispatch_parse(
     priority: int,
     ref: str = "",
     sha: str = "",
+    skip_limits: bool = False,
     # ⚠★★ 2026-10-17 修：**建项目那一刻还没有基图** ⇒ `project.provider` /
     #   `project.repo_url` 都是空的派生属性（`B197`）⇒ 调用方**必须**把
     #   “要拉哪个库”显式传进来；不传才回落到派生属性（重拉等已有基图的场景）
@@ -555,8 +556,14 @@ def dispatch_parse(
             # ⚠★ `B179`：去重键**换成 sha** —— ★ 以前用 `commit or 'HEAD'`，
             #   ★★ 而实测 `commit` 全是空 ⇒ 键永远是 `…:HEAD` ⇒ **两个不同版本会被并成一条** ⚠
             dedup_key=f"parse:{project.project_ref}:{sha or commit or 'HEAD'}",
+            skip_limits=skip_limits,
         )
         return DispatchOutcome(job=job, created=created)
+    except dispatch.QueueBusy as exc:
+        # ★★ 队列满了 / 你排得太多 ⇒ **如实告诉用户**（⛔ 不是笼统的"投递失败"）⚠
+        return DispatchOutcome(
+            failed=True, fail_code="queue_busy", fail_message=str(exc)[:300]
+        )
     except Exception:  # noqa: BLE001 —— ★ 入队失败已在 dispatch 里留痕，这里只负责如实上报
         return DispatchOutcome(
             failed=True, fail_code="enqueue_failed", fail_message="投递作业失败，请稍后再试。"
@@ -614,6 +621,8 @@ def approve_and_resume(
         project, commit=commit, priority=0,
         # ⚠★ `B182`：透传前端算好的 sha（★ 有它就不烧服务端的 API 配额）✅
         sha=sha or "",
+        # ★ 管理员放行 ⇒ 绕开队列公平闸门（他在救场，不该被"你排得太多"挡住）
+        skip_limits=True,
         provider=_prov,
         repo_full_name=fetch.repo_full_from_url(_rev_url) if _rev_url else "",
     )

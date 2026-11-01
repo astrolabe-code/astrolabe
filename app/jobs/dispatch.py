@@ -28,10 +28,74 @@ import logging
 
 from django.db import transaction
 
+from core import appsettings
 from jobs import queue
 from jobs.models import Job
 
 log = logging.getLogger("astrolabe.jobs.dispatch")
+
+
+class QueueBusy(Exception):
+    """★★ **队列满了 / 你排得太多** —— 带着**给用户看**的原因 ⚠
+
+    ⚠ 为什么不在 `enqueue()` 里静默丢弃：`B115` ①「投递即入队，❌ 不得静默拒绝」——
+      静默丢会让用户看到"排队中"却永远轮不到（最糟的一种体验）。
+      ⇒ 这里**在创建 Job 之前**就拦住，并把原因原样传给用户 ✅
+    """
+
+
+def _check_capacity(project_ref: str) -> None:
+    """★★ **队列公平闸门**（在创建 Job 之前调用）⚠
+
+    ```
+    ① 全局：队列深度 ≥ queue_max_jobs（管理员底线）⇒ 拒绝
+    ② 单人：该用户"排队中 + 执行中"的作业 ≥ min(档位 parse_concurrency, queue_user_max)
+            ⇒ 拒绝
+    ```
+
+    ⚠ 为什么要②：单个 worker 串行消费 ⇒ 一个人投 20 条，别人就排在后面干等 ⚠
+    ⚠ 档位值只能**更小**：管理员那条线是底线，⛔ 特权不能突破安全边界
+    """
+    global_cap = int(appsettings.get("queue_max_jobs") or 0)
+    if global_cap > 0:
+        depth = queue.queue_size()
+        if depth >= global_cap:
+            raise QueueBusy(
+                f"解析队列已满（{depth}/{global_cap}），请稍后再提交；"
+                "★ 已有的作业会按顺序出图。"
+            )
+
+    # ---- 单用户：先找到这个人所有的项目 ref（Job 上 `project` 外键大多是 NULL）
+    from core.models import Project
+
+    row = (
+        Project.objects.filter(project_ref=project_ref)
+        .values_list("owner_id", "owner__profile__tier")
+        .first()
+    )
+    if not row or not row[0]:
+        return
+    owner_id, tier = row
+    refs = list(
+        Project.objects.filter(owner_id=owner_id).values_list("project_ref", flat=True)
+    )
+    if not refs:
+        return
+
+    tier_cap = int(appsettings.quota_for(tier or "free").get("parse_concurrency") or 1)
+    admin_cap = int(appsettings.get("queue_user_max") or 0)
+    cap = min(tier_cap, admin_cap) if admin_cap > 0 else tier_cap
+    if cap <= 0:
+        return
+
+    active = Job.objects.filter(
+        project_ref__in=refs, state__in=(Job.STATE_QUEUED, Job.STATE_RUNNING)
+    ).count()
+    if active >= cap:
+        raise QueueBusy(
+            f"你已经有 {active} 个解析在排队或正在跑（上限 {cap} 个），"
+            "等它们出图后再提交新的。"
+        )
 
 
 def submit(
@@ -41,6 +105,7 @@ def submit(
     payload: dict | None = None,
     priority: int = 0,
     dedup_key: str = "",
+    skip_limits: bool = False,
 ) -> tuple[Job, bool]:
     """创建 Job 记录并**投递入队**。
 
@@ -74,6 +139,11 @@ def submit(
         if existing is not None:
             log.info("作业去重命中：dedup_key=%s ⇒ Job#%s", dedup_key, existing.pk)
             return existing, False
+
+    # ---------------------------------------------------------------- ★★ 队列公平
+    #   ⚠ 放在**创建 Job 之前**：拒绝时不该留下一条永远排队的死作业 ⚠
+    if not skip_limits:
+        _check_capacity(project_ref)
 
     # ---------------------------------------------------------------- 创建 + 入队
     with transaction.atomic():

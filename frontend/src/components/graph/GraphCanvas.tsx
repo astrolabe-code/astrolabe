@@ -150,6 +150,16 @@ export default function GraphCanvas({
   //   · · ★★ 照原型 `visible.some(n => n.id === id)` 的写法：
   //     * **用数据判断**，* 而不是 try/catch 兜 G6 抛的异常 ✅
   const visibleRef = useRef<Set<string>>(new Set())
+  /**
+   * ★★ 节点的**实时**信息表（画布上出现过的全部节点，含"展开邻居"临时加进来的）⚠
+   *
+   * ⚠ 不能用 `graph.nodes` 推出来的 `nodeById`：
+   *   `expandNeighbors` 是**直接往 G6 里加**节点/边（不跑布局、不改页面状态），
+   *   那些节点不在 `graph.nodes` 里 ⇒ 悬停查不到 → 没有浮窗（所有者踩到）
+   */
+  const nodeInfoRef = useRef<Map<string, GraphNode>>(new Map())
+  /** ★★ 画布数据版本：加/删节点与边之后 +1 ⇒ 流星按**实时数据**重建 ⚠ */
+  const [dataVersion, setDataVersion] = useState(0)
   // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
   // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
   const nodeSize = (n: GraphNode) =>
@@ -211,7 +221,7 @@ export default function GraphCanvas({
           bestId = id
         }
       }
-      const n = bestId ? nodeById.get(bestId) : undefined
+      const n = bestId ? nodeInfoRef.current.get(bestId) : undefined
       // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
       const hit = !!n && bestD <= nodeSizePx / 2 + 4
       setHover(hit && n ? { node: n, x: last.clientX, y: last.clientY } : null)
@@ -230,7 +240,7 @@ export default function GraphCanvas({
       box.removeEventListener('pointerleave', onLeave)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [graph, nodeById, nodeSizePx])
+  }, [graph, nodeSizePx])
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {
@@ -338,6 +348,7 @@ export default function GraphCanvas({
     // ★★★ **初始化可见集合**（* 之前漏了这行 ⇒ 一直是空集 ⇒
     //   环形按钮一出现就被判"节点不存在"、* 一闪而过）⚠
     visibleRef.current = new Set(graph.nodes.map((n) => String(n.vid)))
+    nodeInfoRef.current = new Map(graph.nodes.map((n) => [String(n.vid), n]))
 
     let alive = true
 
@@ -543,15 +554,24 @@ export default function GraphCanvas({
       }
       // ★★ 每条边带上**发出节点**的 size / color ——
       //    * 流星大小 = 节点直径 1/10，* 颜色 = 节点颜色（* 所有者口径）⚠
-      const edges = graph.edges.map((e) => {
-        const src = nodeById.get(String(e.from))
-        const dst = nodeById.get(String(e.to))
+      // ★★ 边一律取自**画布实时数据**（`g.getEdgeData()`），⛔ 不再取页面状态 ⚠
+      //   原因：「显示邻居」和改图新增是**直接往 G6 里加**节点/边，
+      //   页面状态里没有它们 ⇒ 用 `graph.edges` 会漏掉这些边 ⇒ 新边没有流星（所有者踩到）
+      const liveNodes = new Map(g.getNodeData().map((n) => [String(n.id), n]))
+      const edges = g.getEdgeData().map((e) => {
+        const f = String(e.source)
+        const t = String(e.target)
+        const ns = liveNodes.get(f)
+        const nd = liveNodes.get(t)
+        const sz = Number((ns?.style as Record<string, unknown> | undefined)?.size) || 14
+        const tz = Number((nd?.style as Record<string, unknown> | undefined)?.size) || 14
         return {
-          from: String(e.from),
-          to: String(e.to),
-          size: src ? nodeSize(src) : 14,
-          color: src ? colorOf(src) : '#94a3b8',
-          toSize: dst ? nodeSize(dst) : 14,
+          from: f,
+          to: t,
+          size: sz,
+          // 颜色 = 发出节点的填充色（和节点同源）
+          color: String((ns?.style as Record<string, unknown> | undefined)?.fill ?? '#94a3b8'),
+          toSize: tz,
         }
       })
       stop = startMeteor(g, box, edges, {
@@ -569,7 +589,7 @@ export default function GraphCanvas({
     }
     // ★★ `labelColor` 也进依赖：* 切主题 ⇒ 建图 effect 重跑（图重建）⇒
     //    * 旧的流星实例已销毁 ⇒* 必须跟着重启，否则"切背景后流星没了"⚠
-  }, [graph, meteors, meteorSpeed, meteorSizeRatio, labelColor])
+  }, [graph, meteors, meteorSpeed, meteorSizeRatio, labelColor, dataVersion])
 
   // ★★★ 展开邻居：**只把新节点摆到宿主四周 80px 处 + draw()** ——
   //   * ⛔ 绝不 `render()` / 跑布局（* 那会整图重排，* 是所有者踩过的坑）⚠
@@ -638,9 +658,14 @@ export default function GraphCanvas({
 
     g.addNodeData(added)
     if (addedEdges.length) g.addEdgeData(addedEdges)
-    // ★ 同步可见集合
-    missing.forEach((v) => visibleRef.current.add(v))
+    // ★ 同步可见集合 + **实时信息表**（悬停浮窗要用）
+    missing.forEach((v) => {
+      visibleRef.current.add(v)
+      const n = byId.get(v)
+      if (n) nodeInfoRef.current.set(v, n)
+    })
     await g.draw() // ★ 只重绘，不跑布局
+    setDataVersion((v) => v + 1) // ★ 新边也要有流星
     onGraphChanged?.()
   }
 
@@ -684,8 +709,12 @@ export default function GraphCanvas({
     if (edgeIds.length) g.removeEdgeData(edgeIds)
     g.removeNodeData(ids)
     // ★ 同步可见集合（* 之后任何判断都以它为准）⚠
-    ids.forEach((v) => visibleRef.current.delete(v))
+    ids.forEach((v) => {
+      visibleRef.current.delete(v)
+      nodeInfoRef.current.delete(v)
+    })
     await g.draw()
+    setDataVersion((v) => v + 1)
     setRing(null)
     // ★ 被隐藏的若是当前选中节点 ⇒ 清掉选中
     if (selectedRef.current != null && removing.has(String(selectedRef.current))) {

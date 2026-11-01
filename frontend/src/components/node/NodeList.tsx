@@ -3,6 +3,7 @@ import { GitBranch, Loader2, Search } from 'lucide-react'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 import { entriesFirst, isEntryNode } from '../../lib/entry'
+import NodeHoverCard from './NodeHoverCard'
 import { useGraphNodes } from '../../query/graph'
 import Button from '../ui/Button'
 import EmptyState from '../ui/EmptyState'
@@ -49,6 +50,8 @@ export default function NodeList({
   autoSelectFirst,
   selectVid,
 }: NodeListProps) {
+  // ★ 悬停浮窗（所有者：列表里也要有详情浮窗，重载就靠它分辨）
+  const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [limit, setLimit] = useState(PAGE)
@@ -180,6 +183,8 @@ export default function NodeList({
                     // ★★ 点行 = **只选中**（右栏预览 / 写笔记）
                     //   ⛔ 不再顺手跳图谱 —— 那样太容易误触（所有者 2026-10-31）
                     onClick={() => onSelect(n)}
+                    onMouseEnter={(e) => setHover({ node: n, x: e.clientX, y: e.clientY })}
+                    onMouseLeave={() => setHover(null)}
                     className="w-full text-left"
                     style={{
                       padding: '7px 10px',
@@ -281,6 +286,8 @@ export default function NodeList({
           </ul>
         )}
       </div>
+
+      {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
 
       {items.length < total && (
         <div className="pt-3">

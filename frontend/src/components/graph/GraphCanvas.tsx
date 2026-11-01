@@ -4,6 +4,7 @@ import { startMeteor } from '../../lib/meteorFx'
 import { useTheme } from '../../hooks/useTheme'
 import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
 import { kindColor } from '../../lib/kindLabel'
+import NodeHoverCard from '../node/NodeHoverCard'
 
 /**
  * ★ 图谱画布（`D98` · AntV G6 v5）
@@ -139,6 +140,8 @@ export default function GraphCanvas({
   /** 布局是否已稳定（* 0 = 还没有；存时刻） */
   const readyRef = useRef(0)
   // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
+  // ★★ 悬停浮窗（所有者：图谱上鼠标移上去就显示详情，⛔ 不打断阅读、不用点开右栏）
+  const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
@@ -155,6 +158,79 @@ export default function GraphCanvas({
     () => new Map((graph?.nodes ?? []).map((n) => [String(n.vid), n])),
     [graph],
   )
+
+  // ============================================================ 悬停浮窗
+  /**
+   * ★★ 鼠标移到节点上 ⇒ 浮窗显示详情（名字 / 类型 / 签名 / 文件行号）⚠
+   *
+   * 所有者原话（2026-11-01）：
+   * 「不用这么复杂，图谱上，在鼠标移到相应节点时就一个浮窗，显示相应详细信息，
+   *   列表哪里也是一样。」
+   *
+   * ## 为什么用**原生 pointermove + 距离判定**，而不用 G6 的 `node:pointerenter`
+   *
+   * ```
+   * G6 的事件走它自己的画布拾取，合成事件（自动化测试里）到不了 ⇒ 无法验证
+   * 原生监听 + getCanvasByViewport 换算 + 最近节点判断：
+   *   可测、可控、和 G6 版本解耦（它换事件系统也不影响我们）
+   * ```
+   *
+   * ⚠ 只在命中半径内才弹（`节点直径/2 + 4`）⇒ 不会满屏乱弹
+   */
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || !graph) return
+
+    let raf = 0
+    let last: PointerEvent | null = null
+
+    const update = () => {
+      raf = 0
+      const g = gRef.current
+      if (!g || !last) return
+      const rect = box.getBoundingClientRect()
+      let p: ArrayLike<number>
+      try {
+        p = g.getCanvasByViewport([last.clientX - rect.left, last.clientY - rect.top] as never) as ArrayLike<number>
+      } catch {
+        return
+      }
+      let bestId = ''
+      let bestD = Infinity
+      for (const id of visibleRef.current) {
+        let pos: ArrayLike<number> | undefined
+        try {
+          pos = g.getElementPosition(id) as ArrayLike<number>
+        } catch {
+          continue
+        }
+        if (!pos) continue
+        const d = Math.hypot(pos[0] - p[0], pos[1] - p[1])
+        if (d < bestD) {
+          bestD = d
+          bestId = id
+        }
+      }
+      const n = bestId ? nodeById.get(bestId) : undefined
+      // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
+      const hit = !!n && bestD <= nodeSizePx / 2 + 4
+      setHover(hit && n ? { node: n, x: last.clientX, y: last.clientY } : null)
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      last = ev
+      if (!raf) raf = requestAnimationFrame(update)
+    }
+    const onLeave = () => setHover(null)
+
+    box.addEventListener('pointermove', onMove)
+    box.addEventListener('pointerleave', onLeave)
+    return () => {
+      box.removeEventListener('pointermove', onMove)
+      box.removeEventListener('pointerleave', onLeave)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [graph, nodeById, nodeSizePx])
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {
@@ -308,6 +384,9 @@ export default function GraphCanvas({
       readyRef.current = Date.now()
       onPhase?.('布局完成')
     }, SETTLE_MS)
+
+    g.on('node:dragstart', () => setHover(null))
+
 
     g.on('node:click', (evt: unknown) => {
       const e = evt as { target?: { id?: string | number } }
@@ -716,6 +795,9 @@ export default function GraphCanvas({
           ))}
         </svg>
       )}
+
+      {/* ★★ 悬停浮窗（名字 / 类型 / 签名 / 文件行号）—— 重载靠签名分辨 ⚠ */}
+      {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
     </div>
   )
 }

@@ -29,6 +29,7 @@ import sys
 import paths  # noqa: F401 —— ★ 统一把 `app/` 挂到 sys.path（见 paths.py）
 
 import filefilter  # noqa: E402
+from codeparser.postpass import reparent_contains  # noqa: E402
 from codeparser.scanner import scan_and_parse  # noqa: E402
 from graph import identity  # noqa: E402
 
@@ -183,6 +184,10 @@ def parse_project(
         max_total_bytes=max_total_bytes,
     )
 
+    # ★★ 类外定义归位（C++: `void C::f(){}` 挂回 C 下）—— 两版共用同一份规则 ⚠
+    #   必须在这里做：类在 .h、方法在 .cc ⇒ 只有整项目解析完才查得到那个类
+    scope_stats = reparent_contains(result)
+
     records: list[tuple[dict, str]] = []
     canons: list[str] = []
     for pn in result.nodes:
@@ -327,6 +332,10 @@ def parse_project(
             }
         )
     stats["fields"] = len(fields_out)
+    # ★ 作用域归位的三个数（挪了多少 / 多候选没动 / 查不到类）
+    stats["scopeMoved"] = scope_stats["moved"]
+    stats["scopeAmbiguous"] = scope_stats["ambiguous"]
+    stats["scopeUnresolved"] = scope_stats["unresolved"]
 
     stats["dirNodes"] = len(dir_nodes)
     stats["treeEdges"] = len(tree_edges)

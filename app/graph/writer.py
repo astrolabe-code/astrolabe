@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from django.db import transaction
 
 from codeparser.base import ParseResult
+from codeparser.postpass import reparent_contains
 from graph import identity, kinds
 from graph.models import BaseGraph, Edge, Node, Repo
 
@@ -45,6 +46,8 @@ class WriteStats:
     rev: int = 0
     #: 少量「解析不出来的引用」样本（便于排查，⚠ 只要样本，不要全量）
     unresolved_samples: list[str] = field(default_factory=list)
+    #: ★ 作用域归位：把多少条 contains 边从"词法父级"改挂到"名字所指的类"下
+    scope_moved: int = 0
 
 
 @dataclass
@@ -155,7 +158,13 @@ def write_graph(
         replace: ⚠★ **仅供调试** —— 见上（★ 生产路径一律用默认值 `False`）
         replace_reason: ★ `replace=True` 时必填（⚠ 会写进审计日志）
     """
+    # ★★ 类外定义归位（`void C::f(){}` 应挂在 C 下，而不是词法父级）⚠
+    #   ⚠ 与个人版 `parser_bridge` 调的是**同一份规则**（app/codeparser/postpass.py），
+    #     避免两版各写一套、结果不一致
+    scope_stats = reparent_contains(result)
+
     stats = WriteStats()
+    stats.scope_moved = scope_stats["moved"]
 
     with transaction.atomic():
         # ---------------------------------------------------------- ⓪ ★★★ 定版闸门

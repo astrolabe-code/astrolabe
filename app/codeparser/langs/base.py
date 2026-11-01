@@ -76,7 +76,7 @@ class LangSpec:
 
     # ---------------------------------------------------------------- 定义
 
-    def def_name(self, cname: str, node, src: bytes) -> str:
+    def def_name(self, cname: str, node, src: bytes, caps: dict | None = None) -> str:
         """定义名不由 `.name` 捕获给出时的兜底（⚠ 默认没有）
 
         ★ C 曾在这里沿 declarator 链迭代取名，能把 `int (*f(int))(void)` 认出来；

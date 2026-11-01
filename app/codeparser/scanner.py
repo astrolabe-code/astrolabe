@@ -168,6 +168,14 @@ def scan_and_parse(
     parsers = build_parsers()
     total = len(candidates)
 
+    # ★★ C++ 项目的 `.h` 头文件必须按 **C++** 解析 ⚠
+    #   `EXT_TO_LANG[".h"] = "c"`，而 C++ 的 `class` / `namespace` / `template`
+    #   绝大多数写在 `.h` 里 ⇒ 按 C 解析时这些定义**整个看不见**
+    #   （实测：fmt 的 class 大量丢在头文件里，是 C++ 数字偏低的真实原因）
+    #   ⛔ 纯 C 项目不受影响（没有 C++ 源文件 ⇒ 保持 .h → c）
+    _CPP_EXTS = {".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"}
+    cpp_project = any(Path(rel).suffix.lower() in _CPP_EXTS for _a, rel in candidates)
+
     read_bytes = 0
     for idx, (abs_path, rel) in enumerate(candidates, start=1):
         # ★ 解析阶段同样要随时能停：单个文件也可能极慢
@@ -175,6 +183,8 @@ def scan_and_parse(
             stats.stop_reason = f"解析超过时间预算 {max_seconds:g}s，剩余 {total - idx + 1} 个文件未处理"
             break
         lang = detect_lang(rel)
+        if lang == "c" and cpp_project and Path(rel).suffix.lower() == ".h":
+            lang = "cpp"   # ★ 头文件跟随项目语言（见上）
         parser = parsers.get(lang) if lang else None
         if parser is None:
             stats.skip(f"无解析器:{lang}")

@@ -10,6 +10,7 @@
 ;;   template<T> struct Box<T*>{}    模板特化
 ;;   class / struct / union / enum   类型
 ;;   namespace ns {}                 命名空间（当作 module 处理）
+;;   namespace a::b {}               C++17 嵌套命名空间
 ;;   #define F(x)                    宏
 ;;   f() / obj.f() / p->f() / ns::f()
 ;;   #include <x>
@@ -57,11 +58,20 @@
   declarator: (function_declarator
     declarator: (operator_name) @def.function.name)) @def.function
 
-;; 转换运算符：operator bool() const / operator Action<F>() const
+;; 转换运算符（类内定义）：operator bool() const / operator Action<F>() const
 ;;   ⚠ 名字只取 `operator <类型>`：operator_cast 整段会带上 `() const`，
 ;;     那样节点名会变成 "operator Action<F>() const"（难看且对不上调用点）
+;;   ⇒ 类型由 `@def.operator.type` 捕获给出，处理模块直接拼 "operator " + 类型
 (function_definition
-  declarator: (operator_cast type: (_))) @def.operator
+  declarator: (operator_cast type: (_) @def.operator.type)) @def.operator
+
+;; 转换运算符（**类外定义**）：E::operator bool() const {}
+;;   ⚠ 这种写法的 declarator 是 qualified_identifier（不是 function_declarator），
+;;     以前两条模式都套不上 ⇒ 节点整个丢失（实测）
+(function_definition
+  declarator: (qualified_identifier
+    scope: (_) @def.operator.scope
+    name: (operator_cast type: (_) @def.operator.type))) @def.operator
 
 (class_specifier name: (type_identifier) @def.class.name
   body: (field_declaration_list)) @def.class
@@ -82,6 +92,10 @@
   body: (enumerator_list)) @def.enum
 
 (namespace_definition name: (namespace_identifier) @def.namespace.name) @def.namespace
+
+;; C++17 嵌套命名空间：namespace a::b {}  ⇒ 名字是 `nested_namespace_specifier`
+;;   ⚠ 不认的话，里面的类 qname 会丢掉前面几层（实测 `a::b::C` 变成 `C`）
+(namespace_definition name: (nested_namespace_specifier) @def.namespace.name) @def.namespace
 
 ;; ------------------------------------------------------------ 继承
 ;; class D : public Base, private Other   ⇒ 每个基类一条 extends

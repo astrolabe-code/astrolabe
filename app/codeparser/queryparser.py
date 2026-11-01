@@ -116,7 +116,7 @@ class QueryParser:
                 name_nodes = caps.get(f"{cname}.name") or []
                 name = _txt(name_nodes[0], source) if name_nodes else ""
                 if not name:
-                    name = spec.def_name(cname, outer, source)
+                    name = spec.def_name(cname, outer, source, caps)
                 if not name:
                     continue
                 defs.append((outer.start_byte, cname, kind, name, outer, caps))

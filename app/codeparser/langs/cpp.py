@@ -31,18 +31,19 @@ class CppSpec(LangSpec):
         "def.macro": "macro",
     }
 
-    def def_name(self, cname: str, node, src: bytes) -> str:
+    def def_name(self, cname: str, node, src: bytes, caps: dict | None = None) -> str:
         """★ 转换运算符的名字：`operator <类型>`
 
-        ⚠ 只沿字段取（declarator.type），⛔ 不遍历子树 —— 与"不下钻"一致。
+        ⚠ 类型由**查询捕获**给出（`@def.operator.type`），⛔ 不沿树找 ——
+          类内与类外两种写法的 declarator 形状不同（operator_cast /
+          qualified_identifier），各写一条模式即可，不需要通用下钻。
         """
-        if cname != "def.operator":
+        if cname != "def.operator" or not caps:
             return ""
-        decl = node.child_by_field_name("declarator")
-        typ = decl.child_by_field_name("type") if decl is not None else None
-        if typ is None:
+        nodes = caps.get("def.operator.type") or []
+        if not nodes:
             return ""
-        return "operator " + typ.text.decode("utf-8", "ignore").strip()
+        return "operator " + nodes[0].text.decode("utf-8", "ignore").strip()
 
     @staticmethod
     def _strip_template(name: str) -> str:

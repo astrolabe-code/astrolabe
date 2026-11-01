@@ -263,7 +263,11 @@ class QueryParser:
                         )
                     )
             for node in caps.get("inc.path") or []:
-                raw = _txt(node, source).strip('<>"')
+                # ★ 保留 `"` / `<>` 这两个定界符 ⚠
+                #   · `"x.h"` ⇒ 先按**当前文件目录**找（相对包含）
+                #   · `<x.h>` ⇒ 只按路径后缀找（系统头文件通常连不上，正确）
+                #   剥掉之后两者就分不出来了 —— 由 `codeparser/imports.py` 判
+                raw = _txt(node, source).strip()
                 if raw:
                     stats["imports"] += 1
                     result.edges.append(

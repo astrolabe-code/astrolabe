@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from django.db import transaction
 
 from codeparser.base import ParseResult
+from codeparser.imports import resolve_imports
 from codeparser.postpass import reparent_contains
 from graph import identity, kinds
 from graph.models import BaseGraph, Edge, Node, Repo
@@ -48,6 +49,10 @@ class WriteStats:
     unresolved_samples: list[str] = field(default_factory=list)
     #: ★ 作用域归位：把多少条 contains 边从"词法父级"改挂到"名字所指的类"下
     scope_moved: int = 0
+    #: ★ 导入/包含：连上 / 语料里没有（外部依赖）/ 去重合并掉的条数
+    imports_resolved: int = 0
+    imports_external: int = 0
+    imports_merged: int = 0
 
 
 @dataclass
@@ -169,9 +174,14 @@ def write_graph(base_graph: BaseGraph, result: ParseResult) -> WriteStats:
     #   ⚠ 与个人版 `parser_bridge` 调的是**同一份规则**（app/codeparser/postpass.py），
     #     避免两版各写一套、结果不一致
     scope_stats = reparent_contains(result)
+    # ★★ 导入/包含按文件级解析（与个人版**同一个函数**，避免两版口径不同）
+    import_stats = resolve_imports(result)
 
     stats = WriteStats()
     stats.scope_moved = scope_stats["moved"]
+    stats.imports_resolved = import_stats["resolved"]
+    stats.imports_external = import_stats["external"]
+    stats.imports_merged = import_stats["merged"]
 
     with transaction.atomic():
         # ---------------------------------------------------------- ⓪ ★★★ 定版闸门
@@ -440,18 +450,8 @@ def _resolve(ref: str, index: _Index, stats: WriteStats) -> Node | None:
         return None
 
     if what == "include":
-        raw = value.strip().strip('<>"').strip()
-        if raw:
-            last = raw.rsplit("/", 1)[-1]
-            # ★ 分层匹配 —— 依次是 C 的头文件名 / 路径末段 / 模块名 / 末段去扩展名
-            for candidates in (
-                index.by_file_basename.get(raw),                  # stdio.h
-                index.by_file_basename.get(last),                 # sys/stat.h → stat.h
-                index.by_file_stem.get(raw.rsplit(".", 1)[-1]),   # .base → base · java.util.List → List
-                index.by_file_stem.get(last.rsplit(".", 1)[0]),   # 兜底：末段去扩展名
-            ):
-                if candidates:
-                    return min(candidates, key=lambda n: (len(n.file_path), n.file_path))
+        # ★ 已由 `codeparser/imports.py` 统一解析（两版共用）
+        #   走到这里 = 语料里没有 / 多候选 ⇒ 如实记一条未解析
         _note(stats, ref)
         return None
 

@@ -29,6 +29,7 @@ import sys
 import paths  # noqa: F401 —— ★ 统一把 `app/` 挂到 sys.path（见 paths.py）
 
 import filefilter  # noqa: E402
+from codeparser.imports import resolve_imports  # noqa: E402
 from codeparser.postpass import reparent_contains  # noqa: E402
 from codeparser.scanner import scan_and_parse  # noqa: E402
 from graph import identity  # noqa: E402
@@ -144,18 +145,16 @@ def _resolve(
         stats["ambiguousCall" if len(cands) > 1 else "unresolvedCall"] += 1
         return None
 
-    if what in ("include", "in"):
-        raw = value.strip().strip('<>"').strip()
-        if not raw:
-            return None
-        base = raw.rsplit("/", 1)[-1]
-        for bucket, key in ((by_basename, raw), (by_basename, base),
-                            (by_stem, base.rsplit(".", 1)[0])):
-            vids = bucket.get(key) or []
-            if len(vids) == 1:
-                return vids[0]
+    if what == "include":
+        # ★★ 导入/包含已经在 `codeparser/imports.py` 里统一解析过了（两版共用）⚠
+        #   走到这里说明"语料里没有 / 多候选" ⇒ 如实计一条未解析，⛔ 不再自己猜名字
         stats["unresolvedInclude"] += 1
         return None
+
+    if what == "in":
+        raw = value.strip()
+        vids = by_basename.get(raw) or []
+        return vids[0] if len(vids) == 1 else None
 
     return None
 
@@ -187,6 +186,10 @@ def parse_project(
     # ★★ 类外定义归位（C++: `void C::f(){}` 挂回 C 下）—— 两版共用同一份规则 ⚠
     #   必须在这里做：类在 .h、方法在 .cc ⇒ 只有整项目解析完才查得到那个类
     scope_stats = reparent_contains(result)
+    # ★★ 导入/包含按**文件级**解析（两版共用 `codeparser/imports.py`）⚠
+    #   · 只在"项目里存在且唯一"时连；外部依赖连不上 = 正确
+    #   · 同一对文件只留一条边（import 五次不该画五条线）
+    import_stats = resolve_imports(result)
 
     records: list[tuple[dict, str]] = []
     canons: list[str] = []
@@ -333,6 +336,9 @@ def parse_project(
         )
     stats["fields"] = len(fields_out)
     # ★ 作用域归位的三个数（挪了多少 / 多候选没动 / 查不到类）
+    stats["importsResolved"] = import_stats["resolved"]
+    stats["importsExternal"] = import_stats["external"]
+    stats["importsMerged"] = import_stats["merged"]
     stats["scopeMoved"] = scope_stats["moved"]
     stats["scopeAmbiguous"] = scope_stats["ambiguous"]
     stats["scopeUnresolved"] = scope_stats["unresolved"]

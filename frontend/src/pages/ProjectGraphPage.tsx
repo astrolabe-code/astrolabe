@@ -14,6 +14,7 @@ import {ChevronDown,
   Workflow,
   X,
   GitBranch,
+  Share2,
 } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
@@ -119,6 +120,10 @@ export default function ProjectGraphPage() {
   const [curateOpen, setCurateOpen] = useState(false)
   // ★ 搜索胶囊是否展开
   const [searchOpen, setSearchOpen] = useState(false)
+  // ★★ 依赖线（imports / includes）默认**不显示** ⚠
+  //   · 文件级依赖对"读一个函数"帮助有限，一屏几十条会把主干糊住
+  //   · 需要看模块边界时点「依赖」打开
+  const [showImports, setShowImports] = useState(false)
   // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
   const [fullscreen, setFullscreen] = useState(false)
   // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
@@ -310,9 +315,12 @@ export default function ProjectGraphPage() {
     const nodes = g.nodes
       .filter((n) => shownVids.has(n.vid))
       .sort((a, b) => (rank.get(a.vid) ?? 0) - (rank.get(b.vid) ?? 0))
-    const edges = g.edges.filter((e) => shownVids.has(e.from) && shownVids.has(e.to))
+    const edges = g.edges
+      .filter((e) => shownVids.has(e.from) && shownVids.has(e.to))
+      // ★ 依赖线默认隐藏（`showImports` 打开才画）
+      .filter((e) => showImports || (e.type !== 'imports' && e.type !== 'includes'))
     return { ...g, nodes, edges }
-  }, [g, shownVids, orderVids])
+  }, [g, shownVids, orderVids, showImports])
 
   const selected = useMemo<GraphNode | null>(() => {
     if (!g || selectedVid == null) return null
@@ -475,6 +483,31 @@ export default function ProjectGraphPage() {
             >
               <List size={13} />
               {!isNarrow && <span>列表</span>}
+            </button>
+
+            {/* ---- 依赖线开关（imports / includes，默认关）⚠ ---- */}
+            <button
+              type="button"
+              className="card"
+              onClick={() => setShowImports((v) => !v)}
+              title={showImports ? '隐藏文件依赖线' : '显示文件依赖线（imports / includes）'}
+              style={{
+                padding: isNarrow ? '4px 9px' : '5px 12px',
+                fontSize: isNarrow ? 11.5 : 12.5,
+                borderRadius: 999,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(15,23,42,.14)',
+                // 打开时高亮，关着就是普通胶囊
+                background: showImports ? 'var(--accent, #2563eb)' : undefined,
+                color: showImports ? '#fff' : undefined,
+                borderColor: showImports ? 'transparent' : undefined,
+              }}
+            >
+              <Share2 size={13} />
+              {!isNarrow && <span>依赖</span>}
             </button>
 
             {/* ---- 搜索 ---- */}

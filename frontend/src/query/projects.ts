@@ -35,11 +35,36 @@ import type {
  * 改法：第 1 次 600ms（快速确认是不是已经完成），之后 1.2s → 2.4s → 4s 封顶。
  * ⚠ 用 `dataUpdateCount` 推退避档位 —— 不另外存状态，刷新页面自动从第一档开始。
  */
-const POLL_STEPS = [600, 1200, 2400] as const
+const POLL_STEPS: readonly number[] = [600, 1200, 2400]
 const POLL_CAP = 4000
 
-function pollDelay(dataUpdateCount: number): number {
-  return POLL_STEPS[dataUpdateCount] ?? POLL_CAP
+/**
+ * 取第 `step` 档的间隔。
+ *
+ * ⚠ 不用 `POLL_STEPS[step] ?? POLL_CAP` 那种"靠越界取 undefined 兜底"的写法：
+ * ```
+ * · 行为上它是安全的（JS 越界返回 undefined，不抛错，`??` 只兜 null/undefined）
+ * · 但**意图不清**：读者要自己想"为什么越界是允许的"
+ * · 而且一旦数组里出现 0，或有人把 `??` 改成 `||`，就会静默变味（不报错、值也不对）
+ * ⇒ 显式判断"超出档位"，并把 NaN / 负数 / 小数一并规整
+ * ```
+ */
+function pollDelay(step: number): number {
+  const i = Number.isFinite(step) ? Math.max(0, Math.floor(step)) : 0
+  return i < POLL_STEPS.length ? POLL_STEPS[i] : POLL_CAP
+}
+
+/**
+ * 退避档位：成功次数 + **失败次数** 一起算。
+ *
+ * ⚠★ 只用 `dataUpdateCount` 的坑（真隐患，不是数组那个）：
+ *   React Query 的 `dataUpdateCount` **只在请求成功时 +1**；
+ *   请求一直失败时它不涨 ⇒ 每次都停在第 1 档 ⇒ **每 600ms 重试一次**，
+ *   而"请求失败"往往正是因为服务端正忙 ⇒ 等于自己再加压。
+ *   ⇒ 取 `max(成功次数, 失败次数)` 当档位，失败也会退避到 4 秒。
+ */
+function pollStep(q: { state: { dataUpdateCount: number; errorUpdateCount: number } }): number {
+  return Math.max(q.state.dataUpdateCount, q.state.errorUpdateCount)
 }
 
 export interface StartedFetch {
@@ -161,7 +186,7 @@ export function useProjects(
       const list = query.state.data ?? []
       if (!list.some((p) => isJobActive(p.status))) return false
       // ★ 首查 600ms、之后退避（见 pollDelay）
-      return document.hidden ? false : (opts.pollMs ?? pollDelay(query.state.dataUpdateCount))
+      return document.hidden ? false : (opts.pollMs ?? pollDelay(pollStep(query)))
     },
   })
 }
@@ -404,7 +429,7 @@ export function useProgress(
       //   ★ 收敛成一个函数 ⇒ ★ 以后状态名只在**一处**出现 ✅
       if (!isJobActive(query.state.data?.status)) return false
       // ★ 首查 600ms、之后退避；显式传了 pollMs 就按传的走
-      return document.hidden ? false : (fixedPoll ?? pollDelay(query.state.dataUpdateCount))
+      return document.hidden ? false : (fixedPoll ?? pollDelay(pollStep(query)))
     },
   })
 }

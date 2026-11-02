@@ -44,6 +44,11 @@ class QueueBusy(Exception):
     """
 
 
+#: ★★ 全局队列闸门的**事务级咨询锁**编号（全站唯一，⚠ 不要改）⚠
+#:   用它把"所有提交"串起来 —— 否则 N 个并发请求会同时看到"还没满" ✅
+_QUEUE_LOCK_ID = 0x4153544C  # "ASTL"
+
+
 def _check_capacity(project_ref: str) -> None:
     """★★ **队列公平闸门**（在创建 Job 之前调用）⚠
 
@@ -56,9 +61,18 @@ def _check_capacity(project_ref: str) -> None:
     ⚠ 为什么要②：单个 worker 串行消费 ⇒ 一个人投 20 条，别人就排在后面干等 ⚠
     ⚠ 档位值只能**更小**：管理员那条线是底线，⛔ 特权不能突破安全边界
     """
+    from django.db import connection
+
     global_cap = int(appsettings.get("queue_max_jobs") or 0)
     if global_cap > 0:
-        depth = queue.queue_size()
+        # ★★ 先取**事务级咨询锁**：让并发提交在这里排队（提交/回滚时自动释放）⚠
+        #   ⚠ 没有它：N 个请求同时看到"队列还没满"⇒ 一起进 ⇒ 溢出 N−1 条（没有上限）
+        #   ⚠ 顺序固定（先全局锁、再用户行锁）⇒ 不会互相死等
+        with connection.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", [_QUEUE_LOCK_ID])
+        # ★ 深度数**数据库里的排队作业**（权威），⛔ 不用 Redis 计数：
+        #   Redis 那边没有事务语义，读了也不能保证"读了就还成立"
+        depth = Job.objects.filter(state=Job.STATE_QUEUED).count()
         if depth >= global_cap:
             raise QueueBusy(
                 f"解析队列已满（{depth}/{global_cap}），请稍后再提交；"
@@ -76,6 +90,12 @@ def _check_capacity(project_ref: str) -> None:
     if not row or not row[0]:
         return
     owner_id, tier = row
+    # ★★ 锁住这个人那一行：同一用户的并发提交**串行化** ⚠
+    #   （不同用户互不影响；持锁时间 = 一次 count + 一次 insert，毫秒级）
+    from django.contrib.auth import get_user_model
+
+    get_user_model().objects.select_for_update().filter(pk=owner_id).exists()
+
     refs = list(
         Project.objects.filter(owner_id=owner_id).values_list("project_ref", flat=True)
     )
@@ -118,7 +138,7 @@ def submit(
     |---|---|---|
     | ① | **投递即入队**，❌ 不得静默拒绝 | 入队失败 ⇒ ★ **把 Job 置 `failed` 并抛异常**，❌ 绝不假装成功 |
     | ② | 排队状态可见 | `queue_position` 由 `queue.queue_size()` 另算（见 jobs 接口） |
-    | ③ | 并发粒度合理 | ⚠ 不做「每用户全局 1」—— 限制交给队列深度与限流（J5） |
+    | ③ | 并发粒度合理 | ★ 每用户 = min(档位 `parse_concurrency`, 管理员 `queue_user_max`)；全局 = `queue_max_jobs`，**都在事务内取锁后判定** ⚠ |
     | ④ | 幂等键语义正确 | 相同 `dedup_key` ⇒ ★ **合并到已有 Job 并返回同一个 id**（不是失败） |
 
     ⚠ **为什么"入队失败"必须显式失败**：Redis 挂了但 Job 记录留在 `queued`，
@@ -126,27 +146,31 @@ def submit(
     """
     payload = payload or {}
 
-    # ---------------------------------------------------------------- ④ 幂等合并
-    if dedup_key:
-        existing = (
-            Job.objects.filter(
-                dedup_key=dedup_key,
-                state__in=(Job.STATE_QUEUED, Job.STATE_RUNNING),
-            )
-            .order_by("-queued_at")
-            .first()
-        )
-        if existing is not None:
-            log.info("作业去重命中：dedup_key=%s ⇒ Job#%s", dedup_key, existing.pk)
-            return existing, False
-
-    # ---------------------------------------------------------------- ★★ 队列公平
-    #   ⚠ 放在**创建 Job 之前**：拒绝时不该留下一条永远排队的死作业 ⚠
-    if not skip_limits:
-        _check_capacity(project_ref)
+    # ④ 幂等合并 —— ⚠ 挪到事务里做（与容量检查同锁区），否则"同键两请求"也会各建一条
 
     # ---------------------------------------------------------------- 创建 + 入队
+    # ★★ 队列公平检查**必须和建作业在同一个事务里**（`2026-11-01`）⚠
+    #   以前它在事务外：检查完到建作业之间有一个窗口，
+    #   窗口期内 N 个并发请求全都看到"还没满" ⇒ 一起通过 ⇒ **溢出没有上限** ⚠
+    #   现在：事务内取锁（全局咨询锁 + 用户行锁）后计数 ⇒ 并发也只有一个人通过 ✅
     with transaction.atomic():
+        if not skip_limits:
+            _check_capacity(project_ref)
+
+        # ---------------------------------------------------------------- ④ 幂等合并
+        if dedup_key:
+            existing = (
+                Job.objects.filter(
+                    dedup_key=dedup_key,
+                    state__in=(Job.STATE_QUEUED, Job.STATE_RUNNING),
+                )
+                .order_by("-queued_at")
+                .first()
+            )
+            if existing is not None:
+                log.info("作业去重命中：dedup_key=%s ⇒ Job#%s", dedup_key, existing.pk)
+                return existing, False
+
         job = Job.objects.create(
             project_ref=project_ref,
             kind=kind,

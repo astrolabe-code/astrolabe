@@ -137,6 +137,33 @@ services:
   #   ⇒ 统一成一个镜像后：**构建一次，三层同时生效**。
   web:
     image: astrolabe-web
+    # ★★★ 2026-11-02：**不再以 root 运行**（所有者：「逃逸后，破坏力太大了」）⚠
+    #   · 用 uid/gid = 1000：与宿主 ma 用户一致 ⇒ 挂载目录（data/uploads、
+    #     data/repos、data/static）**不用改属主就能写** ✅
+    #   · 端口 8000 > 1024 ⇒ 非 root 也能绑 ✅
+    #   · 丢掉全部 capabilities + no-new-privileges：即使进程被控，也拿不到额外特权
+    #   · PYTHONDONTWRITEBYTECODE：不往宿主机挂载目录里写 __pycache__
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    # ★★★ 2026-11-02：**UvicornWorker → gthread**（3 workers × 4 threads）⚠
+    #   为什么换：
+    #   · 本项目**没有异步视图**（全仓 0 个 `async def`），ASGI 白搭
+    #   · ASGI 下同步视图走线程池，**线程数随并发涨** ⇒ 每个线程各占一条 PG 连接
+    #     ⇒ 实测把 PostgreSQL 顶到 `too many clients already`（104/100）⇒ 部分请求 500 ⚠
+    #   · gthread 的线程数是**固定的** ⇒ PG 连接数上限 = workers × threads = 12 ✅
+    #   · 顺带把并发从 3 提到 12（原来同步视图在 ASGI 下是串行的）
+    #   --max-requests：进程定期回收，防内存只增不减（长期运行的必要项）
+    command: >
+      gunicorn mysite.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3 --threads 4 --worker-class gthread
+      --timeout 60 --graceful-timeout 25
+      --max-requests 2000 --max-requests-jitter 200
     build:
       context: ..                         # app/
       dockerfile: deploy/Dockerfile
@@ -171,6 +198,20 @@ services:
     image: astrolabe-web                  # ★ 复用 web 的镜像（见上方纪律）
     restart: unless-stopped
     command: python manage.py run_worker
+    # ★★★ 2026-11-02：**不再以 root 运行**（所有者：「逃逸后，破坏力太大了」）⚠
+    #   · 用 uid/gid = 1000：与宿主 ma 用户一致 ⇒ 挂载目录（data/uploads、
+    #     data/repos、data/static）**不用改属主就能写** ✅
+    #   · 端口 8000 > 1024 ⇒ 非 root 也能绑 ✅
+    #   · 丢掉全部 capabilities + no-new-privileges：即使进程被控，也拿不到额外特权
+    #   · PYTHONDONTWRITEBYTECODE：不往宿主机挂载目录里写 __pycache__
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+
     # ★★★ **内存硬上限**（2026-11-01）：解析是全量驻留内存的 ⚠
     #   实测：2MB C 文件 → 8.9 万节点 / 300MB；几千个文件就能把宿主机吃光。
     #   ⛔ 没有上限时 OOM 会打到宿主机，可能连带 db / nginx 一起挂（整站不可用）。

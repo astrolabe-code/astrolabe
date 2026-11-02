@@ -26,9 +26,15 @@ QUEUE_KEY = "astrolabe:jobs"
 #:   ⚠ 只设 `socket_connect_timeout`（建连超时），**不设** `socket_timeout` ——
 #:     `bzpopmin(timeout=…)` 是**阻塞命令**，socket 超时太短会误杀 ⚠
 _conn = None
+_fast_conn = None
 
 
 def _client() -> "redis.Redis":
+    """★ **阻塞专用**（worker 的 `bzpopmin`）—— ⚠ 不设 `socket_timeout`
+
+    `bzpopmin(timeout=…)` 本身就是阻塞命令，socket 超时太短会把它误杀。
+    ⚠ 只有 worker 的领取循环该用它，**web 请求路径一律不要用**（见 `_fast_client`）。
+    """
     global _conn
     if _conn is None:
         _conn = redis.Redis.from_url(
@@ -39,13 +45,42 @@ def _client() -> "redis.Redis":
     return _conn
 
 
+def _fast_client() -> "redis.Redis":
+    """★★ **web / admin 专用**（2026-11-02）—— 必须带 `socket_timeout` ⚠
+
+    ## 为什么必须分开
+
+    ```
+    web 上跑的全是**快命令**（zadd / zcard / zincrby / hgetall …），没有阻塞命令
+    ⇒ 一旦 Redis「没挂、只是卡住」，不设超时的话**调用线程会一直等**
+      · web 只有 workers × threads = 12 个线程
+      · 12 个请求全卡在 Redis 上 ⇒ **整站没响应**（比报错更糟：没有错误可看）
+    ```
+
+    设 1 秒超时后的行为：**快速失败** ⇒ 上层各自降级
+    （`access_audit` 吞异常返回 False、限流失败放行 ⇒ 业务继续跑）✅
+
+    ⚠ 与 `_client()` 的区别只有两个超时参数，但它们决定"卡住时会不会拖死站点"。
+    """
+    global _fast_conn
+    if _fast_conn is None:
+        _fast_conn = redis.Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+            health_check_interval=30,
+        )
+    return _fast_conn
+
+
 def enqueue(job_id: int, priority: int = 0) -> None:
     """投递作业到队列。
 
     ★ `B115` 第 ① 条：**投递即入队** —— 本函数不返回失败，
       也不像旧实现那样「静默拒绝」。
     """
-    _client().zadd(QUEUE_KEY, {str(job_id): -priority})
+    _fast_client().zadd(QUEUE_KEY, {str(job_id): -priority})
 
 
 def dequeue(timeout: int = 5) -> int | None:
@@ -84,9 +119,9 @@ def dequeue(timeout: int = 5) -> int | None:
 
 def remove(job_id: int) -> None:
     """把作业从队列移除（取消作业时用）。"""
-    _client().zrem(QUEUE_KEY, str(job_id))
+    _fast_client().zrem(QUEUE_KEY, str(job_id))
 
 
 def queue_size() -> int:
     """队列长度 —— 供 job 接口算 `queue_position`（J5：排队可见）。"""
-    return int(_client().zcard(QUEUE_KEY))
+    return int(_fast_client().zcard(QUEUE_KEY))

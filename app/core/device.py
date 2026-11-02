@@ -111,6 +111,10 @@ def _issue_allowed(ip: str) -> bool:
     """
     if not ip:
         return True
+    # ★ 审计：谁在疯狂要令牌（2026-10-25 所有者：「我要检测那些IP在疯狂请求token」）⚠
+    from core import access_audit
+
+    access_audit.record("device_issue", ip)
     try:
         key = f"astrolabe:dev:issue:{ip}:{int(time.time()) // ISSUE_WINDOW}"
         n = _redis().incr(key)
@@ -123,11 +127,31 @@ def _issue_allowed(ip: str) -> bool:
 
 
 def client_ip(request) -> str:
-    """★ 取客户端 IP（* 仅用于"发牌"配额，* 不用于限流身份）⚠"""
-    xff = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
+    """★ 取客户端 IP（* 仅用于"发牌"配额与审计，* 不用于限流身份）⚠
+
+    ## ⚠★★ 2026-11-02 改动：**不再相信客户端自带的 `X-Forwarded-For`**
+
+    ```
+    旧写法：取 XFF 的**第一段**（最左边那个）
+      · nginx 用 $proxy_add_x_forwarded_for ⇒ 它把客户端带来的值原样保留在前面
+      · 于是 client_ip() 返回的完全由**客户端决定**
+        —— 实测：加一个 `X-Forwarded-For: 1.2.3.4` 就真的返回 1.2.3.4 ⚠
+      · 后果：封禁一改头就绕过；还能伪造别人的 IP 让人被误封；审计数据不可信
+    ```
+
+    ## 现在的取值顺序
+
+    ```
+    ① X-Real-IP      ← nginx **覆盖写**的（`$remote_addr`），客户端改不了 ✅
+    ② REMOTE_ADDR    ← 直连时的对端
+    ⛔ 不读 XFF —— 那是客户端可以随便写的
+    ```
+
+    ⚠ 一旦接入自有隧道并要求它**覆盖**写 XFF，再在 nginx 启用 `realip` 模块，
+      这里读到的就会是**真实客户端 IP**（届时把 ① 换成 nginx 覆盖后的值即可）。
+    """
     return (
-        xff
-        or request.META.get("HTTP_X_REAL_IP")
+        (request.META.get("HTTP_X_REAL_IP") or "").strip()
         or request.META.get("REMOTE_ADDR")
         or ""
     )

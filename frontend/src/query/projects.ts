@@ -17,6 +17,31 @@ import type {
  * ⚠★ `job_id` 为 `null` **不代表失败** —— ★ `reused: true` 时它是 `null`，
  *   ★★ 而那是**成功**（★ 这份代码已经有人解析过了，★ 直接就能看）✅
  */
+/**
+ * ★★ 轮询间隔：**首查快、之后退避**（2026-11-02）⚠
+ *
+ * 所有者原话：
+ * 「进度，我估计大多项目都不到 3 秒就解析完了，你觉得呢？」「首查快、之后退避就行」
+ *
+ * 实测（不含拉源码）：
+ * ```
+ * itsdangerous 159 节点  0.37s      linux 0.11 1291 节点 0.38s
+ * Java 4499 节点 0.95s              C++ fmt 7124 节点   1.83s
+ * ```
+ * ⇒ 多数作业 2~4 秒就结束。**固定 2 秒轮询**的后果：
+ *   · 小项目：用户盯着"0%"两秒，然后一下子跳到完成
+ *   · 大项目：白白每 2 秒问一次
+ *
+ * 改法：第 1 次 600ms（快速确认是不是已经完成），之后 1.2s → 2.4s → 4s 封顶。
+ * ⚠ 用 `dataUpdateCount` 推退避档位 —— 不另外存状态，刷新页面自动从第一档开始。
+ */
+const POLL_STEPS = [600, 1200, 2400] as const
+const POLL_CAP = 4000
+
+function pollDelay(dataUpdateCount: number): number {
+  return POLL_STEPS[dataUpdateCount] ?? POLL_CAP
+}
+
 export interface StartedFetch {
   project_ref: string
   job_id: number | null
@@ -135,7 +160,8 @@ export function useProjects(
       if (!opts.live) return false
       const list = query.state.data ?? []
       if (!list.some((p) => isJobActive(p.status))) return false
-      return document.hidden ? false : (opts.pollMs ?? 2000)
+      // ★ 首查 600ms、之后退避（见 pollDelay）
+      return document.hidden ? false : (opts.pollMs ?? pollDelay(query.state.dataUpdateCount))
     },
   })
 }
@@ -359,7 +385,9 @@ export function useProgress(
   projectRef?: string | null,
   opts: { enabled?: boolean; pollMs?: number } = {},
 ) {
-  const { enabled = true, pollMs = 2000 } = opts
+  const { enabled = true, pollMs } = opts
+  // ⚠ 显式传了就用传的（0 表示不限）；没传就走退避
+  const fixedPoll = pollMs && pollMs > 0 ? pollMs : undefined
   return useQuery({
     queryKey: ['progress', projectRef],
     enabled: !!projectRef && enabled,
@@ -375,7 +403,8 @@ export function useProgress(
       //     ★★ 失败的项目**会永远轮询下去** ⚠
       //   ★ 收敛成一个函数 ⇒ ★ 以后状态名只在**一处**出现 ✅
       if (!isJobActive(query.state.data?.status)) return false
-      return document.hidden ? false : pollMs
+      // ★ 首查 600ms、之后退避；显式传了 pollMs 就按传的走
+      return document.hidden ? false : (fixedPoll ?? pollDelay(query.state.dataUpdateCount))
     },
   })
 }

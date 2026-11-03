@@ -32,6 +32,19 @@ services:
     # ★★★ 2026-11-03 网络分段（见文件末尾 networks: 的说明）⚠
     networks:
       - data
+    # ★★★ 2026-11-03：资源与权限兜底 ⚠
+    #   · mem_limit：一个跑飞的进程只能拖垮自己，⛔ 不能把宿主机内存吃光
+    #   · pids_limit：防 fork 炸弹
+    #   · no-new-privileges：被利用时也拿不到新特权
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    # ★ 只读根：数据在 pgdata 卷里；socket 与临时文件用 tmpfs
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /var/run/postgresql:size=16m
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -96,6 +109,18 @@ services:
     # ★★★ 2026-11-03 网络分段（见文件末尾 networks: 的说明）⚠
     networks:
       - data
+    # ★★★ 2026-11-03：资源与权限兜底 ⚠
+    #   · mem_limit：一个跑飞的进程只能拖垮自己，⛔ 不能把宿主机内存吃光
+    #   · pids_limit：防 fork 炸弹
+    #   · no-new-privileges：被利用时也拿不到新特权
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    # ★ 只读根：数据在 /data 卷里，只需 /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
     restart: unless-stopped
     # ★★★ 2026-11-03：**必须带密码**（原先 requirepass 为空 ⚠）
     #   为什么：9 个容器同在一个扁平网络 ⇒ 任何被攻破的容器都能直连 Redis；
@@ -148,6 +173,18 @@ services:
     # ★★★ 2026-11-03 网络分段（见文件末尾 networks: 的说明）⚠
     networks:
       - data
+    # ★★★ 2026-11-03：资源与权限兜底 ⚠
+    #   · mem_limit：一个跑飞的进程只能拖垮自己，⛔ 不能把宿主机内存吃光
+    #   · pids_limit：防 fork 炸弹
+    #   · no-new-privileges：被利用时也拿不到新特权
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    # ★ 只读根：索引在 /meili_data 卷里，只需 /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     restart: unless-stopped
     environment:
       # ⚠ 生产模式强制要求 master key（≥16 字节）
@@ -219,6 +256,12 @@ services:
       context: ..                         # app/
       dockerfile: deploy/Dockerfile
       target: public                      # ★ 公开版构建目标
+    pids_limit: 256
+    # ★★★ 2026-11-03：根文件系统只读 —— 被攻破后没有"落马"的地方 ⚠
+    #   只留 /tmp 一份可写的 tmpfs；业务写入都走挂载卷（uploads / staticfiles）
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     restart: unless-stopped
     env_file: [.env]
     # ★ 与 worker 同口径的内存上限（Web 进程本身不该吃这么多）
@@ -251,6 +294,9 @@ services:
     networks:
       - edge
       - data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     restart: unless-stopped
     command: python manage.py run_worker
     # ★★★ 2026-11-02：**不再以 root 运行**（所有者：「逃逸后，破坏力太大了」）⚠
@@ -294,6 +340,14 @@ services:
     # ★★★ 2026-11-03 网络分段（见文件末尾 networks: 的说明）⚠
     networks:
       - data
+    pids_limit: 256
+    mem_limit: 256m
+    # ★ 只读根系统 ⇒ 必须先禁掉 __pycache__ 写入
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     restart: unless-stopped
     command: python manage.py search_worker
     user: "1001:1001"
@@ -356,6 +410,14 @@ services:
     # ★★★ 2026-11-03 网络分段（见文件末尾 networks: 的说明）⚠
     networks:
       - data
+    pids_limit: 256
+    mem_limit: 256m
+    # ★ 只读根系统 ⇒ 必须先禁掉 __pycache__ 写入
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     restart: unless-stopped
     command: python manage.py heat_flush --loop --interval ${HEAT_INTERVAL:-900}
     user: "1001:1001"
@@ -391,6 +453,20 @@ services:
     networks:
       - edge
       - ops
+    # ★★★ 2026-11-03：资源与权限兜底 ⚠
+    #   · mem_limit：一个跑飞的进程只能拖垮自己，⛔ 不能把宿主机内存吃光
+    #   · pids_limit：防 fork 炸弹
+    #   · no-new-privileges：被利用时也拿不到新特权
+    mem_limit: 128m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    # ★ 只读根：nginx 需要写的三处用 tmpfs 顶（缓存/临时目录/pid）
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+      - /var/cache/nginx:size=32m
+      - /run:size=8m
     restart: unless-stopped
     ports:
       # ⚠★ 2026-10-13：旧站退役 ⇒ 直接占 80（★ 花生壳穿透本来就指 80）
@@ -430,6 +506,18 @@ services:
     networks:
       - ops
       - data
+    # ★★★ 2026-11-03：资源与权限兜底 ⚠
+    #   · mem_limit：一个跑飞的进程只能拖垮自己，⛔ 不能把宿主机内存吃光
+    #   · pids_limit：防 fork 炸弹
+    #   · no-new-privileges：被利用时也拿不到新特权
+    mem_limit: 256m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    # ★ 只读根：数据在 /app/data 卷里，只需 /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
     restart: unless-stopped
     ports:
       - "127.0.0.1:${UPTIME_PORT:-3001}:3001"

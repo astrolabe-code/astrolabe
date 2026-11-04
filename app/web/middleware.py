@@ -114,6 +114,35 @@ class SearchRateLimitMiddleware:
         return self.get_response(request)
 
 
+class ReadRateLimitMiddleware:
+    """★★ **登录用户的读接口限流**（P2b-1 · 2026-11-04）⚠
+
+    依据 RATE-LIMIT.md 5.1：
+
+    ```
+    GET /api/** 且**不带 q**（列表 / 详情）   登录用户 30 次/秒
+    GET /api/** 且**带 q**（搜索）            登录用户 10 次/秒  ← 由 SearchRateLimitMiddleware 管
+    ```
+
+    ⚠★ **本阶段只收紧登录用户**（P2b-1）：
+      匿名的额度调整（5 次/秒、按 IP 分桶）必须等 P4 —— 在那之前 `a<ip>` 就是网关，
+      收紧它会变成"全站匿名合计 5 次/秒"，高峰期会被自己打满（N1）。
+      ⇒ 匿名在本阶段：普通读**不新增限流**、搜索**维持现状**。
+    ⚠ 必须排在 `SearchRateLimitMiddleware` 之后，且自己不处理带 q 的请求。
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from web import ratelimit
+
+        blocked = ratelimit.check_read(request)
+        if blocked is not None:
+            return blocked
+        return self.get_response(request)
+
+
 class WriteRateLimitMiddleware:
     """★★ **写操作限流**（P2a · 2026-11-04）⚠
 

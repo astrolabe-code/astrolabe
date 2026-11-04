@@ -122,6 +122,9 @@ MIDDLEWARE = [
     "web.middleware.BanCheckMiddleware",
     # ★★ 搜索限流（* 任何带 q 的 GET 统一判一次）⚠
     "web.middleware.SearchRateLimitMiddleware",
+    # ★★★ 2026-11-04（P2b-1）：登录用户的**普通读**限流（30 次/秒）
+    #   ⚠ 只收紧登录用户；匿名额度要等 P4（现在 `a<ip>` 是网关，收紧会误伤全站）
+    "web.middleware.ReadRateLimitMiddleware",
     # ★★★ 2026-11-04（P2a）：**写操作限流**（30 次/分钟；导出 2 次/分钟）⚠
     #   · 只按用户计账（u<id>）⇒ 与真实 IP 无关，P4 之前即可生效
     #   · 匿名写请求不在这里判（视图层会 401/403）

@@ -205,3 +205,64 @@ def check_write(request, scope: str = "write") -> JsonResponse | None:
     )
     resp["Retry-After"] = "60"
     return resp
+
+
+# ===========================================================================
+# ★★★ 读接口限流（P2b-1 · 2026-11-04）
+# ===========================================================================
+#
+# 依据 RATE-LIMIT.md 5.1：
+#   列表 / 详情（普通读，**不带 q**）  登录用户 30 次/秒
+#   搜索（带 q）                      登录用户 10 次/秒  ← 已有（`check()`）
+#
+# ⚠★ **本阶段只收紧登录用户**（P2b-1）：
+#   匿名的额度调整（5 次/秒、按 IP 分桶）要等 P4 —— 在那之前 `a<ip>` 就是网关，
+#   收紧它会变成"全站匿名合计 5 次/秒"，日活几百的站高峰期会被自己打满（N1）。
+#   ⇒ 匿名**本阶段完全不动**：普通读不新增限流，搜索维持现状（全站共享 10 次/秒）。
+
+#: 登录用户：普通读每秒多少次
+READ_LIMIT_PER_SEC = 30
+
+
+def is_read_request(request) -> bool:
+    """★ 算不算"普通读"（GET/HEAD + /api/ + **不带 q**）⚠
+
+    ⚠ 带 `q` 的是搜索，归 `check()` 管（10 次/秒），这里必须排除，
+      否则一次搜索会被记两笔。
+    """
+    if request.method not in ("GET", "HEAD"):
+        return False
+    if not (request.path or "").startswith("/api/"):
+        return False
+    return not is_search_request(request)
+
+
+def check_read(request) -> JsonResponse | None:
+    """★★ 登录用户的普通读超限 ⇒ 429；匿名与未超限 ⇒ None ⚠"""
+    if not is_read_request(request):
+        return None
+
+    who = identity(request)
+    # ⚠ P2b-1：只收紧登录用户（匿名额度调整要等 P4，见文件上方说明）
+    if not who.startswith("u"):
+        return None
+
+    from search import terms
+
+    if terms.allow("read", who, READ_LIMIT_PER_SEC):
+        return None
+
+    _bump_hit("read", request)
+    resp = JsonResponse(
+        {
+            "ok": False,
+            "error": {
+                "code": "rate_limited",
+                "message": f"请求太快了（每秒最多 {READ_LIMIT_PER_SEC} 次），歇一下～",
+            },
+            "data": {"scope": "read", "limit": READ_LIMIT_PER_SEC},
+        },
+        status=429,
+    )
+    resp["Retry-After"] = "1"
+    return resp

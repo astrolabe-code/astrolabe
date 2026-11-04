@@ -122,6 +122,10 @@ MIDDLEWARE = [
     "web.middleware.BanCheckMiddleware",
     # ★★ 搜索限流（* 任何带 q 的 GET 统一判一次）⚠
     "web.middleware.SearchRateLimitMiddleware",
+    # ★★★ 2026-11-04（P2a）：**写操作限流**（30 次/分钟；导出 2 次/分钟）⚠
+    #   · 只按用户计账（u<id>）⇒ 与真实 IP 无关，P4 之前即可生效
+    #   · 匿名写请求不在这里判（视图层会 401/403）
+    "web.middleware.WriteRateLimitMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -399,6 +403,8 @@ UNFOLD = {
                     {"title": "③ 在线会话", "link": reverse_lazy("admin:access-online")},
                     {"title": "④ 被限流", "link": reverse_lazy("admin:access-limited")},
                     {"title": "⑤ 封禁名单", "link": reverse_lazy("admin:access-ban")},
+                    # ★ 2026-11-04（P1a）：登录锁定（有解锁按钮）
+                    {"title": "⑥ 登录锁定", "link": reverse_lazy("admin:access-lock")},
                 ],
             },
             {

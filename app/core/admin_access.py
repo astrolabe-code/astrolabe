@@ -44,6 +44,10 @@ TABS = (
     ("online", "③ 在线会话", "access-online"),
     ("limited", "④ 被限流", "access-limited"),
     ("ban", "⑤ 封禁名单", "access-ban"),
+    # ★★★ 2026-11-04（P1a）：登录锁定 —— 有列表 + 解锁按钮
+    #   所有者：「用户名被锁后只能硬等到时间到，除非我手动给他打开……
+    #           不止要写解锁脚本，后台页面也要写相应按钮。」
+    ("lock", "⑥ 登录锁定", "access-lock"),
 )
 
 #: ★ 每个 tab 对应哪些 Redis 计数（* 「清空本类记录」要知道清谁）⚠
@@ -53,6 +57,7 @@ TAB_KINDS = {
     "limited": ("rate_limited",),
     "online": (),   # ⚠ 会话不是审计计数，清空走「踢下线」
     "ban": (),      # ⚠ 封禁名单有自己的解封
+    "lock": (),     # ⚠ 登录锁定有自己的解锁（不是审计计数）
 }
 
 _TAB_KEYS = {key for key, _, _ in TABS}
@@ -81,6 +86,50 @@ def _build_tables(tab: str, data: dict, banned: list, q: str = "") -> tuple[list
     def keep(rows):
         return [r for r in rows if not q or q.lower() in (r["ip"] or "").lower()] if q else rows
 
+
+    # ★★★ 2026-11-04（P1a）：登录锁定列表（数据来自 Redis，不是审计汇总）
+    if tab == "lock":
+        from core import login_guard
+
+        try:
+            locked = login_guard.locked_list()
+            err = ""
+        except Exception as exc:  # pragma: no cover —— Redis 挂了也要能打开页面
+            locked, err = [], f"读不到锁定列表（Redis 不可用）：{type(exc).__name__}"
+
+        return (
+            [
+                {
+                    "action": "unlock",
+                    "action_label": "解锁所选用户名",
+                    "columns": [
+                        {"label": "用户名"},
+                        {"label": "失败次数", "w": 110},
+                        {"label": "剩余", "w": 130},
+                    ],
+                    "rows": [
+                        {
+                            "key": r["username"],
+                            "cells": [
+                                _cell(r["username"], "用户名", mono=True),
+                                _cell(
+                                    r["count"], "失败次数", num=True,
+                                    hot=r["count"] >= login_guard.MAX_FAILS,
+                                ),
+                                _cell(login_guard.human_ttl(r["ttl"]), "剩余"),
+                            ],
+                        }
+                        for r in locked
+                    ],
+                    "empty": err or "当前没有被锁定的用户名。",
+                }
+            ],
+            (
+                "同一用户名失败满 %d 次即锁 %d 分钟，只能等它过期或在这里手动解锁。"
+                "⚠ 不存在的用户名也会被锁（否则就是用户名枚举信号）。"
+                % (login_guard.MAX_FAILS, login_guard.LOCK // 60)
+            ),
+        )
 
     if tab == "login_fail":
         return (
@@ -252,10 +301,10 @@ def _build_tables(tab: str, data: dict, banned: list, q: str = "") -> tuple[list
 # ---------------------------------------------------------------------------
 
 
-def access_audit_view(request, tab: str = "device"):
+def access_audit_view(request, tab: str = "login_fail"):
     """★ 单个分类（左栏由 unfold 提供，本视图只管右侧内容）⚠"""
     if tab not in _TAB_KEYS:
-        tab = "device"
+        tab = "login_fail"
 
     if request.method == "POST":
         # ★ 批量：勾选多个 `ips`（与 changelist 的「勾选 + 动作栏」同一套交互）⚠
@@ -314,6 +363,35 @@ def access_audit_view(request, tab: str = "device"):
             ban_seconds = max(0, int(request.POST.get("ban_seconds") or 0))
         except ValueError:
             ban_seconds = 0
+
+        # ★★★ 2026-11-04（P1a）：**解锁被锁定的用户名**
+        #   所有者：「不止要写解锁脚本，后台页面也要写相应按钮。」
+        if action == "unlock" and ips:
+            from core import login_guard
+
+            done, missed_names = 0, []
+            for name in ips:
+                if login_guard.clear(name):
+                    done += 1
+                else:
+                    missed_names.append(name)
+                from core.models import AuditLog  # ★ 管理动作必留痕 ⚠
+
+                AuditLog.objects.create(
+                    actor=request.user,
+                    action="login.unlock",
+                    target_kind="username",
+                    target_id=login_guard.normalize(name),
+                    detail={"by": request.user.get_username()},
+                )
+            if done:
+                messages.success(request, f"已解锁 {done} 个用户名")
+            if missed_names:
+                messages.info(
+                    request,
+                    "这些本来就没有锁定记录：" + "、".join(missed_names[:5]),
+                )
+            return HttpResponseRedirect(request.path)
 
         if action in ("ban", "unban") and ips:
             done, skipped = 0, []
@@ -385,7 +463,8 @@ def access_audit_view(request, tab: str = "device"):
         start = (t["page"] - 1) * per_page
         t["rows"] = t["rows"][start : start + per_page]
         for row in t["rows"]:
-            row["bannable"] = access_audit.is_bannable(row["key"])
+            # ⚠ 锁定页的 key 是**用户名**（不是 IP）⇒ 不走 is_bannable
+            row["bannable"] = True if tab == "lock" else access_audit.is_bannable(row["key"])
         # ★ 动作下拉的选项（* 除主动作外，再给一个「清空本类记录」）⚠
         if t.get("action"):
             t["actions"] = [{"value": t["action"], "label": t["action_label"]}]

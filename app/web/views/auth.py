@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 
+import logging
 import re
 from urllib.parse import urlencode
 
@@ -51,6 +52,8 @@ from core import appsettings, invites, oauth
 # ⚠★ `B176` ①：`OAuthState` **不再需要** —— ★ 回调里已没有"发布/拉取意图"两条路 ✅
 from web import auth
 from web.http import fail, ok, read_json, safe_next_url
+
+logger = logging.getLogger("astrolabe.auth")
 
 # ===========================================================================
 # ★★ `next_url` 白名单 —— ⚠ 已移到 `web/http.py`
@@ -381,8 +384,66 @@ def login(request: HttpRequest) -> JsonResponse:
     if not username or not password:
         return fail("请填写用户名和密码", 400, code="missing_fields")
 
+    # ★★★ 2026-11-04：**保护模式**下只允许管理员登录 ⚠
+    #   所有者原话：「打开了，admin 也要能登陆呀，否则我怎么解除这个呢？」
+    #
+    #   ⚠★ **必须放在 `authenticate()` 之前**：密码校验是 PBKDF2（每次 ~100ms CPU），
+    #     放在之后 = 攻击者仍能用"登录"当 CPU 放大器 ⇒ 保护模式白开 ⚠
+    #   ⇒ 先查"这个用户名是不是 staff"（一次极轻的索引查询），不是就直接 503
+    from core import maintenance
+
+    if maintenance.is_on():
+        from django.contrib.auth import get_user_model
+
+        allowed = get_user_model().objects.filter(
+            username=username, is_staff=True, is_active=True
+        ).exists()
+        if not allowed:
+            return fail(
+                "站点正在保护中，暂时只允许管理员登录。",
+                503,
+                code="protect_mode",
+            )
+
+    # ★★★ 2026-11-04（P1a）：**登录失败计数与硬锁** ⚠
+    #   规范（RATE-LIMIT.md 5.3 / 10.3 / 10.7）：
+    #     · 同一用户名（strip().lower() 后的**计数键**）失败满 5 次 ⇒ 第 6 次起直接拒绝
+    #     · 锁定 15 分钟；解除只能等 TTL 或管理员解锁（后台按钮 / unlock-login.sh）
+    #     · ⚠★ **必须在 authenticate() 之前**：否则攻击者对已锁用户名继续请求，
+    #       每次仍要跑一次 PBKDF2（~100ms）⇒ 锁定失效 +  CPU 被放大
+    #     · ⚠ Redis 故障 ⇒ fail-closed（503），⛔ 不放行（那等于无限试密码）
+    from core import login_guard
+
+    try:
+        locked, retry_after = login_guard.is_locked(username)
+    except Exception:
+        logger.warning("登录计数不可用（Redis）⇒ 按 fail-closed 返回 503")
+        return fail("服务暂时不可用，请稍后再试。", 503, code="service_unavailable")
+
+    if locked:
+        # ⚠ 文案与"密码错误"保持不可区分（⛔ 不写"该用户已锁定"）
+        resp = fail("用户名或密码不正确，请稍后再试。", 429, code="too_many_attempts")
+        resp["Retry-After"] = str(retry_after)
+        logger.info("登录被锁：username=%s 剩余 %ss", login_guard.normalize(username), retry_after)
+        return resp
+
+    from core import access_audit
+    from core.device import client_ip
+
     user = authenticate(request, username=username, password=password)
     if user is None:
+        # ★ 审计登录失败：谁在撞库（⚠ 只记 IP + 用户名，⛔ 不记密码）⚠
+        access_audit.record("login_fail", client_ip(request), username)
+
+        # ★★★ P1a：记一次失败（⚠ 不存在的用户名**也要记** —— 否则就是枚举 Oracle）
+        try:
+            n = login_guard.record_failure(username)
+            if n >= login_guard.MAX_FAILS:
+                logger.warning(
+                    "用户名已锁定：%s（失败 %d 次）", login_guard.normalize(username), n
+                )
+        except Exception:  # pragma: no cover —— 计数失败不该把登录变成 500
+            logger.warning("失败计数写入失败（Redis）", exc_info=True)
         # ⚠★ 刻意**不区分**"没这个人"与"密码错了" —— ★ 见函数文档
         #
         # ⚠★★ **被停用的账号也会落到这里** ——
@@ -400,10 +461,19 @@ def login(request: HttpRequest) -> JsonResponse:
         # ⚠ 见上：★ 当前 `ModelBackend` 走不到这里（★ 留着是为了不依赖某个 backend 的实现细节）
         return fail("这个账号已被停用。", 403, code="account_disabled")
 
+    # ★★ P1a：登录成功 ⇒ **只清零用户名的失败计数**
+    #   ⚠ 不清 IP 键：否则"错 19 次 + 成功 1 次"可把 IP 维度的计数永久洗白
+    try:
+        login_guard.clear(username)
+    except Exception:  # pragma: no cover
+        logger.warning("失败计数清零失败（Redis）", exc_info=True)
+
     # ★★ B245：登录 = 种 session（不再签发 Bearer 令牌）⚠
     #   · · ⚠ 本接口**刻意不加 `csrf_exempt`**（B247②）：cookie 认证下
     #     登录表单是 CSRF 的经典靶子，放开它等于"替攻击者登录受害者" ⚠
     remember = _truthy(body.get("remember"))
+    # ★ 审计登录成功
+    access_audit.record("login_ok", client_ip(request), username)
     auth.login_user(request, user, remember=remember)
     return ok({"user": auth.user_json(user)})
 
@@ -443,6 +513,12 @@ def logout(request: HttpRequest) -> JsonResponse:
     ★ **幂等**：⚠ 重复登出**不算错** —— 否则"网络抖动后自动重试"会得到刺眼报错。
     · · 游客调用也返回 200（* 本来就没有会话可清）✅
     """
+    from core import access_audit
+    from core.device import client_ip
+
+    # ★ 审计登出（* 所有者：「疯狂掉线和登陆也一样呀」）⚠
+    actor = _current_user(request)
+    access_audit.record("logout", client_ip(request), actor.get_username() if actor else "")
     auth.logout_user(request)
     return ok({"revoked": True})
 

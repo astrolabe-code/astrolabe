@@ -16,9 +16,9 @@
 ## ★ 身份与速率
 
 ```
-u<id>      登录用户      10 次/秒
-d<token>   设备（游客）  10 次/秒
-anon       都没有        90 次/秒（全体共用 = 10 × 9）
+u<id>   登录用户        10 次/秒
+a<ip>   匿名（按 IP）   10 次/秒   ← 2026-11-04 起：不再有设备令牌
+anon    取不到 IP       10 次/秒   （理论上不会发生）
 ```
 
 ⚠★ 失败**放行**：限流是保护手段，Redis 挂了不该让搜索不可用 ✅
@@ -42,10 +42,12 @@ def identity(request) -> str:
     if user is not None and getattr(user, "pk", None):
         return f"u{user.pk}"
 
-    token = getattr(request, "device_token", "") or ""
-    if token:
-        return f"d{token.split('.')[0][:16]}"
-    return "anon"
+    # ★★★ 2026-11-04：设备令牌已删除（所有者：「效果没多少，判断还多，没必要」）
+    #   ⇒ 匿名一律按**真实 IP** 计账（`a<ip>`）；⚠ 真实 IP 要等自建隧道接入后才有意义
+    from core.device import client_ip
+
+    ip = client_ip(request)
+    return f"a{ip}" if ip else "anon"
 
 
 def is_search_request(request) -> bool:
@@ -67,7 +69,7 @@ def check(request, scope: str = "search") -> JsonResponse | None:
     if terms.allow(scope, who, limit):
         return None
 
-    _bump_hit(scope)
+    _bump_hit(scope, request)
 
     from web.permissions import current_user
 
@@ -91,7 +93,7 @@ def check(request, scope: str = "search") -> JsonResponse | None:
     return resp
 
 
-def _bump_hit(scope: str) -> None:
+def _bump_hit(scope: str, request=None) -> None:
     """★ 记一次"被限流"（* 用来判断限流是不是误伤）⚠"""
     try:
         from django.utils import timezone
@@ -102,3 +104,12 @@ def _bump_hit(scope: str) -> None:
         r.expire(key, 172800)
     except Exception:
         pass
+
+    # ★ 审计：**是谁**被限流了（原来只有全局日计数，看不出人）⚠
+    if request is not None:
+        try:
+            from core import access_audit, device
+
+            access_audit.record("rate_limited", device.client_ip(request), identity(request))
+        except Exception:  # pragma: no cover
+            pass

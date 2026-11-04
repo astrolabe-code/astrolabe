@@ -169,8 +169,18 @@ def allow(scope: str, who: str, limit: int) -> bool:
 
 
 def rate_limit_for(who: str) -> int:
-    """★ 某个身份每秒允许多少次（* 匿名共用桶给 9 倍）⚠"""
-    return RATE_ANON if who == "anon" else RATE_USER
+    """★ 某个身份每秒允许多少次
+
+    ## ⚠★ 2026-11-04 改动：匿名不再给"9 倍额度"
+
+    ```
+    旧：anon 是**全体共用一个桶**，所以给 9 倍（90 次/秒）还算合理
+    新：设备令牌已删，匿名改为**按 IP 计账**（a<ip>）
+        ⇒ 若仍给 90 次/秒，等于"单个 IP 可以每秒 90 次搜索"，那是更糟的放大 ⚠
+        ⇒ 与登录用户同档（10 次/秒）；真正的收紧（想到 5 次/秒）等 P1/P2 一起定
+    ```
+    """
+    return RATE_USER
 
 
 def matches(kw: str, limit: int = 8) -> list[str]:

@@ -23,7 +23,6 @@ r"""★★ **访问审计：谁在疯狂请求**（2026-10-25 · 所有者需求
 
 | kind | 触发点 | member 形态 |
 |---|---|---|
-| `device_issue` | 首次访问发设备令牌（`B238`） | `ip\|` |
 | `login_ok` | 密码 / OAuth 登录成功 | `ip\|username` |
 | `login_fail` | 登录失败（⚠ 不区分账号不存在与密码错） | `ip\|username` |
 | `logout` | 登出 | `ip\|username` |
@@ -54,7 +53,8 @@ logger = logging.getLogger("astrolabe.audit")
 KEEP_DAYS = 8
 
 #: 五类事件（⚠ 后台按这个顺序出表格，别随意改名 —— 键名里带它）
-KINDS: tuple[str, ...] = ("device_issue", "login_ok", "login_fail", "logout", "rate_limited")
+#: ★ 2026-11-04：`device_issue` 已移除（设备令牌功能被删除，见 `core/device.py`）
+KINDS: tuple[str, ...] = ("login_ok", "login_fail", "logout", "rate_limited")
 
 #: 封禁用的键（永久 = hash；临时 = `<BAN_KEY>:<ip>`）
 BAN_KEY = "astrolabe:ban:ip"

@@ -29,8 +29,12 @@
 
 from __future__ import annotations
 
-from django.http import HttpRequest
+import logging
+
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
+
+logger = logging.getLogger("astrolabe.protect")
 
 #: ★ 只有「安全方法」才种 CSRF Cookie ——
 #: ⚠ POST 上种它没有意义（那一刻请求已经带着自己的 token 了）
@@ -55,47 +59,34 @@ class CsrfCookieMiddleware:
         return self.get_response(request)
 
 
-class DeviceTokenMiddleware:
-    """★★ **设备令牌**（`B238` · 2026-10-23）⚠
 
-    > 「网站链接建立时，就给设备发送一个token存起来。然后，它每次访问都要带上这个
-    >   token，做为身份识别。这样游客也能区分了，有token或有用户名的就给正常速率。
-    >   都没有的，看作一个人，走哪9倍的速率限制……他们用脚本清除token不管用。」
+class BanCheckMiddleware:
+    """★★ **IP 封禁拦截**（2026-11-04 从 `DeviceTokenMiddleware` 里拆出来）⚠
+
+    ## 为什么现在单独一个类
 
     ```
-    没有 cookie / 验签失败 ⇒ 发新令牌并写 HttpOnly Cookie（每 IP 每小时 150 个）
-    有合法令牌            ⇒ request.device_token = 它
+    原来这段判定写在 DeviceTokenMiddleware 里（顺手做的）
+    2026-11-04 删设备令牌时把它一起删了 ⇒ **后台封禁名单直接失效**
+    （冒烟脚本「被封 IP ⇒ 403」当场抓到，这不是猜测）
+    ⇒ 封禁是**独立职责**，不该依附在"发令牌"上
     ```
 
-    ⚠ 只挂一个属性，**不做任何拦截** —— 是否限流由各接口自己决定 ✅
-    ⚠ 与登录认证无关：它回答「这是哪台设备」，session 回答「你是谁」⚠
+    ⚠ 回环与容器网段由 `access_audit.is_banned` 内部直接放行（防自锁）。
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        from core import device
+        from core import access_audit, device
 
-        token = request.COOKIES.get(device.COOKIE_NAME, "")
-        freshing = None
-
-        # ⚠★★ **限流身份只看"请求带来的令牌"**：
-        #   · · 如果这里把"刚发的令牌"当身份 ⇒ **不带 cookie 的脚本每次都是新身份**，
-        #     * 限流直接失效（实测发现）⚠
-        #   · · 所以：* 带来的合法令牌 ⇒ 记身份；* 没带 ⇒ 就是 anon（共用桶）✅
-        valid = device.verify(token)
-        if not valid:
-            # ★ 发牌前先看配额（* 每 IP 每小时 150 个，* 超了就不发）⚠
-            if device._issue_allowed(device.client_ip(request)):
-                freshing = device.issue()
-            token = ""
-
-        request.device_token = token if valid else ""
-        response = self.get_response(request)
-        if freshing:
-            device.set_cookie(response, freshing)
-        return response
+        if access_audit.is_banned(device.client_ip(request)):
+            logger.warning("ban 拦截 ip=%s", device.client_ip(request))
+            return HttpResponse(
+                "Access denied.", status=403, content_type="text/plain; charset=utf-8"
+            )
+        return self.get_response(request)
 
 
 class SearchRateLimitMiddleware:
@@ -121,3 +112,64 @@ class SearchRateLimitMiddleware:
         if blocked is not None:
             return blocked
         return self.get_response(request)
+
+
+class ProtectModeMiddleware:
+    """★★ **站点保护模式**（保命开关 · 2026-11-04）⚠
+
+    ## 所有者原话（逐字）
+
+    > 「打开了，admin 也要能登陆呀，否则我怎么解除这个呢？
+    >   admin 是用 ssh 连接登陆的，放宽也没影响，先要破除我的 ubuntu 密码再说。」
+
+    ## 开启后
+
+    ```
+    已登录 + is_staff      ⇒ 一切正常（admin 必须能进来解除开关）
+    未登录                 ⇒ 只能**只读浏览**；搜索 / 登录 / 写操作 一律 503
+    已登录但非 staff        ⇒ 同上（他们不是管理员，没有理由豁免）
+    健康检查                ⇒ 放行（否则监控会报"站点挂了"，掩盖真实情况）
+    ```
+
+    ⚠ **为什么放行 /api/auth/login/**：admin 需要能登录才能解除；
+      真正的判定在 `web/views/auth.py::login()` —— 非 staff 登录会被拒（503 `protect_mode`）。
+    ⚠ **必须排在 `AuthenticationMiddleware` 之后**（要用 `request.user`）。
+    """
+
+    #: 这些前缀始终放行（健康检查 + 登录入口 + 身份查询）
+    ALWAYS = ("/healthz", "/readyz", "/api/auth/login/", "/api/auth/me/")
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from core import maintenance
+
+        if not maintenance.is_on():
+            return self.get_response(request)
+
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False) and user.is_staff:
+            return self.get_response(request)
+
+        path = request.path or "/"
+        if any(path.startswith(prefix) for prefix in self.ALWAYS):
+            return self.get_response(request)
+
+        # ★ 只读浏览放行：无 q 的 GET / HEAD（⚠ 带 q = 搜索，最贵的那个入口）
+        if request.method in ("GET", "HEAD") and not (request.GET.get("q") or "").strip():
+            return self.get_response(request)
+
+        logger.warning(
+            "protect_mode 拦截 %s %s ip=%s",
+            request.method,
+            path,
+            request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR", ""),
+        )
+        message = "站点正在保护中：已登录用户不受影响，其他人现在只能浏览。"
+        if path.startswith("/api/"):
+            return JsonResponse(
+                {"ok": False, "error": {"code": "protect_mode", "message": message}},
+                status=503,
+            )
+        return HttpResponse(message, status=503, content_type="text/plain; charset=utf-8")

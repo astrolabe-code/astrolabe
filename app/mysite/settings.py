@@ -59,6 +59,12 @@ CSRF_COOKIE_HTTPONLY = False
 #: ★ 前端统一读这个名字（见 frontend/src/api/client.ts）
 CSRF_COOKIE_NAME = "csrftoken"
 
+# ★ 保护模式（life-saving switch）的标志文件；存在 = 开启
+#   ⚠ 放在 uploads 下是因为它已经是**可写挂载**（/app 本身是只读挂载，塞不进新文件）
+MAINTENANCE_FLAG = env(
+    "MAINTENANCE_FLAG", "/app/data/uploads/.runtime/maintenance.flag"
+)
+
 ALLOWED_HOSTS = [h.strip() for h in (env("ALLOWED_HOSTS", "") or "").split(",") if h.strip()]
 if not ALLOWED_HOSTS and not DEBUG:
     raise RuntimeError("生产环境必须设置 ALLOWED_HOSTS（见 deploy/.env）")
@@ -103,11 +109,17 @@ MIDDLEWARE = [
     #   · · 原话：「我的天呐，你把django设计好的维持登陆状态和身份识别的令牌系统给了后台了吗？」
     #   · · ⇒ 认证回到 `AuthenticationMiddleware`（Django 默认次序即可，⛔ 不再需要上移）⚠
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # ★★★ 2026-11-04：**站点保护模式**（保命开关）⚠
+    #   · 打开后：已登录 admin 不受影响；未登录只能只读浏览；搜索/登录/写 一律 503
+    #   · 开关是**文件**（打 DDoS 时数据库/Redis 可能正忙，不能依赖它们）
+    #   · 切换：deploy/maintenance.sh on|off|status
+    "web.middleware.ProtectModeMiddleware",
     # ★★ B247②：GET 时种 csrftoken Cookie（* 否则前端第一个 POST 就 403）⚠
     #   ⚠ 必须在 CsrfViewMiddleware **之前**（* 它靠 META 里的值在 process_response 种 Cookie）⚠
     "web.middleware.CsrfCookieMiddleware",
-    # ★★ 设备令牌（* 给游客发一个签名 Cookie，* 用于限流身份识别）⚠
-    "web.middleware.DeviceTokenMiddleware",
+    # ★★★ 2026-11-04：**IP 封禁拦截**（原来混在 DeviceTokenMiddleware 里，
+    #   删设备令牌时一起被删掉 ⇒ 后台封禁失效；现已拆成独立中间件）⚠
+    "web.middleware.BanCheckMiddleware",
     # ★★ 搜索限流（* 任何带 q 的 GET 统一判一次）⚠
     "web.middleware.SearchRateLimitMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -141,18 +153,52 @@ ASGI_APPLICATION = "mysite.asgi.application"
 
 # ============================================================ 数据库
 
-DATABASES = {
+# ★★★ 2026-10-28：**数据库可切换**（个人版用 SQLite，社区版仍走 Postgres）⚠
+#
+# ```\n# 社区版（默认）：沿用 POSTGRES_* 环境变量\n# 个人版：ASTROLABE_DB=sqlite  ⇒ 同目录下 data/astrolabe.db\n# ```\n
+# ⚠ 注意：`reading_path` 原来是 Postgres 的 `ArrayField`，SQLite 不支持，
+#   已改成 `JSONField`（两边都能跑）—— 详见 `core/models.py` 里那段注释 ⚠
+_DB = (os.environ.get("ASTROLABE_DB") or "postgres").strip().lower()
+
+if _DB == "sqlite":
+    from pathlib import Path as _Path
+
+    # ★ 数据放「程序所在目录/data」（⚠ 冻结后 `BASE_DIR` 指向临时解包目录，不能用来存数据）⚠
+    import sys as _sys
+
+    _home = (
+        _Path(_sys.executable).resolve().parent
+        if getattr(_sys, "frozen", False)
+        else BASE_DIR
+    )
+    _data_dir = _Path(os.environ.get("ASTROLABE_DATA_DIR", _home / "data"))
+    _data_dir.mkdir(parents=True, exist_ok=True)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": str(_data_dir / "astrolabe.db"),
+            # ★ 个人版是单用户，WAL + 长超时足够；⛔ 不要照搬 Postgres 的连接复用 ⚠
+            "OPTIONS": {"timeout": 20, "init_command": "PRAGMA journal_mode=WAL;"},
+        }
+    }
+else:
+    DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": env("POSTGRES_DB", "astrolabe"),
-        "USER": env("POSTGRES_USER", "astrolabe"),
-        "PASSWORD": env("POSTGRES_PASSWORD", ""),
+        # ★★★ 2026-11-03：**运行时用非超级用户**（`astrolabe_app`）⚠
+        #   所有者裁定：「owner 账号不用保留了」⇒ 由 `astrolabe_app` 做对象所有者
+        #   · 它拥有全部表/序列 ⇒ 迁移（DDL）照常能跑 ✅
+        #   · 但 **不是 superuser** ⇒ `COPY ... FROM PROGRAM`、建库、建角色一律不行
+        #   · 容器初始化的 `POSTGRES_USER` 仍是 astrolabe（只在首次建库时用）
+        "USER": env("DB_APP_USER", env("POSTGRES_USER", "astrolabe")),
+        "PASSWORD": env("DB_APP_PASSWORD", env("POSTGRES_PASSWORD", "")),
         "HOST": env("POSTGRES_HOST", "db"),
         "PORT": env("POSTGRES_PORT", "5432"),
         # ★ 连接复用（DEPLOYMENT.md：提高并发）
         "CONN_MAX_AGE": 60,
     }
-}
+    }
 
 # ============================================================ 缓存 / 队列
 #
@@ -283,6 +329,24 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ============================================================================
 # ⚠ 侧栏分组与「先看什么」的顺序，* 按运维习惯排：内容 → 用户 → 系统 ⚠
 UNFOLD = {
+    # ★★ 主色 = 站点的青蓝（`--accent: #0891b2`）⚠
+    #   · · 默认是紫色，与前台完全不搭（* 所有者早就提过"配色跟网站背景色不搭配"）⚠
+    #   · · 值是 Tailwind 要的 "R G B" 三段式（⛔ 不是 #hex）⚠
+    "COLORS": {
+        "primary": {
+            "50": "236 254 255",
+            "100": "207 250 254",
+            "200": "165 243 252",
+            "300": "103 232 249",
+            "400": "34 211 238",
+            "500": "6 182 212",
+            "600": "8 145 178",
+            "700": "14 116 144",
+            "800": "21 94 117",
+            "900": "22 78 99",
+            "950": "8 51 68",
+        },
+    },
     "SITE_TITLE": "Astrolabe 后台",
     "SITE_HEADER": "Astrolabe 后台",
     "SITE_SUBHEADER": "内容处置 · 用户与邀请 · 运行状态",
@@ -295,7 +359,15 @@ UNFOLD = {
         "navigation": [
             {
                 "title": "内容",
+                # ★★★ 2026-10-25：**这一组不折叠** ⚠
+                #   · · 所有者问「审核许可证的按钮在哪里？」—— 因为分组默认收起，
+                #     进后台只看到四个标题，底下有什么全靠猜 ⚠
+                #   · · 「内容」是每天都要用的（审核 / 笔记 / 项目）⇒ **常驻展开** ✅
+                #   · · 其余三组保持可折叠（* 不常用，收起来更清爽）⚠
                 "items": [
+                    # ★ 审核队列放最前（* 有事要先处理）⚠
+                    {"title": "审核队列", "link": reverse_lazy("admin:review-queue")},
+                    {"title": "审核记录", "link": reverse_lazy("admin:core_projectreview_changelist")},
                     {"title": "笔记", "link": reverse_lazy("admin:core_note_changelist")},
                     {"title": "段评 / 章评", "link": reverse_lazy("admin:core_notecomment_changelist")},
                     {"title": "项目", "link": reverse_lazy("admin:core_project_changelist")},
@@ -307,18 +379,45 @@ UNFOLD = {
             },
             {
                 "title": "用户与邀请",
+                "collapsible": True,
                 "items": [
                     {"title": "用户", "link": reverse_lazy("admin:auth_user_changelist")},
                     {"title": "用户档案", "link": reverse_lazy("admin:core_userprofile_changelist")},
+                    {"title": "第三方身份", "link": reverse_lazy("admin:core_oauthidentity_changelist")},
                     {"title": "邀请码", "link": reverse_lazy("admin:core_invite_changelist")},
                 ],
             },
             {
+                # ★★ 访问审计的**五个分类直接挂在左栏**（所有者 2026-10-25：
+                #    「我说把访问日志的二级表也加到左栏，通过折叠展开收起」）⚠
+                #   · · 每个子项是独立 URL ⇒ 侧栏能正确高亮 + 进入时自动展开 ✅
+                "title": "访问审计",
+                "collapsible": True,
+                "items": [
+                    {"title": "① 登录失败", "link": reverse_lazy("admin:access-login-fail")},
+                    {"title": "② 登录 / 登出", "link": reverse_lazy("admin:access-session")},
+                    {"title": "③ 在线会话", "link": reverse_lazy("admin:access-online")},
+                    {"title": "④ 被限流", "link": reverse_lazy("admin:access-limited")},
+                    {"title": "⑤ 封禁名单", "link": reverse_lazy("admin:access-ban")},
+                ],
+            },
+            {
+                "title": "数据与运行",
+                "collapsible": True,
+                "items": [
+                    {"title": "作业队列", "link": reverse_lazy("admin:jobs_job_changelist")},
+                    {"title": "热搜词", "link": reverse_lazy("admin:core_searchterm_changelist")},
+                    {"title": "基图", "link": reverse_lazy("admin:graph_basegraph_changelist")},
+                    {"title": "仓库", "link": reverse_lazy("admin:graph_repo_changelist")},
+                ],
+            },
+            {
                 "title": "系统",
+                "collapsible": True,
                 "items": [
                     {"title": "运维概览", "link": reverse_lazy("admin:ops-dashboard")},
                     {"title": "审计日志", "link": reverse_lazy("admin:core_auditlog_changelist")},
-                    {"title": "站点参数", "link": reverse_lazy("admin:core_appsetting_changelist")},
+                    {"title": "站点参数", "link": reverse_lazy("admin:site-settings")},
                     {"title": "存储占用", "link": reverse_lazy("admin:core_projectstorage_changelist")},
                 ],
             },

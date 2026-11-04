@@ -114,6 +114,34 @@ class SearchRateLimitMiddleware:
         return self.get_response(request)
 
 
+class WriteRateLimitMiddleware:
+    """★★ **写操作限流**（P2a · 2026-11-04）⚠
+
+    依据 RATE-LIMIT.md 5.2：
+
+    ```
+    发布 / 删除 / 修改（POST/PUT/PATCH/DELETE /api/**）  30 次/分钟（按用户）
+    导出（POST /api/me/deleted/export/）                  2 次/分钟
+    ```
+
+    ⚠ **只按用户计账**（`u<id>`）：写操作本来就要登录，与真实 IP 无关
+      ⇒ 所以这一条**不需要等隧道**（P4 之前就能上）。
+    ⚠ 匿名写请求不在这里判：它们会在视图层被 401/403 挡住。
+    ⚠ 与 `SearchRateLimitMiddleware` 不重叠：那个只管带 `q` 的 GET。
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from web import ratelimit
+
+        blocked = ratelimit.check_write(request)
+        if blocked is not None:
+            return blocked
+        return self.get_response(request)
+
+
 class ProtectModeMiddleware:
     """★★ **站点保护模式**（保命开关 · 2026-11-04）⚠
 

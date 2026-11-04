@@ -26,6 +26,7 @@ anon    取不到 IP       10 次/秒   （理论上不会发生）
 from __future__ import annotations
 
 import logging
+import time
 
 from django.http import JsonResponse
 
@@ -113,3 +114,94 @@ def _bump_hit(scope: str, request=None) -> None:
             access_audit.record("rate_limited", device.client_ip(request), identity(request))
         except Exception:  # pragma: no cover
             pass
+
+
+# ===========================================================================
+# ★★★ 写操作限流（P2a · 2026-11-04）
+# ===========================================================================
+#
+# 依据 RATE-LIMIT.md 5.2：
+#   发布 / 删除 / 修改   30 次/分钟（按用户）
+#   导出                 2 次/分钟（500 篇同步生成有内存峰值，5.2 已降到 2）
+#
+# ⚠ 只按**用户**计账（`u<id>`）：写操作本来就要登录，与真实 IP 无关 ⇒
+#   P4 之前也能上（这是 P2a 能排在 IP 分段之前的原因）。
+# ⚠ 匿名写请求不在这里判 —— 它们会在视图层被 401/403 挡掉，不需要额外限流。
+
+#: 一般写操作：每分钟多少次
+WRITE_LIMIT_PER_MIN = 30
+#: 导出：每分钟多少次（⚠ 比一般写操作严，原因见上）
+EXPORT_LIMIT_PER_MIN = 2
+
+#: 算"导出"的路径前缀（500 篇上限那个接口）
+EXPORT_PREFIXES = ("/api/me/deleted/export/",)
+
+#: 不算"写操作"的路径（⚠ 登录/登出有自己的失败计数，混进来会互相干扰）
+WRITE_EXEMPT_PREFIXES = ("/api/auth/",)
+
+
+def is_write_request(request) -> bool:
+    """★ 这次请求算不算"写操作"（⚠ 只看方法 + 路径，不看业务）"""
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return False
+    path = request.path or ""
+    if not path.startswith("/api/"):
+        return False
+    return not any(path.startswith(prefix) for prefix in WRITE_EXEMPT_PREFIXES)
+
+
+def is_export_request(request) -> bool:
+    return any((request.path or "").startswith(p) for p in EXPORT_PREFIXES)
+
+
+def allow_window(scope: str, who: str, limit: int, window: int) -> bool:
+    """★★ **固定窗口限流**（* 每 `scope + 身份 + 窗口` 一个计数键）⚠
+
+    ⚠ 失败**放行**：限流是保护手段，Redis 挂了不该让写操作全部失败
+      （⚠ 与"登录计数 fail-closed"不同 —— 那个是认证闸门，这个是保护措施）
+    """
+    try:
+        from search import terms
+
+        r = terms._redis()
+        key = f"astrolabe:rl:{scope}:{who}:{int(time.time()) // window}"
+        n = r.incr(key)
+        if n == 1:
+            r.expire(key, window * 2)
+        return n <= limit
+    except Exception:
+        return True
+
+
+def check_write(request, scope: str = "write") -> JsonResponse | None:
+    """★★ 写操作超限就返回 429，* 未超限返回 None（调用方继续处理）⚠"""
+    if not is_write_request(request):
+        return None
+
+    who = identity(request)
+    if who == "anon":
+        # ⚠ 匿名写请求后面一定会被拒（401/403）⇒ 不用额外限流
+        return None
+
+    if is_export_request(request):
+        scope, limit = "export", EXPORT_LIMIT_PER_MIN
+    else:
+        limit = WRITE_LIMIT_PER_MIN
+
+    if allow_window(scope, who, limit, 60):
+        return None
+
+    _bump_hit(scope, request)
+    message = (
+        f"操作太频繁了（每分钟最多 {limit} 次），歇一下再试～"
+    )
+    resp = JsonResponse(
+        {
+            "ok": False,
+            "error": {"code": "rate_limited", "message": message},
+            "data": {"scope": scope, "limit": limit},
+        },
+        status=429,
+    )
+    resp["Retry-After"] = "60"
+    return resp

@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, Search, Settings } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 interface DesktopApi {
   isDesktop?: boolean
@@ -92,16 +92,8 @@ export default function PersonalBar() {
           搜索
           <span className="faint" style={{ fontSize: 10, marginLeft: 2 }}>Ctrl+K</span>
         </button>
-        <button type="button" onClick={() => nav('/me/settings')} style={btn}>
-          <Settings size={12} />
-          设置
-        </button>
-        {dataDir && (
-          <button type="button" title={dataDir} onClick={() => void api?.openDataDir?.()} style={btn}>
-            <FolderOpen size={12} />
-            数据
-          </button>
-        )}
+        {/* ★★★ 2026-11-05：设置 / 数据 已移进「工具」菜单（见 AppMenuItems）
+            ⚠ 顶栏右侧只留搜索 —— 所有者：「右侧依旧有除搜索外的按钮」 */}
       </div>
     </div>
   )

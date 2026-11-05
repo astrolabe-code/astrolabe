@@ -30,6 +30,7 @@ import {
 } from '../query/readingPath'
 import AppLayout from '../components/AppLayout'
 import TopbarSlot from '../components/TopbarSlot'
+import AppMenuItems from '../components/AppMenuItems'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
@@ -511,39 +512,13 @@ export default function ProjectGraphPage() {
                     {shownCount != null && shownCount < orderVids.length && (
                       <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
                     )}
+                    <span className="rail-menu-sep" />
+                    <AppMenuItems />
                   </div>
                 )}
               </div>
             </div>
 
-            {/* ---- 右组：搜索 ---- */}
-            <div
-              className="rail-group"
-              onMouseLeave={() => setSearchOpen(false)}
-            >
-              <button
-                type="button"
-                className="rail-btn"
-                onClick={() => setSearchOpen((v) => !v)}
-                title="搜索节点（名字 / qname）"
-              >
-                <Search size={13} />
-                {!searchOpen && !isNarrow && <span>搜索</span>}
-              </button>
-              {searchOpen && (
-                <input
-                  className="input"
-                  autoFocus
-                  style={{ width: isNarrow ? 130 : 200, fontSize: 12.5 }}
-                  placeholder="搜节点名 / qname，回车定位"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') search()
-                  }}
-                />
-              )}
-            </div>
           </div>
 
       </TopbarSlot>

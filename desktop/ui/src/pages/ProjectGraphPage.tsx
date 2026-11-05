@@ -307,6 +307,21 @@ export default function ProjectGraphPage() {
     return { ...g, nodes, edges }
   }, [g, shownVids, orderVids, showImports])
 
+  // ★★★ 2026-11-05：**默认选中第一个节点**（所有者要求图谱页与列表页一致）
+  //   排序口径与"首批展示"相同（路径优先 → 度数高优先）⇒ 选中的就是左栏第一个
+  //   ⚠ 只做一次：用户点过 / 深链带了 ?node=，之后不再干预
+  const autoPickedRef = useRef(false)
+  useEffect(() => {
+    if (autoPickedRef.current) return
+    if (selectedVid != null) {
+      autoPickedRef.current = true
+      return
+    }
+    if (!g || orderVids.length === 0) return
+    autoPickedRef.current = true
+    setSelectedVid(orderVids[0])
+  }, [g, orderVids, selectedVid])
+
   const selected = useMemo<GraphNode | null>(() => {
     if (!g || selectedVid == null) return null
     return g.nodes.find((n) => n.vid === selectedVid) || null

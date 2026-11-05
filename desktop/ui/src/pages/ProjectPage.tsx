@@ -221,7 +221,10 @@ export default function ProjectPage() {
               projectRef={projectRef}
               selectedUid={selected?.uid ?? null}
               onSelect={setSelected}
-              autoSelectFirst={autoThink}
+              // ★★★ 2026-11-05：**总是默认选中第一个节点**
+              //   所有者：「不能在图谱和列表页都默认选择第一个节点吗？还需要用户自己点一个？」
+              //   ⚠ 只在列表就绪时选一次，之后用户怎么点都不干预
+              autoSelectFirst
               // ★★ 点一行 → 图谱里看它 + 直接邻居（图谱页有同一个右栏，能继续写笔记）⚠
               onOpenGraph={(n) =>
                 navigate(`/p/${encodeURIComponent(projectRef)}/graph?node=${n.vid}`)

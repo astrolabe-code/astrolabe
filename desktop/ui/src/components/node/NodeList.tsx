@@ -110,6 +110,11 @@ export default function NodeList({
   const autoPicked = useRef(false)
   useEffect(() => {
     if (!autoSelectFirst || autoPicked.current) return
+    // ★ 深链（?node=）优先：带目标 vid 时交给上面那个 effect，别抢
+    if (selectVid) {
+      autoPicked.current = true
+      return
+    }
     if (selectedUid) {
       autoPicked.current = true
       return
@@ -118,7 +123,7 @@ export default function NodeList({
       autoPicked.current = true
       onSelect(filtered[0])
     }
-  }, [autoSelectFirst, filtered, onSelect, selectedUid])
+  }, [autoSelectFirst, filtered, onSelect, selectedUid, selectVid])
 
   if (nodes.isError) {
     return (

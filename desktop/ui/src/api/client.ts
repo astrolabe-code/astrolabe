@@ -22,9 +22,6 @@ const CSRF_COOKIE = 'csrftoken'
 /** 401(unauthenticated)统一处理钩子:由 App 注册(清登录态 + 跳登录页) */
 let unauthorizedHandler: (() => void) | null = null
 
-export function setUnauthorizedHandler(fn: (() => void) | null) {
-  unauthorizedHandler = fn
-}
 
 /**
  * ★ 读 CSRF Token(供非 GET 请求带 `X-CSRFToken` 头,B247②)⚠

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Layers, Lightbulb, Plus } from 'lucide-react'
+import { Lightbulb, Plus } from 'lucide-react'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
@@ -8,7 +8,6 @@ import EmptyState from '../ui/EmptyState'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
 import ThinkingBoard from './ThinkingBoard'
-import BatchVisibility from './BatchVisibility'
 
 /**
  * ★ 一个节点的笔记区（`F2` · D92）
@@ -61,7 +60,6 @@ export default function NoteSection({
   // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
   const [thinkingOpen, setThinkingOpen] = useState(false)
   // ★ 批量改公开 / 私有（* 所有者：勾选排除，其余批量改）⚠
-  const [batchOpen, setBatchOpen] = useState(false)
   const notes = useNotes(projectRef, { limit: 200 })
 
   // ★★ 首页「思考模式」卡片直达：* 数据就绪后自动开一次白板 ⚠
@@ -129,11 +127,6 @@ export default function NoteSection({
           nodeId={nodeId}
           notes={mine}
           onClose={() => setThinkingOpen(false)}
-        />
-        <BatchVisibility
-          open={batchOpen}
-          projectRef={projectRef}
-          onClose={() => setBatchOpen(false)}
         />
       </>
     )
@@ -218,16 +211,6 @@ export default function NoteSection({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          {/* ★★★ 批量改可见性（* 只有可写的人能看到）⚠ */}
-          {canWrite && (
-            <Button
-              icon={<Layers size={14} />}
-              onClick={() => setBatchOpen(true)}
-              title="批量把本项目的笔记设为公开或私有（可勾选排除）"
-            >
-              批量
-            </Button>
-          )}
           {/* ★★★ 思考模式入口（* 任何人都能用，* 只读用户也能摆着看）⚠ */}
           <Button
             icon={<Lightbulb size={14} />}
@@ -313,12 +296,6 @@ export default function NoteSection({
         nodeId={nodeId}
         notes={mine}
         onClose={() => setThinkingOpen(false)}
-      />
-      {/* ★ 批量改可见性（* 正常分支也要渲染，否则有笔记时点「批量」没反应）⚠ */}
-      <BatchVisibility
-        open={batchOpen}
-        projectRef={projectRef}
-        onClose={() => setBatchOpen(false)}
       />
 
     </div>

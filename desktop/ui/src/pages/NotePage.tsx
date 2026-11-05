@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { EyeOff, Lock, Pencil, ShieldAlert } from 'lucide-react'
+import { EyeOff, Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { useProject } from '../query/projects'
@@ -11,7 +11,6 @@ import Button from '../components/ui/Button'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
 import type { SelectionInfo } from '../components/notes/MilkdownView'
-import ModeratePanel from '../components/admin/ModeratePanel'
 import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
 
@@ -110,7 +109,6 @@ export default function NotePage() {
   const [panelQuote, setPanelQuote] = useState('')
   // ★ 面板贴着哪个位置弹出（* 选区 / 气泡的视口矩形）⚠
   const [panelAnchor, setPanelAnchor] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
-  const [moderating, setModerating] = useState(false)
   const [anchorOpen, setAnchorOpen] = useState(false)
 
   const n = note.data?.note
@@ -395,11 +393,6 @@ export default function NotePage() {
                     <Pencil size={12} /> 编辑
                   </button>
                 )}
-                {isStaff && (
-                  <button type="button" className="link-btn" onClick={() => setModerating(true)}>
-                    <ShieldAlert size={12} /> 管理
-                  </button>
-                )}
               </span>
             </div>
           </div>
@@ -502,13 +495,6 @@ export default function NotePage() {
         }}
       />
 
-      <ModeratePanel
-        open={moderating}
-        kind="note"
-        target={n.id}
-        currentState={n.state}
-        onClose={() => setModerating(false)}
-      />
     </AppLayout>
   )
 }

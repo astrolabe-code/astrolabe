@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { EyeOff, Lock, Settings, ShieldAlert, Workflow } from 'lucide-react'
+import { EyeOff, Lock, Settings, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -14,7 +14,6 @@ import WritingProgress from '../components/graph/WritingProgress'
 import { clearResume, markResume, readResume } from '../lib/resume'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
-import ModeratePanel from '../components/admin/ModeratePanel'
 
 /**
  * ★ 项目页（`F2` · D92）——* 双栏：左节点列表 + 右笔记面板
@@ -52,7 +51,6 @@ export default function ProjectPage() {
   const dwellMs = Math.max(0, Number(siteCfg.data?.resumeDwellSeconds ?? 20)) * 1000
   const me = useMe()
   const [selected, setSelected] = useState<GraphNode | null>(null)
-  const [moderating, setModerating] = useState(false)
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
 
@@ -131,13 +129,6 @@ export default function ProjectPage() {
           <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
             <Button icon={<Settings size={14} />}>设置</Button>
           </Link>
-        )}
-        {/* ★★ `F4`：**管理处置入口** ——* 只有 staff 才渲染（`B208`）⚠
-            · · ⚠ 这里只决定"显不显示"；* 真正的拦截在后端 `@staff_only` ✅ */}
-        {me.data?.is_staff && (
-          <Button icon={<ShieldAlert size={14} />} onClick={() => setModerating(true)}>
-            管理
-          </Button>
         )}
       </div>
 
@@ -291,14 +282,6 @@ export default function ProjectPage() {
 
       </div>
 
-      {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
-      <ModeratePanel
-        open={moderating}
-        kind="project"
-        target={projectRef}
-        currentState={p.state}
-        onClose={() => setModerating(false)}
-      />
     </AppLayout>
   )
 }

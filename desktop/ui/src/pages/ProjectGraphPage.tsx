@@ -21,7 +21,6 @@ import { errorMessage } from '../api/errors'
 import CuratePanel from '../components/graph/CuratePanel'
 import { useFullGraph } from '../query/graph'
 import { useProject } from '../query/projects'
-import { useUserSettings } from '../query/settings'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import {
   useAppendToPath,
@@ -81,16 +80,11 @@ export default function ProjectGraphPage() {
   const removeFromPath = useRemoveFromPath(projectRef)
   const replace = useReplacePath(projectRef)
   const me = useMe()
-  // ★★ 流星参数来自**用户设置**（`graph.meteor.*`，* 三级继承 ⇒ 用户档覆盖默认）⚠
-  // ★★ 只在**已登录**时请求（* 游客请求会 401 ⇒ 被踢去登录页）⚠
-  const userSettings = useUserSettings(!!me.data?.authenticated)
-  const meteorConf = userSettings.data?.settings ?? {}
-  const meteorOnBySetting = meteorConf['graph.meteor.enabled'] !== false
-  // ★ 后端用整数存：* speed 是「×1000」、* size_pct 是百分比 ⚠
-  const meteorSpeed = Number(meteorConf['graph.meteor.speed'] ?? 5) / 1000
-  const meteorSizeRatio = Number(meteorConf['graph.meteor.size_pct'] ?? 25) / 100
-  // ★ 节点直径（* 流星光晕随之等比缩放）⚠
-  const nodeSizePx = Number(meteorConf['graph.node.size'] ?? 14)
+  // ★★★ 2026-11-05：个人版**没有"用户设置"**（那是网页版账号体系的东西）
+  //   ⇒ 流星参数用固定值（与网页版的默认档一致），不再请求 `/api/me/settings/`
+  const meteorSpeed = 0.005 // ×1000 存储的那个 5，换算成 0.005
+  const meteorSizeRatio = 0.25 // 25%
+  const nodeSizePx = 14
 
   // ★★ 从节点列表点过来时带着 `?node=<vid>`：
   //    要**以它为焦点**展示（它 + 直接邻居），⛔ 不是默认那 16 个 ⚠
@@ -102,12 +96,6 @@ export default function ProjectGraphPage() {
   // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
   // ★ 默认跟用户设置走；* 工具栏开关只是本次会话的临时覆盖 ⚠
   const [meteors, setMeteors] = useState(true)
-  const meteorsInited = useRef(false)
-  useEffect(() => {
-    if (meteorsInited.current || !userSettings.data) return
-    meteorsInited.current = true
-    setMeteors(meteorOnBySetting)
-  }, [userSettings.data, meteorOnBySetting])
   const [focusVid, setFocusVid] = useState<number | null>(null)
   const [q, setQ] = useState('')
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）

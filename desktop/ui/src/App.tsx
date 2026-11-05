@@ -10,7 +10,6 @@ import NotePage from './pages/NotePage'
 import NoteEditPage from './pages/NoteEditPage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
-import RecycleBinPage from './pages/RecycleBinPage'
 
 /** ★★ 图谱页懒加载 —— G6 是大件，只在打开图谱时才下载 ⚠ */
 const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
@@ -57,7 +56,6 @@ export default function App() {
         <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
 
         <Route path="/me/settings" element={<UserSettingsPage />} />
-        <Route path="/me/deleted" element={<RecycleBinPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

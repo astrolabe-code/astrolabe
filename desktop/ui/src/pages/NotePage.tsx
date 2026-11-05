@@ -8,9 +8,6 @@ import { useProject } from '../query/projects'
 import { useMe } from '../hooks/useMe'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
-import LikeButton from '../components/likes/LikeButton'
-import CommentSection from '../components/comments/CommentSection'
-import ParagraphComments from '../components/comments/ParagraphComments'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
 import type { SelectionInfo } from '../components/notes/MilkdownView'
@@ -490,46 +487,7 @@ export default function NotePage() {
           document.body,
         )}
 
-      {/* ④ 段评面板（* 只渲染当前那一段，* 文字由上面的 Milkdown 画）⚠ */}
-        {/* ★★ 段评面板：**贴着选中文字 / 气泡**弹出（2026-10-23）⚠
-            · · 所有者：「段评的弹窗就贴在选中文字下方弹出呀。现在总是在页面中间，
-              要翻很长才能看见」
-            · · 用 portal 挂 body：`.page.rise` 的 transform 会让 fixed 相对它定位 ⚠ */}
-        {activeBlock &&
-          createPortal(
-            <div
-              className="block-comment-panel"
-              style={{
-                position: 'fixed',
-                ...panelLayout(panelAnchor).style,
-                overflow: 'auto', // ★ 固定高度 + 内部滑块（所有者要求）⚠
-                zIndex: 95,
-                background: 'var(--card)',
-                border: '1px solid var(--card-border)',
-                borderRadius: 12,
-                boxShadow: 'var(--shadow-card-hover)',
-                padding: '12px 14px',
-              }}
-            >
-              <ParagraphComments
-                noteId={n.ref}
-                block={activeBlock}
-                authed={authed}
-                perm={perm}
-                renderText={false}
-                panelOpen
-                quote={panelQuote}
-                onPanelOpenChange={(o) => {
-                  if (!o) {
-                    setActiveFp('')
-                    setPanelQuote('')
-                    setPanelAnchor(null)
-                  }
-                }}
-              />
-            </div>,
-            document.body,
-          )}
+      
 
       {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
       {/* ★★ 改锚点弹窗（`D125`）⚠ */}

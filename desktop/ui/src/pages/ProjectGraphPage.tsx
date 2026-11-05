@@ -463,23 +463,18 @@ export default function ProjectGraphPage() {
         >
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
-          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: 6 }}>
+          {/* ★★★ 2026-11-05：工具条从"悬浮"改为**内容流里的一条** ⚠
+              所有者：「样子怪不说，还挡住了后面的字」——原来是 absolute 压在图谱上，
+              正好盖住上面那句"作者还没有排学习路径…"的提示
+              ⇒ 现在：① 不悬浮（把提示文字顶下去） ② 去掉胶囊/阴影（Obsidian 那种
+                 扁平图标按钮，悬停才出现浅底） */}
+          <div className="graph-toolbar">
             {/* ---- 回节点列表（图谱 ⇄ 列表 一键互跳）⚠ ---- */}
             <button
               type="button"
-              className="card"
+              className="rail-btn"
               onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
               title="回到节点列表（可以从头找）"
-              style={{
-                padding: isNarrow ? '4px 9px' : '5px 12px',
-                fontSize: isNarrow ? 11.5 : 12.5,
-                borderRadius: 999,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                cursor: 'pointer',
-                boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-              }}
             >
               <List size={13} />
               {!isNarrow && <span>列表</span>}
@@ -488,23 +483,10 @@ export default function ProjectGraphPage() {
             {/* ---- 依赖线开关（imports / includes，默认关）⚠ ---- */}
             <button
               type="button"
-              className="card"
+              className="rail-btn"
               onClick={() => setShowImports((v) => !v)}
+              aria-pressed={showImports}
               title={showImports ? '隐藏文件依赖线' : '显示文件依赖线（imports / includes）'}
-              style={{
-                padding: isNarrow ? '4px 9px' : '5px 12px',
-                fontSize: isNarrow ? 11.5 : 12.5,
-                borderRadius: 999,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                cursor: 'pointer',
-                boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-                // 打开时高亮，关着就是普通胶囊
-                background: showImports ? 'var(--accent, #2563eb)' : undefined,
-                color: showImports ? '#fff' : undefined,
-                borderColor: showImports ? 'transparent' : undefined,
-              }}
             >
               <Share2 size={13} />
               {!isNarrow && <span>依赖</span>}
@@ -517,19 +499,9 @@ export default function ProjectGraphPage() {
             >
               <button
                 type="button"
-                className="card"
+                className="rail-btn"
                 onClick={() => setSearchOpen((v) => !v)}
                 title="搜索节点（名字 / qname）"
-                style={{
-                  padding: isNarrow ? '4px 9px' : '5px 12px',
-                  fontSize: isNarrow ? 11.5 : 12.5,
-                  borderRadius: 999,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-                }}
               >
                 <Search size={13} />
                 {!searchOpen && <span>搜索</span>}
@@ -557,19 +529,9 @@ export default function ProjectGraphPage() {
               {
                 <button
                   type="button"
-                  className="card"
+                  className="rail-btn"
                   onClick={() => setCurateOpen(true)}
                   title="改图：解析不准的地方在这里补"
-                  style={{
-                    padding: isNarrow ? '4px 9px' : '5px 12px',
-                    fontSize: isNarrow ? 11.5 : 12.5,
-                    borderRadius: 999,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    cursor: 'pointer',
-                    boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-                  }}
                 >
                   <GitBranch size={13} />
                   <span>改图</span>
@@ -577,19 +539,9 @@ export default function ProjectGraphPage() {
               }
               <button
                 type="button"
-                className="card"
+                className="rail-btn"
                 onClick={() => setBarOpen((v) => !v)}
                 title="工具"
-                style={{
-                  padding: isNarrow ? '4px 9px' : '5px 12px',
-                  fontSize: isNarrow ? 11.5 : 12.5,
-                  borderRadius: 999,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  cursor: 'pointer',
-                  boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-                }}
               >
                 <SlidersHorizontal size={13} />
                 {!barOpen && <span>工具</span>}

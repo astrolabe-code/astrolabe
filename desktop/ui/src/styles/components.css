@@ -443,3 +443,53 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   /* 更窄：连图标按钮也允许换行，但绝不压住标签 */
   .note-head { flex-wrap: wrap; }
 }
+
+/* ==========================================================================
+   ★★★ 图谱页工具条（2026-11-05）
+   所有者：「（Obsidian 的按钮）……这是我们这个软件的，样子怪不说，还挡住了后面的字」
+
+   ```
+   之前：absolute 悬浮在画布左上角 + 胶囊外形 + 阴影
+         ⇒ 正好盖住"作者还没有排学习路径…"那行提示
+   现在：① 在**内容流**里（把提示文字顶下去，永不重叠）
+         ② 扁平图标按钮（无边框/无阴影/无胶囊），悬停才出现浅底
+         ③ 选中态只改文字颜色（aria-pressed），不再整块填色
+   右侧留 44px：给"全屏"那个圆形按钮让位（它仍是绝对定位在画布右上角）
+   ```
+   ========================================================================== */
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 44px 8px 0;
+}
+
+.rail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-sub);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+
+.rail-btn:hover {
+  background: rgba(15, 23, 42, .06);
+  color: var(--text-main);
+}
+
+.rail-btn[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.rail-btn[aria-pressed='true']:hover {
+  background: rgba(37, 99, 235, .10);
+}

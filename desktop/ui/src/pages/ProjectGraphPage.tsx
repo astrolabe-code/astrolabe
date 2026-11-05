@@ -57,6 +57,15 @@ import NodePanel from '../components/node/NodePanel'
  */
 // ★ 类型名与颜色统一来自 `lib/kindLabel`（⛔ 页面里不再另写一份）
 
+/** ★ `D105`：按画布面积算初始批量（* 12~24）⚠ */
+function initialBatch() {
+  // ★★ 节点直径 28 ⇒ 一屏放不下太多（* 十几个就满，* 再多必然挤）⚠
+  const area = (window.innerWidth || 1280) * (window.innerHeight || 720)
+  return Math.max(10, Math.min(16, Math.round(area / 60000)))
+}
+
+const BATCH_STEP = 24
+
 // ★★★ **稳定的空数组**（`B234`/`D105`）——* `|| []` 每次渲染都是新引用 ⇒
 //   * `pathVids`/`orderVids`/`view` 全变 ⇒* `GraphCanvas` 被反复重建 ⇒
 //   * 布局、流星、阶段通知**全部被打断**（* 实测踩到）⚠
@@ -215,9 +224,7 @@ export default function ProjectGraphPage() {
   }, [pathItems])
 
   useEffect(() => {
-    // ★★★ 2026-11-05：**默认展示全部**（「加载更多 / 显示全部」已从菜单删除）
-    //   ⚠ 仍留 shownCount 这个通道：搜索定位到更靠后的节点时会临时扩大（见 search()）
-    if (shownCount == null) setShownCount(orderVids.length || g?.nodes.length || 0)
+    if (shownCount == null) setShownCount(initialBatch())
   }, [shownCount])
 
   /**
@@ -263,7 +270,7 @@ export default function ProjectGraphPage() {
   }, [g, hasPath, pathVids, deepVid])
 
   const shownVids = useMemo(
-    () => new Set(orderVids.slice(0, shownCount ?? orderVids.length)),
+    () => new Set(orderVids.slice(0, shownCount ?? initialBatch())),
     [orderVids, shownCount],
   )
 
@@ -429,7 +436,7 @@ export default function ProjectGraphPage() {
                 并折叠，就像一些编程IDE做的那样」）⚠
                 · 左组：导航（列表）· 编辑（改图）· 工具（视图开关全收进下拉）
                 · 右组：搜索（单独留在最右，展开时变成输入框）
-                ⛔ 不再把「依赖 / 流星 / 加载更多 / 学习路径」平铺成一排 ⚠ */}
+                ⛔ 不再把「依赖 / 学习路径 / 加载更多」平铺成一排 ⚠ */}
             <div className="rail-group">
               {/* ---- 导航 ---- */}
               <button
@@ -463,7 +470,7 @@ export default function ProjectGraphPage() {
                   className="rail-btn"
                   onClick={() => setBarOpen((v) => !v)}
                   aria-pressed={barOpen}
-                  title="工具：依赖线 / 流星 / 学习路径 / 加载更多"
+                  title="工具：依赖线 / 学习路径 / 加载更多"
                 >
                   <SlidersHorizontal size={13} />
                   {!isNarrow && <span>工具</span>}

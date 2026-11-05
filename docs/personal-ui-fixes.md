@@ -1,0 +1,118 @@
+# 个人版修过、网页版**也要改**的界面问题
+
+> **用途**：个人版（`desktop/ui`）先修的一批界面问题，网页版（`frontend`）暂时不动。
+> 这份清单保证以后改网页版时**不会漏**。
+>
+> **维护方式**：
+> ```
+> ① 个人版又修了界面问题 ⇒ 先判断"网页版是否也有"，有就加到下面【A】
+> ② 网页版改完一条 ⇒ 在"状态"列打 ✅，并写上日期
+> ③ 只属于个人版的改动 ⇒ 记到【B】，⛔ 不要加到网页版（否则会误删网页版的功能）
+> ```
+>
+> 建立于 2026-11-05。当时网页版**四个问题全部存在**（已逐项核对代码）。
+
+---
+
+## A. 网页版也需要改（4 项）
+
+### A1. 笔记五组"全空即整块隐藏"
+
+| | |
+|---|---|
+| **现象** | 一个节点一篇笔记都没有时，只显示一句"这个节点还没有笔记"，**五个盒子连同说明全部消失**；写过一篇之后才出现。→ 同一页面两种形态，不统一 |
+| **网页版现状** | ⚠ **有**：`frontend/src/components/notes/NoteSection.tsx` 第 105~110 行有 `if (nonEmpty.length === 0) return <EmptyState .../>` |
+| **根因** | 2026-10-28 的决定（`D134`）只改了"部分为空"，漏了"全空" |
+| **个人版修法** | 删掉那个提前返回 + 删掉 `nonEmpty` 变量 + 删 `EmptyState` 导入 ⇒ 五个盒子恒定渲染（空的显示"还没有" + 说明） |
+| **网页版怎么改** | 同样删掉 `if (nonEmpty.length === 0) { return (...) }` 整块（含里面的 `ThinkingBoard`，因为主返回里已有一份） |
+| **验证** | 选一个**没有任何笔记**的节点 ⇒ 五组标题 + 说明 + "还没有"都要在；"写笔记"按钮仍在 |
+| **状态** | ⬜ 网页版未改 |
+
+### A2. 笔记区头部：按钮压住标签（需要按宽度折叠）
+
+| | |
+|---|---|
+| **现象** | 右栏变窄时，"思考模式 / 写笔记"两个按钮压在"五个盒子"的标签上（标签竖着换行，按钮垂直居中） |
+| **网页版现状** | ⚠ **有**：`frontend/src/components/notes/NoteSection.tsx` 第 203 行是一个 `flex items-center justify-between`，按钮与标签**同一行** |
+| **个人版修法** | 拆成两行：①「笔记」+ 右侧按钮 ② 标签行（`flex-wrap`）；并用**容器查询**折叠按钮：<br>`< 420px` ⇒ 按钮只留图标（`.btn-label` 隐藏，`title` 保留）<br>`< 260px` ⇒ 标题行允许换行 |
+| **网页版怎么改** | 结构与上面一致；CSS 追加到 `frontend/src/styles/components.css`：`.note-section{container-type:inline-size}`、`.note-head-actions`、`.note-head-chips`、`@container (max-width:420px){...}` |
+| **为什么用容器查询** | 右栏宽度 ≠ 窗口宽度（图谱页还有折叠栏）⇒ 用窗口宽度判断会误判 |
+| **验证** | 把右栏拖窄：按钮变图标；标签独占一行、自行换行；任何宽度下都不重叠 |
+| **状态** | ⬜ 网页版未改 |
+
+### A3. 节点悬停卡片被右栏笔记卡片盖住
+
+| | |
+|---|---|
+| **现象** | 悬停左栏节点，浮窗只显示一半，右半被笔记卡片盖住（"提示层应该在笔记之上"） |
+| **网页版现状** | ⚠ **有**：`frontend/src/components/node/NodeHoverCard.tsx` 是 `position:fixed; z-index:9999`，但**没有 portal** |
+| **根因** | 不是 z-index 不够，而是**被祖先的层叠上下文关住**（flex 栏 + 滚动容器 + `.page.rise` 的 transform）⇒ 9999 只在左栏内部有效 |
+| **个人版修法** | `return createPortal(<div .../>, document.body)`（`import { createPortal } from 'react-dom'`）；`pointerEvents:'none'` 保持 |
+| **网页版怎么改** | 同上（与 `Modal` 的修法是同一类，`D136`） |
+| **验证** | 悬停左栏任一节点 ⇒ 浮窗完整压在右侧笔记卡片之上；图谱页悬停同理（共用组件） |
+| **状态** | ⬜ 网页版未改 |
+
+### A4. 进入项目/图谱时默认选中第一个节点
+
+| | |
+|---|---|
+| **现象** | 打开项目或图谱，右侧笔记区是空的，必须自己点一个节点才有内容 |
+| **网页版现状** | ⚠ **部分有**：`frontend/src/pages/ProjectPage.tsx` 第 257 行 `autoSelectFirst={autoThink}` ⇒ **只有 `?think=1` 才自动选**；`frontend/src/pages/ProjectGraphPage.tsx` **完全没有**自动选中 |
+| **个人版修法** | ① 列表页：`autoSelectFirst` 常开（去掉 `={autoThink}`）<br>② 图谱页：加 effect，图加载后若 `selectedVid == null` ⇒ 选 `orderVids[0]`<br>③ `NodeList`：加守卫，带 `?node=` 深链时**不抢**（深链优先） |
+| **选中口径** | 与"首批展示"一致：阅读路径里第一个 → 否则度数最高（连边最多） |
+| **验证** | 打开项目 ⇒ 左栏第一个高亮、右侧五组直接显示；打开图谱（不带 `?node=`）⇒ 自动选中；从列表点某行跳图谱 ⇒ 以那一行为准 |
+| **状态** | ⬜ 网页版未改 |
+
+---
+
+## B. 个人版专属（网页版**不要跟**）
+
+> 这些是"个人版没有别人、没有服务器"才删的。⛔ 网页版逐个都需要，别当 bug 修掉。
+
+| 项 | 个人版 | 网页版 |
+|---|---|---|
+| 笔记卡片上的「公开 / 私有」开关 | 删除 | **需要** |
+| 卡片上的「私有」徽标、「已被隐藏」徽标 | 删除 | **需要** |
+| 卡片上的点赞数 / 评论数 | 删除 | **需要** |
+| 卡片上点作者名跳 `/u/<username>` | 删除（无用户空间页） | **需要** |
+| "被管理员隐藏"横幅（项目页 / 笔记页） | 删除 | **需要** |
+| 段评（选中文字的浮动工具条 + 面板 + 气泡） | 删除 | **需要** |
+| 管理处置面板（隐藏 / 下架 / 恢复） | 删除 | **需要** |
+| 回收站、导入 / 导出、批量可见性 | 删除（边车无对应接口） | **需要** |
+| 身份判断（`useMe` / `canWrite` / `perm` / `isStaff` / `can_edit`） | 删除（打开就能写） | **需要** |
+| `public/theme-init.js`（按 localStorage 设 light/dark） | 删除（恒为白） | **需要** |
+| 首页 / 登录 / 注册 / 搜索页 / 用户空间 / 管理页 | 删除 | **需要** |
+
+---
+
+## C. 快速自查：网页版现在还有没有问题
+
+```bash
+cd /home/ma/astrolabe/frontend/src
+
+# A1 五个盒子（有输出 = 还是"全空就隐藏"）
+grep -n 'nonEmpty\|这个节点还没有笔记' components/notes/NoteSection.tsx
+
+# A2 头部是否已拆两行（有 .note-section = 已改）
+grep -n 'note-section\|note-head-actions' components/notes/NoteSection.tsx styles/components.css
+
+# A3 悬停卡片是否已 portal（无输出 = 还会被盖住）
+grep -n 'createPortal' components/node/NodeHoverCard.tsx
+
+# A4 默认选中（有 autoSelectFirst={autoThink} = 只在思考模式下生效）
+grep -n 'autoSelectFirst' pages/ProjectPage.tsx
+grep -n 'autoPickedRef' pages/ProjectGraphPage.tsx
+```
+
+---
+
+## D. 附：个人版这些改动的提交位置
+
+```
+A1  NoteSection.tsx（删提前返回）
+A2  NoteSection.tsx + styles/components.css（两行布局 + 容器查询）
+A3  NodeHoverCard.tsx（portal 到 body）
+A4  ProjectPage.tsx + ProjectGraphPage.tsx + components/node/NodeList.tsx
+```
+
+改编网页版时，可以照这四组文件逐条对照个人版现在的实现。

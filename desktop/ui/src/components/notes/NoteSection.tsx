@@ -157,39 +157,54 @@ export default function NoteSection({
   )
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2.5" style={{ gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
-          <span className="h2" style={{ fontSize: 14, flexShrink: 0 }}>
-            笔记
-          </span>
-          {/* ★★★ **五个盒子各带数量** + 「全部」——* 点谁就只看谁 ⚠ */}
-          {chip('all', '全部', mine.length, 'var(--text-sub)', activeKind === 'all')}
-          {counts.map((c) =>
-            chip(
-              c.kind,
-              KIND_META[c.kind].label,
-              c.n,
-              KIND_META[c.kind].color,
-              activeKind === c.kind,
-            ),
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+    <div className="note-section">
+      {/* ★★★ 2026-11-05：标题与按钮一行，**标签另起一行** ⚠
+          所有者：「思考模式的文字盖住了五个盒子……不能在收缩到一定程度时，
+          对一些按钮进行折叠吗？」
+          根因：按钮原来与标签共用一行 ⇒ 窄的时候标签换行，按钮被挤到中间，压住标签
+          ⇒ 拆成两行：① 标题 + 按钮  ② 标签（可换行）
+          ⇒ 容器变窄时按钮只留图标（`@container`，见 components.css 的 .note-head-actions） */}
+      <div
+        className="note-head"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+      >
+        <span className="h2" style={{ fontSize: 14, flexShrink: 0 }}>
+          笔记
+        </span>
+        <div className="note-head-actions">
           {/* ★★★ 思考模式入口（* 任何人都能用，* 只读用户也能摆着看）⚠ */}
           <Button
             icon={<Lightbulb size={14} />}
             onClick={() => setThinkingOpen(true)}
-            title="在白布上自由排布笔记卡片，理清它们之间的联系"
+            title="在白板上自由排布笔记卡片，理清它们之间的联系"
           >
-            思考模式
+            <span className="btn-label">思考模式</span>
           </Button>
           {canWrite && (
-            <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
-              写笔记
+            <Button
+              variant="primary"
+              icon={<Plus size={14} />}
+              onClick={onCreateNote}
+              title="写笔记"
+            >
+              <span className="btn-label">写笔记</span>
             </Button>
           )}
         </div>
+      </div>
+
+      <div className="note-head-chips">
+        {/* ★★★ **五个盒子各带数量** + 「全部」——* 点谁就只看谁 ⚠ */}
+        {chip('all', '全部', mine.length, 'var(--text-sub)', activeKind === 'all')}
+        {counts.map((c) =>
+          chip(
+            c.kind,
+            KIND_META[c.kind].label,
+            c.n,
+            KIND_META[c.kind].color,
+            activeKind === c.kind,
+          ),
+        )}
       </div>
 
       <div className="flex flex-col gap-4">

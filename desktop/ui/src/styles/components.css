@@ -401,3 +401,45 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .icon-btn.danger { border-color: rgba(220, 38, 38, 0.35); color: var(--err); }
 .icon-btn.danger:hover { border-color: var(--err); color: var(--err); background: rgba(220, 38, 38, 0.08); }
+
+/* ==========================================================================
+   ★★★ 笔记区头部（2026-11-05）
+   所有者：「思考模式的文字盖住了五个盒子……不能在收缩到一定程度时，
+   对一些按钮进行折叠吗？」
+
+   ```
+   布局：① 标题「笔记」+ 右侧按钮   ② 标签（全部/五类，可换行）
+   折叠：容器宽度 < 420px ⇒ 按钮只留图标（label 隐藏），避免挤占标签行
+   实现：**容器查询**（container-type 在 .note-section 上）
+         ⚠ 不用窗口宽度判断 —— 右栏宽度不等于窗口宽度（图谱页还有折叠栏）
+   ```
+   ========================================================================== */
+.note-section { container-type: inline-size; }
+
+.note-head { margin-bottom: 8px; }
+
+.note-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.note-head-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+@container (max-width: 420px) {
+  /* 窄：按钮只剩图标，省下的宽度留给标签 */
+  .note-head-actions .btn-label { display: none; }
+  .note-head-actions .btn { padding-left: 8px; padding-right: 8px; }
+}
+
+@container (max-width: 260px) {
+  /* 更窄：连图标按钮也允许换行，但绝不压住标签 */
+  .note-head { flex-wrap: wrap; }
+}

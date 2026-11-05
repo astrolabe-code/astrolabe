@@ -460,9 +460,21 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .graph-toolbar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px;
-  padding: 0 44px 8px 0;
+  padding: 0;
+  margin-left: 6px;
+  min-width: 0;
+}
+
+/* ★ 顶栏里那个插槽：吃掉中间的空位，页面工具条就并排贴在「Astrolabe」右边 */
+.topbar-slot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .rail-btn {

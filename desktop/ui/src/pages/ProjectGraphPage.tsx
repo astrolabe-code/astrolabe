@@ -29,6 +29,7 @@ import {
   useReplacePath,
 } from '../query/readingPath'
 import AppLayout from '../components/AppLayout'
+import TopbarSlot from '../components/TopbarSlot'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
@@ -421,48 +422,8 @@ export default function ProjectGraphPage() {
     <AppLayout
       page={false}
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 0,
-          padding: fullscreen ? 12 : '10px 16px 0',
-          // ★★ 移动端用 `dvh`（* 动态视口高，* 避开地址栏伸缩）⚠
-          height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
-          minHeight: fullscreen ? undefined : 520,
-          ...(fullscreen
-            ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--card)', padding: 12 }
-            : {}),
-        }}
-      >
-        {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
-        <div
-          ref={mainRef}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: isNarrow ? 'column' : 'row',
-            gap: 0,
-            position: 'relative',
-          }}
-        >
-        {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            // ★★★ 必须 `minHeight:0` ——* flex 列里默认 `min-height:auto`，
-            //   * 图区会被 canvas 撑住、* 挤不下去（* 写作区上提时图不缩）⚠
-            minHeight: 0,
-            display: panelFull ? 'none' : 'flex',
-            flexDirection: 'column',
-            position: 'relative',
-          }}
-        >
-          {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
-              压在图谱上、不占高度）⚠ */}
+      {/* ★★★ 工具条挂在**顶栏那一行**（画布上不再有浮层）⚠ */}
+      <TopbarSlot>
           {/* ★★★ 2026-11-05：工具条从"悬浮"改为**内容流里的一条** ⚠
               所有者：「样子怪不说，还挡住了后面的字」——原来是 absolute 压在图谱上，
               正好盖住上面那句"作者还没有排学习路径…"的提示
@@ -524,7 +485,7 @@ export default function ProjectGraphPage() {
             {/* ---- 工具 ---- */}
             <div
               onMouseLeave={() => setBarOpen(false)}
-              style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}
+              style={{ position: 'relative', display: 'flex' }}
             >
               {
                 <button
@@ -550,6 +511,11 @@ export default function ProjectGraphPage() {
                 <div
                   className="card flex items-center gap-2 flex-wrap"
                   style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    left: 0,
+                    zIndex: 60,
+                    background: 'var(--card)',
                     padding: 8,
                     maxWidth: isNarrow ? 'calc(100vw - 90px)' : 560,
                     boxShadow: '0 10px 28px rgba(0,0,0,.28)',
@@ -589,6 +555,50 @@ export default function ProjectGraphPage() {
             </div>
           </div>
 
+      </TopbarSlot>
+
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 0,
+          padding: fullscreen ? 12 : '10px 16px 0',
+          // ★★ 移动端用 `dvh`（* 动态视口高，* 避开地址栏伸缩）⚠
+          height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
+          minHeight: fullscreen ? undefined : 520,
+          ...(fullscreen
+            ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--card)', padding: 12 }
+            : {}),
+        }}
+      >
+        {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
+        <div
+          ref={mainRef}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: isNarrow ? 'column' : 'row',
+            gap: 0,
+            position: 'relative',
+          }}
+        >
+        {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            // ★★★ 必须 `minHeight:0` ——* flex 列里默认 `min-height:auto`，
+            //   * 图区会被 canvas 撑住、* 挤不下去（* 写作区上提时图不缩）⚠
+            minHeight: 0,
+            display: panelFull ? 'none' : 'flex',
+            flexDirection: 'column',
+            position: 'relative',
+          }}
+        >
+          {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
+              压在图谱上、不占高度）⚠ */}
           {/* ★★★ 右上角：圆形全屏按钮（* 形似 code_network）⚠ */}
           <button
             type="button"

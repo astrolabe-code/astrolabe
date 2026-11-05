@@ -75,6 +75,11 @@ export default function PersonalBar() {
         Astrolabe
       </button>
 
+      {/* ★★★ 2026-11-05：**页面级工具条的插槽** ⚠
+          所有者：「你把这些工具按钮直接移到上面的 astrolabe 行，不就完了？上面那么空」
+          ⇒ 页面用 `<TopbarSlot>` portal 进来（见 components/TopbarSlot.tsx） */}
+      <div id="app-topbar-slot" className="topbar-slot" />
+
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         {/* ★ 触发 Ctrl+K 面板（面板自己监听键盘，这里只是让它可发现）⚠ */}
         <button

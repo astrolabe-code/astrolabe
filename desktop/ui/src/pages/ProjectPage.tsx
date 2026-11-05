@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { EyeOff, Lock, Settings, Workflow } from 'lucide-react'
+import { Lock, Settings, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -134,29 +134,7 @@ export default function ProjectPage() {
 
       {/* ★★ 内容区：* 左右只留 18px（移动 10px）⇒* 白面板尽量宽 ⚠ */}
       <div style={{ padding: isNarrow ? '0 10px' : '0 18px' }}>
-      {/* ① 隐藏横幅：只有 owner 看得到（后端把其余人挡在 404） */}
-      {p.state === 'hidden' && (
-        <div
-          className="card"
-          style={{
-            padding: '10px 14px',
-            marginBottom: 12,
-            borderColor: 'var(--err)',
-            display: 'flex',
-            gap: 8,
-            alignItems: 'flex-start',
-          }}
-        >
-          <EyeOff size={15} style={{ color: 'var(--err)', marginTop: 2 }} />
-          <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-            <b>这个项目已被管理员隐藏</b>
-            {p.moderation_reason ? `：${p.moderation_reason}` : ''}
-            <div className="faint" style={{ fontSize: 11.5 }}>
-              隐藏期间只有你（作者）能看到它，别人无法访问。恢复请联系管理员。
-            </div>
-          </div>
-        </div>
-      )}
+      
 
       {p.desc && (
         <div className="faint" style={{ fontSize: 12.5, marginBottom: 12 }}>

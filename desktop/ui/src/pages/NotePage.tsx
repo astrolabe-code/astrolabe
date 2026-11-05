@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { EyeOff, Lock, Pencil } from 'lucide-react'
+import { Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { useProject } from '../query/projects'
@@ -10,7 +9,6 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
-import type { SelectionInfo } from '../components/notes/MilkdownView'
 import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
 
@@ -66,32 +64,6 @@ function panelWidth(): number {
  * 只做一件事：整块超出视口底部时，* 把整个面板往上推回视口内（⛔ 不翻到上方）
  * ```
  */
-function panelLayout(a: { top: number; left: number; width: number; height: number } | null) {
-  const GAP = 8
-  const width = panelWidth()
-  const height = Math.min(420, Math.round(window.innerHeight * 0.58))
-
-  if (!a) {
-    return {
-      style: {
-        top: Math.max(GAP, Math.round((window.innerHeight - height) / 2)),
-        left: Math.max(12, Math.round((window.innerWidth - width) / 2)),
-        width,
-        height,
-      },
-      scrollBy: 0,
-    }
-  }
-
-  const left = Math.max(12, Math.min(a.left, window.innerWidth - width - 12))
-  const rawTop = a.top + a.height + GAP
-  // ★ 下面放不下 ⇒ **把页面滚一点**（而不是翻到上方，也不盖住选中的字）⚠
-  const overflow = Math.max(0, rawTop + height + GAP - window.innerHeight)
-  return {
-    style: { top: rawTop - overflow, left, width, height },
-    scrollBy: overflow,
-  }
-}
 
 
 export default function NotePage() {
@@ -102,53 +74,14 @@ export default function NotePage() {
   const project = useProject(projectRef)
   const me = useMe()
   const nav = useNavigate()
-  // ★ 当前打开段评面板的那一段（* 由 Milkdown 里的气泡点击驱动）⚠
-  const [activeFp, setActiveFp] = useState('')
-  // ★ 右键「选中文字」小菜单 + 面板里预填的引用原文 ⚠
-  const [sel, setSel] = useState<SelectionInfo | null>(null)
-  const [panelQuote, setPanelQuote] = useState('')
-  // ★ 面板贴着哪个位置弹出（* 选区 / 气泡的视口矩形）⚠
-  const [panelAnchor, setPanelAnchor] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   const [anchorOpen, setAnchorOpen] = useState(false)
 
   const n = note.data?.note
   // ★★ 改锚点用（`D125`）—— 必须放在 `n` 之后（* 它要 `n.ref`）⚠
   const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
-  const activeBlock = blocks.find((b) => b.fingerprint === activeFp)
 
-  // ★ 面板下面空间不够 ⇒ 轻轻滚一下页面，* 让它正好落在选中文字下方 ⚠
-  useEffect(() => {
-    if (!activeBlock || !panelAnchor) return
-    const { scrollBy } = panelLayout(panelAnchor)
-    if (scrollBy > 0) window.scrollBy({ top: scrollBy, behavior: 'auto' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeBlock, panelAnchor])
 
-  // ★ 点别处 / 滚动 / Esc 都关掉右键小菜单
-  useEffect(() => {
-    if (!sel) return
-    const close = () => setSel(null)
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSel(null)
-    }
-    // ⚠ 用 mousedown 而不是 click：* 拖选结束时常伴随一次 click，
-    //   会在工具条刚出现时又把它关掉（竞争）⚠
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement | null
-      if (t?.closest('.sel-toolbar')) return // 点工具条自身 ⇒ 不关
-      if (t?.closest('.milkdown .ProseMirror')) return // 点正文 ⇒ 交给选区上报
-      close()
-    }
-    document.addEventListener('mousedown', onDown, true)
-    document.addEventListener('scroll', close, true)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown, true)
-      document.removeEventListener('scroll', close, true)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [sel])
   const authed = !!me.data?.authenticated
   const canEdit = !!project.data?.can_edit
   const meUsername = me.data?.username
@@ -291,22 +224,7 @@ export default function NotePage() {
 
         {/* ---------------------------------------------------------- 纸 */}
         <div className="note-article">
-          {/* 隐藏横幅：只有作者看得到 */}
-          {n.state === 'hidden' && (
-            <div
-              className="card flex items-start gap-2"
-              style={{ padding: '10px 14px', marginBottom: 14, borderColor: 'var(--err)' }}
-            >
-              <EyeOff size={15} style={{ color: 'var(--err)', marginTop: 2 }} />
-              <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-                <b>这篇笔记已被管理员隐藏</b>
-                {n.moderation_reason ? `：${n.moderation_reason}` : ''}
-                <div className="faint" style={{ fontSize: 11.5 }}>
-                  隐藏期间只有你（作者）能看到它。恢复请联系管理员。
-                </div>
-              </div>
-            </div>
-          )}
+          
 
           {/* 纸：名字标题 + 信息行 + 正文 + 文末操作，全在一张卡里 ⚠ */}
           <div className="card note-body-card flex flex-col">
@@ -369,12 +287,6 @@ export default function NotePage() {
                 text={n.body || ''}
                 blocks={blocks}
                 authed={authed}
-                onOpenBlock={(b, anchor) => {
-                  setPanelQuote('')
-                  setPanelAnchor(anchor ?? null)
-                  setActiveFp(b.fingerprint)
-                }}
-                onSelection={(info) => setSel(info)}
               />
             </div>
 
@@ -405,84 +317,10 @@ export default function NotePage() {
       {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
             · · ⛔ 不再用右键：所有者：「不要右键弹出评论按钮了……评论按钮和
               原生的浏览器右键弹窗同时出现了」⚠ */}
-      {/* ⚠★ 必须用 portal 挂到 body：`.page.rise` 上有 `transform`（单位矩阵也算），
-            会让 `position: fixed` 相对它定位而不是视口 ⇒ 工具条飘到别处 ⚠ */}
-      {sel &&
-        createPortal(
-          <div
-            className="sel-toolbar"
-          onMouseDown={(e) => e.preventDefault()}
-          style={{
-            position: 'fixed',
-            // ★★ 贴着选区上沿（* 只留 6px 缝）—— 所有者：「就在选中文字上方一点点就可以了」⚠
-            //   · · 用 translateY(-100%) 让**底边**对齐，* 不用猜工具条高度 ✅
-            //   · · 太靠页面顶部时改放选区下方，* 避免被裁掉 ⚠
-            top: sel.rect.top > 44 ? sel.rect.top - 6 : sel.rect.top + sel.rect.height + 6,
-            transform: sel.rect.top > 44 ? 'translateY(-100%)' : undefined,
-            left: Math.max(
-              8,
-              Math.min(
-                sel.rect.left + sel.rect.width / 2 - 44,
-                window.innerWidth - 108,
-              ),
-            ),
-            zIndex: 90,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 2,
-            padding: 3,
-            background: 'var(--card)',
-            border: '1px solid var(--card-border)',
-            borderRadius: 999,
-            boxShadow: 'var(--shadow-card-hover)',
-          }}
-        >
-          {[
-            {
-              key: 'comment',
-              label: '评论',
-              title: sel.block ? '对选中的文字写段评' : '这段没能对上段落，暂不支持段评',
-              disabled: !sel.block,
-              run: () => {
-                if (!sel.block) return
-                setPanelQuote(sel.quote)
-                setPanelAnchor(sel.rect)
-                setActiveFp(sel.block.fingerprint)
-                setSel(null)
-              },
-            },
-            // ★ 以后要加按钮就往这个数组里塞（* 高亮 / 复制 / 引用…）⚠
-          ].map((a) => (
-            <button
-              key={a.key}
-              type="button"
-              disabled={a.disabled}
-              title={a.title}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={a.run}
-              style={{
-                padding: '5px 12px',
-                fontSize: 12,
-                fontFamily: 'var(--font-ui)',
-                lineHeight: 1.2,
-                color: a.disabled ? 'var(--text-faint)' : 'var(--text-main)',
-                background: 'transparent',
-                border: 'none',
-                borderRadius: 999,
-                cursor: a.disabled ? 'not-allowed' : 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {a.label}
-            </button>
-            ))}
-          </div>,
-          document.body,
-        )}
+      
 
       
 
-      {/* ★★ `F4`：管理处置（隐藏 / 下架 / 恢复）—— 仅 staff 能打开 */}
       {/* ★★ 改锚点弹窗（`D125`）⚠ */}
       <AnchorPicker
         open={anchorOpen}

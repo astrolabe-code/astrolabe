@@ -16,28 +16,8 @@
  */
 import type { ApiError, ApiResult, EnvelopeKind } from './types'
 
-/** ★ CSRF Cookie 名 —— 与后端 `settings.CSRF_COOKIE_NAME` 一致(必须是**非** HttpOnly)⚠ */
-const CSRF_COOKIE = 'csrftoken'
-
 /** 401(unauthenticated)统一处理钩子:由 App 注册(清登录态 + 跳登录页) */
 let unauthorizedHandler: (() => void) | null = null
-
-
-/**
- * ★ 读 CSRF Token(供非 GET 请求带 `X-CSRFToken` 头,B247②)⚠
- *
- * ⚠ 它保护的就是 sessionid —— ⛔ **不是**登录凭证本身,
- *   泄露它没有意义(攻击者仍然拿不到你的 HttpOnly sessionid)✅
- */
-export function getCsrfToken(): string | null {
-  try {
-    const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]*)`))
-    return m ? decodeURIComponent(m[1]) : null
-  } catch (e) {
-    console.error('read csrf token failed', e)
-    return null
-  }
-}
 
 /**
  * ★ 登出后的本地清理(B245 后 session 由服务端管)
@@ -103,16 +83,9 @@ export async function api<T = any>(
   if (!headers.has('Accept')) headers.set('Accept', 'application/json')
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
-  // ★★ B247②：非 GET 一律带 CSRF 头(⛔ GET/HEAD 不需要,带了反而多余)⚠
-  const method = (init.method || 'GET').toUpperCase()
-  if (method !== 'GET' && method !== 'HEAD' && !headers.has('X-CSRFToken')) {
-    const csrf = getCsrfToken()
-    if (csrf) headers.set('X-CSRFToken', csrf)
-  }
-
   let res: Response
   try {
-    res = await fetch(path, { credentials: 'same-origin', ...init, headers })
+    res = await fetch(path, { ...init, headers })
   } catch (e) {
     console.error('network error', e)
     return { ok: false, error: { message: '网络异常,请稍后重试', status: 0 } }
@@ -157,72 +130,6 @@ export function apiPatch<T = any>(path: string, body?: unknown, kind: EnvelopeKi
 
 export function apiDelete<T = any>(path: string, body?: unknown, kind: EnvelopeKind = 'spread') {
   return api<T>(path, kind, { method: 'DELETE', body: body === undefined ? undefined : JSON.stringify(body) })
-}
-
-/* ---------------------------------------------------------------- 上传 */
-
-export interface UploadOptions {
-  /** 文件字段名,后端 upload 取 request.FILES */
-  field?: string
-  /** 额外表单字段(如 max_mb) */
-  extra?: Record<string, string>
-  onProgress?: (pct: number) => void
-}
-
-export interface UploadHandle {
-  promise: Promise<ApiResult<any>>
-  abort: () => void
-}
-
-/**
- * zip 上传(D15):XHR + FormData,**不手设 Content-Type**(浏览器生成 boundary)。
- * 后端 `upload/` 立即返回({ok,key,parsing}),解析进度另走 `/progress/` 轮询。
- */
-export function upload(path: string, file: File, opts: UploadOptions = {}): UploadHandle {
-  const xhr = new XMLHttpRequest()
-
-  const promise = new Promise<ApiResult<any>>((resolve) => {
-    const form = new FormData()
-    form.append(opts.field || 'file', file)
-    Object.entries(opts.extra || {}).forEach(([k, v]) => form.append(k, v))
-
-    xhr.open('POST', path, true)
-    xhr.setRequestHeader('Accept', 'application/json')
-    // ★ B245：上传走 session；B247②：带 CSRF 头 ⚠
-    xhr.withCredentials = true
-    const csrf = getCsrfToken()
-    if (csrf) xhr.setRequestHeader('X-CSRFToken', csrf)
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && opts.onProgress) {
-        opts.onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-    }
-    xhr.onerror = () => {
-      console.error('upload network error', path)
-      resolve({ ok: false, error: { message: '网络异常,上传失败', status: 0 } })
-    }
-    xhr.onabort = () => {
-      resolve({ ok: false, error: { message: '上传已取消', status: 0 } })
-    }
-    xhr.onload = () => {
-      const ct = xhr.getResponseHeader('content-type') || ''
-      let body: any = null
-      if (ct.includes('application/json')) {
-        try {
-          body = JSON.parse(xhr.responseText)
-        } catch (e) {
-          console.error('upload json parse failed', e)
-          body = null
-        }
-      }
-      resolve(afterResult(normalize(xhr.status, body, 'spread')))
-    }
-
-    xhr.send(form)
-  })
-
-  return { promise, abort: () => xhr.abort() }
 }
 
 export type { ApiError, ApiResult, EnvelopeKind }

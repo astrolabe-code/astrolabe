@@ -585,3 +585,8 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   background: var(--card-border);
   margin: 2px 0;
 }
+
+/* ★ 窄屏：顶栏按钮只留图标（等价于原来每个页面各写一遍的 !isNarrow 判断） */
+@media (max-width: 900px) {
+  .rail-label { display: none; }
+}

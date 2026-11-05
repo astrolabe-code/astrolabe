@@ -15,7 +15,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, Plus } from 'lucide-react'
+
+import { PageBar, RailButton } from '../components/PageBar'
+import { FolderOpen, Plus, Settings } from 'lucide-react'
 
 interface ScanResult {
   root: string
@@ -610,9 +612,21 @@ const secondary: React.CSSProperties = {
 }
 
 function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+  const navigate = useNavigate()
   return (
-    <div style={{ width: wide ? 760 : 520, maxWidth: '92vw', display: 'flex', flexDirection: 'column' }}>
-      {children}
-    </div>
+    <>
+      {/* ★★★ 顶栏工具条（公共组件 PageBar）——首页各个视图共用这个壳，所以挂在壳里 ⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<Settings size={13} />}
+          label="设置"
+          title="设置（外观 / 数据在哪）"
+          onClick={() => navigate('/me/settings')}
+        />
+      </PageBar>
+      <div style={{ width: wide ? 760 : 520, maxWidth: '92vw', display: 'flex', flexDirection: 'column' }}>
+        {children}
+      </div>
+    </>
   )
 }

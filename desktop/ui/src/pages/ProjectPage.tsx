@@ -6,6 +6,7 @@ import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
+import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
@@ -158,6 +159,16 @@ export default function ProjectPage() {
       //   很多空白」）⚠
       page={false}
     >
+      {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<Workflow size={13} />}
+          label="图谱"
+          title="打开图谱（看它和谁连着）"
+          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/graph`)}
+        />
+      </PageBar>
+
       {/* ★★ 自绘顶部操作行（* 靠右，不占 `.page` 那 1120 的窄容器）⚠ */}
       <div
         className="flex items-center justify-end gap-2"

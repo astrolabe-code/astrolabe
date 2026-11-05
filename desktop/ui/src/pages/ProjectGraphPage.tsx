@@ -29,7 +29,7 @@ import {
   useReplacePath,
 } from '../query/readingPath'
 import AppLayout from '../components/AppLayout'
-import TopbarSlot from '../components/TopbarSlot'
+import { PageBar, RailButton, RailMenu, RailMenuSep } from '../components/PageBar'
 import AppMenuItems from '../components/AppMenuItems'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
@@ -101,12 +101,9 @@ export default function ProjectGraphPage() {
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
   const [shownCount, setShownCount] = useState<number | null>(null)
   // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
-  const toolRef = useRef<HTMLDivElement>(null)
   const [showAllNodes, setShowAllNodes] = useState(false)
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
-  // ★ 悬浮工具条：* 默认收起，* 点开才展开（* 不占图谱高度）⚠
-  const [barOpen, setBarOpen] = useState(false)
   /** ★★ 改图抽屉（个人版核心兜底能力）⚠ */
   const [curateOpen, setCurateOpen] = useState(false)
   // ★ 搜索胶囊是否展开
@@ -340,22 +337,6 @@ export default function ProjectGraphPage() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [g])
 
-  // ★ 工具下拉：点外面或按 Esc 关闭（⛔ 不再靠 mouseleave —— 会被 6px 空隙误触发）
-  useEffect(() => {
-    if (!barOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (!toolRef.current?.contains(e.target as Node)) setBarOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setBarOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [barOpen])
 
   /** ★ 显示全部 / 收起（同一个按钮来回切，收起时回到点之前的节点数） */
   const toggleShowAll = () => {
@@ -457,104 +438,44 @@ export default function ProjectGraphPage() {
       page={false}
     >
       {/* ★★★ 工具条挂在**顶栏那一行**（画布上不再有浮层）⚠ */}
-      <TopbarSlot>
-          {/* ★★★ 2026-11-05：工具条从"悬浮"改为**内容流里的一条** ⚠
-              所有者：「样子怪不说，还挡住了后面的字」——原来是 absolute 压在图谱上，
-              正好盖住上面那句"作者还没有排学习路径…"的提示
-              ⇒ 现在：① 不悬浮（把提示文字顶下去） ② 去掉胶囊/阴影（Obsidian 那种
-                 扁平图标按钮，悬停才出现浅底） */}
-          <div className="graph-toolbar">
-            {/* ★★★ 2026-11-05：**按类归组 + 折叠**（所有者：「能合为一类的合为一类，
-                并折叠，就像一些编程IDE做的那样」）⚠
-                · 左组：导航（列表）· 编辑（改图）· 工具（视图开关全收进下拉）
-                · 右组：搜索（单独留在最右，展开时变成输入框）
-                ⛔ 不再把「依赖 / 学习路径 / 加载更多」平铺成一排 ⚠ */}
-            <div className="rail-group">
-              {/* ---- 导航 ---- */}
-              <button
-                type="button"
-                className="rail-btn"
-                onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
-                title="回到节点列表（可以从头找）"
-              >
-                <List size={13} />
-                {!isNarrow && <span>列表</span>}
-              </button>
-
-              {/* ---- 编辑 ---- */}
-              <button
-                type="button"
-                className="rail-btn"
-                onClick={() => setCurateOpen(true)}
-                title="改图：解析不准的地方在这里补"
-              >
-                <GitBranch size={13} />
-                {!isNarrow && <span>改图</span>}
-              </button>
-
-              {/* ---- 工具（视图开关都收在这里，折叠不占位）---- */}
-              {/* ★★★ 2026-11-05：**不再用 mouseleave 关闭** ⚠
-                  所有者：「只要鼠标移动到工具框一点，下拉窗就消失，这让我如何点击？」
-                  根因：菜单是 absolute，浮在按钮下方 6px 处；那 6px 不属于任何元素
-                        ⇒ 指针经过时先触发容器的 mouseleave ⇒ 菜单被关掉
-                  ⇒ 改为：点外面 / Esc 关闭（IDE 的菜单就是这种语义）；
-                    6px 空隙由 CSS 的 .rail-menu::before 补成"隐形桥" */}
-              <div ref={toolRef} style={{ position: 'relative', display: 'flex' }}>
-                <button
-                  type="button"
-                  className="rail-btn"
-                  onClick={() => setBarOpen((v) => !v)}
-                  aria-pressed={barOpen}
-                  title="工具：依赖线 / 学习路径 / 显示全部"
-                >
-                  <SlidersHorizontal size={13} />
-                  {!isNarrow && <span>工具</span>}
-                  <ChevronDown size={11} style={{ opacity: 0.6 }} />
-                </button>
-
-                {barOpen && (
-                  <div className="rail-menu">
-                    {/* ★★★ 2026-11-05：菜单**不放图标**（所有者：「你把下拉栏都加图标干啥？」）
-                        ⚠ 「流星」移到 设置 → 外观；「加载更多」删掉（节点上的「+」已能展开邻居）*/}
-                    <Button
-                      variant={showImports ? 'primary' : 'ghost'}
-                      onClick={() => setShowImports((v) => !v)}
-                      title="文件之间的 import / include 连线（默认关，会糊住主干）"
-                    >
-                      依赖线
-                    </Button>
-                    <Button
-                      variant={pathOpen ? 'primary' : 'ghost'}
-                      onClick={() => setPathOpen((v) => !v)}
-                    >
-                      学习路径（{pathItems.length}）
-                    </Button>
-                    {/* ★★★ 2026-11-05：「加载更多」删掉 —— 节点上的「+」已经能展开邻居
-                        （所有者：「节点上点击显示的加号按钮就已经有这个功能了」）
-                        ⇒ 只留一个**可来回切**的「显示全部 / 收起」⚠ */}
-                    {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
-                      <Button
-                        variant={showAllNodes ? 'primary' : 'ghost'}
-                        onClick={toggleShowAll}
-                        title={
-                          showAllNodes
-                            ? '收起，回到刚才那批节点'
-                            : `把剩下 ${orderVids.length - (shownCount ?? 0)} 个也画出来`
-                        }
-                      >
-                        {showAllNodes ? '收起' : '显示全部'}
-                      </Button>
-                    )}
-                    <span className="rail-menu-sep" />
-                    <AppMenuItems />
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </div>
-
-      </TopbarSlot>
+      {/* ★★★ 2026-11-05：顶栏工具条改用公共组件 PageBar（所有页面统一）⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<List size={13} />}
+          label="列表"
+          title="回到节点列表（可以从头找）"
+          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
+        />
+        <RailButton
+          icon={<GitBranch size={13} />}
+          label="改图"
+          title="改图：解析不准的地方在这里补"
+          onClick={() => setCurateOpen(true)}
+        />
+        <RailMenu label="工具" title="工具：依赖线 / 学习路径 / 显示全部">
+          <Button
+            variant={showImports ? 'primary' : 'ghost'}
+            onClick={() => setShowImports((v) => !v)}
+            title="文件之间的 import / include 连线（默认关，会糊住主干）"
+          >
+            依赖线
+          </Button>
+          <Button variant={pathOpen ? 'primary' : 'ghost'} onClick={() => setPathOpen((v) => !v)}>
+            学习路径（{pathItems.length}）
+          </Button>
+          {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
+            <Button
+              variant={showAllNodes ? 'primary' : 'ghost'}
+              onClick={toggleShowAll}
+              title={showAllNodes ? '收起，回到刚才那批节点' : '把剩下的节点也画出来'}
+            >
+              {showAllNodes ? '收起' : '显示全部'}
+            </Button>
+          )}
+          <RailMenuSep />
+          <AppMenuItems />
+        </RailMenu>
+      </PageBar>
 
       <div
         style={{

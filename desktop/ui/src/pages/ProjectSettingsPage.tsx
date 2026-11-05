@@ -1,6 +1,8 @@
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 
 import AppLayout from '../components/AppLayout'
+import { PageBar, RailButton } from '../components/PageBar'
 import PersonalProjectSettings from '../components/settings/PersonalProjectSettings'
 
 /**
@@ -10,9 +12,20 @@ import PersonalProjectSettings from '../components/settings/PersonalProjectSetti
  */
 export default function ProjectSettingsPage() {
   const { projectRef = '' } = useParams<{ projectRef: string }>()
+  const navigate = useNavigate()
 
   return (
     <AppLayout title="项目设置">
+      {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<ArrowLeft size={13} />}
+          label="项目"
+          title="回到项目页"
+          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
+        />
+      </PageBar>
+
       <PersonalProjectSettings projectRef={projectRef} />
     </AppLayout>
   )

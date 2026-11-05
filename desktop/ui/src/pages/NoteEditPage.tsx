@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
+import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import AppLayout from '../components/AppLayout'
+import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
@@ -274,6 +275,16 @@ export default function NoteEditPage() {
 
   return (
     <AppLayout>
+      {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<BookOpenText size={13} />}
+          label="阅读"
+          title="回到阅读页（未保存的改动会提示）"
+          onClick={back}
+        />
+      </PageBar>
+
       {/* ★★★ 写作区两栏（`D131`）：左目录（可折叠）＋ 纸 ⚠
           · · 目录是正文里的 `#` / `##` / `###`（⛔ 不含名字）
           · · 折叠状态记在本地，下次打开还是收着的 ⚠ */}

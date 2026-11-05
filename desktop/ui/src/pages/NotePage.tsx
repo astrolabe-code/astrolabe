@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Lock, Pencil } from 'lucide-react'
+import { List, Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { useProject } from '../query/projects'
 import AppLayout from '../components/AppLayout'
+import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
@@ -136,6 +137,16 @@ export default function NotePage() {
 
   return (
     <AppLayout>
+      {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
+      <PageBar>
+        <RailButton
+          icon={<List size={13} />}
+          label="节点"
+          title="回到节点列表"
+          onClick={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
+        />
+      </PageBar>
+
       {/* ★★★ 2026-10-26（`D111` / `D114`）——
           所有者：「还是要右栏好看一点，不过放在左边」
                   「作者信息要放在目录上边」

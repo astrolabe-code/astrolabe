@@ -28,7 +28,6 @@ import {
   useRemoveFromPath,
   useReplacePath,
 } from '../query/readingPath'
-import { useMe } from '../hooks/useMe'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
@@ -79,7 +78,6 @@ export default function ProjectGraphPage() {
   const append = useAppendToPath(projectRef)
   const removeFromPath = useRemoveFromPath(projectRef)
   const replace = useReplacePath(projectRef)
-  const me = useMe()
   // ★★★ 2026-11-05：个人版**没有"用户设置"**（那是网页版账号体系的东西）
   //   ⇒ 流星参数用固定值（与网页版的默认档一致），不再请求 `/api/me/settings/`
   const meteorSpeed = 0.005 // ×1000 存储的那个 5，换算成 0.005
@@ -208,8 +206,8 @@ export default function ProjectGraphPage() {
 
   const p = project.data
   const g = graph.data
-  const canWrite = !!p?.can_edit
-  const meUsername = me.data?.username
+  // ★ 个人版：没有身份，能打开就能改图
+  const canWrite = true
 
   // ★ 用**稳定引用**，⛔ 不用 `|| []`（* 见 EMPTY_ITEMS 的说明）⚠
   const pathItems = pathQ.data?.items ?? EMPTY_ITEMS
@@ -933,7 +931,6 @@ export default function ProjectGraphPage() {
             projectRef={projectRef}
             node={selected}
             canWrite={canWrite}
-            meUsername={meUsername}
             inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
             canEditPath={canWrite}
             flat

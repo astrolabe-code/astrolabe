@@ -16,7 +16,6 @@ export interface MilkdownLazyProps {
   text: string
   blocks?: NoteBlockInfo[]
   onOpenBlock?: (b: NoteBlockInfo, anchor?: AnchorRect) => void
-  authed?: boolean
   onSelection?: (info: SelectionInfo | null) => void
 }
 

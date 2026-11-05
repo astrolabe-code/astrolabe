@@ -56,14 +56,6 @@ export interface ProjectSummary {
   state?: string
   /** ★ 最近一次处置的理由（`B196`：作者来问"为什么"必须答得出） */
   moderation_reason?: string
-  /** ★★ `F2`（联调摸底）新增：**当前用户对这个项目能不能改** ⚠
-   *
-   * ⚠★ 为什么必须有它：没有这个字段，前端分不清"协作者"与"外人" ⇒
-   *   · 给所有人渲染写入口 ⇒ 外人点击得 403（差体验）
-   *   · 只给 owner 渲染 ⇒ 协作者被藏掉入口（更错——他们有权）
-   * ★★ 后端 `projects.detail::_project_json` 现算现返（`can_edit` 判据）✅
-   */
-  can_edit?: boolean
   /** ★★ `F4` 预留：能不能管理协作者（owner/staff）—— 协作者管理页的入口显隐 ⚠ */
   can_manage?: boolean
   /**

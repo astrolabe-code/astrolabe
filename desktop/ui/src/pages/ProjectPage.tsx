@@ -4,7 +4,6 @@ import { Lock, Settings, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
-import { useMe } from '../hooks/useMe'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
@@ -49,7 +48,6 @@ export default function ProjectPage() {
   const deepVid = Number(sp.get('node') || 0) || undefined
   const siteCfg = useSiteConfig()
   const dwellMs = Math.max(0, Number(siteCfg.data?.resumeDwellSeconds ?? 20)) * 1000
-  const me = useMe()
   const [selected, setSelected] = useState<GraphNode | null>(null)
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
@@ -76,8 +74,8 @@ export default function ProjectPage() {
   const parseOk = parseState !== 'failed'
   /** ★ 没有源码目录 = 手动结构（节点与连线全靠手补）*/
   const isBlank = !!(p as unknown as { is_blank?: boolean })?.is_blank
-  const canWrite = !!p?.can_edit && parseOk
-  const meUsername = me.data?.username
+  // ★ 个人版：**没有身份判断** —— 能打开软件就能写（只受"解析成功"约束）
+  const canWrite = parseOk
 
   // ★★ 存档指向的项目已经打不开 ⇒ 清掉存档（`D120` 防御）⚠
   //   · · 否则首页那条「继续」永远指向一个 404，点一次烦一次 ⚠
@@ -251,7 +249,6 @@ export default function ProjectPage() {
             projectRef={projectRef}
             node={selected}
             canWrite={canWrite}
-            meUsername={meUsername}
             autoThink={autoThink}
             flat
           />

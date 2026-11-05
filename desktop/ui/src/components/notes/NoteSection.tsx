@@ -28,10 +28,9 @@ import ThinkingBoard from './ThinkingBoard'
 interface NoteSectionProps {
   projectRef: string
   nodeId: number
-  /** 当前用户能否写（前端拿 `project.can_edit`；作者本人另行判断） */
+  /** 能否写（个人版恒为 true，没有身份判断） */
   canWrite: boolean
   /** 当前登录用户名（判断"是不是我写的"用） */
-  meUsername?: string
   /** ★★ `F3`：点卡片进阅读页（NoteCard 内部 navigate，这里只作预留扩展位） */
   onOpenNote?: (note: Note) => void
   /** 新建笔记（打开编辑器） */
@@ -48,7 +47,6 @@ export default function NoteSection({
   projectRef,
   nodeId,
   canWrite,
-  meUsername,
   onOpenNote,
   onCreateNote,
   onEditNote,
@@ -272,7 +270,7 @@ export default function NoteSection({
                   key={n.id}
                   note={n}
                   projectRef={projectRef}
-                  canWrite={canWrite || n.created_by === meUsername}
+                  canWrite={canWrite}
                   onEdit={onEditNote}
                   onDelete={onDeleteNote}
                 />

@@ -45,14 +45,12 @@ export default function MilkdownView({
   text,
   blocks = [],
   onOpenBlock,
-  authed = false,
   onSelection,
 }: {
   text: string
   blocks?: NoteBlockInfo[]
   onOpenBlock?: (block: NoteBlockInfo, anchor?: AnchorRect) => void
   /** ★ 是否登录（* 未登录不拦右键菜单）⚠ */
-  authed?: boolean
   /**
    * ★★ **选区变化**（* 2026-10-23）：选中文字 ⇒ 回信息，选区没了 ⇒ 回 null ⚠
    *   · · ⛔ 不再用右键菜单 —— 所有者：「不要右键弹出评论按钮了……评论按钮和
@@ -66,8 +64,6 @@ export default function MilkdownView({
   blocksRef.current = blocks
   const cbRef = useRef(onOpenBlock)
   cbRef.current = onOpenBlock
-  const authedRef = useRef(authed)
-  authedRef.current = authed
   const selRef = useRef(onSelection)
   selRef.current = onSelection
 
@@ -96,7 +92,6 @@ export default function MilkdownView({
         },
       })
       crepe.setReadonly(true)
-      crepe.editor.use(makeBubblePlugin(blocksRef, cbRef, selRef, authedRef))
       // ★ 代码块高亮（* 只影响阅读页）⚠
       crepe.editor.use(makeHighlightPlugin())
       return crepe.editor
@@ -282,63 +277,6 @@ function bubbleButton(b: NoteBlockInfo, cb: (anchor: AnchorRect) => void): HTMLE
   return btn
 }
 
-function makeBubblePlugin(
-  blocksRef: { current: NoteBlockInfo[] },
-  cbRef: { current: ((b: NoteBlockInfo, anchor?: AnchorRect) => void) | undefined },
-  selRef: { current: ((i: SelectionInfo | null) => void) | undefined },
-  authedRef: { current: boolean },
-) {
-  return $prose(
-    () =>
-      new Plugin({
-        props: {
-          // ★★ 右键：选中了文字 ⇒ 弹「写段评」（* 番茄小说那种）⚠
-          //   · · 没选中 / 未登录 ⇒ 放行原生菜单 ✅
-          handleDOMEvents: {
-            // ★★ 选中文字 ⇒ ① 自动扩到整段 ② 上报选区给外层弹浮动工具条 ⚠
-            //   · · 用 setTimeout 0：mouseup 时浏览器还没把选区落到 ProseMirror ⚠
-            //   · · 单击（空选区）⇒ 上报 null，工具条收起 ✅
-            mouseup: (view) => {
-              setTimeout(() => {
-                expandToBlocks(view)
-                reportSelection(view, selRef.current, blocksRef.current)
-              }, 0)
-              return false
-            },
-          },
-          decorations: (state: EditorState) => {
-            const list = blocksRef.current
-            if (!list.length) return DecorationSet.empty
-
-            const nodes = topNodes(state)
-            const map = alignBlocks(nodes, list)
-
-            const decos = list.map((b, i) => {
-              const n = nodes[map[i]]
-              if (!n || map[i] < 0) return null
-              // ★ 没有段评的段落不挂气泡（* 与旧口径一致；
-              //   要新开一段评 ⇒ 选中文字后右键）⚠
-              if (!b.comment_count) return null
-              return Decoration.widget(
-                n.end - 1,
-                () => bubbleButton(b, (anchor) => cbRef.current?.(b, anchor)),
-                { side: 1, key: `bubble-${b.fingerprint}` },
-              )
-            })
-            return DecorationSet.create(
-              state.doc,
-              decos.filter((d): d is Decoration => d !== null),
-            )
-          },
-        },
-      }),
-  )
-}
-
-/**
- * ★ 粗略归一：去掉空白与 markdown 记号，只比「文字」
- *   · · 只在序号对不上时兜底，* 不需要精确 ✅
- */
 function loose(s: string): string {
   return (s || '')
     .replace(/\r\n/g, '\n')

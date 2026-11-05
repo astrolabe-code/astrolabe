@@ -4,7 +4,6 @@ import { Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { useProject } from '../query/projects'
-import { useMe } from '../hooks/useMe'
 import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
@@ -72,7 +71,6 @@ export default function NotePage() {
   const ref = noteId
   const note = useNote(ref || null)
   const project = useProject(projectRef)
-  const me = useMe()
   const nav = useNavigate()
   const [anchorOpen, setAnchorOpen] = useState(false)
 
@@ -82,14 +80,10 @@ export default function NotePage() {
   const blocks = note.data?.blocks || []
 
 
-  const authed = !!me.data?.authenticated
-  const canEdit = !!project.data?.can_edit
-  const meUsername = me.data?.username
-  const isStaff = !!me.data?.is_staff
   // ★★ 可写 = 作者 ∨ 项目成员（* `B207`③）✅
-  const canWrite = !!n && (n.created_by === meUsername || canEdit)
+  // ★ 个人版：没有身份判断 —— 能打开就能编辑
+  const canWrite = !!n
   // ★★ 删除判据上下文（* 逐条判：* 评论作者本人 / 项目成员 / 管理员，* `B207`⑤）✅
-  const perm = { meUsername, canEdit, isStaff }
 
   if (note.isError) {
     return (
@@ -286,7 +280,6 @@ export default function NotePage() {
               <MilkdownLazy
                 text={n.body || ''}
                 blocks={blocks}
-                authed={authed}
               />
             </div>
 

@@ -34,11 +34,10 @@ import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 interface NodePanelProps {
   projectRef: string
   node: GraphNode | null
-  /** 项目级写权限（后端 `can_edit` 字段） |
+  /** 是否可写（个人版恒为 true，没有身份判断） |
    *  ⚠ 作者本人另算（`NoteSection` 里按 `created_by` 判）✅ */
   canWrite: boolean
   /** 当前登录用户名（判断"是不是我写的"） */
-  meUsername?: string
   /** ★★ `D106`：这个节点在学习路径里的序号（* null = 不在路径里）⚠ */
   inPathOrdinal?: number | null
   /** ★★ `D106`：能不能改学习路径（* owner ∨ 协作者）⚠ */
@@ -76,7 +75,6 @@ export default function NodePanel({
   projectRef,
   node,
   canWrite,
-  meUsername,
   inPathOrdinal,
   canEditPath,
   onAddToPath,
@@ -415,7 +413,6 @@ export default function NodePanel({
           projectRef={projectRef}
           nodeId={node.vid}
           canWrite={canWrite}
-          meUsername={meUsername}
           onOpenNote={() => {
             /* ★★ `F3`：点卡片进**阅读页**（NoteCard 内部 navigate）——
                这里不需要再做跳转，⛔ 不留空转的入口 ✅ */

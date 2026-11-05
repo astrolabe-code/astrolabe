@@ -17,7 +17,6 @@
 import { useEffect, useState } from 'react'
 import { PenLine } from 'lucide-react'
 
-import { useMe } from '../../hooks/useMe'
 import { clearResume, markResume, readResume, type ResumePoint } from '../../lib/resume'
 import { useCreateNote } from '../../query/notes'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
@@ -26,7 +25,6 @@ import AnchorPicker from './AnchorPicker'
 import Modal from '../ui/Modal'
 
 export default function QuickNote() {
-  const me = useMe()
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [kind, setKind] = useState<NoteKind>('flash')
@@ -37,7 +35,6 @@ export default function QuickNote() {
   const [done, setDone] = useState('')
 
   const create = useCreateNote(point?.ref)
-  const authed = !!me.data?.authenticated
 
   // ★ 打开时读一次存档（* 每次打开都重读，⛔ 不在挂载时缓存，避免过期）⚠
   useEffect(() => {
@@ -51,7 +48,6 @@ export default function QuickNote() {
 
   // ★ 快捷键 `n`：在输入框里打字时不触发 ⚠
   useEffect(() => {
-    if (!authed) return
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
       if (e.key !== 'n' && e.key !== 'N') return
@@ -64,7 +60,7 @@ export default function QuickNote() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [authed])
+  }, [])
 
   const save = async () => {
     const body = text.trim()
@@ -91,7 +87,6 @@ export default function QuickNote() {
     }
   }
 
-  if (!authed) return null
 
   return (
     <>

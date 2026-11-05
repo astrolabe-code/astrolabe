@@ -104,7 +104,6 @@ export function toProjectSummary(raw: any, stats?: any): any {
     owner_display: '我',
     mine: true,
     /** ★ 个人版自己是作者 ⇒ 可写；真正的门槛在 parse_state（图不完整不给写）*/
-    can_edit: true,
     parse_state: String(raw.parse_state || 'none'),
     /** ★ 空白结构：没有源码目录，节点与连线全靠手补（`B184`）*/
     is_blank: !String(raw.root || '').trim(),

@@ -17,7 +17,6 @@
 import type { ApiError, ApiResult, EnvelopeKind } from './types'
 
 /** 401(unauthenticated)统一处理钩子:由 App 注册(清登录态 + 跳登录页) */
-let unauthorizedHandler: (() => void) | null = null
 
 /**
  * ★ 登出后的本地清理(B245 后 session 由服务端管)
@@ -25,13 +24,6 @@ let unauthorizedHandler: (() => void) | null = null
  * ⚠ localStorage 里**不再存任何凭证** —— 只需清掉遗留的旧键
  *   (老版本曾把 `api_token` 放在这里,升级后要扫掉,否则用户永远登不出)⚠
  */
-export function clearLegacyAuth() {
-  try {
-    localStorage.removeItem('api_token')
-  } catch (e) {
-    console.error('clear legacy auth failed', e)
-  }
-}
 
 function normalize<T>(status: number, body: any, kind: EnvelopeKind): ApiResult<T> {
   // ④ 编码错误(优先判失败,避免字段名恰为 ok 时误判)
@@ -59,19 +51,6 @@ function normalize<T>(status: number, body: any, kind: EnvelopeKind): ApiResult<
   }
   // 少数接口直接返回裸对象
   return { ok: true, data: body as T }
-}
-
-/** 统一后置处理:401 清 token 并交给 App 跳登录(只触发一次由 handler 保证) */
-function afterResult<T>(result: ApiResult<T>): ApiResult<T> {
-  if (!result.ok && result.error.status === 401 && result.error.code === 'unauthenticated') {
-    // ★ B245：session 失效由服务端管,前端只需跳登录页(⛔ 不清 Cookie,那归 Django)⚠
-    try {
-      unauthorizedHandler?.()
-    } catch (e) {
-      console.error('unauthorized handler failed', e)
-    }
-  }
-  return result
 }
 
 export async function api<T = any>(
@@ -102,7 +81,7 @@ export async function api<T = any>(
     body = await res.text().catch(() => null)
   }
 
-  return afterResult(normalize<T>(res.status, body, kind))
+  return normalize<T>(res.status, body, kind)
 }
 
 export function apiGet<T = any>(path: string, kind: EnvelopeKind = 'spread') {

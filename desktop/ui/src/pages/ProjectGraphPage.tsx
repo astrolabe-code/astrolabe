@@ -64,7 +64,6 @@ function initialBatch() {
   return Math.max(10, Math.min(16, Math.round(area / 60000)))
 }
 
-const BATCH_STEP = 24
 
 // ★★★ **稳定的空数组**（`B234`/`D105`）——* `|| []` 每次渲染都是新引用 ⇒
 //   * `pathVids`/`orderVids`/`view` 全变 ⇒* `GraphCanvas` 被反复重建 ⇒
@@ -101,6 +100,9 @@ export default function ProjectGraphPage() {
   const [q, setQ] = useState('')
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
   const [shownCount, setShownCount] = useState<number | null>(null)
+  // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
+  const [showAllNodes, setShowAllNodes] = useState(false)
+  const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
   // ★ 悬浮工具条：* 默认收起，* 点开才展开（* 不占图谱高度）⚠
   const [barOpen, setBarOpen] = useState(false)
@@ -337,6 +339,18 @@ export default function ProjectGraphPage() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [g])
 
+  /** ★ 显示全部 / 收起（同一个按钮来回切，收起时回到点之前的节点数） */
+  const toggleShowAll = () => {
+    if (!showAllNodes) {
+      beforeShowAllRef.current = shownCount ?? initialBatch()
+      setShownCount(orderVids.length)
+      setShowAllNodes(true)
+    } else {
+      setShownCount(beforeShowAllRef.current ?? initialBatch())
+      setShowAllNodes(false)
+    }
+  }
+
   const search = () => {
     const kw = q.trim().toLowerCase()
     if (!kw || !g) return
@@ -470,7 +484,7 @@ export default function ProjectGraphPage() {
                   className="rail-btn"
                   onClick={() => setBarOpen((v) => !v)}
                   aria-pressed={barOpen}
-                  title="工具：依赖线 / 学习路径 / 加载更多"
+                  title="工具：依赖线 / 学习路径 / 显示全部"
                 >
                   <SlidersHorizontal size={13} />
                   {!isNarrow && <span>工具</span>}
@@ -480,7 +494,7 @@ export default function ProjectGraphPage() {
                 {barOpen && (
                   <div className="rail-menu">
                     {/* ★★★ 2026-11-05：菜单**不放图标**（所有者：「你把下拉栏都加图标干啥？」）
-                        ⚠ 「流星」移到 设置 → 外观；「加载更多 / 显示全部」删除（不需要手动点） */}
+                        ⚠ 「流星」移到 设置 → 外观；「加载更多」删掉（节点上的「+」已能展开邻居）*/}
                     <Button
                       variant={showImports ? 'primary' : 'ghost'}
                       onClick={() => setShowImports((v) => !v)}
@@ -494,6 +508,22 @@ export default function ProjectGraphPage() {
                     >
                       学习路径（{pathItems.length}）
                     </Button>
+                    {/* ★★★ 2026-11-05：「加载更多」删掉 —— 节点上的「+」已经能展开邻居
+                        （所有者：「节点上点击显示的加号按钮就已经有这个功能了」）
+                        ⇒ 只留一个**可来回切**的「显示全部 / 收起」⚠ */}
+                    {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
+                      <Button
+                        variant={showAllNodes ? 'primary' : 'ghost'}
+                        onClick={toggleShowAll}
+                        title={
+                          showAllNodes
+                            ? '收起，回到刚才那批节点'
+                            : `把剩下 ${orderVids.length - (shownCount ?? 0)} 个也画出来`
+                        }
+                      >
+                        {showAllNodes ? '收起' : '显示全部'}
+                      </Button>
+                    )}
                     <span className="rail-menu-sep" />
                     <AppMenuItems />
                   </div>

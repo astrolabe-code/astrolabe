@@ -9,7 +9,6 @@ import {ChevronDown,
   Maximize2,
   Minimize2,
   Search,
-  Sparkles,
   Trash2,
   Workflow,
   X,
@@ -22,6 +21,7 @@ import CuratePanel from '../components/graph/CuratePanel'
 import { useFullGraph } from '../query/graph'
 import { useProject } from '../query/projects'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { getMeteors } from '../lib/uiPrefs'
 import {
   useAppendToPath,
   useReadingPath,
@@ -57,15 +57,6 @@ import NodePanel from '../components/node/NodePanel'
  */
 // ★ 类型名与颜色统一来自 `lib/kindLabel`（⛔ 页面里不再另写一份）
 
-/** ★ `D105`：按画布面积算初始批量（* 12~24）⚠ */
-function initialBatch() {
-  // ★★ 节点直径 28 ⇒ 一屏放不下太多（* 十几个就满，* 再多必然挤）⚠
-  const area = (window.innerWidth || 1280) * (window.innerHeight || 720)
-  return Math.max(10, Math.min(16, Math.round(area / 60000)))
-}
-
-const BATCH_STEP = 24
-
 // ★★★ **稳定的空数组**（`B234`/`D105`）——* `|| []` 每次渲染都是新引用 ⇒
 //   * `pathVids`/`orderVids`/`view` 全变 ⇒* `GraphCanvas` 被反复重建 ⇒
 //   * 布局、流星、阶段通知**全部被打断**（* 实测踩到）⚠
@@ -95,7 +86,8 @@ export default function ProjectGraphPage() {
   const [selectedVid, setSelectedVid] = useState<number | null>(deepVid)
   // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
   // ★ 默认跟用户设置走；* 工具栏开关只是本次会话的临时覆盖 ⚠
-  const [meteors, setMeteors] = useState(true)
+  // ★ 流星开关来自「设置 → 外观」（`lib/uiPrefs`）；图谱页不再提供开关 ⚠
+  const [meteors] = useState(() => getMeteors())
   const [focusVid, setFocusVid] = useState<number | null>(null)
   const [q, setQ] = useState('')
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
@@ -223,7 +215,9 @@ export default function ProjectGraphPage() {
   }, [pathItems])
 
   useEffect(() => {
-    if (shownCount == null) setShownCount(initialBatch())
+    // ★★★ 2026-11-05：**默认展示全部**（「加载更多 / 显示全部」已从菜单删除）
+    //   ⚠ 仍留 shownCount 这个通道：搜索定位到更靠后的节点时会临时扩大（见 search()）
+    if (shownCount == null) setShownCount(orderVids.length || g?.nodes.length || 0)
   }, [shownCount])
 
   /**
@@ -269,7 +263,7 @@ export default function ProjectGraphPage() {
   }, [g, hasPath, pathVids, deepVid])
 
   const shownVids = useMemo(
-    () => new Set(orderVids.slice(0, shownCount ?? initialBatch())),
+    () => new Set(orderVids.slice(0, shownCount ?? orderVids.length)),
     [orderVids, shownCount],
   )
 
@@ -478,40 +472,21 @@ export default function ProjectGraphPage() {
 
                 {barOpen && (
                   <div className="rail-menu">
+                    {/* ★★★ 2026-11-05：菜单**不放图标**（所有者：「你把下拉栏都加图标干啥？」）
+                        ⚠ 「流星」移到 设置 → 外观；「加载更多 / 显示全部」删除（不需要手动点） */}
                     <Button
                       variant={showImports ? 'primary' : 'ghost'}
-                      icon={<Share2 size={13} />}
                       onClick={() => setShowImports((v) => !v)}
                       title="文件之间的 import / include 连线（默认关，会糊住主干）"
                     >
                       依赖线
                     </Button>
                     <Button
-                      variant={meteors ? 'primary' : 'ghost'}
-                      icon={<Sparkles size={13} />}
-                      onClick={() => setMeteors((v) => !v)}
-                      title="节点之间飞过的流光效果"
-                    >
-                      流星
-                    </Button>
-                    <Button
                       variant={pathOpen ? 'primary' : 'ghost'}
-                      icon={<Route size={13} />}
                       onClick={() => setPathOpen((v) => !v)}
                     >
                       学习路径（{pathItems.length}）
                     </Button>
-                    {shownCount != null && shownCount < orderVids.length && (
-                      <Button
-                        icon={<ChevronDown size={13} />}
-                        onClick={() => setShownCount((c) => (c ?? 0) + BATCH_STEP)}
-                      >
-                        加载更多（{orderVids.length - shownCount}）
-                      </Button>
-                    )}
-                    {shownCount != null && shownCount < orderVids.length && (
-                      <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
-                    )}
                     <span className="rail-menu-sep" />
                     <AppMenuItems />
                   </div>

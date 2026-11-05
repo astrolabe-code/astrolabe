@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'react'
 import { ExternalLink, FolderOpen } from 'lucide-react'
 
+import { getMeteors, setMeteors as saveMeteors } from '../../lib/uiPrefs'
+
 interface Info {
   version: string
   dataDir: string
@@ -19,6 +21,8 @@ interface Info {
 }
 
 export default function PersonalUserSettings() {
+  // ★ 外观偏好（流星）—— 与图谱页共用 lib/uiPrefs
+  const [meteors, setMeteors] = useState(getMeteors)
   const [info, setInfo] = useState<Info | null>(null)
   const api = (
     window as unknown as {
@@ -101,6 +105,35 @@ export default function PersonalUserSettings() {
             具体某个项目存在哪，去那个项目的 <b>设置</b> 里看（那一页有个「打开」按钮）。
           </div>
         </div>
+      </div>
+
+      {/* ★★★ 2026-11-05：外观（流星）—— 所有者：「流星这个应该在设置页面出现」 */}
+      <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>外观</div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12.5,
+            color: 'var(--text-sub)',
+            cursor: 'pointer',
+            lineHeight: 1.8,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={meteors}
+            onChange={(e) => {
+              setMeteors(e.target.checked)
+              saveMeteors(e.target.checked)
+            }}
+          />
+          流星特效
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            图谱里节点之间飞过的流光（关掉更快、更安静）
+          </span>
+        </label>
       </div>
 
       <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>

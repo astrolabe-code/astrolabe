@@ -4,7 +4,6 @@ import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
 import Button from '../ui/Button'
-import EmptyState from '../ui/EmptyState'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
 import ThinkingBoard from './ThinkingBoard'
@@ -98,38 +97,6 @@ export default function NoteSection({
     kind,
     items: mine.filter((n) => n.kind === kind),
   }))
-  const nonEmpty = groups.filter((g) => g.items.length > 0)
-
-  if (nonEmpty.length === 0) {
-    return (
-      <>
-        <EmptyState
-          title="这个节点还没有笔记"
-          hint={
-            canWrite
-              ? '做第一个写笔记的人 —— 你的一闪念，可能正好解开别人的困惑'
-              : '登录后可撰写笔记'
-          }
-          action={
-            canWrite ? (
-              <Button variant="primary" icon={<Plus size={14} />} onClick={onCreateNote}>
-                写笔记
-              </Button>
-            ) : undefined
-          }
-        />
-        {/* ★★ 空节点也要能开白板（* 首页「思考模式」卡片直达到空节点时）⚠ */}
-        <ThinkingBoard
-          open={thinkingOpen}
-          projectRef={projectRef}
-          nodeId={nodeId}
-          notes={mine}
-          onClose={() => setThinkingOpen(false)}
-        />
-      </>
-    )
-  }
-
   // ★★ 五个盒子的**各自数量**（* 0 也显示，* 一眼看出这节点哪类多）⚠
   const counts = NOTE_KINDS.map((kind: NoteKind) => ({
     kind,

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { EyeOff, Lock, LockOpen, MessageSquare, Pencil, ThumbsUp, Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
 import { kindMeta } from './kindMeta'
@@ -22,7 +22,6 @@ import { kindMeta } from './kindMeta'
  * | # | 口径 |
  * |---|---|
  * | ① | ★ 正文只显示**摘要**（前两行）—— 卡片不是阅读区 |
- * | ② | ★ `is_public=false` ⇒ 显示「私有」徽标 |
  * | ③ | ★ `state=hidden` ⇒ 显示「已被隐藏」徽标（只有 owner 看得到） |
  */
 interface NoteCardProps {
@@ -55,7 +54,6 @@ export default function NoteCard({
   const navigate = useNavigate()
   const meta = kindMeta(note.kind)
   const Icon = meta.icon
-  // ★★ 「公开 / 私有」开关：* 与编辑弹窗里的同一个字段（`is_public`）联动 ⚠
   const update = useUpdateNote(note.ref)
   return (
     <div
@@ -82,30 +80,9 @@ export default function NoteCard({
           <Icon size={11} />
           {meta.label}
         </span>
-        {!note.is_public && (
-          <span className="tag" style={{ fontSize: 10.5 }} title="只有作者可见">
-            <EyeOff size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
-            私有
-          </span>
-        )}
-        {note.state === 'hidden' && (
-          <span className="tag" style={{ fontSize: 10.5, color: 'var(--err)' }} title={note.moderation_reason}>
-            已被隐藏
-          </span>
-        )}
         <span className="faint" style={{ fontSize: 11, marginLeft: 'auto' }}>
           {/* ★ 显示昵称（* 为空回落用户名），* 点名字进 TA 的空间（⛔ 不触发卡片跳转）⚠ */}
-          {note.created_by ? (
-            <Link
-              to={`/u/${encodeURIComponent(note.created_by)}`}
-              onClick={(e) => e.stopPropagation()}
-              style={{ color: 'inherit' }}
-            >
-              {note.created_by_display || note.created_by}
-            </Link>
-          ) : (
-            note.created_by_display || ''
-          )}{' '}
+          {note.created_by_display || note.created_by || ''}{' '}
           · {note.created_at?.slice(0, 10)}
         </span>
       </div>
@@ -116,39 +93,12 @@ export default function NoteCard({
         </div>
       )}
       <div className="flex items-center gap-3 mt-2 faint" style={{ fontSize: 11 }}>
-        <span className="flex items-center gap-1">
-          <ThumbsUp size={11} /> {note.like_count}
-        </span>
-        <span className="flex items-center gap-1">
-          <MessageSquare size={11} /> {note.comment_count}
-        </span>
         {canWrite && (
           <div
             className="flex items-center gap-3"
             style={{ marginLeft: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* ★★ 公开 / 私有开关（* 与弹窗里的同一字段联动）⚠
-                · · ⛔ 不跳阅读页 —— 这个容器统一 stopPropagation ✅ */}
-            <button
-              type="button"
-              className="flex items-center gap-1"
-              disabled={update.isPending}
-              title={note.is_public ? '当前公开，点击改为私有' : '当前私有，点击改为公开'}
-              style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
-              onClick={() => {
-                // ★ 整份 PATCH（* 后端按字段更新；带上其余字段避免误清空）⚠
-                update.mutate({
-                  kind: note.kind,
-                  title: note.title,
-                  body: note.body,
-                  is_public: !note.is_public,
-                })
-              }}
-            >
-              {note.is_public ? <LockOpen size={11} /> : <Lock size={11} />}
-              {note.is_public ? '公开' : '私有'}
-            </button>
 
             <button
               type="button"

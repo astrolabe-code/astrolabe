@@ -36,6 +36,3 @@ export function errorMessage(e: unknown, fallback = '请求失败,请稍后重�
 /** 冲突/门禁类错误码(§1 关键错误码)——用于页面差异化提示 */
 export const BUSY_CODES = ['project_busy', 'graph_not_ready', 'stale_rev', 'too_many_changes']
 
-export function isBusyError(e: unknown): boolean {
-  return e instanceof ApiRequestError && BUSY_CODES.includes(e.code || '')
-}

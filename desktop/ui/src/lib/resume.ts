@@ -88,11 +88,3 @@ export function clearResume(): void {
 }
 
 /** ★ 人话时间（"3 小时前"）—— 提示条上显示 ⚠ */
-export function agoText(at: number): string {
-  const min = Math.floor((Date.now() - at) / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `${h} 小时前`
-  return `${Math.floor(h / 24)} 天前`
-}

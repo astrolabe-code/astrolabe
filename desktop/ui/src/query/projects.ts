@@ -139,10 +139,6 @@ export const TERMINAL_JOB_STATES = ['done', 'failed', 'canceled', 'none'] as con
  *   ⇒ ★ 判错的后果：★ **失败的项目会永远轮询下去**（★ 白耗电、白打接口）⚠
  *   ★ 另有 `'none'` —— ★ 那是**列表端点**在"没有作业"时给的伪状态 ✅
  */
-export function isJobActive(status?: string | null): boolean {
-  return status === 'queued' || status === 'running'
-}
-
 export function useProject(projectRef?: string | null) {
   return useQuery({
     queryKey: ['project', projectRef],

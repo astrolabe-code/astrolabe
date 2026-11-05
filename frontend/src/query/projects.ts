@@ -1,8 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import { unwrap } from '../api/errors'
-import { IS_PERSONAL } from '../lib/personal'
-import { personalApi } from '../api/personal'
 import { resolveRef } from '../lib/resolveRef'
 import type {
   ProgressData,
@@ -203,10 +201,7 @@ export function useProject(projectRef?: string | null) {
     queryKey: ['project', projectRef],
     enabled: !!projectRef,
     queryFn: async (): Promise<ProjectSummary> =>
-      // ★ 个人版走本地边车
-      IS_PERSONAL
-        ? (personalApi.getProject(projectRef!) as unknown as Promise<ProjectSummary>)
-        : unwrap(await apiGet<ProjectSummary>(`/api/projects/${encodeURIComponent(projectRef!)}/`, 'data')),
+      unwrap(await apiGet<ProjectSummary>(`/api/projects/${encodeURIComponent(projectRef!)}/`, 'data')),
   })
 }
 

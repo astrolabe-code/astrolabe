@@ -11,7 +11,7 @@
  *
  * ## 用法
  *
- * ```ts\n * const hooks = IS_PERSONAL ? personalApi : null\n * queryFn: () => hooks ? hooks.graphNodes(ref, limit, offset) : unwrap(await apiGet(...))\n * ```\n */
+ * ```ts\n * const hooks = personalApi\n * queryFn: () => hooks ? hooks.graphNodes(ref, limit, offset) : unwrap(await apiGet(...))\n * ```\n */
 
 import type { Note, NoteKind } from './types'
 import type { GraphNode } from '../lib/mergeGraph'

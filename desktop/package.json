@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
-    "build:web": "cd ../frontend && npm run build:personal",
+    "build:web": "cd ui && npm run build",
     "build:sidecar": "pyinstaller --clean --noconfirm --distpath packaging/out --workpath packaging/work packaging/sidecar.spec",
     "dist:linux": "npm run build:web && npm run build:sidecar && electron-builder --linux dir",
     "dist:win": "npm run build:web && npm run build:sidecar && electron-builder --win dir"
@@ -29,7 +29,7 @@
     ],
     "extraResources": [
       {
-        "from": "../frontend/dist-personal",
+        "from": "ui/dist",
         "to": "dist"
       },
       {
@@ -48,7 +48,8 @@
       "target": [
         "dir"
       ],
-      "artifactName": "${productName}-${version}-win-x64.${ext}"
+      "artifactName": "${productName}-${version}-win-x64.${ext}",
+      "signAndEditExecutable": false
     },
     "linux": {
       "target": [

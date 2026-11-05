@@ -15,11 +15,8 @@ import './styles/index.css'
  * 个人版  白底黑字，只留结构 —— 这是"我的工具"
  * ```
 
- * ⚠ 只在 `VITE_PERSONAL` 构建里打这个标记；社区版不受影响。
+ * ⚠ 网页版不设 plain 标记（那是个人版的规则）。
  */
-if (import.meta.env.VITE_PERSONAL === '1') {
-  document.documentElement.dataset.theme = 'plain'
-}
 
 // ★ SPA 挂 /app/ 前缀（D26/D27）—— basename 必须与 vite base 一致
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '')

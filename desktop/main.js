@@ -31,14 +31,12 @@ const { pathToFileURL } = require('node:url')
 const IS_PACKAGED = app.isPackaged
 const EXE_DIR = path.dirname(app.getPath('exe'))
 
-/** 前端构建产物目录：打包后在 resources/dist，开发时在 ../frontend/dist */
+/** 前端构建产物目录：打包后在 resources/dist，开发时在 ui/dist
+ *  ★★★ 2026-11-05：个人版前端已**完全独立**（desktop/ui），
+ *      ⛔ 不再回退到 ../frontend（那是网页版，改了会影响这里）⚠ */
 const DIST = IS_PACKAGED
   ? path.join(process.resourcesPath, 'dist')
-  : (() => {
-      // ★ 本地开发：个人版产物（dist-personal）优先，没有才退回线上产物
-      const personal = path.join(__dirname, '..', 'frontend', 'dist-personal')
-      return fs.existsSync(personal) ? personal : path.join(__dirname, '..', 'frontend', 'dist')
-    })()
+  : path.join(__dirname, 'ui', 'dist')
 
 /** 边车：打包后是 resources/sidecar/astrolabe-sidecar(.exe)，开发时是 python 脚本 */
 const SIDECAR_CMD = IS_PACKAGED

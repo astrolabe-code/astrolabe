@@ -1,0 +1,118 @@
+/* ============================================================
+   黎明特效层:光束 + 暗角 + 曙光 + 冰面 + 光尘 + 星辰 + 启明星
+   (旧站 base.css 同名规则的精简重写,视觉一致)
+   ============================================================ */
+.skyfx {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+}
+.skyfx .beam {
+  position: absolute; top: -8%; left: 50%;
+  transform-origin: 50% 0%;
+  width: 74%; height: 78%;
+  background: var(--fx-beam);
+  animation: beamExpand 12s ease-in-out infinite;
+}
+@keyframes beamExpand {
+  0%, 100% { transform: translateX(-50%) scale(0.97, 0.98); opacity: 0.82; }
+  50%      { transform: translateX(-50%) scale(1.03, 1.02); opacity: 1; }
+}
+.skyfx .vignette { position: absolute; inset: 0; box-shadow: var(--fx-vignette); }
+.skyfx .horizon {
+  position: absolute; left: -12%; right: -12%; bottom: 2%; height: 24%;
+  background: radial-gradient(58% 100% at 50% 100%,
+    rgba(255,255,255,0.16), rgba(255,255,255,0.06) 46%, transparent 76%);
+}
+.skyfx .iceglow {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 42% 34% at 50% 100%, rgba(255,255,255,0.42), transparent 72%),
+    radial-gradient(ellipse 30% 20% at 50% 100%, rgba(255,255,255,0.46), transparent 75%),
+    radial-gradient(ellipse 88% 9% at 28% 94%, rgba(255,255,255,0.46), transparent 70%),
+    radial-gradient(ellipse 72% 7% at 66% 97%, rgba(255,255,255,0.38), transparent 70%),
+    radial-gradient(ellipse 56% 5% at 44% 89%, rgba(255,255,255,0.32), transparent 70%),
+    radial-gradient(ellipse 64% 6% at 78% 91%, rgba(255,255,255,0.34), transparent 70%);
+}
+.skyfx .underlight {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 72%;
+  background:
+    radial-gradient(ellipse 72% 54% at 50% 100%, rgba(255,255,255,0.22), transparent 68%),
+    radial-gradient(ellipse 48% 38% at 50% 100%, rgba(255,255,255,0.15), transparent 70%),
+    radial-gradient(ellipse 90% 40% at 50% 105%, rgba(255,255,255,0.12), transparent 75%);
+}
+.skyfx .dust i {
+  position: absolute; bottom: -8px;
+  width: 3px; height: 3px; border-radius: 50%;
+  background: var(--fx-dust);
+  box-shadow: 0 0 6px 1px var(--fx-star-glow-dim);
+  animation: rise linear infinite;
+}
+@keyframes rise {
+  0%   { transform: translateY(0); opacity: 0; }
+  8%   { opacity: 0.9; }
+  70%  { opacity: 0.5; }
+  100% { transform: translateY(-68vh); opacity: 0; }
+}
+.skyfx .stars i {
+  position: absolute;
+  width: 3px; height: 3px; border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 7px 2.5px var(--fx-star-glow);
+  animation: starTwinkle ease-in-out infinite;
+}
+.skyfx .stars i.big { width: 4.2px; height: 4.2px; box-shadow: 0 0 11px 4px var(--fx-star-glow-big); }
+.skyfx .stars i.dim { width: 2.2px; height: 2.2px; box-shadow: 0 0 4px 1px var(--fx-star-glow-dim); }
+@keyframes starTwinkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.55); }
+  50%      { opacity: 1; transform: scale(1.45); }
+}
+.skyfx .morning-star {
+  position: absolute; top: 8%; left: 66%;
+  width: 4px; height: 4px; border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--fx-mstar);
+  animation: starPulse 4s ease-in-out infinite;
+}
+@keyframes starPulse {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.3); }
+}
+
+/* 深色下隐藏浅色系特效层(冰面反光/地平线/深层透光=雪原概念) */
+[data-theme="dark"] .skyfx .horizon,
+[data-theme="dark"] .skyfx .iceglow,
+[data-theme="dark"] .skyfx .underlight { display: none; }
+/* 深色夜空专属动画:星辰更亮、光束更含蓄 */
+[data-theme="dark"] .skyfx .stars i { animation-name: starTwinkleDark; }
+@keyframes starTwinkleDark {
+  0%, 100% { opacity: 0.35; transform: scale(0.6); }
+  50%      { opacity: 1; transform: scale(1.5); }
+}
+[data-theme="dark"] .skyfx .beam { animation-name: beamExpandDark; }
+@keyframes beamExpandDark {
+  0%, 100% { transform: translateX(-50%) scale(0.97, 0.98); opacity: 0.32; }
+  50%      { transform: translateX(-50%) scale(1.03, 1.02); opacity: 0.48; }
+}
+[data-theme="dark"] .skyfx .dust i { opacity: 0.55; }
+
+/* 移动端性能优化:只保留轻量星辰(6 颗),隐藏重特效 */
+@media (max-width: 768px) {
+  .skyfx .beam,
+  .skyfx .vignette,
+  .skyfx .horizon,
+  .skyfx .iceglow,
+  .skyfx .underlight,
+  .skyfx .dust,
+  .skyfx .morning-star { display: none !important; }
+  .skyfx {
+    position: absolute !important; top: 0; left: 0; right: 0; bottom: auto;
+    width: 100%; height: 45vh; z-index: 0 !important;
+  }
+  .skyfx .stars i { display: none !important; }
+  .skyfx .stars i:nth-child(-n+6) { display: block !important; }
+  .skyfx .stars i:nth-child(1) { top: 8% !important; left: 7% !important; }
+  .skyfx .stars i:nth-child(2) { top: 22% !important; left: 18% !important; }
+  .skyfx .stars i:nth-child(3) { top: 12% !important; left: 34% !important; }
+  .skyfx .stars i:nth-child(4) { top: 28% !important; left: 52% !important; }
+  .skyfx .stars i:nth-child(5) { top: 15% !important; left: 68% !important; }
+  .skyfx .stars i:nth-child(6) { top: 33% !important; left: 88% !important; }
+}

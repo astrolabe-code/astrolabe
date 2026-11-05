@@ -10,7 +10,6 @@ import AppLayout from '../components/AppLayout'
 import Button from '../components/ui/Button'
 import LikeButton from '../components/likes/LikeButton'
 import CommentSection from '../components/comments/CommentSection'
-import { IS_PERSONAL } from '../lib/personal'
 import ParagraphComments from '../components/comments/ParagraphComments'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
@@ -237,7 +236,7 @@ export default function NotePage() {
                   </Link>
                 </div>
                 {/* ★ 个人版只有你自己 ⇒ 没有"他的空间"可看 ⚠ */}
-                {!IS_PERSONAL && <div className="note-author-sub">查看他的空间 →</div>}
+                <div className="note-author-sub">查看他的空间 →</div>
               </div>
             </div>
           </div>
@@ -388,7 +387,7 @@ export default function NotePage() {
             {/* ★★★ 文末操作条（`D111`④）：章赞在左、编辑/管理在右且更小 ⚠ */}
             <div className="note-foot">
               {/* ★ 点赞是社区功能（需要"别人"）⇒ 个人版不渲染 ⚠ */}
-              {!IS_PERSONAL && <LikeButton noteId={n.ref} anchor="chapter" />}
+              {<LikeButton noteId={n.ref} anchor="chapter" />}
               <span className="note-foot-hint">读到这里才点得顺手</span>
               <span className="note-foot-right">
                 {canWrite && (
@@ -410,11 +409,11 @@ export default function NotePage() {
           </div>
 
           {/* ④ 章评区 —— ★ 个人版没有第二个用户，评论没有对象 ⇒ 整块不渲染 ⚠ */}
-          {!IS_PERSONAL && (
+          {
             <div className="card mt-4" style={{ padding: '16px 18px' }}>
               <CommentSection noteId={n.ref} authed={authed} perm={perm} />
             </div>
-          )}
+          }
         </div>
       </div>
 

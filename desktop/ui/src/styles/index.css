@@ -1,0 +1,645 @@
+/* 样式入口:先加载站点 token 与语义类,再挂 Tailwind(D20)
+   Tailwind 只负责布局工具类,外观一律由下面的语义类决定 */
+@import "./tokens.css";
+@import "./components.css";
+@import "./skyfx.css";
+@import "./home.css";
+@import "./login.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   ★★ 顶栏收起后的恢复胶囊（`D104` 补充）
+   ★ 形似所有者原型 `code_network/src/style.css` 的 `.header-restore`：
+     · 默认半透明（opacity .55）不抢眼；★ 鼠标移上去变清晰、变强调色 ✅
+   ============================================================================ */
+.nav-restore {
+  position: fixed;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-sub);
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.2s ease, color 0.15s ease;
+}
+
+.nav-restore:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ===== 段评气泡（* Milkdown 只读渲染里，由 ProseMirror Decoration 挂上）===== */
+.block-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 17px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 1;
+  font-family: var(--font-ui);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid transparent;
+  cursor: pointer;
+  vertical-align: middle;
+  user-select: none;
+}
+.block-bubble:hover {
+  border-color: var(--accent);
+}
+
+/* ★ Milkdown 只读容器：别把编辑器的外框/光标画出来 ⚠ */
+.milkdown-view .ProseMirror {
+  padding: 0;
+  outline: none;
+}
+
+/* ★★★ 阅读页：**去掉 Crepe 给编辑器留的上下 60px**（2026-10-25）⚠
+ *
+ * 现象（所有者）：「阅读页的 markdown 文档，怎么正文上面有很大一块空白？」
+ *
+ * 原因：
+ *   · Crepe 是**编辑器**样式，`.ProseMirror` 自带 `padding: 60px 0`
+ *     （* 给顶部浮动工具栏留位置）
+ *   · 只读页里没有工具栏 ⇒ 这 60px 就是**纯空白**
+ *   · 再叠上卡片的 16px 和 h1 自己的 26px 上边距 ⇒ 正文顶部空了近 100px ⚠
+ *
+ * ⛔ 只作用于 `.note-body-card`（阅读页专有）——
+ *   编辑页还要靠这块空间放工具栏，不能一起改 ⚠
+ */
+.note-body-card .milkdown .ProseMirror {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* ★ 正文第一个块的 margin-top 也归零 ——
+ *   ⚠ 否则去掉 60px 之后，h1/h2 的上边距还会再顶出一截空白 ⚠
+ *   ⚠★ 必须带 `#root`：下面那条 `#root .milkdown .ProseMirror h1 { margin-top: .93em }`
+ *      是 **ID 选择器**，优先级更高 —— 不带 `#root` 的话本条会被它压掉（实测无效）⚠ */
+#root .note-body-card .milkdown .ProseMirror > *:first-child {
+  margin-top: 0;
+}
+
+/* ===== Milkdown 正文配色：对齐站点纸张与正文色 ===== */
+/* ① 代码块：Crepe 默认给的是灰底（--crepe-color-inline-area 混色）
+      ⇒ 改成**透明**（跟随纸张），* 只留一条细边框把范围圈出来 ⚠ */
+.milkdown .ProseMirror pre {
+  background: transparent;
+  border: 1px solid var(--card-border);
+}
+
+/* ② 列表标记（圆点 / 数字 / 勾选框）：Crepe 默认用 --crepe-color-outline 的灰
+      ⇒ 改成**正文色**（* 选择器比主题更具体，* 不依赖加载顺序）⚠ */
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper,
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper .label {
+  color: var(--text-main);
+}
+.milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper svg {
+  fill: var(--text-main);
+}
+
+/* ===== 正文基准字号：**唯一的参照物** =====
+   ★ 所有标题都按 em 相对它缩放 —— ⛔ 不再写死 px（所有者指出的问题）⚠
+   · · 想让正文和标题整体变大变小，* 只改这一行 ✅
+   · · 默认 16px = 与站点其余正文一致 */
+:root {
+  --md-base-size: 16px;
+}
+
+/* ★ 把 Crepe 的基准也接到同一个参照物上
+     （* 它默认在 nord.css 里写死 16px，* 这里覆盖成我们的 token）⚠ */
+#root .milkdown .ProseMirror {
+  --crepe-base-font-size: var(--md-base-size);
+  font-size: var(--md-base-size);
+}
+
+/* ===== 标题：相对基准字号缩放（em）=====
+   16px 基准下依次为 28 / 24 / 20 / 18 / 16 / 15px ✅
+   ⚠ 行高与上边距同样是相对值，* 基准一变整体等比缩放 ⚠ */
+#root .milkdown .ProseMirror h1,
+#root .milkdown .ProseMirror h2,
+#root .milkdown .ProseMirror h3,
+#root .milkdown .ProseMirror h4,
+#root .milkdown .ProseMirror h5,
+#root .milkdown .ProseMirror h6 {
+  font-weight: 650;
+  line-height: 1.35;
+}
+#root .milkdown .ProseMirror h1 { font-size: 1.75em;  margin-top: 0.93em; }
+#root .milkdown .ProseMirror h2 { font-size: 1.5em;   margin-top: 1em; }
+#root .milkdown .ProseMirror h3 { font-size: 1.25em;  margin-top: 1em; }
+#root .milkdown .ProseMirror h4 { font-size: 1.125em; margin-top: 1em; }
+#root .milkdown .ProseMirror h5 { font-size: 1em;     margin-top: 1em; }
+#root .milkdown .ProseMirror h6 { font-size: 0.9375em; margin-top: 0.93em; }
+
+/* ===== 阅读节奏：块之间的留白 =====
+   ⚠ Crepe 是**编辑器**样式：段落只有 `padding: 4px 0`、没有 margin
+     ⇒ 只读页里所有段落挤成一片（所有者：「正文都挤在一起了」）⚠
+   · · 下面全部用 em（相对正文基准字号），* 随 --md-base-size 一起缩放 ✅ */
+#root .milkdown .ProseMirror p {
+  padding: 0;
+  margin: 0 0 0.9em;
+  line-height: 1.75;          /* 中文长文比 1.5 更松快 */
+}
+#root .milkdown .ProseMirror ul,
+#root .milkdown .ProseMirror ol,
+#root .milkdown .ProseMirror pre,
+#root .milkdown .ProseMirror table {
+  margin: 0 0 0.9em;
+}
+#root .milkdown .ProseMirror li {
+  margin: 0.25em 0;
+  line-height: 1.7;
+}
+#root .milkdown .ProseMirror blockquote {
+  margin: 0.9em 0;
+  /* ⚠ 主题给的是 40px 死值 ⇒ 移动端太深，* 改成相对值 ⚠ */
+  padding-left: 1.4em;
+}
+#root .milkdown .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+/* ===== 正文卡片：内边距随屏幕收窄（* 原来是内联写死的 16/18）===== */
+.note-body-card { padding: 16px 18px; }
+@media (max-width: 640px) {
+  .note-body-card { padding: 14px 12px; }
+}
+
+/* ===== 正文左右留白 =====
+   ⚠ Crepe 给编辑器留了 `padding: 0 120px`（块手柄要站的地方）
+     * 344px 的移动端卡片减掉 240px ⇒ 正文只剩 100px 宽（所有者：「挤在一起」）⚠
+   · · 阅读页：卡片自己已有内边距 ⇒ 正文**铺满** ✅
+   · · 编辑器：仍需左侧留白给「+」手柄，* 但比 120px 窄得多 ⚠ */
+#root .note-body-card .milkdown .ProseMirror {
+  padding-left: 0;
+  padding-right: 0;
+}
+/* ⚠★ 2026-10-27：左边那 2.5em 本来是给 **块手柄**（`+` / `⋮⋮`）让位的，
+ *   手柄关掉后它只会让正文比「名字」右缩 20px（实测很别扭）⇒ 归零，让两者左对齐 ✅ */
+#root .milkdown-editor .milkdown .ProseMirror {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* ===== 笔记编辑页（* 弹窗改成整页后，正文要吃掉页面高度）===== */
+.note-edit-card { padding: 20px 22px 16px; }
+/* ★★★ 2026-10-27（`D129`）：**正文不再画边框** ——
+ * 所有者要的是"铺在纸上的稿纸"，不是一个输入框（参照 CSDN 的编辑区）⚠
+ * ⚠ 上内边距从 Crepe 的 60px 收到 10px：那块空间本是给浮动工具栏的，
+ *   但留 60px 会让第一行字悬在半空（实测观感很空）⚠ */
+.note-edit-card .milkdown-editor {
+  min-height: 56vh;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+.note-edit-card .milkdown .ProseMirror {
+  padding-top: 10px;
+  padding-bottom: 24px;
+}
+@media (max-width: 640px) {
+  .note-edit-card { padding: 14px 12px 12px; }
+  .note-edit-card .milkdown-editor { min-height: 48vh; }
+}
+
+/* ===== Milkdown 正文配色：接到站点主题上 =====
+   ⚠ Crepe 的 nord 主题只考虑浅色（--crepe-color-background: #fdfcff）
+     ⇒ 深色模式下正文区是一块**纯白底**，字贴着白块边缘
+     ⇒ 所有者：「深色背景下，正文内容像顶格写的一样，不好看」⚠
+   · · 正文背景**永远跟随卡片**（透明），文字与线条按主题映射 ✅ */
+.milkdown {
+  background: transparent;
+  /* ★ 两种主题都接：文字用站点正文色，* 不再用 Crepe 自带的黑/白 ⚠ */
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text-main);
+  --crepe-color-surface: var(--card);
+  --crepe-color-on-surface: var(--text-main);
+  --crepe-color-on-surface-variant: var(--text-sub);
+  --crepe-color-outline: var(--text-sub);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-inline-area: var(--bg-deep);
+}
+
+[data-theme='dark'] .milkdown {
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text-main);
+  --crepe-color-surface: var(--card);
+  --crepe-color-surface-low: #1e1e2c;
+  --crepe-color-on-surface: var(--text-main);
+  --crepe-color-on-surface-variant: var(--text-sub);
+  --crepe-color-outline: var(--text-sub);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: rgba(77, 184, 214, 0.15);
+  --crepe-color-on-secondary: var(--text-main);
+  --crepe-color-inline-code: #ffb4a8;
+  --crepe-color-inline-area: rgba(148, 163, 184, 0.18);
+  --crepe-color-hover: rgba(148, 163, 184, 0.12);
+  --crepe-color-selected: rgba(77, 184, 214, 0.22);
+}
+
+/* ===== 代码块语法高亮（阅读页 · Prism 区间着色）=====
+   · · 颜色全部取站点 token ⇒ 深浅主题自动跟随 ✅
+   · · 类名由 components/notes/highlight.ts 映射 */
+.milkdown .ProseMirror pre {
+  color: var(--code-text);
+  tab-size: 2;
+}
+/* ⚠ Crepe 把 `code` 的颜色设成了**行内代码色**（红），连 `pre code` 一起吃
+   ⇒ 代码块里没被 Prism 着色的部分（变量名、空白）会变红，必须纠正 ⚠ */
+.milkdown .ProseMirror pre code {
+  color: var(--code-text);
+  background: transparent;
+}
+.milkdown .md-tok-key { color: var(--code-key); font-weight: 600; }
+.milkdown .md-tok-str { color: var(--code-str); }
+.milkdown .md-tok-fn  { color: var(--code-fn); }
+.milkdown .md-tok-com { color: var(--code-com); font-style: italic; }
+.milkdown .md-tok-num { color: var(--code-num); }
+.milkdown .md-tok-dec { color: var(--code-dec); }
+.milkdown .md-tok-dim { color: var(--code-dim); }
+
+/* ===== 代码块行号 =====
+   ⚠ 行号靠「每行行首插一个 inline-block」实现
+     ⇒ 代码块必须**不自动折行**（white-space: pre），* 否则行号会跟内容错位 ⚠
+   · · 长行改为横向滚动（滚动条在代码块内部）✅ */
+.milkdown .ProseMirror pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+.milkdown .md-line-no {
+  display: inline-block;
+  width: 2.2em;
+  margin-right: 10px;
+  text-align: right;
+  color: var(--code-dim);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+/* ===== 设置页：左分类 / 右内容 ===== */
+.settings-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.settings-nav {
+  width: 176px;
+  flex: none;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  color: var(--text-sub);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.settings-nav-item:hover {
+  background: var(--bg-deep);
+  color: var(--text-main);
+}
+.settings-nav-item.active {
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .settings-nav-item {
+    width: auto;
+    white-space: nowrap;
+  }
+}
+
+/* ===== 空间头像：可点时给悬停反馈 =====
+   · · 只有本人视角才是 <a>（可点）⇒ **只对 a 做放大**
+   · · 别人空间里头像不可点，* 不加动效（⛔ 别骗用户去点）⚠ */
+.profile-avatar {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  will-change: transform;
+}
+a.profile-avatar {
+  cursor: pointer;
+}
+a.profile-avatar:hover {
+  transform: scale(1.09);
+  box-shadow: 0 6px 18px rgba(8, 145, 178, 0.35);
+}
+a.profile-avatar:active {
+  transform: scale(1.03);
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-avatar {
+    transition: none;
+  }
+  a.profile-avatar:hover {
+    transform: none;
+  }
+}
+
+
+/* ============================================================================
+   ★★★ 阅读页两栏（`D111` / `D114` · 2026-10-26）⚠
+
+   所有者原话（逐字）：
+     「还是要右栏好看一点，不过放在左边，出示意图，我看看」
+     「方案戊看着顺眼多了，不过作者信息要放在目录上边」
+     「这个居中显示，颜色字体与#不太一样就行，这样就真的是标题。#这些就承担目录的功能了」
+
+   结构：左栏 264（作者卡在上 / 目录在下，sticky）＋ 间距 24 ＋ 纸 760
+   ⛔ 操作按钮不在左栏 —— 章赞在文末（CSDN 口径）
+   ========================================================================== */
+
+.note-layout {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 760px);
+  gap: 24px;
+  align-items: start;
+  justify-content: center;
+}
+
+.note-rail {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.note-rail-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.note-author { display: flex; align-items: center; gap: 10px; }
+.note-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #67e8f9);
+  color: #fff; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.note-author-name { font-size: 13px; font-weight: 600; }
+.note-author-sub { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+
+/* 目录：只来自正文的 # / ## / ###，名字不参与 ⚠ */
+.note-toc h4 {
+  font-size: 11.5px; color: var(--text-faint); font-weight: 600;
+  margin-bottom: 8px; letter-spacing: 0.5px;
+}
+.note-toc a,
+.note-toc button {
+  display: block; width: 100%; text-align: left;
+  font-family: var(--font-ui); font-size: 12.5px; color: var(--text-sub);
+  text-decoration: none; padding: 4px 8px; line-height: 1.5;
+  background: none; border: none; border-left: 2px solid transparent;
+  border-radius: 0 4px 4px 0; cursor: pointer;
+}
+.note-toc a:hover,
+.note-toc button:hover { color: var(--accent); background: var(--accent-dim); }
+.note-toc .lv2 { padding-left: 18px; font-size: 12px; }
+.note-toc .lv3 { padding-left: 28px; font-size: 11.5px; }
+
+/* 纸里的「名字」标题 —— 居中 + 拉开字距，和左对齐的 # 章节一眼分开 ✅ */
+.note-title {
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 2px;
+  line-height: 1.35;
+  color: var(--note-title);
+  margin: 6px 0 8px;
+}
+
+/* 信息行：编号 · 类型 · 作者 · 时间（居中，跟着标题） */
+.note-meta {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--text-faint);
+  margin: 0 0 18px;
+}
+.note-no {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px; padding: 0 5px; border-radius: 4px;
+  border: 1px solid var(--card-border);
+}
+
+/* 文末操作条：章赞在左，编辑 / 删除在右 */
+.note-foot {
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px -18px -16px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--card-border);
+  background: var(--accent-dim);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.note-foot-hint { font-size: 11px; color: var(--text-faint); }
+
+/* 文末小字按钮（编辑 / 管理）—— 不抢章赞的注意力 */
+.link-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border: none; background: transparent;
+  font-family: var(--font-ui); font-size: 12px;
+  color: var(--text-faint); cursor: pointer; border-radius: 6px;
+}
+.link-btn:hover { color: var(--accent); background: var(--accent-dim); }
+.note-foot-right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+
+/* 窄屏：左栏收到正文下面（目录仍在，横向铺开） */
+@media (max-width: 1100px) {
+  .note-layout { grid-template-columns: minmax(0, 1fr); }
+  .note-layout > .note-article { order: 1; }
+  .note-rail {
+    order: 2; position: static;
+    flex-direction: row; flex-wrap: wrap;
+  }
+  .note-rail-card { flex: 1 1 200px; }
+  .note-foot { margin: 18px -12px -14px; padding: 12px; }
+}
+
+
+/* ============================================================================
+   ★★★ 写作页底部常驻栏（`D129` · 2026-10-27）⚠
+
+   所有者：「就按这个改，要加字数统计，停止输入一秒后计数就行，不要弄出抖动」
+
+   · · 元信息（类型 / 公开）从正文上方**沉到这里**（CSDN 也是这么放的）
+   · · `sticky bottom: 0` ⇒ 正文再长也不用滚到底找按钮
+   · · 负边距是为了**贴到卡片边缘**（与 `.note-edit-card` 的内边距对齐）
+   ========================================================================== */
+.note-edit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px -22px -16px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--card-border);
+  background: var(--card);
+}
+
+@media (max-width: 720px) {
+  /* ⚠ 移动端卡片内边距是 14/12 ⇒ 负边距要跟着变，否则会横向溢出 ⚠ */
+  .note-edit-bar {
+    margin: 14px -12px -12px;
+    padding: 9px 12px;
+    gap: 6px;
+  }
+}
+
+
+/* ============================================================================
+   ★★★ 写作区两栏：左目录（可折叠）＋ 纸（`D131` · 2026-10-27）⚠
+
+   所有者：「写作区加个目录，可折叠的，更好一点」
+
+   · · 目录 = 正文里的 # / ## / ###（⛔ 不含「名字」，那是身份不是章节）
+   · · 跟着字数那次 1 秒防抖一起更新，⛔ 不额外接 onChange
+   · · 折叠状态存本地（useCollapsed），下次打开还是收着的
+   ========================================================================== */
+
+.note-edit-layout {
+  display: grid;
+  /* ⚠ 纸宽**固定** 820：折叠只收左栏，⛔ 不让正文重排（否则眼睛要重新找行）⚠ */
+  grid-template-columns: 220px minmax(0, 820px);
+  gap: 20px;
+  align-items: start;
+  /* ★ 和阅读页一致：整体居中，别让纸贴着屏幕左缘 ⚠ */
+  justify-content: center;
+}
+
+.note-edit-layout.is-folded {
+  grid-template-columns: 40px minmax(0, 820px);
+}
+
+.note-edit-rail {
+  position: sticky;
+  top: 16px;
+}
+
+/* 折叠后：一条竖排的「目录」＋ 箭头，占 40px */
+.note-edit-fold-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0 14px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  box-shadow: var(--shadow-card);
+}
+.note-edit-fold-btn:hover { color: var(--accent); border-color: var(--accent); }
+.note-edit-fold-btn .v {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 3px;
+}
+
+/* 目录标题行：左「目录」右「收起」箭头 */
+.note-toc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.note-toc-head h4 {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+.note-toc-head button {
+  /* ⚠ 必须 width:auto —— `.note-toc button` 那条给了 `width:100%`（给目录项用的），
+     不收窄的话「收起」按钮会占满整行，把「目录」两个字挤成竖排（踩过）⚠ */
+  width: auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.note-toc-head button:hover { color: var(--accent); background: var(--accent-dim); }
+
+/* 窄屏：目录整块不显示（写作时屏幕本来就窄，正文优先） */
+@media (max-width: 1100px) {
+  .note-edit-layout,
+  .note-edit-layout.is-folded { grid-template-columns: minmax(0, 1fr); }
+  .note-edit-rail { display: none; }
+}
+
+
+/* ============================================================================
+   ★★ 写作页「名字说明」那一行（`D134` · 2026-10-28）⚠
+
+   ⚠ 类别说明**不占版面**：所有者最终定的方案是把说明放进**右上角徽标的悬浮提示**，
+     ⛔ 不额外加一行文字（「现在的版面看着太怪了」）⚠
+   ========================================================================== */
+.note-edit-subline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  margin-bottom: 2px;
+}
+.note-edit-subline .sub-name {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+

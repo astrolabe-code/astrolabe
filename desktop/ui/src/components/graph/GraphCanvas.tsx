@@ -1,0 +1,832 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Graph } from '@antv/g6'
+import { startMeteor } from '../../lib/meteorFx'
+import { useTheme } from '../../hooks/useTheme'
+import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
+import { kindColor } from '../../lib/kindLabel'
+import NodeHoverCard from '../node/NodeHoverCard'
+
+/**
+ * ★ 图谱画布（`D98` · AntV G6 v5）
+ *
+ * ## ★★ 所有者口径（原话）
+ *
+ * > 「**现在图要用 G6 画，不要用 vis-network 了。**」
+ * > 「**先用两三秒调整布局，最后再根据稳定的布局，加上 canvas 的流星效果。**」
+ *
+ * ## ★★ 三个时间点（* 一次说清，* 别再乱）
+ *
+ * ```
+ * t=0      建图：* 节点先排成**小圆环**聚在画布中心（* 肉眼能看到"聚"）
+ * t≈2.5s   fruchterman 散开到位 ⇒ fitView + fitCenter ⇒ 通知「布局完成」
+ * t≈2.6s   流星启动（* 等布局稳了才画，* 否则位置乱窜）
+ * ```
+ *
+ * ## ★★ 四条必须遵守的实现约束（* 都是踩过的坑）
+ *
+ * ```
+ * ① ★ `animation` 必须**开**，否则布局过渡是瞬时的（看不到散开）
+ * ② ★★ `animation: true` 时 **`g.render()` 的 promise 永不 resolve** ——
+ *     ⛔ 绝对不能 `await` / `.then()`，否则后面全都不执行（* 流星因此消失过）⚠
+ * ③ ★ 初始位置**不能全重叠在一点** —— fruchterman 散不开（* 斥力方向不定）；
+ *     排成半径 70 的小圆环，* 视觉上仍是"聚在中心" ✅
+ * ④ ★ 容器必须 `position: relative` —— 流星罩层是 absolute;inset:0 ⚠
+ * ```
+ */
+
+// ★ 颜色统一来自 lib/kindLabel（图谱 / 列表 / 面板三处必须一致）
+
+const colorOf = (n: GraphNode) => kindColor(n.kind)
+
+/** ★★ 环形按钮几何（Neo4j 风格）：* 内径 24、外径 42、画布 96 ——
+ *   环绕节点一圈，分左右两段弧形扇区 ⚠ */
+const RING_GEO = { c: 48, r1: 24, r2: 42 }
+
+/** 生成一段环形扇区路径（* 角度 0 = 向右，* 正方向顺时针，* 与 SVG 一致） */
+function ringArcPath(a1: number, a2: number): string {
+  const { c, r1, r2 } = RING_GEO
+  const pt = (r: number, a: number) => [c + r * Math.cos(a), c + r * Math.sin(a)] as const
+  const [x1, y1] = pt(r2, a1)
+  const [x2, y2] = pt(r2, a2)
+  const [x3, y3] = pt(r1, a2)
+  const [x4, y4] = pt(r1, a1)
+  const large = a2 - a1 > Math.PI ? 1 : 0
+  return [
+    `M ${x1.toFixed(2)} ${y1.toFixed(2)}`,
+    `A ${r2} ${r2} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`,
+    `L ${x3.toFixed(2)} ${y3.toFixed(2)}`,
+    `A ${r1} ${r1} 0 ${large} 0 ${x4.toFixed(2)} ${y4.toFixed(2)}`,
+    'Z',
+  ].join(' ')
+}
+
+/** 初始圆环半径（px）—— 小到看起来"聚在中心"，又大到能让布局散开 */
+const RING = 70
+/** 布局散开 + 适配的时间（ms） */
+const SETTLE_MS = 2500
+
+interface GraphCanvasProps {
+  graph?: EffectiveGraph
+  /** 选中节点 vid（受控） */
+  selectedVid?: number | null
+  onSelect: (vid: number) => void
+  /** 点空白处 */
+  onDeselect?: () => void
+  /** 搜索聚焦（* 只移动视口，* 不改选中） */
+  focusVid?: number | null
+  /** 流星开关（* 默认开） */
+  meteors?: boolean
+  /** ★ 流星速度：* 每帧相位增量（* 来自用户设置，* 越小越慢）⚠ */
+  meteorSpeed?: number
+  /** ★ 流星大小：* 头部直径 / 节点直径（* 0.25 = 1/4）⚠ */
+  meteorSizeRatio?: number
+  /** ★ 节点直径（px，* 默认 14；* 来自用户设置）⚠ */
+  nodeSizePx?: number
+  /** 阶段回调（* 供页面显示"布局动画中 / 布局完成 / 流星已启动"） */
+  onPhase?: (phase: string) => void
+  /** ★★ 完整图（* 环形按钮展开邻居时要从这里查——* `graph` 只是已展示子集）⚠ */
+  fullGraph?: EffectiveGraph
+  /** ★ 发生增删后通知页面（* 用于统计展示数）⚠ */
+  onGraphChanged?: () => void
+}
+
+export default function GraphCanvas({
+  graph,
+  selectedVid,
+  onSelect,
+  onDeselect,
+  focusVid,
+  meteors = true,
+  meteorSpeed,
+  meteorSizeRatio,
+  nodeSizePx = 28,
+  onPhase,
+  fullGraph,
+  onGraphChanged,
+}: GraphCanvasProps) {
+  // ★★★ 节点标签颜色：**读 CSS 变量 + 作为建图依赖** ⚠
+  //   · · ★ 试过 `updateNodeData` 逐节点改 ——* G6 这条增量路径对节点样式不生效
+  //     （* 改完 `getElementRenderStyle` 仍是旧值）⚠
+  //   · · ★★ 最终做法：* 颜色一变就**重建图**（* 代价是重跑一次布局，
+  //     * 但主题切换不频繁，* 正确性优先）✅
+  const labelColorRef = useRef<string>('')
+  const readLabelColor = () =>
+    getComputedStyle(document.documentElement).getPropertyValue('--text-main').trim() || '#000000'
+  if (!labelColorRef.current) labelColorRef.current = readLabelColor()
+  const [labelColor, setLabelColor] = useState<string>(labelColorRef.current)
+
+  useEffect(() => {
+    const sync = () => {
+      const v = readLabelColor()
+      setLabelColor((prev) => (prev === v ? prev : v))
+    }
+    const mo = new MutationObserver(sync)
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+    const t1 = window.setTimeout(sync, 50)
+    const t2 = window.setTimeout(sync, 200)
+    return () => {
+      mo.disconnect()
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+    }
+  }, [])
+
+  const boxRef = useRef<HTMLDivElement>(null)
+  const gRef = useRef<Graph | null>(null)
+  const selectedRef = useRef<number | null>(null)
+  /** 布局是否已稳定（* 0 = 还没有；存时刻） */
+  const readyRef = useRef(0)
+  // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
+  // ★★ 悬停浮窗（所有者：图谱上鼠标移上去就显示详情，⛔ 不打断阅读、不用点开右栏）
+  const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
+  const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [ringScale, setRingScale] = useState(1)
+  const ringRef = useRef<SVGSVGElement>(null)
+  // ★★★ **当前可见节点集合**（* 单一数据源）——
+  //   · · ★ 增删节点时同步维护；* 一切"这个节点还在吗"都查它 ⚠
+  //   · · ★★ 照原型 `visible.some(n => n.id === id)` 的写法：
+  //     * **用数据判断**，* 而不是 try/catch 兜 G6 抛的异常 ✅
+  const visibleRef = useRef<Set<string>>(new Set())
+  /**
+   * ★★ 节点的**实时**信息表（画布上出现过的全部节点，含"展开邻居"临时加进来的）⚠
+   *
+   * ⚠ 不能用 `graph.nodes` 推出来的 `nodeById`：
+   *   `expandNeighbors` 是**直接往 G6 里加**节点/边（不跑布局、不改页面状态），
+   *   那些节点不在 `graph.nodes` 里 ⇒ 悬停查不到 → 没有浮窗（所有者踩到）
+   */
+  const nodeInfoRef = useRef<Map<string, GraphNode>>(new Map())
+  /** ★★ 画布数据版本：加/删节点与边之后 +1 ⇒ 流星按**实时数据**重建 ⚠ */
+  const [dataVersion, setDataVersion] = useState(0)
+  // ★ 节点的 size / color：* 节点渲染与流星共用（* 流星大小 = 直径 1/10、颜色 = 节点色）⚠
+  // ★ 手工补的节点略大 15%，* 其余按设置值（* 流星光晕随之等比缩放）⚠
+  const nodeSize = (n: GraphNode) =>
+    n.origin === 'manual' ? Math.round(nodeSizePx * 1.15) : nodeSizePx
+  const nodeById = useMemo(
+    () => new Map((graph?.nodes ?? []).map((n) => [String(n.vid), n])),
+    [graph],
+  )
+
+  // ============================================================ 悬停浮窗
+  /**
+   * ★★ 鼠标移到节点上 ⇒ 浮窗显示详情（名字 / 类型 / 签名 / 文件行号）⚠
+   *
+   * 所有者原话（2026-11-01）：
+   * 「不用这么复杂，图谱上，在鼠标移到相应节点时就一个浮窗，显示相应详细信息，
+   *   列表哪里也是一样。」
+   *
+   * ## 为什么用**原生 pointermove + 距离判定**，而不用 G6 的 `node:pointerenter`
+   *
+   * ```
+   * G6 的事件走它自己的画布拾取，合成事件（自动化测试里）到不了 ⇒ 无法验证
+   * 原生监听 + getCanvasByViewport 换算 + 最近节点判断：
+   *   可测、可控、和 G6 版本解耦（它换事件系统也不影响我们）
+   * ```
+   *
+   * ⚠ 只在命中半径内才弹（`节点直径/2 + 4`）⇒ 不会满屏乱弹
+   */
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || !graph) return
+
+    let raf = 0
+    let last: PointerEvent | null = null
+
+    const update = () => {
+      raf = 0
+      const g = gRef.current
+      if (!g || !last) return
+      const rect = box.getBoundingClientRect()
+      let p: ArrayLike<number>
+      try {
+        p = g.getCanvasByViewport([last.clientX - rect.left, last.clientY - rect.top] as never) as ArrayLike<number>
+      } catch {
+        return
+      }
+      let bestId = ''
+      let bestD = Infinity
+      for (const id of visibleRef.current) {
+        let pos: ArrayLike<number> | undefined
+        try {
+          pos = g.getElementPosition(id) as ArrayLike<number>
+        } catch {
+          continue
+        }
+        if (!pos) continue
+        const d = Math.hypot(pos[0] - p[0], pos[1] - p[1])
+        if (d < bestD) {
+          bestD = d
+          bestId = id
+        }
+      }
+      const n = bestId ? nodeInfoRef.current.get(bestId) : undefined
+      // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
+      const hit = !!n && bestD <= nodeSizePx / 2 + 4
+      setHover(hit && n ? { node: n, x: last.clientX, y: last.clientY } : null)
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      last = ev
+      if (!raf) raf = requestAnimationFrame(update)
+    }
+    const onLeave = () => setHover(null)
+
+    box.addEventListener('pointermove', onMove)
+    box.addEventListener('pointerleave', onLeave)
+    return () => {
+      box.removeEventListener('pointermove', onMove)
+      box.removeEventListener('pointerleave', onLeave)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [graph, nodeSizePx])
+
+  // ============================================================ 建图（只在 graph 变时）
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || !graph) return
+
+    const W = box.clientWidth || 900
+    const H = box.clientHeight || 600
+    const total = Math.max(1, graph.nodes.length)
+
+    const g = new Graph({
+      container: box,
+      autoResize: true,
+      // ★ ① 必须开：关掉的话布局过渡是瞬时的（看不到散开）
+      animation: true,
+      data: {
+        nodes: graph.nodes.map((n, i) => {
+          // ★ ③ 小圆环初始分布（视觉上聚在中心，但布局能散开）
+          const ang = (i / total) * Math.PI * 2
+          const manual = n.origin === 'manual'
+          return {
+            id: String(n.vid),
+            type: manual ? 'diamond' : 'circle',
+            style: {
+              x: W / 2 + Math.cos(ang) * RING,
+              y: H / 2 + Math.sin(ang) * RING,
+              size: nodeSize(n),
+              fill: colorOf(n),
+              // ★★ 白描边 2px ——* 深色背景上一圈白边，* 节点立刻"跳"出来（形似 code_network）⚠
+              stroke: n.patched ? '#fbbf24' : '#ffffff',
+              lineWidth: n.patched ? 2.5 : 2,
+              lineDash: n.patched ? [4, 3] : undefined,
+              labelText: n.name,
+              labelPlacement: 'bottom',
+              labelFill: labelColor,
+              labelFontSize: 11,
+            },
+          }
+        }),
+        edges: graph.edges.map((e) => {
+          const src = nodeById.get(String(e.from))
+          return {
+            id: String(e.id),
+            source: String(e.from),
+            target: String(e.to),
+            style: {
+              // ★★★ 连线颜色 = **发出节点的颜色**（* 所有者：「就用发出节点的颜色」）⚠
+              //   · · ★ 以后连线颜色可能承载别的含义，* 现在统一跟节点走 ✅
+              stroke: src ? colorOf(src) : '#94a3b8',
+              lineWidth: 1,
+              opacity: 0.65,
+              endArrow: true,
+              // ★★ 箭头调小（* 默认 10 左右 ⇒* 满屏都是箭头，* 密密麻麻）⚠
+              endArrowSize: 4,
+              lineDash: e.origin === 'manual' ? [5, 4] : undefined,
+            },
+          }
+        }),
+      },
+      node: {
+        style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
+        state: {
+          // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗 + 放大，* 无色无阴影 ⚠
+          selected: { lineWidth: 3, size: 35 },
+          // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
+          //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
+          // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
+          // ★ 只加粗、* 不换色、* 不加阴影 ⇒ 不会出现"多一圈"的观感 ⚠
+          active: { lineWidth: 3.5 },
+        },
+      },
+      edge: {
+        style: { endArrow: true, lineWidth: 1 },
+        state: {
+          // ★ 相关边变亮变粗（* 其余边保持原位，* 不做淡化以免闪烁）⚠
+          active: { stroke: '#22d3ee', lineWidth: 2.5, opacity: 1 },
+        },
+      },
+      layout: {
+        // ★ 从圆环出发，fruchterman 把它散开
+        type: 'fruchterman',
+        // ★★ 布局区域缩到画布 85% ——* 否则边缘节点会被切掉（* fit 后仍顶边）⚠
+        width: W * 0.85,
+        height: H * 0.85,
+        // ★★ 节点 28px ⇒ 向心力必须小（* 8 太聚，* 24 个圆挤成一团）⚠
+        gravity: 4,
+        speed: 10,
+      },
+      behaviors: [
+        // ★ 滚轮缩放（默认 trigger:[] ⇒ 内部走 wheel 分支）
+        'zoom-canvas',
+        // ★★★ **双指缩放**（移动端）——* G6 默认 `trigger: []` **只绑 wheel**，
+        //   · · 要想双指捏合必须显式 `trigger: ['pinch']`（* 否则静默不生效）⚠
+        { type: 'zoom-canvas', trigger: ['pinch'] },
+        'drag-canvas',
+        'drag-element',
+        // ⚠ 不用 `click-select` ——* 它会给选中元素套一层 G6 默认高亮（* 那圈深色）
+        //   · * 选中态改由页面受控的 `selected` state 驱动（* 见下面的 effect）⚠
+        // ★★ 悬停高亮：* 鼠标扫过节点 ⇒ 它和**直接邻居**（1 度）一起亮，
+        //    * 一眼看清「谁调谁」（* 形似所有者原型）⚠
+        { type: 'hover-activate', degree: 1, state: 'active' },
+      ],
+    })
+
+    // ★★★ **初始化可见集合**（* 之前漏了这行 ⇒ 一直是空集 ⇒
+    //   环形按钮一出现就被判"节点不存在"、* 一闪而过）⚠
+    visibleRef.current = new Set(graph.nodes.map((n) => String(n.vid)))
+    nodeInfoRef.current = new Map(graph.nodes.map((n) => [String(n.vid), n]))
+
+    let alive = true
+
+    // ★ ② 不 await / 不 then —— `animation:true` 时 promise 永不 resolve
+    void g.render()
+    onPhase?.('布局动画中…')
+
+    // ★ 2.5 秒后：适配视图 + 标记"布局完成"
+    const settle = window.setTimeout(() => {
+      if (!alive) return
+      void (async () => {
+        try {
+          // ★★★ **自己算缩放**：* `fitView` 会顶边（* 边缘节点被切），
+          //   * 而 `zoomTo(常数)` 在大小图上都不合适 ⇒* 算 bbox + 留白 ⚠
+          const fit = async () => {
+            const ids = graph.nodes.map((n) => String(n.vid))
+            let minX = Infinity
+            let minY = Infinity
+            let maxX = -Infinity
+            let maxY = -Infinity
+            for (const id of ids) {
+              const p = g.getElementPosition(id)
+              if (!p) continue
+              minX = Math.min(minX, p[0])
+              minY = Math.min(minY, p[1])
+              maxX = Math.max(maxX, p[0])
+              maxY = Math.max(maxY, p[1])
+            }
+            if (!isFinite(minX) || maxX - minX < 1 || maxY - minY < 1) return
+            const pad = 70 // 四周留白（* 像素）
+            const bw = maxX - minX
+            const bh = maxY - minY
+            const z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 1.6)
+            // ★★ 必须 await ——* 否则 `fitCenter` 用旧 zoom（* 实测图不放大）⚠
+            await g.zoomTo(Math.max(0.15, z))
+            await g.fitCenter()
+          }
+          void fit()
+          window.setTimeout(() => void fit(), 700)
+        } catch {
+          /* 适配失败不影响看图 */
+        }
+      })()
+      readyRef.current = Date.now()
+      onPhase?.('布局完成')
+    }, SETTLE_MS)
+
+    g.on('node:dragstart', () => setHover(null))
+
+
+    g.on('node:click', (evt: unknown) => {
+      const e = evt as { target?: { id?: string | number } }
+      if (e?.target?.id != null) {
+        const id = String(e.target.id)
+        const p = g.getViewportByCanvas(g.getElementPosition(id) as never) as ArrayLike<number>
+        setRing({ id, x: p[0], y: p[1] })
+        setRingScale(Math.max(1, Math.min(g.getZoom(), 1.6)))
+        onSelect(Number(id))
+      }
+    })
+    g.on('canvas:click', () => {
+      // ★★ 只收起环形按钮，**不清空选中** ——
+      //   · · 所有者：「应该点击节点才切换，点击节点以外的地方，写作区内容不变。
+      //     不然，写作时，不小心点了别的地方写作内容直接换成别的了」⚠
+      //   · · ★ 否则写笔记时点到画布空白 ⇒ selectedVid 变 null ⇒ 写作区瞬间清空 ⚠
+      setRing(null)
+    })
+
+    gRef.current = g
+
+    return () => {
+      alive = false
+      window.clearTimeout(settle)
+      readyRef.current = 0
+      gRef.current = null
+      selectedRef.current = null
+      g.destroy()
+    }
+    // ★★ `labelColor` 也进依赖：* 主题切换 ⇒ 重建图 ⇒ 标签用新色 ⚠
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, labelColor])
+
+  // ============================================================ 环形按钮跟住节点
+  useEffect(() => {
+    if (!ring) return
+    let raf = 0
+    const tick = () => {
+      const g = gRef.current
+      const el = ringRef.current
+      // 节点被隐藏 ⇒ 收起按钮（* 先判断数据，* 不做异常兜底）⚠
+      if (!visibleRef.current.has(ring.id)) {
+        setRing(null)
+        return
+      }
+      if (g && el) {
+        try {
+          const p = g.getViewportByCanvas(
+            g.getElementPosition(ring.id) as never,
+          ) as ArrayLike<number>
+          const z = Math.max(1, Math.min(g.getZoom(), 1.6))
+          // ★★ 直接写 DOM style ——* 走 setState 会因 React 排帧慢而「跟不住」⚠
+          el.style.left = `${p[0]}px`
+          el.style.top = `${p[1]}px`
+          el.style.transform = `translate(-50%, -50%) scale(${z})`
+        } catch {
+          /* 节点已不在 */
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [ring?.id])
+
+  // ============================================================ 容器尺寸 ⇒ 重画
+  useEffect(() => {
+    const g = gRef.current
+    const box = boxRef.current
+    if (!g || !box) return
+    // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* 必须显式 resize，
+    //   * 否则 G6 的 canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        try {
+          const w = box.clientWidth
+          const h = box.clientHeight
+          if (w > 0 && h > 0) g.resize(w, h)
+        } catch {
+          /* 实例已销毁 */
+        }
+      })
+    })
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [graph])
+
+  // ============================================================ 选中态（受控）
+  useEffect(() => {
+    const g = gRef.current
+    if (!g || !graph) return
+    const cur = selectedVid ?? null
+    const prev = selectedRef.current
+
+    // ★★★ **直接改节点描边**，⛔ 不用 `setElementState` ——
+    //   · · ★ G6 的默认 selected 样式会叠一层**黑色描边**（* 实测：点击后变黑圈，
+    //     颜色和标签文字一样），* 改 state 样式压不住那层 ⚠
+    //   · · ★ 直接 `updateNodeData` 最可控 ✅
+    // ★★ `scale` = 节点直径倍数：* 选中要**把节点放大**，
+    //   * 只加粗描边会让填充区视觉上变小（* 所有者指出的问题）⚠
+    const paint = (vid: number, stroke: string, lineWidth: number, scale: number) => {
+      const n = graph.nodes.find((x) => x.vid === vid)
+      if (!n) return
+      // ★★ 查**可见集合**（* 已被隐藏移除的节点直接跳过，不碰 G6）⚠
+      if (!visibleRef.current.has(String(vid))) return
+      g.updateNodeData([
+        {
+          id: String(vid),
+          style: {
+            stroke,
+            lineWidth,
+            size: nodeSize(n) * scale,
+          },
+        },
+      ])
+    }
+    if (prev != null && prev !== cur) {
+      const p = graph.nodes.find((x) => x.vid === prev)
+      paint(prev, p?.patched ? '#fbbf24' : '#ffffff', p?.patched ? 2.5 : 2, 1)
+    }
+    // ★★★ 选中 = **节点放大 1.25 倍 + 白描边略加粗**（* 只加粗描边会让填充变
+    //   小、* 视觉上反而"缩小"，* 所以必须同时放大尺寸）⚠
+    if (cur != null) paint(cur, '#ffffff', 3, 1.25)
+    selectedRef.current = cur
+    void g.draw()
+  }, [selectedVid, graph])
+
+  // ============================================================ 搜索聚焦
+  useEffect(() => {
+    const g = gRef.current
+    if (!g || focusVid == null) return
+    void g.focusElement(String(focusVid))
+  }, [focusVid])
+
+  // ============================================================ 流星（等布局稳定后启动）
+  useEffect(() => {
+    const g = gRef.current
+    const box = boxRef.current
+    if (!g || !box || !graph || !meteors) return
+    // ★★★ 所有者原话：「**不管什么情况，都给我加个动态效果**」⚠
+    //   ⛔ 不再因 `prefers-reduced-motion` 跳过 —— * 那会让流星彻底不出现
+    //   （* 一度就是这个原因：* 系统开了"减少动态效果" ⇒ 用户始终看不到 canvas）⚠
+
+    let stop: (() => void) | null = null
+    let timer: number | null = null
+    let cancelled = false
+
+    // ★ 轮询等「布局完成」信号；布局还在动时画流星会乱窜
+    const wait = () => {
+      if (cancelled) return
+      if (!readyRef.current) {
+        timer = window.setTimeout(wait, 150)
+        return
+      }
+      // ★★ 每条边带上**发出节点**的 size / color ——
+      //    * 流星大小 = 节点直径 1/10，* 颜色 = 节点颜色（* 所有者口径）⚠
+      // ★★ 边一律取自**画布实时数据**（`g.getEdgeData()`），⛔ 不再取页面状态 ⚠
+      //   原因：「显示邻居」和改图新增是**直接往 G6 里加**节点/边，
+      //   页面状态里没有它们 ⇒ 用 `graph.edges` 会漏掉这些边 ⇒ 新边没有流星（所有者踩到）
+      const liveNodes = new Map(g.getNodeData().map((n) => [String(n.id), n]))
+      const edges = g.getEdgeData().map((e) => {
+        const f = String(e.source)
+        const t = String(e.target)
+        const ns = liveNodes.get(f)
+        const nd = liveNodes.get(t)
+        const sz = Number((ns?.style as Record<string, unknown> | undefined)?.size) || 14
+        const tz = Number((nd?.style as Record<string, unknown> | undefined)?.size) || 14
+        return {
+          from: f,
+          to: t,
+          size: sz,
+          // 颜色 = 发出节点的填充色（和节点同源）
+          color: String((ns?.style as Record<string, unknown> | undefined)?.fill ?? '#94a3b8'),
+          toSize: tz,
+        }
+      })
+      stop = startMeteor(g, box, edges, {
+        speed: meteorSpeed,
+        sizeRatio: meteorSizeRatio,
+      })
+      onPhase?.('流星已启动')
+    }
+    wait()
+
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearTimeout(timer)
+      stop?.()
+    }
+    // ★★ `labelColor` 也进依赖：* 切主题 ⇒ 建图 effect 重跑（图重建）⇒
+    //    * 旧的流星实例已销毁 ⇒* 必须跟着重启，否则"切背景后流星没了"⚠
+  }, [graph, meteors, meteorSpeed, meteorSizeRatio, labelColor, dataVersion])
+
+  // ★★★ 展开邻居：**只把新节点摆到宿主四周 80px 处 + draw()** ——
+  //   * ⛔ 绝不 `render()` / 跑布局（* 那会整图重排，* 是所有者踩过的坑）⚠
+  const expandNeighbors = async (id: string) => {
+    const g = gRef.current
+    const src = fullGraph
+    if (!g || !src) return
+    const existing = new Set(g.getNodeData().map((n) => String(n.id)))
+    const byId = new Map(src.nodes.map((n) => [String(n.vid), n]))
+    const nbrs = new Set<string>()
+    for (const e of src.edges) {
+      if (String(e.from) === id) nbrs.add(String(e.to))
+      if (String(e.to) === id) nbrs.add(String(e.from))
+    }
+    const missing = [...nbrs].filter((v) => !existing.has(v) && byId.has(v))
+    if (missing.length === 0) return
+
+    const base = g.getElementPosition(id) as ArrayLike<number>
+    const bx = base[0]
+    const by = base[1]
+    const added = missing.map((v, i) => {
+      const n = byId.get(v) as GraphNode
+      // ★ 沿宿主四周**均匀分布**（-90° 起）
+      const ang = (Math.PI * 2 * i) / missing.length - Math.PI / 2
+      return {
+        id: v,
+        type: n.origin === 'manual' ? 'diamond' : 'circle',
+        style: {
+          x: bx + Math.cos(ang) * 90,
+          y: by + Math.sin(ang) * 90,
+          size: nodeSize(n),
+          fill: colorOf(n),
+          stroke: n.patched ? '#fbbf24' : '#ffffff',
+          lineWidth: n.patched ? 2.5 : 2,
+          labelText: n.name,
+          labelPlacement: 'bottom' as const,
+          labelFill: labelColor,
+          labelFontSize: 11,
+        },
+      }
+    })
+
+    // 只加「两端都在图里」的边（* 新节点 ↔ 已在图里的节点）
+    const addedIds = new Set(missing)
+    const addedEdges = src.edges
+      .filter((e) => {
+        const f = String(e.from)
+        const t = String(e.to)
+        const fOk = existing.has(f) || addedIds.has(f)
+        const tOk = existing.has(t) || addedIds.has(t)
+        return fOk && tOk && (addedIds.has(f) || addedIds.has(t))
+      })
+      .map((e) => ({
+        id: String(e.id),
+        source: String(e.from),
+        target: String(e.to),
+        style: {
+          stroke: colorOf(byId.get(String(e.from)) as GraphNode),
+          lineWidth: 1,
+          opacity: 0.65,
+          endArrow: true,
+          endArrowSize: 4,
+          lineDash: e.origin === 'manual' ? [5, 4] : undefined,
+        },
+      }))
+
+    g.addNodeData(added)
+    if (addedEdges.length) g.addEdgeData(addedEdges)
+    // ★ 同步可见集合 + **实时信息表**（悬停浮窗要用）
+    missing.forEach((v) => {
+      visibleRef.current.add(v)
+      const n = byId.get(v)
+      if (n) nodeInfoRef.current.set(v, n)
+    })
+    await g.draw() // ★ 只重绘，不跑布局
+    setDataVersion((v) => v + 1) // ★ 新边也要有流星
+    onGraphChanged?.()
+  }
+
+  // ★★★ 隐藏节点：* **照原型 `hideNodeFromVisible` 的口径** ——
+  //   · · ① 目标节点本身移除 ✅
+  //   · · ② 只与它相连的**叶子邻居**（* 度数 1 且只连它）一并收起 ✅
+  //   · · ③ 还连着**其它节点**的邻居 ⇒* **保留**，* 只断开与目标之间的边 ⚠
+  //   · · （* 我原来把所有直接邻居都删了 ⇒ 点个枢纽节点半张图就没了）⚠
+  const hideNodeAndNeighbors = async (id: string) => {
+    const g = gRef.current
+    if (!g) return
+    const nodes = g.getNodeData()
+    const edges = g.getEdgeData()
+
+    // 当前可见图的无向邻接表
+    const adj = new Map<string, Set<string>>()
+    for (const e of edges) {
+      const a = String(e.source)
+      const b = String(e.target)
+      if (!adj.has(a)) adj.set(a, new Set())
+      if (!adj.has(b)) adj.set(b, new Set())
+      adj.get(a)!.add(b)
+      adj.get(b)!.add(a)
+    }
+
+    const removing = new Set<string>([id])
+    for (const n of adj.get(id) ?? []) {
+      const nbrs = adj.get(n)
+      // ★ 只删「仅与它相连」的邻居（* 还连着别人的要留在图上）⚠
+      if (nbrs && nbrs.size === 1 && nbrs.has(id)) removing.add(n)
+    }
+
+    const cur = new Set(nodes.map((n) => String(n.id)))
+    const ids = [...removing].filter((v) => cur.has(v))
+    if (ids.length === 0) return
+
+    // 先删边（两头沾到被移除节点的边），再删点
+    const edgeIds = edges
+      .filter((e) => removing.has(String(e.source)) || removing.has(String(e.target)))
+      .map((e) => String(e.id))
+    if (edgeIds.length) g.removeEdgeData(edgeIds)
+    g.removeNodeData(ids)
+    // ★ 同步可见集合（* 之后任何判断都以它为准）⚠
+    ids.forEach((v) => {
+      visibleRef.current.delete(v)
+      nodeInfoRef.current.delete(v)
+    })
+    await g.draw()
+    setDataVersion((v) => v + 1)
+    setRing(null)
+    // ★ 被隐藏的若是当前选中节点 ⇒ 清掉选中
+    if (selectedRef.current != null && removing.has(String(selectedRef.current))) {
+      onDeselect?.()
+    }
+    onGraphChanged?.()
+  }
+
+  // ★★ 两段弧：* 右半 = 显示邻居，* 左半 = 隐藏节点及其邻居 ⚠
+  const ringSegments = [
+    {
+      key: 'expand',
+      title: '显示邻居',
+      d: ringArcPath(-Math.PI / 2 + 0.18, Math.PI / 2 - 0.18),
+      icon: {
+        x: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.cos(0),
+        y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(0),
+        d: 'M12 5v14M5 12h14',
+      },
+      run: (id: string) => void expandNeighbors(id),
+    },
+    {
+      key: 'hide',
+      title: '隐藏节点及其邻居',
+      d: ringArcPath(Math.PI / 2 + 0.18, Math.PI * 1.5 - 0.18),
+      icon: {
+        x: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.cos(Math.PI),
+        y: RING_GEO.c + ((RING_GEO.r1 + RING_GEO.r2) / 2) * Math.sin(Math.PI),
+        d: 'M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61M9.88 9.88a3 3 0 1 0 4.24 4.24M2 2l20 20',
+      },
+      run: (id: string) => void hideNodeAndNeighbors(id),
+    },
+  ]
+
+  // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
+  return (
+    <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {ring && (
+        <svg
+          ref={ringRef}
+          className="node-ring"
+          style={{
+            position: 'absolute',
+            left: ring.x,
+            top: ring.y,
+            width: 96,
+            height: 96,
+            transform: `translate(-50%, -50%) scale(${ringScale})`,
+            zIndex: 20,
+            overflow: 'visible',
+            // ★★★ 关键：* 环外空白**不拦截**图的拖拽 / 缩放 ——
+            //   否则 96×96 整个盖住节点，* 节点就拖不动了（* 所有者踩过的坑）⚠
+            pointerEvents: 'none',
+          }}
+          viewBox="0 0 96 96"
+        >
+          {ringSegments.map((seg) => (
+            <g key={seg.key}>
+              <path
+                d={seg.d}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  seg.run(ring.id)
+                }}
+                style={{
+                  // ★★★ 完全照原型 .node-ring-seg：
+                  //   白实底 rgba(255,255,255,.96) + 边 #cbd5e1 + pointer-events auto ⚠
+                  fill: 'rgba(255,255,255,.96)',
+                  stroke: '#cbd5e1',
+                  strokeWidth: 1,
+                  pointerEvents: 'auto',
+                  cursor: 'pointer',
+                  transition: 'fill .15s, stroke .15s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.fill = '#eff6ff'
+                  e.currentTarget.style.stroke = '#93c5fd'
+                  const icon = e.currentTarget.nextElementSibling as SVGElement | null
+                  if (icon) icon.style.stroke = '#2563eb'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.fill = 'rgba(255,255,255,.96)'
+                  e.currentTarget.style.stroke = '#cbd5e1'
+                  const icon = e.currentTarget.nextElementSibling as SVGElement | null
+                  if (icon) icon.style.stroke = '#475569'
+                }}
+              >
+                <title>{seg.title}</title>
+              </path>
+              <g
+                transform={`translate(${seg.icon.x} ${seg.icon.y}) scale(0.55) translate(-12 -12)`}
+                style={{ pointerEvents: 'none', fill: 'none', stroke: '#475569' }}
+              >
+                <path
+                  d={seg.icon.d}
+                  style={{
+                    // ★★★ 照原型 .node-ring-icon：* 深灰蓝 #475569（* 白底上清晰）⚠
+                    fill: 'none',
+                    stroke: 'inherit',
+                    strokeWidth: 2.6,
+                    strokeLinecap: 'round',
+                    strokeLinejoin: 'round',
+                  }}
+                />
+              </g>
+            </g>
+          ))}
+        </svg>
+      )}
+
+      {/* ★★ 悬停浮窗（名字 / 类型 / 签名 / 文件行号）—— 重载靠签名分辨 ⚠ */}
+      {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
+    </div>
+  )
+}

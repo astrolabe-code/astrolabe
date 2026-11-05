@@ -19,7 +19,6 @@ import {ChevronDown,
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import CuratePanel from '../components/graph/CuratePanel'
-import { IS_PERSONAL } from '../lib/personal'
 import { useFullGraph } from '../query/graph'
 import { useProject } from '../query/projects'
 import { useUserSettings } from '../query/settings'
@@ -554,27 +553,7 @@ export default function ProjectGraphPage() {
               onMouseLeave={() => setBarOpen(false)}
               style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}
             >
-              {IS_PERSONAL && (
-                <button
-                  type="button"
-                  className="card"
-                  onClick={() => setCurateOpen(true)}
-                  title="改图：解析不准的地方在这里补"
-                  style={{
-                    padding: isNarrow ? '4px 9px' : '5px 12px',
-                    fontSize: isNarrow ? 11.5 : 12.5,
-                    borderRadius: 999,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    cursor: 'pointer',
-                    boxShadow: '0 2px 8px rgba(15,23,42,.14)',
-                  }}
-                >
-                  <GitBranch size={13} />
-                  <span>改图</span>
-                </button>
-              )}
+              
               <button
                 type="button"
                 className="card"
@@ -995,7 +974,7 @@ export default function ProjectGraphPage() {
         </div>
       </div>
 
-      {/* ★★ 改图抽屉（`IS_PERSONAL` 才有入口）⚠ */}
+      {/* ★★ 改图抽屉（解析不准的地方在这里补）⚠ */}
       <CuratePanel
         open={curateOpen}
         projectRef={projectRef}

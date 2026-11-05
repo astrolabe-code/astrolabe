@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>写作页改版示意 · Astrolabe</title>
+<style>
+  :root{
+    --bg:#eef3f9; --card:#ffffff; --card-border:rgba(15,42,69,.12);
+    --text-main:#0f2a45; --text-sub:#5a7086; --text-faint:#8fa3b5;
+    --accent:#0891b2; --accent-dim:rgba(8,145,178,.10);
+    --ok:#10b981; --err:#ef4444; --warn:#a16207;
+    --font-ui:"MiSans","PingFang SC","Microsoft YaHei",sans-serif;
+    --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:28px 0 60px;font-family:var(--font-ui);color:var(--text-main);
+    background:
+      radial-gradient(1.2px 1.2px at 18% 12%,rgba(255,255,255,.9) 50%,transparent 51%),
+      radial-gradient(1px 1px at 72% 26%,rgba(255,255,255,.8) 50%,transparent 51%),
+      radial-gradient(1.4px 1.4px at 42% 68%,rgba(255,255,255,.7) 50%,transparent 51%),
+      linear-gradient(180deg,#f7fbfe 0%,#e9f1f8 42%,#dde8f3 100%);
+    background-attachment:fixed;
+  }
+  .wrap{width:1120px;margin:0 auto}
+  h1{font-size:17px;font-weight:600;margin:0 0 4px}
+  .sub{font-size:12.5px;color:var(--text-sub);margin:0 0 22px}
+
+  .case-title{font-size:13px;font-weight:600;margin:30px 0 10px;display:flex;align-items:center;gap:8px}
+  .case-title .tag{font-weight:400;font-size:11.5px;color:var(--text-faint)}
+  .case{background:var(--card);border:1px solid var(--card-border);border-radius:14px;
+        box-shadow:0 6px 22px rgba(15,42,69,.06);padding:0;overflow:hidden}
+  .case-inner{padding:22px 26px}
+
+  /* ---------- 现在 ---------- */
+  .lab{font-size:11.5px;color:var(--text-sub);margin:0 0 6px;letter-spacing:.3px}
+  .lab-bad{color:var(--err)}
+  .chips{display:flex;gap:6px;margin-bottom:6px}
+  .chip{font-size:11px;line-height:17px;padding:2px 10px;border-radius:999px;
+        border:1px solid var(--card-border);color:var(--text-faint)}
+  .chip.on{color:#f59e0b;border-color:#f59e0b;background:rgba(245,158,11,.10)}
+  .hint{font-size:11.5px;color:var(--text-faint);margin:0 0 14px}
+  .inp{width:100%;height:34px;border:1px solid var(--card-border);border-radius:8px;
+       padding:0 11px;font-size:13px;color:var(--text-faint);display:flex;align-items:center;
+       background:#fff}
+  .box-note{font-size:11.5px;color:var(--text-faint);margin:5px 0 14px}
+  .old-box{border:1px solid var(--card-border);border-radius:10px;min-height:230px;
+           padding:60px 18px 18px;font-size:15px;line-height:1.75;color:#22405c}
+  .pub{display:flex;align-items:center;gap:7px;border:1px solid var(--card-border);
+       border-radius:8px;padding:7px 11px;font-size:12.5px;color:var(--text-sub);margin-top:14px}
+  .dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--text-faint)}
+  .btns{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+  .btn{font-size:13px;padding:7px 16px;border-radius:999px;border:1px solid var(--card-border);
+       background:#fff;color:var(--text-sub)}
+  .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  /* ---------- 改后 ---------- */
+  .new-title{font-size:22px;font-weight:600;color:var(--text-faint);
+             padding:2px 0 10px;border-bottom:1px solid var(--card-border);margin-bottom:16px}
+  .body-mock{font-size:15.5px;line-height:1.8;color:#22405c;min-height:250px}
+  .body-mock h2{font-size:19px;font-weight:650;margin:18px 0 8px;color:var(--text-main)}
+  .body-mock p{margin:0 0 12px}
+  .meta-bar{display:flex;align-items:center;gap:10px;border-top:1px solid var(--card-border);
+            margin:20px -26px 0;padding:12px 26px;background:rgba(238,243,249,.55)}
+  .sel{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;line-height:18px;
+       padding:3px 10px;border-radius:999px;border:1px solid #f59e0b;color:#f59e0b;
+       background:rgba(245,158,11,.10)}
+  .pub-new{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sub);
+           cursor:pointer}
+  .dot.on{background:var(--ok);border-color:var(--ok)}
+  .count{font-size:11.5px;color:var(--text-faint);margin-left:auto;font-variant-numeric:tabular-nums}
+  .sticky-cap{font-size:10.5px;color:var(--accent);font-family:var(--font-mono);
+              background:var(--accent-dim);padding:1px 6px;border-radius:4px}
+
+  /* ---------- 标注 ---------- */
+  .mark{position:relative;border:1.5px dashed var(--err);border-radius:10px;padding:6px 8px}
+  .mark .note{position:absolute;left:8px;top:-9px;background:#fff;padding:0 5px;
+              font-size:10.5px;color:var(--err);font-family:var(--font-mono)}
+  .mark.ok{border-color:var(--ok)}
+  .mark.ok .note{color:var(--ok)}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  th{text-align:left;font-size:11.5px;color:var(--text-faint);font-weight:600;padding:7px 10px 7px 0}
+  td{padding:8px 10px 8px 0;border-top:1px solid rgba(15,42,69,.08);vertical-align:top;line-height:1.65}
+  .k{font-family:var(--font-mono);font-size:11.5px;color:var(--text-sub)}
+  .foot{margin-top:30px;font-size:12px;color:var(--text-faint);line-height:1.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>写作页：现在 vs 改后</h1>
+  <p class="sub">对照 CSDN 的真实结构 —— 上面写字、下面设置、底部常驻</p>
+
+  <!-- ============ 现在 ============ -->
+  <div class="case-title">现在 <span class="tag">六个表单块自上而下，正文被夹在中间</span></div>
+  <div class="case"><div class="case-inner">
+
+    <div class="mark"><span class="note">① 第一眼是"归类"，不是"要写什么"</span>
+      <div style="padding-top:6px">
+        <div class="lab">类型</div>
+        <div class="chips">
+          <span class="chip on">灵光一闪</span><span class="chip">质疑</span>
+          <span class="chip">困惑</span><span class="chip">踩坑</span><span class="chip">小结</span>
+        </div>
+        <div class="hint">突然明白的一件事</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="lab">名字（可空）</div>
+      <div class="inp">不填就自动取正文第一行（25 字）</div>
+      <div class="box-note">起个名字只是为了以后搜得到它；正文里的 # 才是章节标题。</div>
+    </div>
+
+    <div class="mark"><span class="note">② 正文被"框"住，顶上还空 70px</span>
+      <div style="padding-top:8px">
+        <div class="lab">正文（markdown）</div>
+        <div class="old-box">这里是一段示例正文，用来看看写作页的整体观感。</div>
+      </div>
+    </div>
+
+    <div class="pub" style="margin-top:14px"><span class="dot"></span>公开 · 项目里其他人能看到这篇</div>
+    <div class="btns"><span class="btn">取消</span><span class="btn pri">写下</span></div>
+    <div style="font-size:11px;color:var(--err);font-family:var(--font-mono);margin-top:18px">
+      ③ 保存按钮在页面最底 —— 正文一长，就得滚到底才按得到
+    </div>
+  </div></div>
+
+  <!-- ============ 改后 ============ -->
+  <div class="case-title">改后 <span class="tag">两块：上面写字，底部一条常驻操作栏</span></div>
+  <div class="case"><div class="case-inner">
+
+    <div class="mark ok"><span class="note">① 名字提到最上，大字（但不强制填）</span>
+      <div style="padding-top:8px">
+        <div class="new-title">名字（可留空）</div>
+      </div>
+    </div>
+
+    <div class="body-mock">
+      <p>这里是一段示例正文，用来看看写作页的整体观感。正文不再有边框，直接铺在纸上。</p>
+      <h2>一级标题 H1</h2>
+      <p>标题仍然由 markdown 的 # 决定，进目录、进章节；名字只用于搜索列表和浏览器标签页。</p>
+      <p>写完点右下角保存，会弹一个确认框，让你看一眼自动取的名字 —— 不满意可以就地改。</p>
+    </div>
+
+    <div class="meta-bar">
+      <span class="sel">灵光一闪 ▾</span>
+      <span class="pub-new"><span class="dot on"></span>公开</span>
+      <span class="count">共 128 字</span>
+      <span class="btn">取消</span>
+      <span class="btn pri">保存</span>
+      <span class="sticky-cap">sticky 常驻底部</span>
+    </div>
+  </div></div>
+
+  <!-- ============ 对照表 ============ -->
+  <div class="case-title">改了哪几处</div>
+  <div class="case"><div class="case-inner">
+    <table>
+      <tr><th style="width:130px">位置</th><th style="width:300px">现在</th><th>改后</th></tr>
+      <tr>
+        <td>第一行</td>
+        <td>五个类型胶囊 + 说明</td>
+        <td><b>名字</b>（22px 大字，灰提示「可留空」）—— 眼睛先落在"要写什么"</td>
+      </tr>
+      <tr>
+        <td>正文</td>
+        <td>1px 边框的盒子 + 「正文（markdown）」标签，顶上还空 70px</td>
+        <td><b>无边框、无标签</b>，直接铺在纸上（和阅读页的纸一致）</td>
+      </tr>
+      <tr>
+        <td>类型 / 公开</td>
+        <td>在正文<b>上方</b>，占两屏</td>
+        <td>沉到正文<b>下方</b>，压成底部操作栏里的两个小控件</td>
+      </tr>
+      <tr>
+        <td>保存</td>
+        <td>页面最底，滚动后看不见</td>
+        <td><b>sticky 底栏</b>，始终可见；旁边带「共 N 字」</td>
+      </tr>
+      <tr>
+        <td>字数</td>
+        <td>没有</td>
+        <td>有 —— 停止输入 1 秒后算一次（⛔ 不是每次击键，避免又抖）</td>
+      </tr>
+    </table>
+    <div class="foot">
+      <b>不借鉴 CSDN 的两处</b>：<br />
+      · 它强制「标题 5~100 字」，我们的名字可留空（`D112`：名字只是身份，不是文章标题）<br />
+      · 它正文下方那一大堆发布配置（封面 / 摘要 / 多平台 / 话题），我们用不上
+    </div>
+  </div></div>
+</div>
+</body>
+</html>

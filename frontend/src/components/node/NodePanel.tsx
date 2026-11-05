@@ -6,7 +6,6 @@ import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
 
 import { errorMessage } from '../../api/errors'
-import { personalApi } from '../../api/personal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteSection from '../notes/NoteSection'
 
@@ -99,18 +98,9 @@ export default function NodePanel({
       setFields([])
       return
     }
-    let alive = true
-    void personalApi
-      .nodeFields(projectRef, node.vid)
-      .then((items) => {
-        if (alive) setFields(items)
-      })
-      .catch(() => {
-        if (alive) setFields([])
-      })
-    return () => {
-      alive = false
-    }
+    // ★★ 网页版的图库**没有 node_field 表** ⇒ 字段列表恒为空，不发请求
+    //   （要支持：需要一次迁移 + writer 落库 + 端点，见 docs/backend-decisions.md）
+    setFields([])
   }, [node?.vid, node?.kind, projectRef])
 
   const del = useDeleteNote()

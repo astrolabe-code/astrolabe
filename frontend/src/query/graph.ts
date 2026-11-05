@@ -28,8 +28,6 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { apiGet } from '../api/client'
-import { IS_PERSONAL } from '../lib/personal'
-import { personalApi } from '../api/personal'
 import { unwrap } from '../api/errors'
 import { mergeGraph } from '../lib/mergeGraph'
 import type { EffectiveGraph, GraphEdge, GraphNode, GraphPatch } from '../lib/mergeGraph'
@@ -48,8 +46,6 @@ export function useGraphNodes(
     queryKey: ['graph', 'nodes', projectRef, limit, offset],
     enabled: !!projectRef && enabled,
     queryFn: async (): Promise<{ total: number; items: GraphNode[] }> => {
-      // ★★ 个人版：走本地边车（`api/personal.ts` 负责形状翻译）⚠
-      if (IS_PERSONAL) return personalApi.graphNodes(projectRef!, limit, offset)
       // ⚠★ `'spread'` —— ★ 这个端点是**平铺**的（`ok_flat`），❌ 没有 `data` 包一层 ⚠
       return unwrap(
         await apiGet<{ total: number; items: GraphNode[] }>(
@@ -133,11 +129,6 @@ export function useFullGraph(projectRef?: string | null) {
     // ★ 图谱是重查询 ⇒ 30 秒内不重取（* `graph_rev` 变了会自然失效）
     staleTime: 30_000,
     queryFn: async (): Promise<EffectiveGraph & { graph_rev: number }> => {
-      // ★★ 个人版：一次拿全图（边车不做分页，也没有补丁概念）
-      if (IS_PERSONAL) {
-        const g = await personalApi.fullGraph(projectRef!)
-        return { ...mergeGraph(g.nodes, g.edges, []), graph_rev: g.rev }
-      }
       const ref = encodeURIComponent(projectRef!)
 
       // ① 节点（② 型扁平：`ok_flat`，没有 data 包一层）

@@ -33,6 +33,11 @@ python --version
 
 ### 把代码放到 Windows 上
 
+> **不想从 GitHub 拉？** 可以只要「打包所需源码」的那一小份（约 780KB）：
+> 里面只有 `desktop/` `frontend/` `app/codeparser/` `app/graph/` 和许可证文件。
+> ⚠ 解压后要保证是 `astrolabe\desktop\...` 这一层，`package-win.bat` 按相对路径找。
+
+
 两种都行：
 
 ```bat
@@ -54,12 +59,22 @@ cd astrolabe\desktop
 packaging\package-win.bat
 ```
 
+脚本里已经设好三个国内镜像（GitHub / npm / PyPI 慢的根源）：
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set npm_config_registry=https://registry.npmmirror.com
+set PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+⚠ 公司有私有源的话，把对应的那行注释掉。
+
 脚本会依次做 6 件事，每步失败都会停下并告诉你原因：
 
 ```
 [0/6] 检查 node / python 有没有装、是不是 64 位
 [1/6] npm install            前端依赖（首次 2-3 分钟）
-[2/6] npm run build:personal 前端构建 → frontend\dist-personal
+[2/6] npm run build:web 前端构建（desktop/ui）→ desktop\ui\dist
 [3/6] npm install            桌面依赖（首次下载 electron ~110MB，走国内镜像）
 [4/6] pip install -r packaging\requirements.txt
                              ★ tree-sitter 四个语法包 + pyinstaller
@@ -121,7 +136,7 @@ packaging\package-win.bat
 | 解析出 0 个节点 | Python 里缺语法包 | 重跑第 4、5 步；确认 `pip list` 有 `tree-sitter-python` |
 | `electron-builder` 下载超时 | 网络 | 脚本已设 `ELECTRON_MIRROR=npmmirror`；确认能访问 npmmirror.com |
 | 打包报 "author is missed" | 已修 | `package.json` 里有 `author` 字段了 |
-| 前端白屏 | `dist-personal` 没构建 | 检查 `frontend\dist-personal\index.html` 是否存在 |
+| 前端白屏 | `ui/dist` 没构建 | 检查 `desktop\ui\dist\index.html` 是否存在（`cd ui && npm run build`） |
 | 朋友打开提示缺 DLL | 系统太旧（Win7/8） | 需要 Win10 1809+ |
 
 ---

@@ -101,6 +101,7 @@ export default function ProjectGraphPage() {
   // ★★ `D105`：* 已展示多少个（* null = 还没初始化 ⇒* 用 initialBatch()）
   const [shownCount, setShownCount] = useState<number | null>(null)
   // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
+  const toolRef = useRef<HTMLDivElement>(null)
   const [showAllNodes, setShowAllNodes] = useState(false)
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
@@ -339,6 +340,23 @@ export default function ProjectGraphPage() {
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [g])
 
+  // ★ 工具下拉：点外面或按 Esc 关闭（⛔ 不再靠 mouseleave —— 会被 6px 空隙误触发）
+  useEffect(() => {
+    if (!barOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!toolRef.current?.contains(e.target as Node)) setBarOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBarOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [barOpen])
+
   /** ★ 显示全部 / 收起（同一个按钮来回切，收起时回到点之前的节点数） */
   const toggleShowAll = () => {
     if (!showAllNodes) {
@@ -475,10 +493,13 @@ export default function ProjectGraphPage() {
               </button>
 
               {/* ---- 工具（视图开关都收在这里，折叠不占位）---- */}
-              <div
-                onMouseLeave={() => setBarOpen(false)}
-                style={{ position: 'relative', display: 'flex' }}
-              >
+              {/* ★★★ 2026-11-05：**不再用 mouseleave 关闭** ⚠
+                  所有者：「只要鼠标移动到工具框一点，下拉窗就消失，这让我如何点击？」
+                  根因：菜单是 absolute，浮在按钮下方 6px 处；那 6px 不属于任何元素
+                        ⇒ 指针经过时先触发容器的 mouseleave ⇒ 菜单被关掉
+                  ⇒ 改为：点外面 / Esc 关闭（IDE 的菜单就是这种语义）；
+                    6px 空隙由 CSS 的 .rail-menu::before 补成"隐形桥" */}
+              <div ref={toolRef} style={{ position: 'relative', display: 'flex' }}>
                 <button
                   type="button"
                   className="rail-btn"

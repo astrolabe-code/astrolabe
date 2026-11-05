@@ -495,6 +495,17 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   box-shadow: 0 10px 28px rgba(0, 0, 0, .18);
 }
 
+/* ★★★ 2026-11-05：菜单与按钮之间有 6px 视觉缝 —— 用一块**透明桥**补上，
+   否则鼠标从按钮移到菜单的途中指针会"离开容器"，把菜单误关掉（踩过）*/
+.rail-menu::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+
 /* 菜单项：整行可点、无边框、悬停浅底（⛔ 不用 .btn 的胶囊外形）*/
 .rail-menu .btn {
   justify-content: flex-start;

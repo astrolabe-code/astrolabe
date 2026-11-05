@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 
@@ -40,7 +42,12 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
-  return (
+  // ★★★ 2026-11-05：**必须 portal 到 body** ⚠
+  //   所有者：「提示信息被笔记卡片盖住了，不应该是提示信息盖住笔记卡片吗？」
+  //   ⚠ 根因不是 z-index 不够（已经是 9999），而是它被**祖先的层叠上下文**关住了：
+  //     flex 栏 + 滚动容器 + `.page.rise` 的 transform ⇒ 再高的 z-index 也出不去
+  //   ⇒ 挂到 body，层级才与右栏处在同一层（与 Modal 踩过的是同一个坑）
+  return createPortal(
     <div
       style={{
         position: 'fixed',
@@ -102,6 +109,7 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
           {node.file_path}:{node.line}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

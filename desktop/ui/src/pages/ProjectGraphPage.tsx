@@ -430,33 +430,96 @@ export default function ProjectGraphPage() {
               ⇒ 现在：① 不悬浮（把提示文字顶下去） ② 去掉胶囊/阴影（Obsidian 那种
                  扁平图标按钮，悬停才出现浅底） */}
           <div className="graph-toolbar">
-            {/* ---- 回节点列表（图谱 ⇄ 列表 一键互跳）⚠ ---- */}
-            <button
-              type="button"
-              className="rail-btn"
-              onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
-              title="回到节点列表（可以从头找）"
-            >
-              <List size={13} />
-              {!isNarrow && <span>列表</span>}
-            </button>
+            {/* ★★★ 2026-11-05：**按类归组 + 折叠**（所有者：「能合为一类的合为一类，
+                并折叠，就像一些编程IDE做的那样」）⚠
+                · 左组：导航（列表）· 编辑（改图）· 工具（视图开关全收进下拉）
+                · 右组：搜索（单独留在最右，展开时变成输入框）
+                ⛔ 不再把「依赖 / 流星 / 加载更多 / 学习路径」平铺成一排 ⚠ */}
+            <div className="rail-group">
+              {/* ---- 导航 ---- */}
+              <button
+                type="button"
+                className="rail-btn"
+                onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}`)}
+                title="回到节点列表（可以从头找）"
+              >
+                <List size={13} />
+                {!isNarrow && <span>列表</span>}
+              </button>
 
-            {/* ---- 依赖线开关（imports / includes，默认关）⚠ ---- */}
-            <button
-              type="button"
-              className="rail-btn"
-              onClick={() => setShowImports((v) => !v)}
-              aria-pressed={showImports}
-              title={showImports ? '隐藏文件依赖线' : '显示文件依赖线（imports / includes）'}
-            >
-              <Share2 size={13} />
-              {!isNarrow && <span>依赖</span>}
-            </button>
+              {/* ---- 编辑 ---- */}
+              <button
+                type="button"
+                className="rail-btn"
+                onClick={() => setCurateOpen(true)}
+                title="改图：解析不准的地方在这里补"
+              >
+                <GitBranch size={13} />
+                {!isNarrow && <span>改图</span>}
+              </button>
 
-            {/* ---- 搜索 ---- */}
+              {/* ---- 工具（视图开关都收在这里，折叠不占位）---- */}
+              <div
+                onMouseLeave={() => setBarOpen(false)}
+                style={{ position: 'relative', display: 'flex' }}
+              >
+                <button
+                  type="button"
+                  className="rail-btn"
+                  onClick={() => setBarOpen((v) => !v)}
+                  aria-pressed={barOpen}
+                  title="工具：依赖线 / 流星 / 学习路径 / 加载更多"
+                >
+                  <SlidersHorizontal size={13} />
+                  {!isNarrow && <span>工具</span>}
+                  <ChevronDown size={11} style={{ opacity: 0.6 }} />
+                </button>
+
+                {barOpen && (
+                  <div className="rail-menu">
+                    <Button
+                      variant={showImports ? 'primary' : 'ghost'}
+                      icon={<Share2 size={13} />}
+                      onClick={() => setShowImports((v) => !v)}
+                      title="文件之间的 import / include 连线（默认关，会糊住主干）"
+                    >
+                      依赖线
+                    </Button>
+                    <Button
+                      variant={meteors ? 'primary' : 'ghost'}
+                      icon={<Sparkles size={13} />}
+                      onClick={() => setMeteors((v) => !v)}
+                      title="节点之间飞过的流光效果"
+                    >
+                      流星
+                    </Button>
+                    <Button
+                      variant={pathOpen ? 'primary' : 'ghost'}
+                      icon={<Route size={13} />}
+                      onClick={() => setPathOpen((v) => !v)}
+                    >
+                      学习路径（{pathItems.length}）
+                    </Button>
+                    {shownCount != null && shownCount < orderVids.length && (
+                      <Button
+                        icon={<ChevronDown size={13} />}
+                        onClick={() => setShownCount((c) => (c ?? 0) + BATCH_STEP)}
+                      >
+                        加载更多（{orderVids.length - shownCount}）
+                      </Button>
+                    )}
+                    {shownCount != null && shownCount < orderVids.length && (
+                      <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ---- 右组：搜索 ---- */}
             <div
+              className="rail-group"
               onMouseLeave={() => setSearchOpen(false)}
-              style={{ display: 'flex', gap: 6, alignItems: 'center' }}
             >
               <button
                 type="button"
@@ -465,13 +528,13 @@ export default function ProjectGraphPage() {
                 title="搜索节点（名字 / qname）"
               >
                 <Search size={13} />
-                {!searchOpen && <span>搜索</span>}
+                {!searchOpen && !isNarrow && <span>搜索</span>}
               </button>
               {searchOpen && (
                 <input
                   className="input"
                   autoFocus
-                  style={{ width: isNarrow ? 150 : 240, fontSize: 12.5 }}
+                  style={{ width: isNarrow ? 130 : 200, fontSize: 12.5 }}
                   placeholder="搜节点名 / qname，回车定位"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
@@ -479,78 +542,6 @@ export default function ProjectGraphPage() {
                     if (e.key === 'Enter') search()
                   }}
                 />
-              )}
-            </div>
-
-            {/* ---- 工具 ---- */}
-            <div
-              onMouseLeave={() => setBarOpen(false)}
-              style={{ position: 'relative', display: 'flex' }}
-            >
-              {
-                <button
-                  type="button"
-                  className="rail-btn"
-                  onClick={() => setCurateOpen(true)}
-                  title="改图：解析不准的地方在这里补"
-                >
-                  <GitBranch size={13} />
-                  <span>改图</span>
-                </button>
-              }
-              <button
-                type="button"
-                className="rail-btn"
-                onClick={() => setBarOpen((v) => !v)}
-                title="工具"
-              >
-                <SlidersHorizontal size={13} />
-                {!barOpen && <span>工具</span>}
-              </button>
-              {barOpen && (
-                <div
-                  className="card flex items-center gap-2 flex-wrap"
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 6px)',
-                    left: 0,
-                    zIndex: 60,
-                    background: 'var(--card)',
-                    padding: 8,
-                    maxWidth: isNarrow ? 'calc(100vw - 90px)' : 560,
-                    boxShadow: '0 10px 28px rgba(0,0,0,.28)',
-                  }}
-                >
-                  <Link to={`/p/${encodeURIComponent(projectRef)}`}>
-                    <Button icon={<List size={13} />}>回列表</Button>
-                  </Link>
-                  <Button
-                    variant={meteors ? 'primary' : 'ghost'}
-                    icon={<Sparkles size={13} />}
-                    onClick={() => setMeteors((v) => !v)}
-                    title="节点之间飞过的流光效果"
-                  >
-                    流星
-                  </Button>
-                  {shownCount != null && shownCount < orderVids.length && (
-                    <Button
-                      icon={<ChevronDown size={13} />}
-                      onClick={() => setShownCount((c) => (c ?? 0) + BATCH_STEP)}
-                    >
-                      加载更多（{orderVids.length - shownCount}）
-                    </Button>
-                  )}
-                  {shownCount != null && shownCount < orderVids.length && (
-                    <Button onClick={() => setShownCount(orderVids.length)}>显示全部</Button>
-                  )}
-                  <Button
-                    variant={pathOpen ? 'primary' : 'ghost'}
-                    icon={<Route size={13} />}
-                    onClick={() => setPathOpen((v) => !v)}
-                  >
-                    学习路径（{pathItems.length}）
-                  </Button>
-                </div>
               )}
             </div>
           </div>

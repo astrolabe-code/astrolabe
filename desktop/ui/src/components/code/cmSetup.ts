@@ -131,8 +131,8 @@ export function focusLine(view: EditorView, line: number | null) {
   })
 }
 
-/** 基础扩展（不含语言包） */
-export function baseExtensions(): Extension[] {
+/** 基础扩展（不含语言包）；`readOnly: false` 即可编辑（仿写用） */
+export function baseExtensions({ readOnly = true }: { readOnly?: boolean } = {}): Extension[] {
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -155,9 +155,8 @@ export function baseExtensions(): Extension[] {
       indentWithTab,
     ]),
     codeTheme,
-    // ★★ 只读：以后做仿写，去掉这两行即可（其余配置完全复用）
-    EditorState.readOnly.of(true),
-    EditorView.editable.of(false),
+    // ★★ 只读 / 可编辑：仿写传 readOnly:false，其余配置完全复用
+    ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
   ]
 }
 

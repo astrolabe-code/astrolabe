@@ -13,6 +13,7 @@ import { personalApi } from '../../api/personal'
 import type { GraphNode } from '../../lib/mergeGraph'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
+import ImitationPanel from './ImitationPanel'
 import FileTree, { firstLevelDirs } from './FileTree'
 import CodeViewer from './CodeViewer'
 
@@ -23,12 +24,12 @@ interface CodeWorkspaceProps {
   /** ★ 只有"大窗口"传（点 × 关掉回原页面）；右栏常驻面板不传 */
   onClose?: () => void
   /** ★ 起始 tab：大窗口默认看代码，右栏默认停在笔记（右栏本来就是写笔记的地方） */
-  initialTab?: 'code' | 'notes'
+  initialTab?: Tab
   /** ★ 笔记页内容：调用方可贴自己的 NodePanel（右栏要保留学习路径等能力） */
   notePanel?: ReactNode
 }
 
-type Tab = 'code' | 'notes'
+type Tab = 'code' | 'imitation' | 'notes'
 
 const TREE_OPEN_KEY = 'astrolabe.code.treeOpen'
 
@@ -298,7 +299,7 @@ export default function CodeWorkspace({
       {/* ★ tab：代码 / 笔记（蓝色下划线选中态） */}
       {!immersive && (
         <div className="code-tabs">
-          {(['code', 'notes'] as const).map((k) => (
+          {(['code', 'imitation', 'notes'] as const).map((k) => (
             <button
               key={k}
               type="button"
@@ -308,7 +309,7 @@ export default function CodeWorkspace({
               }}
               className={`code-tab${tab === k ? ' is-active' : ''}`}
             >
-              {k === 'code' ? '代码' : '笔记'}
+              {k === 'code' ? '代码' : k === 'imitation' ? '仿写' : '笔记'}
             </button>
           ))}
         </div>
@@ -367,6 +368,8 @@ export default function CodeWorkspace({
             >
               {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
             </div>
+          ) : tab === 'imitation' ? (
+            <ImitationPanel projectRef={projectRef} node={node} />
           ) : (
             <>
               {loading ? (

@@ -41,6 +41,7 @@ import projectstore
 import notefile
 import store
 import source
+import imitation
 
 VERSION = "0.3.0"
 
@@ -128,6 +129,8 @@ R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
+R_IMITS = re.compile(r"^/api/projects/([^/]+)/imitations/$")
+R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
 
 
 def _data_dir_is_ours(data_dir: str, code_root: str) -> bool:
@@ -468,6 +471,55 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             _activate(entry)
             p = store.get_or_create_project(CONN, name, code_root, ref=entry["ref"])
             return ok({"project": dict(p)})
+
+    # ★★★ 仿写：一个节点下的多份代码卡（见 sidecar/imitation.py）⚠
+    #   · 只写 <项目数据目录>/imitations/ —— ⛔ 绝不碰用户源码目录
+    m = R_IMITS.match(path)
+    if m:
+        entry = projectstore.get(m.group(1))
+        if not entry or not entry.get("data"):
+            return bad("项目不存在", 404)
+        try:
+            vid = int(body.get("vid") or 0)
+            if method == "GET":
+                return ok(imitation.list_items(entry["data"], vid))
+            if method == "POST":
+                return ok(
+                    imitation.create_item(
+                        entry["data"], vid, str(body.get("ext") or "txt")
+                    )
+                )
+            return bad("不支持的方法", 405)
+        except imitation.ImitationError as exc:
+            return bad(f"{exc.message}（{exc.code}）", 400)
+
+    m = R_IMIT.match(path)
+    if m:
+        entry = projectstore.get(m.group(1))
+        if not entry or not entry.get("data"):
+            return bad("项目不存在", 404)
+        try:
+            vid = int(body.get("vid") or 0)
+            name = str(body.get("name") or "")
+            if method == "GET":
+                return ok(imitation.read_item(entry["data"], vid, name))
+            if method == "PUT":
+                return ok(
+                    imitation.write_item(
+                        entry["data"], vid, name, str(body.get("text") or "")
+                    )
+                )
+            if method == "PATCH":
+                return ok(
+                    imitation.rename_item(
+                        entry["data"], vid, name, str(body.get("title") or "")
+                    )
+                )
+            if method == "DELETE":
+                return ok(imitation.remove_item(entry["data"], vid, name))
+            return bad("不支持的方法", 405)
+        except imitation.ImitationError as exc:
+            return bad(f"{exc.message}（{exc.code}）", 400)
 
     # ★★★ 代码展示：列文件树 / 读源码（见 sidecar/source.py）⚠
     #   · 文件树**全部显示**，⛔ 不按 .gitignore 过滤（所有者明确要求）

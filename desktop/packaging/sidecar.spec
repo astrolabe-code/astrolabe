@@ -52,6 +52,8 @@ HIDDEN = [
     "projectstore",
     # code viewer: file tree / source read
     "source",
+    # 仿写：一个节点下多份代码卡
+    "imitation",
 ]
 
 a = Analysis(

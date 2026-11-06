@@ -14,7 +14,7 @@
  * ```ts\n * const hooks = personalApi\n * queryFn: () => hooks ? hooks.graphNodes(ref, limit, offset) : unwrap(await apiGet(...))\n * ```\n */
 
 import type { Note, NoteKind } from './types'
-import type { FileTreeData, SourceFile } from './code'
+import type { FileTreeData, ImitationItem, SourceFile } from './code'
 import type { GraphNode } from '../lib/mergeGraph'
 
 // ---------------------------------------------------------------- 基础请求
@@ -33,6 +33,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 const get = <T>(p: string) => call<T>('GET', p)
 const post = <T>(p: string, b?: unknown) => call<T>('POST', p, b ?? {})
 const patch = <T>(p: string, b: unknown) => call<T>('PATCH', p, b)
+const put = <T>(p: string, b: unknown) => call<T>('PUT', p, b)
 const del = <T>(p: string) => call<T>('DELETE', p)
 
 // ---------------------------------------------------------------- 形状适配
@@ -219,5 +220,42 @@ export const personalApi = {
   readSource: (ref: string, path: string) =>
     get<SourceFile>(
       `/api/projects/${encodeURIComponent(ref)}/source/?path=${encodeURIComponent(path)}`,
+    ),
+
+  // ---- 仿写（见 sidecar/imitation.py）
+  /** 列出某个节点下的所有仿写 */
+  imitations: (ref: string, vid: number) =>
+    get<{ items: ImitationItem[]; next: number }>(
+      `/api/projects/${encodeURIComponent(ref)}/imitations/?vid=${vid}`,
+    ),
+
+  /** 读一份仿写的代码 */
+  imitation: (ref: string, vid: number, name: string) =>
+    get<ImitationItem & { text: string }>(
+      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
+    ),
+
+  /** 保存一份仿写（不存在则创建） */
+  saveImitation: (ref: string, vid: number, name: string, text: string) =>
+    put<ImitationItem>(
+      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
+      { text },
+    ),
+
+  /** 新建一份空白仿写（标题自动「第 N 版」） */
+  createImitation: (ref: string, vid: number, ext: string) =>
+    post<ImitationItem>(`/api/projects/${encodeURIComponent(ref)}/imitations/?vid=${vid}`, {
+      ext,
+    }),
+
+  renameImitation: (ref: string, vid: number, name: string, title: string) =>
+    patch<ImitationItem>(
+      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
+      { title },
+    ),
+
+  deleteImitation: (ref: string, vid: number, name: string) =>
+    del<{ removed: string }>(
+      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
     ),
 }

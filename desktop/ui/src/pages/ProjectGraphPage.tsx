@@ -839,6 +839,7 @@ export default function ProjectGraphPage() {
             inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
             canEditPath={canWrite}
             flat
+            codeTabs
             onAddToPath={selected ? () => addToPath(selected) : undefined}
             onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
           />

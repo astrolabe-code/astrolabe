@@ -670,3 +670,6 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   cursor: pointer;
 }
 .code-tree-row:hover { background: rgba(15, 23, 42, .05); }
+
+/* ★ 右栏节点面板里的「代码 / 笔记」tab：占固定高度，不被 flex 压缩 */
+.node-tabs { flex: none; }

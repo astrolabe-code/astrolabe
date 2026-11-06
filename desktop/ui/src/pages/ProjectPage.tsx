@@ -337,6 +337,7 @@ export default function ProjectPage() {
             canWrite={canWrite}
             autoThink={autoThink}
             flat
+            codeTabs
           />
         </div>
       </div>

@@ -4,17 +4,16 @@
  * 目前有三项：
  * ```
  * 流星特效     图谱里节点之间飞过的流光
- * 代码字号     CodeMirror 的字体大小
+ * 代码字号     CodeMirror 的字体大小（用户自己填，9–24px）
  * 代码字体     CodeMirror 的等宽字体栈
  * ```
  *
- * 为什么单独抽出来：
- *   它们原来散在图谱页的「工具」下拉里 —— 所有者（2026-11-05）：
- *   「流星这个应该在设置页面出现，怎么出现在这个下拉栏了？」
- *   ⇒ 统一移到 设置 → 外观，页面只读这里的值。
+ * ⚠ 设置页采用 **「草稿 + 一次确认」**：控件改的是草稿，只有点「确认」
+ *   才由 `saveAppearance()` 一次性写入并下发；「取消」把草稿还原成已保存值。
+ *   ⇒ 不要在这里加"改一项存一项"的即时保存（所有者明确不要每项单独确认）。
  *
  * ⚠ 代码外观用 **CSS 变量**下发（`--code-font-size` / `--code-font-family`），
- *   CodeMirror 的 theme 读变量 ⇒ 改设置**立刻生效**，不用重建编辑器。
+ *   CodeMirror 的 theme 读变量 ⇒ 确认后已打开的编辑器不用重建就能刷新。
  */
 const KEY_METEORS = 'astrolabe.meteors'
 
@@ -28,19 +27,12 @@ export function getMeteors(): boolean {
   }
 }
 
-/** 写「流星」开关 */
-export function setMeteors(on: boolean): void {
-  try {
-    localStorage.setItem(KEY_METEORS, on ? '1' : '0')
-  } catch {
-    /* 存不了就算了，下次还是默认开 */
-  }
-}
-
 // ---------------------------------------------------------------- 代码外观
 
-/** 代码字号档位（px）；默认 12.5，与原来的写死值一致 */
-export const CODE_FONT_SIZES = [11, 12.5, 14, 16, 18] as const
+/** 字号范围（用户自己填，⛔ 不再给固定档位选择） */
+export const CODE_FONT_MIN = 9
+export const CODE_FONT_MAX = 24
+export const DEFAULT_CODE_FONT_SIZE = 12.5
 
 /**
  * ★ 免版权顾虑的等宽字体（所有者：「换几个没版权限制的字体」）
@@ -79,13 +71,15 @@ export const CODE_FONT_STACKS = [
 
 const KEY_CODE_FONT_SIZE = 'astrolabe.code.fontSize'
 const KEY_CODE_FONT_FAMILY = 'astrolabe.code.fontFamily'
-const DEFAULT_CODE_FONT_SIZE = 12.5
 const DEFAULT_CODE_FONT_FAMILY = CODE_FONT_STACKS[0].value
 
+/** 读字号：只校验范围，⛔ 不再限定几个固定档位（用户可自己填 13、15.5 等） */
 export function getCodeFontSize(): number {
   try {
     const n = Number(localStorage.getItem(KEY_CODE_FONT_SIZE))
-    return CODE_FONT_SIZES.some((x) => x === n) ? n : DEFAULT_CODE_FONT_SIZE
+    return Number.isFinite(n) && n >= CODE_FONT_MIN && n <= CODE_FONT_MAX
+      ? n
+      : DEFAULT_CODE_FONT_SIZE
   } catch {
     return DEFAULT_CODE_FONT_SIZE
   }
@@ -101,7 +95,7 @@ export function getCodeFontFamily(): string {
 
 /**
  * ★ 把偏好写到根元素的 CSS 变量。
- * 应用启动时调一次（`main.tsx`），改设置时再调一次 ⇒ 已打开的代码窗口即时刷新。
+ * 应用启动时调一次（`main.tsx`），设置页点「确认」后再调一次。
  */
 export function applyCodePrefs(): void {
   const root = document.documentElement
@@ -109,20 +103,29 @@ export function applyCodePrefs(): void {
   root.style.setProperty('--code-font-family', getCodeFontFamily())
 }
 
-export function setCodeFontSize(px: number): void {
-  try {
-    localStorage.setItem(KEY_CODE_FONT_SIZE, String(px))
-  } catch {
-    /* 存不了就用本次会话的值 */
-  }
-  applyCodePrefs()
+export interface AppearancePrefs {
+  meteors: boolean
+  fontSize: number
+  fontFamily: string
 }
 
-export function setCodeFontFamily(stack: string): void {
+/** 读已保存的外观（设置页用它初始化「草稿」与「已保存」两份） */
+export function getAppearance(): AppearancePrefs {
+  return {
+    meteors: getMeteors(),
+    fontSize: getCodeFontSize(),
+    fontFamily: getCodeFontFamily(),
+  }
+}
+
+/** ★★ **全局确认**：三项一次性写入 + 一次下发（⛔ 不要每项单独保存/确认） */
+export function saveAppearance(p: AppearancePrefs): void {
   try {
-    localStorage.setItem(KEY_CODE_FONT_FAMILY, stack)
+    localStorage.setItem(KEY_METEORS, p.meteors ? '1' : '0')
+    localStorage.setItem(KEY_CODE_FONT_SIZE, String(p.fontSize))
+    localStorage.setItem(KEY_CODE_FONT_FAMILY, p.fontFamily)
   } catch {
-    /* 存不了就用本次会话的值 */
+    /* 存不了就用本次会话的值，不抛错 */
   }
   applyCodePrefs()
 }

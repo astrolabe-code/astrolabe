@@ -12,14 +12,12 @@ import { useEffect, useState } from 'react'
 import { ExternalLink, FolderOpen } from 'lucide-react'
 
 import {
-  getMeteors,
-  setMeteors as saveMeteors,
-  getCodeFontSize,
-  setCodeFontSize as saveCodeFontSize,
-  getCodeFontFamily,
-  setCodeFontFamily as saveCodeFontFamily,
-  CODE_FONT_SIZES,
+  getAppearance,
+  saveAppearance,
   CODE_FONT_STACKS,
+  CODE_FONT_MIN,
+  CODE_FONT_MAX,
+  type AppearancePrefs,
 } from '../../lib/uiPrefs'
 
 interface Info {
@@ -31,10 +29,23 @@ interface Info {
 
 export default function PersonalUserSettings() {
   // ★ 外观偏好（流星）—— 与图谱页共用 lib/uiPrefs
-  const [meteors, setMeteors] = useState(getMeteors)
-  // ★ 代码外观（字号 / 字体）—— 改完写 CSS 变量，已打开的代码窗口即时生效
-  const [codeFontSize, setCodeFontSize] = useState(getCodeFontSize)
-  const [codeFontFamily, setCodeFontFamily] = useState(getCodeFontFamily)
+  // ★★★ 外观是「草稿 + 一次确认」：控件只改 draft，点确认才 saveAppearance()
+  const [saved, setSaved] = useState<AppearancePrefs>(getAppearance)
+  const [draft, setDraft] = useState<AppearancePrefs>(getAppearance)
+  const dirty =
+    draft.meteors !== saved.meteors ||
+    draft.fontSize !== saved.fontSize ||
+    draft.fontFamily !== saved.fontFamily
+  const sizeOk =
+    Number.isFinite(draft.fontSize) &&
+    draft.fontSize >= CODE_FONT_MIN &&
+    draft.fontSize <= CODE_FONT_MAX
+  const confirmAppearance = () => {
+    const next = { ...draft }
+    saveAppearance(next)
+    setSaved(next)
+    setDraft(next)
+  }
   const [info, setInfo] = useState<Info | null>(null)
   const api = (
     window as unknown as {
@@ -119,7 +130,7 @@ export default function PersonalUserSettings() {
         </div>
       </div>
 
-      {/* ★★★ 2026-11-05：外观（流星）—— 所有者：「流星这个应该在设置页面出现」 */}
+      {/* ★★★ 外观：字号自己填，改动统一「确认 / 取消」 */}
       <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>外观</div>
         <label
@@ -135,11 +146,8 @@ export default function PersonalUserSettings() {
         >
           <input
             type="checkbox"
-            checked={meteors}
-            onChange={(e) => {
-              setMeteors(e.target.checked)
-              saveMeteors(e.target.checked)
-            }}
+            checked={draft.meteors}
+            onChange={(e) => setDraft({ ...draft, meteors: e.target.checked })}
           />
           流星特效
           <span className="faint" style={{ fontSize: 11.5 }}>
@@ -147,45 +155,35 @@ export default function PersonalUserSettings() {
           </span>
         </label>
 
-        {/* ★★★ 2026-11-06：代码字号 / 字体
-            所有者：「字号能不能调整？就把这个按钮放在设置页，
-                    要是还能换几个没版权限制的字体，就好了」 */}
+        {/* ★ 字号：自己填，⛔ 不再给档位按钮 */}
         <div style={{ ...row, display: 'flex', alignItems: 'center', marginTop: 10 }}>
           <span style={key}>代码字号</span>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {CODE_FONT_SIZES.map((px) => (
-              <button
-                key={px}
-                type="button"
-                onClick={() => {
-                  setCodeFontSize(px)
-                  saveCodeFontSize(px)
-                }}
-                style={{
-                  padding: '3px 10px',
-                  fontSize: 11.5,
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  border: `1px solid ${codeFontSize === px ? 'var(--accent)' : 'var(--card-border)'}`,
-                  background: codeFontSize === px ? 'var(--accent-dim)' : 'transparent',
-                  color: codeFontSize === px ? 'var(--accent)' : 'var(--text-sub)',
-                }}
-              >
-                {px}
-              </button>
-            ))}
-          </div>
+          <input
+            className="input"
+            type="number"
+            min={CODE_FONT_MIN}
+            max={CODE_FONT_MAX}
+            step={0.5}
+            value={Number.isNaN(draft.fontSize) ? '' : draft.fontSize}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                fontSize: e.target.value === '' ? NaN : Number(e.target.value),
+              })
+            }
+            style={{ width: 100, fontSize: 12.5, flex: 'none' }}
+          />
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            px · 可填 {CODE_FONT_MIN}–{CODE_FONT_MAX}（默认 12.5，支持小数）
+          </span>
         </div>
         <div style={{ ...row, display: 'flex', alignItems: 'center' }}>
           <span style={key}>代码字体</span>
           <select
             className="input"
-            style={{ fontSize: 12.5, maxWidth: 340, fontFamily: codeFontFamily }}
-            value={codeFontFamily}
-            onChange={(e) => {
-              setCodeFontFamily(e.target.value)
-              saveCodeFontFamily(e.target.value)
-            }}
+            style={{ fontSize: 12.5, maxWidth: 340, fontFamily: draft.fontFamily }}
+            value={draft.fontFamily}
+            onChange={(e) => setDraft({ ...draft, fontFamily: e.target.value })}
           >
             {CODE_FONT_STACKS.map((f) => (
               <option key={f.label} value={f.value}>
@@ -196,7 +194,9 @@ export default function PersonalUserSettings() {
         </div>
         <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
           这些都是系统自带或开源自由许可（OFL 等）的等宽字体，软件不随附字体文件 ——
-          用本机已装的那一个，没装会自动回退到系统等宽字体。改完立即生效，已打开的代码窗口也会跟着变。
+          用本机已装的那一个，没装会自动回退到系统等宽字体。
+          <br />
+          改动先在这里预览，点下方「确认」才对所有代码窗口生效；「取消」可放弃本次修改。
         </div>
         <div
           style={{
@@ -205,8 +205,8 @@ export default function PersonalUserSettings() {
             borderRadius: 8,
             background: 'var(--code-bg, #f6f8fa)',
             border: '1px solid var(--card-border)',
-            fontFamily: codeFontFamily,
-            fontSize: codeFontSize,
+            fontFamily: draft.fontFamily,
+            fontSize: sizeOk ? draft.fontSize : saved.fontSize,
             lineHeight: 1.8,
             color: 'var(--code-text, #24292f)',
             overflowX: 'auto',
@@ -218,6 +218,58 @@ export default function PersonalUserSettings() {
 {'\n    '}<span style={{ color: '#7c3aed', fontWeight: 600 }}>return</span>{' '}
           <span style={{ color: '#0a7d47' }}>f&quot;hi, {'{name}'}&quot;</span>
         </div>
+
+        {/* ★★ 全局确认 / 取消：只在有改动时出现，⛔ 不给每个设置项单独确认 */}
+        {dirty && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: '1px solid var(--card-border)',
+            }}
+          >
+            <span className="faint" style={{ fontSize: 11.5, marginRight: 'auto' }}>
+              {sizeOk
+                ? '有未保存的修改'
+                : `字号请填 ${CODE_FONT_MIN}–${CODE_FONT_MAX} 之间的数`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDraft(saved)}
+              style={{
+                padding: '5px 14px',
+                fontSize: 12.5,
+                borderRadius: 6,
+                cursor: 'pointer',
+                border: '1px solid var(--card-border)',
+                background: 'transparent',
+                color: 'var(--text-sub)',
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={!sizeOk}
+              onClick={confirmAppearance}
+              style={{
+                padding: '5px 14px',
+                fontSize: 12.5,
+                borderRadius: 6,
+                cursor: sizeOk ? 'pointer' : 'not-allowed',
+                opacity: sizeOk ? 1 : 0.5,
+                border: '1px solid var(--accent)',
+                background: 'var(--accent)',
+                color: '#fff',
+              }}
+            >
+              确认
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>

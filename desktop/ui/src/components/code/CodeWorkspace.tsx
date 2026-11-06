@@ -19,7 +19,12 @@ interface CodeWorkspaceProps {
   projectRef: string
   /** 当前选中的节点：决定笔记页显示谁、代码页跳到哪一行 */
   node: GraphNode | null
-  onClose: () => void
+  /** ★ 只有"大窗口"传（点 × 关掉回原页面）；右栏常驻面板不传 */
+  onClose?: () => void
+  /** ★ 起始 tab：大窗口默认看代码，右栏默认停在笔记（右栏本来就是写笔记的地方） */
+  initialTab?: 'code' | 'notes'
+  /** ★ 笔记页内容：调用方可贴自己的 NodePanel（右栏要保留学习路径等能力） */
+  notePanel?: ReactNode
 }
 
 type Tab = 'code' | 'notes'
@@ -64,8 +69,14 @@ function IconBtn({ title, onClick, active, children }: IconBtnProps) {
  * 文件树**全部显示**（⛔ 不按 .gitignore 过滤）；读文件仍受
  * sidecar/source.py 的三条边界约束（项目根内 / UTF-8 / ≤512KB）。
  */
-export default function CodeWorkspace({ projectRef, node, onClose }: CodeWorkspaceProps) {
-  const [tab, setTab] = useState<Tab>('code')
+export default function CodeWorkspace({
+  projectRef,
+  node,
+  onClose,
+  initialTab = 'code',
+  notePanel,
+}: CodeWorkspaceProps) {
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [treeOpen, setTreeOpen] = useState(() => {
     try {
       return localStorage.getItem(TREE_OPEN_KEY) !== '0'
@@ -108,7 +119,6 @@ export default function CodeWorkspace({ projectRef, node, onClose }: CodeWorkspa
     if (!node?.file_path) return
     setActivePath(node.file_path)
     setFocusLineNo(node.line > 0 ? node.line : null)
-    setTab('code')
   }, [node?.file_path, node?.line, node?.vid])
 
   // ③ 读文件内容
@@ -199,8 +209,9 @@ export default function CodeWorkspace({ projectRef, node, onClose }: CodeWorkspa
     : {
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100dvh - var(--nav-h, 40px))',
-        minHeight: 0,
+        flex: 1,
+        height: '100%',
+        minHeight: 420,
         background: 'var(--card, #fff)',
       }
 
@@ -247,9 +258,11 @@ export default function CodeWorkspace({ projectRef, node, onClose }: CodeWorkspa
                 <Maximize size={16} strokeWidth={1.5} />
               )}
             </IconBtn>
-            <IconBtn title="关闭代码窗口" onClick={onClose}>
-              <X size={16} strokeWidth={1.5} />
-            </IconBtn>
+            {onClose && (
+              <IconBtn title="关闭代码窗口" onClick={onClose}>
+                <X size={16} strokeWidth={1.5} />
+              </IconBtn>
+            )}
           </div>
         </div>
       )}
@@ -331,8 +344,16 @@ export default function CodeWorkspace({ projectRef, node, onClose }: CodeWorkspa
         {/* 右侧：代码页 / 笔记页 */}
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {tab === 'notes' ? (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>
-              <NodePanel projectRef={projectRef} node={node} canWrite flat />
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat />}
             </div>
           ) : (
             <>

@@ -9,7 +9,6 @@ import { errorMessage } from '../../api/errors'
 import { personalApi } from '../../api/personal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteSection from '../notes/NoteSection'
-import InlineSource from '../code/InlineSource'
 
 // ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -47,8 +46,6 @@ interface NodePanelProps {
   flat?: boolean
   /** ★ `?think=1`：* 节点就绪后自动打开思考白板（* 首页直达用）⚠ */
   autoThink?: boolean
-  /** ★★ 右栏是否显示「代码 / 笔记」tab（列表页/图谱页传 true；代码工作区不传） */
-  codeTabs?: boolean
   /** ★★ `D106`：加入路径 */
   onAddToPath?: () => void
   /** ★★ `D106`：从路径移除 */
@@ -84,13 +81,10 @@ export default function NodePanel({
   onRemoveFromPath,
   flat,
   autoThink,
-  codeTabs,
 }: NodePanelProps) {
   const navigate = useNavigate()
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
   const [infoOpen, setInfoOpen] = useState(true)
-  /** ★ 右栏的「代码 / 笔记」切换（默认停在笔记，因为右栏本来就是写笔记的地方） */
-  const [panelTab, setPanelTab] = useState<'code' | 'notes'>('notes')
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
   const [delErr, setDelErr] = useState('')
   // ★★ 结构体/类的字段（`HAS_PROPERTY` 那种信息）—— 只在这里显示，⛔ 不进图
@@ -413,36 +407,9 @@ export default function NodePanel({
       </div>
       )}
 
-      {/* ★★★ 2026-11-06：右栏也放「代码 / 笔记」tab（所有者要求）
-          ⚠ 与代码工作区共用 `.code-tabs` 样式；代码工作区里的 NodePanel 不传 codeTabs
-            ⇒ 不会出现"tab 里套 tab" */}
-      {codeTabs && (
-        <div className="code-tabs node-tabs">
-          <button
-            type="button"
-            className={`code-tab${panelTab === 'code' ? ' is-active' : ''}`}
-            onClick={() => setPanelTab('code')}
-          >
-            代码
-          </button>
-          <button
-            type="button"
-            className={`code-tab${panelTab === 'notes' ? ' is-active' : ''}`}
-            onClick={() => setPanelTab('notes')}
-          >
-            笔记
-          </button>
-        </div>
-      )}
-
       {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}
-      {codeTabs && panelTab === 'code' ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <InlineSource projectRef={projectRef} path={node.file_path} line={node.line} />
-        </div>
-      ) : (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>
-          <NoteSection
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>
+        <NoteSection
           projectRef={projectRef}
           nodeId={node.vid}
           canWrite={canWrite}
@@ -467,8 +434,7 @@ export default function NodePanel({
           onDeleteNote={setPendingDelete}
           autoThink={autoThink}
         />
-        </div>
-      )}
+      </div>
 
       {/* ③ 编辑器（只承担「新建 / 编辑」—— 阅读与互动在 NotePage） */}
 

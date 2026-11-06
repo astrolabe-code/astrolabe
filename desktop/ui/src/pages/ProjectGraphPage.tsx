@@ -119,7 +119,7 @@ export default function ProjectGraphPage() {
   // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
   const [fullscreen, setFullscreen] = useState(false)
   // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
-  const [panelFull, setPanelFull] = useState(false)
+  const [panelFull] = useState(false)
   // ★★★ **移动端响应式**（* 窄屏 ⇒ 单列 + 写作区抽屉）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
   // ★★★ 移动端 = **上下式**（* 照原型：图在上、* 写作区在下）⚠
@@ -530,12 +530,11 @@ export default function ProjectGraphPage() {
         >
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
-          {/* ★★★ 右上角：圆形全屏按钮（* 形似 code_network）⚠ */}
+          {/* ★★★ 画布全屏按钮：细线图标，⛔ 无圆形底板/边框/阴影 */}
           <button
             type="button"
             onClick={() => {
               setFullscreen((v) => !v)
-              setPanelFull(false)
             }}
             title={fullscreen ? '退出全屏' : '全屏'}
             style={{
@@ -768,33 +767,6 @@ export default function ProjectGraphPage() {
                 }),
           }}
         >
-          {/* ★★ 写作区全屏按钮（* 与图的右上角同款，* 两者互斥）⚠ */}
-          <button
-            type="button"
-            onClick={() => {
-              setPanelFull((v) => !v)
-              setFullscreen(false)
-            }}
-            title={panelFull ? '退出全屏' : '写作区全屏'}
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 6,
-              zIndex: 12,
-              padding: 5,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              // ★ 同图全屏：⛔ 圆形底板 / 边框 / 阴影（与代码工作区一致）
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-sub)',
-              boxShadow: 'none',
-            }}
-          >
-            {panelFull ? <Minimize size={16} strokeWidth={1.5} /> : <Maximize size={16} strokeWidth={1.5} />}
-          </button>
           {isNarrow && !panelFull && (
             <>
               {/* ★★ 抓手条：* 按住上下拖 = 调高度；* 点一下 = 收起/展开 ⚠ */}
@@ -832,16 +804,23 @@ export default function ProjectGraphPage() {
               </div>
             </>
           )}
-          <NodePanel
+          {/* ★★★ 右栏也贴**同一个** CodeWorkspace；笔记页仍用原来的完整 NodePanel */}
+          <CodeWorkspace
             projectRef={projectRef}
             node={selected}
-            canWrite={canWrite}
-            inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
-            canEditPath={canWrite}
-            flat
-            codeTabs
-            onAddToPath={selected ? () => addToPath(selected) : undefined}
-            onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
+            initialTab="notes"
+            notePanel={
+              <NodePanel
+                projectRef={projectRef}
+                node={selected}
+                canWrite={canWrite}
+                inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
+                canEditPath={canWrite}
+                flat
+                onAddToPath={selected ? () => addToPath(selected) : undefined}
+                onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
+              />
+            }
           />
         </div>
         )}

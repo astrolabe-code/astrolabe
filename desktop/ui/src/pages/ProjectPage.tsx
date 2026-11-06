@@ -331,13 +331,21 @@ export default function ProjectPage() {
             overflow: 'hidden',
           }}
         >
-          <NodePanel
+          {/* ★★★ 右栏直接贴**同一个** CodeWorkspace（文件树 / 代码·笔记 tab / 三枚按钮全都有）
+              ⚠ 空间窄就点右上角第一个按钮收起文件树 —— 那个按钮本来就是为这件事设计的 */}
+          <CodeWorkspace
             projectRef={projectRef}
             node={selected}
-            canWrite={canWrite}
-            autoThink={autoThink}
-            flat
-            codeTabs
+            initialTab="notes"
+            notePanel={
+              <NodePanel
+                projectRef={projectRef}
+                node={selected}
+                canWrite={canWrite}
+                autoThink={autoThink}
+                flat
+              />
+            }
           />
         </div>
       </div>

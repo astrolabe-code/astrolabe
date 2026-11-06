@@ -64,7 +64,9 @@ export default function ProjectPage() {
   const mainRef = useRef<HTMLDivElement>(null)
   const [listWidth, setListWidth] = useState(300)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
-  const MIN_LIST = 220
+  // ★★★ 最小放宽到 280：行尾两枚图标(60px) + 徽标 + 函数名都要有位置
+  //   （所有者：「应该把能缩小的宽度放大一点」）
+  const MIN_LIST = 280
   const MIN_NOTE = 320
   const RESIZER = 4
 

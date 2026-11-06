@@ -204,12 +204,21 @@ export default function NodeList({
                       paddingRight: onOpenGraph || onOpenCode ? 60 : 10,
                     }}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
                       {/* ★★ 有作用域时显示**限定名**（`A.run` / `ns::Class::m`）⚠
                           否则同一个类里两个 `run` 在列表上完全一样，分不出谁是谁 */}
+                      {/* ★★★ 名字吃掉剩余宽度并省略：⛔ 不再溢出盖住行尾图标 */}
                       <span
                         className="mono"
-                        style={{ fontSize: 12.5, color: 'var(--text-main)' }}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontSize: 12.5,
+                          color: 'var(--text-main)',
+                        }}
                         title={n.qname || n.name}
                       >
                         {n.qname && n.qname !== n.name ? n.qname : n.name}
@@ -251,7 +260,17 @@ export default function NodeList({
                     </div>
                     {/* ★ 空白结构没有文件/行号 ⇒ **整行不渲染**（类型上面那个 tag 已经显示过了）⚠ */}
                     {n.file_path && (
-                      <div className="faint mono" style={{ fontSize: 11, marginTop: 2 }}>
+                      <div
+                        className="faint mono"
+                        style={{
+                          fontSize: 11,
+                          marginTop: 2,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={`${n.file_path}:${n.line}`}
+                      >
                         {n.file_path}:{n.line}
                       </div>
                     )}

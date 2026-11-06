@@ -325,6 +325,11 @@ export default function ProjectPage() {
           className="card"
           style={{
             minHeight: isNarrow ? 320 : 480,
+            // ★★★ 给右栏一个**确定高度**（与左栏 maxHeight 同口径）⚠
+            //   否则 CodeWorkspace 的 height:100% 在 auto 父容器里不生效 ⇒
+            //   切到「代码」时 CodeMirror 把卡片撑高 ⇒ 整页变长、左栏 sticky 与右栏错开
+            //   （所有者：「点代码，上面就空出来一截……就不能一直是对齐的吗？」）
+            height: isNarrow ? undefined : 'calc(100vh - 96px)',
             display: 'flex',
             flexDirection: 'column',
             padding: 0,

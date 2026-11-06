@@ -539,7 +539,7 @@ export default function ProjectGraphPage() {
             title={fullscreen ? '退出全屏' : '全屏'}
             style={{
               position: 'absolute',
-              top: 10,
+              top: 2,
               right: 10,
               zIndex: 30,
               padding: 5,
@@ -558,150 +558,157 @@ export default function ProjectGraphPage() {
             {fullscreen ? <Minimize size={16} strokeWidth={1.5} /> : <Maximize size={16} strokeWidth={1.5} />}
           </button>
 
-          {/* ★★ `D107`：失效 vid 提示 + 一键清理（* ⛔ 不自动删）⚠ */}
-          {stale.length > 0 && (
-            <div
-              className="card flex items-center gap-2 flex-wrap"
-              style={{ padding: '8px 12px', marginBottom: 8, borderColor: 'var(--warn)' }}
-            >
-              <span style={{ fontSize: 12.5 }}>
-                学习路径里有 <b>{stale.length}</b> 个节点已不在图中（代码可能变了）：
-                <code style={{ marginLeft: 6, fontSize: 11 }}>{stale.slice(0, 5).join('、')}</code>
-                {stale.length > 5 ? ' …' : ''}
-              </span>
-              <Button
-                icon={<Trash2 size={12} />}
-                style={{ marginLeft: 'auto' }}
-                disabled={!canWrite || replace.isPending}
-                onClick={cleanStale}
-              >
-                一键清理
-              </Button>
-            </div>
-          )}
-
-          {/* ★★ 没有路径时的提示（* 作者自己排；* 读者看到度数兜底）⚠ */}
-          {!loading && !hasPath && (
-            <div className="faint" style={{ fontSize: 11.5, marginBottom: 6 }}>
-              作者还没有排学习路径 —— 现在按「连接数」展示前 {view?.nodes.length ?? 0} 个。
-              {canWrite && '在节点面板点「加入路径」即可开始编排。'}
-            </div>
-          )}
-
-          {hint && (
-            <div className="faint" style={{ fontSize: 11.5, marginBottom: 6 }}>
-              {hint}
-            </div>
-          )}
-
-          {/* ★★ `D106`：路径面板（* 作者可排序，* 其他人只读）⚠ */}
-          {pathOpen && (
-            <div className="card" style={{ padding: 10, marginBottom: 8, maxHeight: 200, overflow: 'auto' }}>
-              {pathItems.length === 0 ? (
-                <div className="faint" style={{ fontSize: 12 }}>
-                  还没有排学习路径 —— 在节点面板点「加入路径」开始。
-                </div>
-              ) : (
-                pathItems.map((item, i) => (
-                  <div
-                    key={item.vid}
-                    className="flex items-center gap-2"
-                    style={{ padding: '3px 0', fontSize: 12 }}
-                  >
-                    <span className="faint" style={{ width: 22, textAlign: 'right' }}>
-                      {i + 1}
-                    </span>
-                    <button
-                      type="button"
-                      style={{ cursor: 'pointer', background: 'none', border: 'none', color: 'var(--accent)' }}
-                      onClick={() => {
-                        setSelectedVid(item.vid)
-                        setFocusVid(item.vid)
-                      }}
-                    >
-                      {item.name}
-                    </button>
-                    <span className="faint" style={{ fontSize: 10.5 }}>
-                      {item.file_path}:{item.line}
-                    </span>
-                    {canWrite && (
-                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                        <button
-                          type="button"
-                          title="上移"
-                          disabled={i === 0 || replace.isPending}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-sub)' }}
-                          onClick={() => move(i, -1)}
-                        >
-                          <ChevronUp size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          title="下移"
-                          disabled={i === pathItems.length - 1 || replace.isPending}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-sub)' }}
-                          onClick={() => move(i, 1)}
-                        >
-                          <ChevronDown size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          title="移除"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--err)' }}
-                          onClick={() => removeNode({ vid: item.vid, name: item.name } as GraphNode)}
-                        >
-                          <X size={13} />
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
           <div
             className="card"
-            style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: 0, position: 'relative' }}
+            style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}
           >
-            {loading ? (
-              <div className="flex items-center justify-center h-full gap-2">
-                <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-sub)' }} />
-                <span className="faint" style={{ fontSize: 12.5 }}>
-                  正在拉取整张图（节点 / 边 / 补丁）…
-                </span>
-              </div>
-            ) : view && view.nodes.length === 0 ? (
-              <div className="flex items-center justify-center h-full">
-                <EmptyState
-                  title="这个项目还没有图"
-                  hint="先去工作区触发拉取代码并解析"
-                  icon={<Workflow size={28} />}
-                  action={
-                    <Link to="/workspace">
-                      <Button variant="primary">去工作区</Button>
-                    </Link>
-                  }
+            {/* ★★★ 2026-11-06：提示/路径面板移到**卡片内部** ⚠
+                原来它们在卡片之前占高度，把左栏卡片往下推 ⇒ 右栏没这行 ⇒ 两栏顶部错开，
+                且绝对定位的全屏按钮正好被左栏卡片的上边框横穿（所有者截图反馈）。
+                现在两栏卡片都从各自容器顶部开始，始终对齐、顶格。 */}
+            <div style={{ flexShrink: 0, padding: '8px 40px 0 12px' }}>
+              {/* ★★ `D107`：失效 vid 提示 + 一键清理（* ⛔ 不自动删）⚠ */}
+              {stale.length > 0 && (
+                <div
+                  className="card flex items-center gap-2 flex-wrap"
+                  style={{ padding: '8px 12px', marginBottom: 8, borderColor: 'var(--warn)' }}
+                >
+                  <span style={{ fontSize: 12.5 }}>
+                    学习路径里有 <b>{stale.length}</b> 个节点已不在图中（代码可能变了）：
+                    <code style={{ marginLeft: 6, fontSize: 11 }}>{stale.slice(0, 5).join('、')}</code>
+                    {stale.length > 5 ? ' …' : ''}
+                  </span>
+                  <Button
+                    icon={<Trash2 size={12} />}
+                    style={{ marginLeft: 'auto' }}
+                    disabled={!canWrite || replace.isPending}
+                    onClick={cleanStale}
+                  >
+                    一键清理
+                  </Button>
+                </div>
+              )}
+
+              {/* ★★ 没有路径时的提示（* 作者自己排；* 读者看到度数兜底）⚠ */}
+              {!loading && !hasPath && (
+                <div className="faint" style={{ fontSize: 11.5, marginBottom: 6 }}>
+                  作者还没有排学习路径 —— 现在按「连接数」展示前 {view?.nodes.length ?? 0} 个。
+                  {canWrite && '在节点面板点「加入路径」即可开始编排。'}
+                </div>
+              )}
+
+              {hint && (
+                <div className="faint" style={{ fontSize: 11.5, marginBottom: 6 }}>
+                  {hint}
+                </div>
+              )}
+
+              {/* ★★ `D106`：路径面板（* 作者可排序，* 其他人只读）⚠ */}
+              {pathOpen && (
+                <div className="card" style={{ padding: 10, marginBottom: 8, maxHeight: 200, overflow: 'auto' }}>
+                  {pathItems.length === 0 ? (
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      还没有排学习路径 —— 在节点面板点「加入路径」开始。
+                    </div>
+                  ) : (
+                    pathItems.map((item, i) => (
+                      <div
+                        key={item.vid}
+                        className="flex items-center gap-2"
+                        style={{ padding: '3px 0', fontSize: 12 }}
+                      >
+                        <span className="faint" style={{ width: 22, textAlign: 'right' }}>
+                          {i + 1}
+                        </span>
+                        <button
+                          type="button"
+                          style={{ cursor: 'pointer', background: 'none', border: 'none', color: 'var(--accent)' }}
+                          onClick={() => {
+                            setSelectedVid(item.vid)
+                            setFocusVid(item.vid)
+                          }}
+                        >
+                          {item.name}
+                        </button>
+                        <span className="faint" style={{ fontSize: 10.5 }}>
+                          {item.file_path}:{item.line}
+                        </span>
+                        {canWrite && (
+                          <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                            <button
+                              type="button"
+                              title="上移"
+                              disabled={i === 0 || replace.isPending}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-sub)' }}
+                              onClick={() => move(i, -1)}
+                            >
+                              <ChevronUp size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              title="下移"
+                              disabled={i === pathItems.length - 1 || replace.isPending}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-sub)' }}
+                              onClick={() => move(i, 1)}
+                            >
+                              <ChevronDown size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              title="移除"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--err)' }}
+                              onClick={() => removeNode({ vid: item.vid, name: item.name } as GraphNode)}
+                            >
+                              <X size={13} />
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+              {loading ? (
+                <div className="flex items-center justify-center h-full gap-2">
+                  <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-sub)' }} />
+                  <span className="faint" style={{ fontSize: 12.5 }}>
+                    正在拉取整张图（节点 / 边 / 补丁）…
+                  </span>
+                </div>
+              ) : view && view.nodes.length === 0 ? (
+                <div className="flex items-center justify-center h-full">
+                  <EmptyState
+                    title="这个项目还没有图"
+                    hint="先去工作区触发拉取代码并解析"
+                    icon={<Workflow size={28} />}
+                    action={
+                      <Link to="/workspace">
+                        <Button variant="primary">去工作区</Button>
+                      </Link>
+                    }
+                  />
+                </div>
+              ) : (
+                <>
+                {/* ★ 统计已移到页脚托底条（* 避免和图例叠在左下角）⚠ */}
+                              <GraphCanvas
+                  graph={view}
+                  meteors={meteors}
+                  meteorSpeed={meteorSpeed}
+                  meteorSizeRatio={meteorSizeRatio}
+                  nodeSizePx={nodeSizePx}
+                  onPhase={setPhase}
+                  fullGraph={g}
+                  selectedVid={selectedVid}
+                  onSelect={setSelectedVid}
+                  onDeselect={() => setSelectedVid(null)}
+                  focusVid={focusVid}
                 />
-              </div>
-            ) : (
-              <>
-              {/* ★ 统计已移到页脚托底条（* 避免和图例叠在左下角）⚠ */}
-                            <GraphCanvas
-                graph={view}
-                meteors={meteors}
-                meteorSpeed={meteorSpeed}
-                meteorSizeRatio={meteorSizeRatio}
-                nodeSizePx={nodeSizePx}
-                onPhase={setPhase}
-                fullGraph={g}
-                selectedVid={selectedVid}
-                onSelect={setSelectedVid}
-                onDeselect={() => setSelectedVid(null)}
-                focusVid={focusVid}
-              />
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
 
         </div>

@@ -33,7 +33,16 @@ import { tags as t } from '@lezer/highlight'
 
 /** 语法配色：接到站点 CSS 变量上（沿用 MilkdownEditor 里那套 `--code-*` 口径） */
 const codeHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: 'var(--code-kw, #7c3aed)' },
+  // ★★★ 关键字**按语义分色**（所有者：「关键字都是一个颜色，没有区分，看着很单调」）
+  //   ⚠ @lezer/highlight 里这些都是 t.keyword 的子 tag，语言包打了哪个就用哪个色；
+  //     只打通用 keyword 的语法走最后那条兜底。
+  //   ⚠ 放在数组最前：后面 t.bool / t.null 等更具体的规则仍能覆盖它们。
+  { tag: t.controlKeyword,    color: 'var(--code-kw-control, #7c3aed)',  fontWeight: '600' }, // if/else/for/return/try
+  { tag: t.definitionKeyword, color: 'var(--code-kw-define, #c026d3)',   fontWeight: '600' }, // def/class/struct/func
+  { tag: t.moduleKeyword,     color: 'var(--code-kw-module, #0891b2)',   fontWeight: '600' }, // import/from/export/use
+  { tag: t.operatorKeyword,   color: 'var(--code-kw-operator, #c2410c)', fontWeight: '600' }, // and/or/not/is/in/as
+  { tag: t.modifier,          color: 'var(--code-kw-modifier, #4f46e5)', fontWeight: '600' }, // public/static/const/async
+  { tag: t.keyword,           color: 'var(--code-kw, #7c3aed)',          fontWeight: '600' }, // 兜底：未细分的关键字
   { tag: [t.string, t.special(t.string)], color: 'var(--code-str, #0a7d47)' },
   { tag: t.comment, color: 'var(--code-comment, #94a3b8)', fontStyle: 'italic' },
   { tag: [t.number, t.bool, t.null], color: 'var(--code-num, #b45309)' },
@@ -50,12 +59,13 @@ const codeTheme = EditorView.theme(
       height: '100%',
       backgroundColor: 'transparent',
       color: 'var(--text-main, #1f2937)',
-      fontSize: '12.5px',
+      // ★ 设置 → 外观 可调（lib/uiPrefs 下发 CSS 变量，改完立刻生效）
+      fontSize: 'var(--code-font-size, 12.5px)',
     },
     '.cm-scroller': {
       overflow: 'auto',
       fontFamily:
-        'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+        'var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace)',
       lineHeight: '1.65',
     },
     '.cm-content': { caretColor: 'transparent', padding: '8px 0' },

@@ -78,6 +78,8 @@ export default function CodeWorkspace({
 }: CodeWorkspaceProps) {
   const [tab, setTab] = useState<Tab>(initialTab)
   const [treeOpen, setTreeOpen] = useState(() => {
+    // ★ 文件树跟着「代码」页走：初始停在笔记就不显示
+    if (initialTab === 'notes') return false
     try {
       return localStorage.getItem(TREE_OPEN_KEY) !== '0'
     } catch {
@@ -294,7 +296,10 @@ export default function CodeWorkspace({
             <button
               key={k}
               type="button"
-              onClick={() => setTab(k)}
+              onClick={() => {
+                setTab(k)
+                setTreeOpen(k === 'code')
+              }}
               className={`code-tab${tab === k ? ' is-active' : ''}`}
             >
               {k === 'code' ? '代码' : '笔记'}
@@ -304,7 +309,8 @@ export default function CodeWorkspace({
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* 左侧文件树 */}
+        {/* ★★ 文件树只由 treeOpen 决定：切到笔记时由 tab 按钮把它收起，
+            右上角的按钮常驻，用户想看随时点开（⛔ 渲染处不加 tab 判断） */}
         {treeOpen && (
           <div
             style={{

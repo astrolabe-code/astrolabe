@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { FolderOpen, Settings } from 'lucide-react'
 
 import Button from './ui/Button'
@@ -26,6 +26,11 @@ interface DesktopApi {
  */
 export default function AppMenuItems() {
   const nav = useNavigate()
+  const location = useLocation()
+  // ★ 在图谱页/项目页里点「设置」⇒ 带当前项目进合并设置页；
+  //   在首页则用 /me/settings（合并页会挑清单第一个项目）
+  const m = location.pathname.match(/\/p\/([^/]+)/)
+  const settingsPath = m ? `/p/${m[1]}/settings` : '/me/settings'
   const [dataDir, setDataDir] = useState('')
   const api = (window as unknown as { astrolabe?: DesktopApi }).astrolabe
 
@@ -36,7 +41,7 @@ export default function AppMenuItems() {
 
   return (
     <>
-      <Button icon={<Settings size={13} />} onClick={() => nav('/me/settings')} title="设置">
+      <Button icon={<Settings size={13} />} onClick={() => nav(settingsPath)} title="设置">
         设置
       </Button>
       {dataDir && (

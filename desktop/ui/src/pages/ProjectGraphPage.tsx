@@ -31,6 +31,7 @@ import {
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton, RailMenu, RailMenuSep } from '../components/PageBar'
 import AppMenuItems from '../components/AppMenuItems'
+import SplitPane from '../components/SplitPane'
 import CodeWorkspace from '../components/code/CodeWorkspace'
 import { FileCode2 } from 'lucide-react'
 import Button from '../components/ui/Button'
@@ -165,47 +166,9 @@ export default function ProjectGraphPage() {
   useEffect(() => {
     if (isNarrow && selectedVid != null) setPanelCollapsed(false)
   }, [isNarrow, selectedVid])
-  // ★★ 写作区宽度（* 可拖拽分隔条调整；* 单位 px）⚠
-  const [panelWidth, setPanelWidth] = useState(340)
-  const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
+  // ★ mainRef 仍由窄屏上下拖用；左右两栏 + 拖拽交给 components/SplitPane
   const mainRef = useRef<HTMLDivElement>(null)
-  // ★★ 与所有者原型同口径：* 写作区最小 280、* 图谱最小 320 ——*
-  //   * 上限是**动态**的（容器宽 − 图谱最小宽 − 分隔条），* ⛔ 不是写死的 680 ⚠
-  const MIN_PANEL = 280
-  const MIN_GRAPH = 320
-  const RESIZER = 4
 
-  const clampPanel = (w: number) => {
-    const inner = mainRef.current?.clientWidth ?? window.innerWidth
-    const max = Math.max(MIN_PANEL, inner - RESIZER - MIN_GRAPH)
-    return Math.min(max, Math.max(MIN_PANEL, w))
-  }
-
-  // ★ 拖拽分隔条：向左拖 ⇒ 写作区变宽（* 上下限 280 ~ 680）⚠
-  const onResizeStart = (e: React.PointerEvent) => {
-    e.preventDefault()
-    resizeRef.current = { startX: e.clientX, startW: panelWidth }
-    window.addEventListener('pointermove', onResizeMove)
-    window.addEventListener('pointerup', onResizeEnd)
-  }
-  const onResizeMove = (e: PointerEvent) => {
-    if (!resizeRef.current) return
-    const next = resizeRef.current.startW - (e.clientX - resizeRef.current.startX)
-    setPanelWidth(clampPanel(next))
-  }
-  const onResizeEnd = () => {
-    resizeRef.current = null
-    window.removeEventListener('pointermove', onResizeMove)
-    window.removeEventListener('pointerup', onResizeEnd)
-  }
-  useEffect(() => {
-    const onWin = () => setPanelWidth((w) => clampPanel(w))
-    window.addEventListener('resize', onWin)
-    return () => {
-      window.removeEventListener('resize', onWin)
-      onResizeEnd()
-    }
-  }, [])
   const [hint, setHint] = useState('')
   // ★ 画布当前阶段（* 布局动画中 / 布局完成 / 流星已启动）——* 用来验证效果真的跑了 ⚠
   const [phase, setPhase] = useState('')
@@ -503,17 +466,16 @@ export default function ProjectGraphPage() {
         }}
       >
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
-        <div
-          ref={mainRef}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: isNarrow ? 'column' : 'row',
-            gap: 0,
-            position: 'relative',
-          }}
+        <SplitPane
+          containerRef={mainRef}
+          fixed="right"
+          initial={340}
+          min={280}
+          otherMin={320}
+          gap={0}
+          stacked={isNarrow}
+          showHandle={!fullscreen && !panelFull && !isNarrow}
+          style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}
         >
         {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
         <div
@@ -713,28 +675,9 @@ export default function ProjectGraphPage() {
 
         </div>
 
-        {/* ★★ 左右拖动调整宽度（* 形似所有者原型的分隔条）⚠ */}
-        {!fullscreen && !panelFull && !isNarrow && (
-          <div
-            onPointerDown={onResizeStart}
-            title="拖动调整宽度"
-            style={{
-              width: 4,
-              flexShrink: 0,
-              cursor: 'col-resize',
-              background: 'transparent',
-              transition: 'background .15s',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          />
-        )}
-
         {!fullscreen && (
         <div
           style={{
-            width: isNarrow ? '100%' : panelFull ? undefined : panelWidth,
-            flex: panelFull ? 1 : undefined,
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
@@ -824,6 +767,7 @@ export default function ProjectGraphPage() {
                 inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
                 canEditPath={canWrite}
                 flat
+                hideInfo
                 onAddToPath={selected ? () => addToPath(selected) : undefined}
                 onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
               />
@@ -831,7 +775,7 @@ export default function ProjectGraphPage() {
           />
         </div>
         )}
-        </div>
+        </SplitPane>
 
         {/* ★★★ **托底状态条**（* 所有者：「我页面底下也有一块的，你写的界面没了，
             整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}

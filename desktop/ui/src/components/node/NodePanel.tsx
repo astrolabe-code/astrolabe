@@ -9,6 +9,7 @@ import { errorMessage } from '../../api/errors'
 import { personalApi } from '../../api/personal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteSection from '../notes/NoteSection'
+import NodeHeading from './NodeHeading'
 
 // ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -46,6 +47,8 @@ interface NodePanelProps {
   flat?: boolean
   /** ★ `?think=1`：* 节点就绪后自动打开思考白板（* 首页直达用）⚠ */
   autoThink?: boolean
+  /** ★ 代码工作区顶部已经显示同一份节点头部 ⇒ 这里传 true，避免重复 */
+  hideInfo?: boolean
   /** ★★ `D106`：加入路径 */
   onAddToPath?: () => void
   /** ★★ `D106`：从路径移除 */
@@ -81,6 +84,7 @@ export default function NodePanel({
   onRemoveFromPath,
   flat,
   autoThink,
+  hideInfo,
 }: NodePanelProps) {
   const navigate = useNavigate()
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
@@ -159,252 +163,211 @@ export default function NodePanel({
         overflow: 'hidden',
       }}
     >
-      {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
-      {!infoOpen && (
-        // ★★★ 折叠后**单独占一行工具条**（* 左侧「节点信息」胶囊、* 右侧留给全屏按钮）——
-        //   · · 所有者：「折叠后，写作按钮，全屏按钮，以及折叠的胶囊按钮全部挤在一起了，
-        //     不好点击了」⚠
-        //   · · ⛔ 不再 absolute 浮在笔记区标题上 ⇒* 三者互不重叠 ✅
-        <div
-          style={{
-            height: 40,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            paddingRight: 42, // 给右上角全屏按钮（30×30 + 6 边距）留位
-            paddingLeft: 2,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setInfoOpen(true)}
-            title="展开节点信息"
-            style={{
-              padding: '3px 11px',
-              borderRadius: 999,
-              fontSize: 11.5,
-              color: 'var(--text-sub)',
-              background: 'var(--card)',
-              border: '1px solid var(--card-border)',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            <ChevronDown size={12} />
-            节点信息
-          </button>
-        </div>
-      )}
-      {infoOpen && (
-      <div
-        style={{
-          padding: '12px 14px',
-          flexShrink: 0,
-          borderBottom: '1px solid var(--card-border)',
-        }}
-      >
-        {/* ★★★ 第一行：**颜色小圆点 + 名称 + 类型徽章**（* 照原型 .code-panel-header）⚠
-            · · ★ 圆点 / 徽章文字 / 徽章边框 / 徽章底色 **全部取节点类型色** ✅ */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            paddingRight: 34, // 给右上角「写作区全屏」按钮让位
-            minWidth: 0,
-          }}
-        >
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: '50%',
-              background: kc,
-              flexShrink: 0,
-            }}
-          />
-          <span
-            className="mono"
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {node.name}
-          </span>
-          <span
-            style={{
-              fontSize: 10,
-              flexShrink: 0,
-              padding: '1px 7px',
-              borderRadius: 999,
-              lineHeight: '16px',
-              // ★★ 照原型 `.code-panel-type`：* 只有文字色 + 1px 同色边框，
-              //   ⛔ **背景透明**（* 背后是什么色就透什么色，* 不要淡灰底）⚠
-              color: kc,
-              // ★ 未登记类型虚线（与左侧列表一致）
-              border: `1px ${kindKnown(node.kind) ? 'solid' : 'dashed'} ${kc}`,
-              background: 'transparent',
-            }}
-          >
-            {kindLabel(node.kind)}
-          </span>
-          {/* ★★ 收起 / 展开（* 收起后只留这一行，* 笔记区自动变大）⚠ */}
-          <button
-            type="button"
-            onClick={() => setInfoOpen((v) => !v)}
-            title={infoOpen ? '收起节点信息' : '展开节点信息'}
-            aria-label={infoOpen ? '收起节点信息' : '展开节点信息'}
-            style={{
-              marginLeft: 'auto',
-              display: 'inline-flex',
-              alignItems: 'center',
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: 'var(--text-sub)',
-            }}
-          >
-            {infoOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        </div>
-        {infoOpen && (
+      {/* ① 节点信息：代码工作区顶部已经显示同一份 ⇒ hideInfo 时整块不渲染 */}
+      {!hideInfo && (
         <>
-        {/* ★★ 函数签名 —— 读源码时最想知道"它要什么参数、返回什么" ⚠
-            （解析时顺手取的，⛔ 不存在于源码外的地方） */}
-        {node.signature && node.signature !== node.name && (
-          <div
-            className="mono faint"
-            style={{
-              fontSize: 11,
-              marginTop: 6,
-              lineHeight: 1.6,
-              wordBreak: 'break-word',
-              borderLeft: '2px solid var(--card-border)',
-              paddingLeft: 6,
-            }}
-          >
-            {node.signature}
-          </div>
-        )}
-        {/* ★ 字段列表：读源码时"这个结构体里有什么"比"它叫什么"更常被问 */}
-        {fields.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              onClick={() => setFieldsOpen((v) => !v)}
-              style={{
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                cursor: 'pointer',
-                fontSize: 11,
-                color: 'var(--text-faint)',
-              }}
-            >
-              {fieldsOpen ? '▾' : '▸'} 字段 {fields.length} 个
-            </button>
-            {fieldsOpen && (
-              <div className="mono" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 2 }}>
-                {fields.slice(0, 40).map((f) => (
-                  <div key={`${f.name}-${f.line}`} style={{ display: 'flex', gap: 6 }}>
-                    <span style={{ color: 'var(--text-faint)', minWidth: 34, textAlign: 'right' }}>
-                      {f.line}
-                    </span>
-                    <span style={{ color: 'var(--text-main)' }}>{f.name}</span>
-                    {f.type_text && <span style={{ color: 'var(--text-faint)' }}>{f.type_text}</span>}
-                  </div>
-                ))}
-                {fields.length > 40 && (
-                  <div className="faint" style={{ paddingLeft: 40 }}>
-                    … 还有 {fields.length - 40} 个
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-        {node.qname && node.qname !== node.name && (
-          <div
-            className="mono faint"
-            style={{
-              fontSize: 11,
-              marginTop: 6,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {node.qname}
-          </div>
-        )}
-        <div
-          className="mono faint"
-          style={{
-            fontSize: 11,
-            marginTop: 2,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {node.file_path}:{node.line}
-          <span style={{ opacity: 0.55 }}> · {node.lang}</span>
-        </div>
-        {/* ★★ `D106`：学习路径入口（* 作者才能改；* 在路径里显示序号）⚠ */}
-        {canEditPath && (
+        {/* ① 节点信息：* 展开=整张卡片；**收起=整个卡片消失**，只留一颗小胶囊 ✅ */}
+        {!infoOpen && (
+          // ★★★ 折叠后**单独占一行工具条**（* 左侧「节点信息」胶囊、* 右侧留给全屏按钮）——
+          //   · · 所有者：「折叠后，写作按钮，全屏按钮，以及折叠的胶囊按钮全部挤在一起了，
+          //     不好点击了」⚠
+          //   · · ⛔ 不再 absolute 浮在笔记区标题上 ⇒* 三者互不重叠 ✅
           <div
             style={{
-              marginTop: 10,
-              paddingTop: 8,
-              borderTop: '1px dashed var(--card-border)',
+              height: 40,
+              flexShrink: 0,
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
+              paddingRight: 42, // 给右上角全屏按钮（30×30 + 6 边距）留位
+              paddingLeft: 2,
             }}
           >
-            {inPathOrdinal != null ? (
-              <>
-                <span className="tag" style={{ fontSize: 10.5 }}>
-                  学习路径第 {inPathOrdinal + 1} 个
-                </span>
-                <button
-                  type="button"
-                  className="faint"
-                  style={{ fontSize: 11.5, cursor: 'pointer', background: 'none', border: 'none' }}
-                  onClick={onRemoveFromPath}
-                >
-                  从路径移除
-                </button>
-              </>
-            ) : (
+            <button
+              type="button"
+              onClick={() => setInfoOpen(true)}
+              title="展开节点信息"
+              style={{
+                padding: '3px 11px',
+                borderRadius: 999,
+                fontSize: 11.5,
+                color: 'var(--text-sub)',
+                background: 'var(--card)',
+                border: '1px solid var(--card-border)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <ChevronDown size={12} />
+              节点信息
+            </button>
+          </div>
+        )}
+        {infoOpen && (
+        <div
+          style={{
+            padding: '12px 14px',
+            flexShrink: 0,
+            borderBottom: '1px solid var(--card-border)',
+          }}
+        >
+          {/* ★★ 名称行与路径行统一由 NodeHeading 渲染（与代码工作区共用同一份） */}
+          <NodeHeading
+            node={node}
+            trailing={
               <button
                 type="button"
+                onClick={() => setInfoOpen((v) => !v)}
+                title={infoOpen ? '收起节点信息' : '展开节点信息'}
+                aria-label={infoOpen ? '收起节点信息' : '展开节点信息'}
                 style={{
-                  fontSize: 11.5,
-                  cursor: 'pointer',
-                  color: 'var(--accent)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
                   background: 'none',
                   border: 'none',
                   padding: 0,
+                  cursor: 'pointer',
+                  color: 'var(--text-sub)',
                 }}
-                onClick={onAddToPath}
               >
-                + 加入学习路径
+                {infoOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
-            )}
+            }
+          />
+          {infoOpen && (
+          <>
+          {/* ★★ 函数签名 —— 读源码时最想知道"它要什么参数、返回什么" ⚠
+              （解析时顺手取的，⛔ 不存在于源码外的地方） */}
+          {node.signature && node.signature !== node.name && (
+            <div
+              className="mono faint"
+              style={{
+                fontSize: 11,
+                marginTop: 6,
+                lineHeight: 1.6,
+                wordBreak: 'break-word',
+                borderLeft: '2px solid var(--card-border)',
+                paddingLeft: 6,
+              }}
+            >
+              {node.signature}
+            </div>
+          )}
+          {/* ★ 字段列表：读源码时"这个结构体里有什么"比"它叫什么"更常被问 */}
+          {fields.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={() => setFieldsOpen((v) => !v)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  color: 'var(--text-faint)',
+                }}
+              >
+                {fieldsOpen ? '▾' : '▸'} 字段 {fields.length} 个
+              </button>
+              {fieldsOpen && (
+                <div className="mono" style={{ fontSize: 11, lineHeight: 1.9, marginTop: 2 }}>
+                  {fields.slice(0, 40).map((f) => (
+                    <div key={`${f.name}-${f.line}`} style={{ display: 'flex', gap: 6 }}>
+                      <span style={{ color: 'var(--text-faint)', minWidth: 34, textAlign: 'right' }}>
+                        {f.line}
+                      </span>
+                      <span style={{ color: 'var(--text-main)' }}>{f.name}</span>
+                      {f.type_text && <span style={{ color: 'var(--text-faint)' }}>{f.type_text}</span>}
+                    </div>
+                  ))}
+                  {fields.length > 40 && (
+                    <div className="faint" style={{ paddingLeft: 40 }}>
+                      … 还有 {fields.length - 40} 个
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {node.qname && node.qname !== node.name && (
+            <div
+              className="mono faint"
+              style={{
+                fontSize: 11,
+                marginTop: 6,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {node.qname}
+            </div>
+          )}
+          <div
+            className="mono faint"
+            style={{
+              fontSize: 11,
+              marginTop: 2,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {node.file_path}:{node.line}
+            <span style={{ opacity: 0.55 }}> · {node.lang}</span>
           </div>
+          {/* ★★ `D106`：学习路径入口（* 作者才能改；* 在路径里显示序号）⚠ */}
+          {canEditPath && (
+            <div
+              style={{
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: '1px dashed var(--card-border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              {inPathOrdinal != null ? (
+                <>
+                  <span className="tag" style={{ fontSize: 10.5 }}>
+                    学习路径第 {inPathOrdinal + 1} 个
+                  </span>
+                  <button
+                    type="button"
+                    className="faint"
+                    style={{ fontSize: 11.5, cursor: 'pointer', background: 'none', border: 'none' }}
+                    onClick={onRemoveFromPath}
+                  >
+                    从路径移除
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  style={{
+                    fontSize: 11.5,
+                    cursor: 'pointer',
+                    color: 'var(--accent)',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                  }}
+                  onClick={onAddToPath}
+                >
+                  + 加入学习路径
+                </button>
+              )}
+            </div>
+          )}
+          </>
+          )}
+        </div>
         )}
         </>
-        )}
-      </div>
       )}
 
       {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}

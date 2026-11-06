@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { FileCode2, Lock, Settings, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
@@ -7,6 +7,7 @@ import { useProject } from '../query/projects'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
+import SplitPane from '../components/SplitPane'
 import CodeWorkspace from '../components/code/CodeWorkspace'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
@@ -56,51 +57,7 @@ export default function ProjectPage() {
   // ★ 代码工作区（顶栏「源码」按钮打开；关闭后回到原来的两栏）
   const [codeOpen, setCodeOpen] = useState(false)
 
-  // ★★★ 2026-11-05：**左栏可拖动改宽** ⚠
-  //   所有者：「列表页也要像图谱页有左右拉伸的功能呀。」
-  //   口径与图谱页一致（`ProjectGraphPage` 的 panelWidth）：
-  //     · 左栏最小 220、右栏最小 320、分隔条 4px
-  //     · 上限是**动态**的（容器宽 − 右栏最小 − 分隔条），⛔ 不是写死的
-  const mainRef = useRef<HTMLDivElement>(null)
-  const [listWidth, setListWidth] = useState(300)
-  const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
-  // ★★★ 最小放宽到 280：行尾两枚图标(60px) + 徽标 + 函数名都要有位置
-  //   （所有者：「应该把能缩小的宽度放大一点」）
-  const MIN_LIST = 280
-  const MIN_NOTE = 320
-  const RESIZER = 4
-
-  const clampList = (w: number) => {
-    const inner = mainRef.current?.clientWidth ?? window.innerWidth
-    const max = Math.max(MIN_LIST, inner - RESIZER - MIN_NOTE)
-    return Math.min(max, Math.max(MIN_LIST, w))
-  }
-  const onResizeMove = (e: PointerEvent) => {
-    if (!resizeRef.current) return
-    // ★ 向右拖 ⇒ 左栏变宽（与图谱页"向左拖右栏变宽"方向对称）
-    const next = resizeRef.current.startW + (e.clientX - resizeRef.current.startX)
-    setListWidth(clampList(next))
-  }
-  const onResizeEnd = () => {
-    resizeRef.current = null
-    window.removeEventListener('pointermove', onResizeMove)
-    window.removeEventListener('pointerup', onResizeEnd)
-  }
-  const onResizeStart = (e: React.PointerEvent) => {
-    e.preventDefault()
-    resizeRef.current = { startX: e.clientX, startW: listWidth }
-    window.addEventListener('pointermove', onResizeMove)
-    window.addEventListener('pointerup', onResizeEnd)
-  }
-  useEffect(() => {
-    const onWin = () => setListWidth((w) => clampList(w))
-    window.addEventListener('resize', onWin)
-    return () => {
-      window.removeEventListener('resize', onWin)
-      onResizeEnd()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // ★ 左右两栏 + 拖拽由 components/SplitPane 统一提供（⛔ 本页不再写第二套骨架）
 
   /**
    * ★★★ 「继续上次」的**记录时机**（`D120`③ · 2026-10-27）⚠
@@ -204,16 +161,14 @@ export default function ProjectPage() {
           · · 所有者：「这个页面的左边没有列表之类的，完全平铺很长，导致页面看起来
             很怪」——* 列表有 137 个节点却没限高 ⇒ 左栏 5977px，整页被拉成一条长列 ⚠
           · · ★ 左栏**独立滚动**（sticky + maxHeight）⇒ 页面高度只由右栏决定 ✅ */}
-      <div
-        ref={mainRef}
-        style={{
-          display: 'grid',
-          // ★ 左栏宽度由分隔条决定（拖动改 listWidth）；窄屏仍单列
-          gridTemplateColumns: isNarrow ? '1fr' : `${listWidth}px minmax(0, 1fr)`,
-          gap: 14,
-          alignItems: 'start',
-          position: 'relative',
-        }}
+      <SplitPane
+        fixed="left"
+        initial={300}
+        min={220}
+        otherMin={320}
+        gap={14}
+        stacked={isNarrow}
+        style={{ position: 'relative', alignItems: 'flex-start' }}
       >
         <div
           className="card"
@@ -298,27 +253,6 @@ export default function ProjectPage() {
           </div>
         </div>
 
-        {/* ★★ 左右拖动调整宽度（与图谱页同款手感：透明条，悬停变强调色）⚠ */}
-        {!isNarrow && (
-          <div
-            onPointerDown={onResizeStart}
-            title="拖动调整宽度"
-            style={{
-              position: 'absolute',
-              top: 0,
-              bottom: 0,
-              left: listWidth + (14 - RESIZER) / 2,
-              width: RESIZER,
-              cursor: 'col-resize',
-              background: 'transparent',
-              transition: 'background .15s',
-              zIndex: 5,
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          />
-        )}
-
         {/* ★★★ 右侧**始终是一整块白色面板**（* 所有者：「右边的写作区也没有白色
             背景填满，而且没有一开始就出现」）——
             · · ⛔ 不再依赖 NodePanel 自己画卡：* 没选节点时它返回空态、没有背景 ⚠
@@ -351,12 +285,12 @@ export default function ProjectPage() {
                 canWrite={canWrite}
                 autoThink={autoThink}
                 flat
+                hideInfo
               />
             }
           />
         </div>
-      </div>
-
+      </SplitPane>
       </div>
 
       {/* ★★★ 代码工作区：占满内容区（顶栏仍在），关闭即回到原两栏 ⚠ */}

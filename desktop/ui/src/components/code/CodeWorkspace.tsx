@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   Copy,
   Maximize,
@@ -12,6 +12,7 @@ import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
 import type { GraphNode } from '../../lib/mergeGraph'
 import NodePanel from '../node/NodePanel'
+import NodeHeading from '../node/NodeHeading'
 import FileTree, { firstLevelDirs } from './FileTree'
 import CodeViewer from './CodeViewer'
 
@@ -185,11 +186,6 @@ export default function CodeWorkspace({
     return () => document.removeEventListener('keydown', onKey)
   }, [fullscreen, immersive])
 
-  const title = useMemo(
-    () => activePath || node?.qname || node?.name || '代码',
-    [activePath, node?.qname, node?.name],
-  )
-
   const copy = () => {
     if (!source) return
     void navigator.clipboard.writeText(source.text).then(() => {
@@ -219,56 +215,6 @@ export default function CodeWorkspace({
 
   return (
     <div style={shellStyle}>
-      {/* ★ 沉浸态：标题行 + tab 行都隐藏，只留右上角「退出沉浸」 */}
-      {!immersive && (
-        <div className="code-head">
-          <span
-            title={title}
-            style={{
-              fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-              fontSize: 13,
-              fontWeight: 600,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              minWidth: 0,
-            }}
-          >
-            {title}
-            {focusLineNo ? <span className="faint"> : {focusLineNo}</span> : null}
-          </span>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-            <IconBtn
-              title={treeOpen ? '收起文件树' : '展开文件树'}
-              onClick={toggleTree}
-              active={treeOpen}
-            >
-              <PanelLeft size={16} strokeWidth={1.5} />
-            </IconBtn>
-            <IconBtn title="沉浸（隐藏标题和标签页）" onClick={() => setImmersive(true)}>
-              <SquareChevronDown size={16} strokeWidth={1.5} />
-            </IconBtn>
-            <IconBtn
-              title={fullscreen ? '退出全屏' : '全屏'}
-              onClick={() => setFullscreen((v) => !v)}
-              active={fullscreen}
-            >
-              {fullscreen ? (
-                <Minimize size={16} strokeWidth={1.5} />
-              ) : (
-                <Maximize size={16} strokeWidth={1.5} />
-              )}
-            </IconBtn>
-            {onClose && (
-              <IconBtn title="关闭代码窗口" onClick={onClose}>
-                <X size={16} strokeWidth={1.5} />
-              </IconBtn>
-            )}
-          </div>
-        </div>
-      )}
-
       {immersive && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 10px 0' }}>
           <button
@@ -286,6 +232,66 @@ export default function CodeWorkspace({
           >
             ∨ 退出沉浸
           </button>
+        </div>
+      )}
+
+      {/* ★★★ 第一行：**节点头部（圆点 + 名称 + 类型 + 路径）** 在左，工具按钮在右；
+          tab 行在它下面（所有者：「我叫你这样摆！」） */}
+      {!immersive && (
+        <div
+          style={{
+            flex: 'none',
+            padding: '8px 12px',
+            borderBottom: '1px solid var(--card-border)',
+          }}
+        >
+          <NodeHeading
+            node={node}
+            trailing={
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {source && (
+                  <>
+                    <span
+                      className="faint"
+                      style={{ fontSize: 11.5, whiteSpace: 'nowrap', marginRight: 4 }}
+                    >
+                      {source.lang || '文本'} · {source.lines} 行
+                    </span>
+                    <IconBtn title="复制全部代码" onClick={copy}>
+                      <Copy size={14} strokeWidth={1.5} />
+                      {copied ? '已复制' : ''}
+                    </IconBtn>
+                  </>
+                )}
+                <IconBtn
+                  title={treeOpen ? '收起文件树' : '展开文件树'}
+                  onClick={toggleTree}
+                  active={treeOpen}
+                >
+                  <PanelLeft size={16} strokeWidth={1.5} />
+                </IconBtn>
+                <IconBtn title="沉浸（隐藏标签页）" onClick={() => setImmersive(true)}>
+                  <SquareChevronDown size={16} strokeWidth={1.5} />
+                </IconBtn>
+                <IconBtn
+                  title={fullscreen ? '退出全屏' : '全屏'}
+                  onClick={() => setFullscreen((v) => !v)}
+                  active={fullscreen}
+                >
+                  {fullscreen ? (
+                    <Minimize size={16} strokeWidth={1.5} />
+                  ) : (
+                    <Maximize size={16} strokeWidth={1.5} />
+                  )}
+                </IconBtn>
+                {onClose && (
+                  <IconBtn title="关闭代码窗口" onClick={onClose}>
+                    <X size={16} strokeWidth={1.5} />
+                  </IconBtn>
+                )}
+              </div>
+            }
+          />
         </div>
       )}
 
@@ -359,39 +365,10 @@ export default function CodeWorkspace({
                 overflow: 'hidden',
               }}
             >
-              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat />}
+              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
             </div>
           ) : (
             <>
-              <div
-                className="code-filebar faint"
-                style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
-              >
-                <span
-                  title={activePath}
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {activePath || '未选择文件'}
-                </span>
-                {source && (
-                  <>
-                    <span style={{ flex: 'none' }}>
-                      {source.lang || '文本'} · {source.lines} 行
-                    </span>
-                    <button
-                      type="button"
-                      onClick={copy}
-                      title="复制全部代码"
-                      className="code-icon-btn"
-                      style={{ marginLeft: 'auto', flex: 'none' }}
-                    >
-                      <Copy size={14} strokeWidth={1.5} />
-                      {copied ? '已复制' : ''}
-                    </button>
-                  </>
-                )}
-              </div>
-
               {loading ? (
                 <div className="faint" style={{ padding: 20, fontSize: 12.5 }}>正在读取…</div>
               ) : sourceError ? (

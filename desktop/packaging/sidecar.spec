@@ -50,6 +50,8 @@ HIDDEN = [
     "paths",
     "filefilter",
     "projectstore",
+    # code viewer: file tree / source read
+    "source",
 ]
 
 a = Analysis(

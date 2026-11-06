@@ -6,8 +6,8 @@ import {ChevronDown,
   Loader2,
   Route,
   SlidersHorizontal,
-  Maximize2,
-  Minimize2,
+  Maximize,
+  Minimize,
   Search,
   Trash2,
   Workflow,
@@ -31,6 +31,8 @@ import {
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton, RailMenu, RailMenuSep } from '../components/PageBar'
 import AppMenuItems from '../components/AppMenuItems'
+import CodeWorkspace from '../components/code/CodeWorkspace'
+import { FileCode2 } from 'lucide-react'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
@@ -102,6 +104,8 @@ export default function ProjectGraphPage() {
   const [shownCount, setShownCount] = useState<number | null>(null)
   // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
   const [showAllNodes, setShowAllNodes] = useState(false)
+  // ★ 代码工作区
+  const [codeOpen, setCodeOpen] = useState(false)
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
   /** ★★ 改图抽屉（个人版核心兜底能力）⚠ */
@@ -452,6 +456,13 @@ export default function ProjectGraphPage() {
           title="改图：解析不准的地方在这里补"
           onClick={() => setCurateOpen(true)}
         />
+        <RailButton
+          icon={<FileCode2 size={13} />}
+          label="源码"
+          title="打开代码工作区（当前节点的源码 + 笔记）"
+          active={codeOpen}
+          onClick={() => setCodeOpen((v) => !v)}
+        />
         <RailMenu label="工具" title="工具：依赖线 / 学习路径 / 显示全部">
           <Button
             variant={showImports ? 'primary' : 'ghost'}
@@ -532,22 +543,20 @@ export default function ProjectGraphPage() {
               top: 10,
               right: 10,
               zIndex: 30,
-              width: isNarrow ? 30 : 34,
-              height: isNarrow ? 30 : 34,
-              borderRadius: '50%',
-              display: 'grid',
-              placeItems: 'center',
+              padding: 5,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               cursor: 'pointer',
-              // ★★ 所有者：「两个全屏按钮不要整阴影之类的装饰，看着怪怪的」⚠
-              //   ⇒ ⛔ 不用 `.card`（它带 box-shadow: --shadow-card）、⛔ 无任何阴影
-              //   ⇒ 只留**白底 + 1px 细边框** ✅
-              background: 'var(--card)',
-              border: '1px solid var(--card-border)',
+              // ★★★ 2026-11-06：跟代码工作区右上角**同一套细线图标** ⚠
+              //   所有者：「现在的全屏按钮，太怪了」⇒ ⛔ 圆形底板 / 边框 / 阴影
+              background: 'transparent',
+              border: 'none',
               color: 'var(--text-sub)',
               boxShadow: 'none',
             }}
           >
-            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {fullscreen ? <Minimize size={16} strokeWidth={1.5} /> : <Maximize size={16} strokeWidth={1.5} />}
           </button>
 
           {/* ★★ `D107`：失效 vid 提示 + 一键清理（* ⛔ 不自动删）⚠ */}
@@ -772,20 +781,19 @@ export default function ProjectGraphPage() {
               top: 6,
               right: 6,
               zIndex: 12,
-              width: 30,
-              height: 30,
-              borderRadius: '50%',
-              display: 'grid',
-              placeItems: 'center',
+              padding: 5,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               cursor: 'pointer',
-              // ★★ 同图全屏：⛔ 无阴影、⛔ 不用 .card ⚠
-              background: 'var(--card)',
-              border: '1px solid var(--card-border)',
+              // ★ 同图全屏：⛔ 圆形底板 / 边框 / 阴影（与代码工作区一致）
+              background: 'transparent',
+              border: 'none',
               color: 'var(--text-sub)',
               boxShadow: 'none',
             }}
           >
-            {panelFull ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {panelFull ? <Minimize size={16} strokeWidth={1.5} /> : <Maximize size={16} strokeWidth={1.5} />}
           </button>
           {isNarrow && !panelFull && (
             <>
@@ -886,6 +894,23 @@ export default function ProjectGraphPage() {
         canReparse={!(project.data as unknown as { is_blank?: boolean })?.is_blank}
         blank={!!(project.data as unknown as { is_blank?: boolean })?.is_blank}
       />
+      {/* ★★★ 代码工作区：占满内容区（顶栏仍在），关闭即回到图谱 ⚠ */}
+      {codeOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 'var(--nav-h, 40px) 0 0 0',
+            zIndex: 90,
+            background: 'var(--card, #fff)',
+          }}
+        >
+          <CodeWorkspace
+            projectRef={projectRef}
+            node={selected}
+            onClose={() => setCodeOpen(false)}
+          />
+        </div>
+      )}
     </AppLayout>
   )
 }

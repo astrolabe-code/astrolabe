@@ -40,6 +40,7 @@ import library
 import projectstore
 import notefile
 import store
+import source
 
 VERSION = "0.3.0"
 
@@ -125,6 +126,8 @@ R_GRAPH = re.compile(r"^/api/projects/([^/]+)/graph/$")
 R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
+R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
+R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
 
 
 def _data_dir_is_ours(data_dir: str, code_root: str) -> bool:
@@ -465,6 +468,33 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             _activate(entry)
             p = store.get_or_create_project(CONN, name, code_root, ref=entry["ref"])
             return ok({"project": dict(p)})
+
+    # ★★★ 代码展示：列文件树 / 读源码（见 sidecar/source.py）⚠
+    #   · 文件树**全部显示**，⛔ 不按 .gitignore 过滤（所有者明确要求）
+    #   · 读文件有三条硬边界：只在项目根内、只认 UTF-8、≤512KB
+    m = R_TREE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            return ok(source.tree(p["root"]))
+        except source.SourceError as exc:
+            return bad(exc.message, 400)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"列文件树失败：{type(exc).__name__}", 400)
+
+    m = R_SOURCE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            return ok(source.read(p["root"], str(body.get("path") or "")))
+        except source.SourceError as exc:
+            return bad(f"{exc.message}（{exc.code}）", 400)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"读取失败：{type(exc).__name__}", 400)
 
     # ★★ 项目设置（个人版没有"权限/可见性"这些项，只有事实）
     m = R_PSET.match(path)

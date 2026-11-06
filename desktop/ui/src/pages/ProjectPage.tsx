@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Lock, Settings, Workflow } from 'lucide-react'
+import { FileCode2, Lock, Settings, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
+import CodeWorkspace from '../components/code/CodeWorkspace'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
@@ -52,6 +53,8 @@ export default function ProjectPage() {
   const [selected, setSelected] = useState<GraphNode | null>(null)
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
+  // ★ 代码工作区（顶栏「源码」按钮打开；关闭后回到原来的两栏）
+  const [codeOpen, setCodeOpen] = useState(false)
 
   // ★★★ 2026-11-05：**左栏可拖动改宽** ⚠
   //   所有者：「列表页也要像图谱页有左右拉伸的功能呀。」
@@ -160,6 +163,9 @@ export default function ProjectPage() {
       page={false}
     >
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
+      {/* ★★★ 2026-11-05：只保留**顶栏这一处**入口 ⚠
+          所有者：「原来的按钮没去掉吗？」——页面内那行「图谱 / 设置」已删除，
+          否则同一个动作在顶栏和正文里各出现一次 */}
       <PageBar>
         <RailButton
           icon={<Workflow size={13} />}
@@ -167,23 +173,20 @@ export default function ProjectPage() {
           title="打开图谱（看它和谁连着）"
           onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/graph`)}
         />
+        <RailButton
+          icon={<Settings size={13} />}
+          label="设置"
+          title="项目设置"
+          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/settings`)}
+        />
+        <RailButton
+          icon={<FileCode2 size={13} />}
+          label="源码"
+          title="打开代码工作区（当前节点的源码 + 笔记）"
+          active={codeOpen}
+          onClick={() => setCodeOpen((v) => !v)}
+        />
       </PageBar>
-
-      {/* ★★ 自绘顶部操作行（* 靠右，不占 `.page` 那 1120 的窄容器）⚠ */}
-      <div
-        className="flex items-center justify-end gap-2"
-        style={{ marginBottom: 12, padding: isNarrow ? '0 10px' : '0 18px' }}
-      >
-        {/* ★★ `D98`：图谱入口 ——* 谁都能看（读权限由后端判）✅ */}
-        <Link to={`/p/${encodeURIComponent(projectRef)}/graph`}>
-          <Button icon={<Workflow size={14} />}>图谱</Button>
-        </Link>
-        {canWrite && (
-          <Link to={`/p/${encodeURIComponent(projectRef)}/settings`}>
-            <Button icon={<Settings size={14} />}>设置</Button>
-          </Link>
-        )}
-      </div>
 
       {/* ★★ 内容区：* 左右只留 18px（移动 10px）⇒* 白面板尽量宽 ⚠ */}
       <div style={{ padding: isNarrow ? '0 10px' : '0 18px' }}>
@@ -288,6 +291,7 @@ export default function ProjectPage() {
                 navigate(`/p/${encodeURIComponent(projectRef)}/graph?node=${n.vid}`)
               }
               selectVid={deepVid}
+              onOpenCode={() => setCodeOpen(true)}
             />
           </div>
         </div>
@@ -339,6 +343,23 @@ export default function ProjectPage() {
 
       </div>
 
+      {/* ★★★ 代码工作区：占满内容区（顶栏仍在），关闭即回到原两栏 ⚠ */}
+      {codeOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 'var(--nav-h, 40px) 0 0 0',
+            zIndex: 90,
+            background: 'var(--card, #fff)',
+          }}
+        >
+          <CodeWorkspace
+            projectRef={projectRef}
+            node={selected}
+            onClose={() => setCodeOpen(false)}
+          />
+        </div>
+      )}
     </AppLayout>
   )
 }

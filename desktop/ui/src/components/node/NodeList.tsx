@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { GitBranch, Loader2, Search } from 'lucide-react'
+import { FileCode2, GitBranch, Loader2, Search } from 'lucide-react'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 import { entriesFirst, isEntryNode } from '../../lib/entry'
@@ -29,6 +29,8 @@ interface NodeListProps {
   onSelect: (node: GraphNode) => void
   /** ★★ 点一行就去图谱里看它 + 它的直接邻居（⛔ 不再是"只在右栏预览"）⚠ */
   onOpenGraph?: (node: GraphNode) => void
+  /** ★★ 直接打开代码工作区并定位到这个节点 */
+  onOpenCode?: (node: GraphNode) => void
   /** ★ `?think=1`：* 列表就绪后自动选中第一个节点（* 让思考白板有节点可开）⚠ */
   autoSelectFirst?: boolean
   /**
@@ -47,6 +49,7 @@ export default function NodeList({
   selectedUid,
   onSelect,
   onOpenGraph,
+  onOpenCode,
   autoSelectFirst,
   selectVid,
 }: NodeListProps) {
@@ -198,7 +201,7 @@ export default function NodeList({
                       background: active ? 'var(--accent-dim)' : 'transparent',
                       cursor: 'pointer',
                       // 给右侧的「图谱」按钮留位置，免得多行时压住文字
-                      paddingRight: onOpenGraph ? 34 : 10,
+                      paddingRight: onOpenGraph || onOpenCode ? 60 : 10,
                     }}
                   >
                     <div className="flex items-center gap-2">
@@ -266,7 +269,7 @@ export default function NodeList({
                       }}
                       style={{
                         position: 'absolute',
-                        right: 6,
+                        right: onOpenCode ? 32 : 6,
                         top: '50%',
                         transform: 'translateY(-50%)',
                         display: 'inline-flex',
@@ -283,6 +286,37 @@ export default function NodeList({
                       }}
                     >
                       <GitBranch size={12} />
+                    </button>
+                  )}
+                  {/* ★★★ 2026-11-06：**点节点直接打开代码**（并定位到它所在行）⚠ */}
+                  {onOpenCode && n.file_path && (
+                    <button
+                      type="button"
+                      title="查看这个节点的源码"
+                      aria-label="查看源码"
+                      onClick={() => {
+                        onSelect(n)
+                        onOpenCode(n)
+                      }}
+                      style={{
+                        position: 'absolute',
+                        right: 6,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        borderRadius: 6,
+                        border: '1px solid var(--card-border)',
+                        background: 'var(--card-bg, transparent)',
+                        color: 'var(--text-sub)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <FileCode2 size={12} />
                     </button>
                   )}
                 </li>

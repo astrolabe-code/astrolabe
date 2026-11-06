@@ -461,7 +461,8 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .graph-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* ★ 右侧「搜索 Ctrl+K」属于 PersonalBar，这里只需左对齐 ⚠ */
+  justify-content: flex-start;
   gap: 8px;
   flex: 1;
   min-width: 0;
@@ -590,3 +591,82 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 @media (max-width: 900px) {
   .rail-label { display: none; }
 }
+
+/* ==========================================================================
+   ★★★ 代码工作区（2026-11-06）
+   所有者给的样式要点：tab 切换、可折叠文件树、右上角三枚同款细线图标
+   ⛔ 不用紫色圆点 / 胶囊 / 黄色警告条 / 圆形底板按钮
+   ========================================================================== */
+.code-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* ★ 右上角三枚（+关闭）同规格细线图标：无背景/无边框/无阴影 */
+.code-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.code-icon-btn:hover { background: rgba(15, 23, 42, .06); }
+
+/* ★ tab：蓝色下划线选中态 */
+.code-tabs {
+  flex: none;
+  display: flex;
+  gap: 18px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--card-border);
+}
+.code-tab {
+  padding: 9px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-sub, #6b7280);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.code-tab:hover { color: var(--text-main); }
+.code-tab.is-active {
+  color: var(--accent, #2563eb);
+  border-bottom-color: var(--accent, #2563eb);
+}
+
+.code-filebar {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.code-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 26px;
+  padding-right: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.code-tree-row:hover { background: rgba(15, 23, 42, .05); }

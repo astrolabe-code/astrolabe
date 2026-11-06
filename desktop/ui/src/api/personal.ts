@@ -14,6 +14,7 @@
  * ```ts\n * const hooks = personalApi\n * queryFn: () => hooks ? hooks.graphNodes(ref, limit, offset) : unwrap(await apiGet(...))\n * ```\n */
 
 import type { Note, NoteKind } from './types'
+import type { FileTreeData, SourceFile } from './code'
 import type { GraphNode } from '../lib/mergeGraph'
 
 // ---------------------------------------------------------------- 基础请求
@@ -208,4 +209,15 @@ export const personalApi = {
   },
 
   deleteNote: (ref: string) => del<{ deleted: string }>(`/api/notes/${encodeURIComponent(ref)}/`),
+
+  // ---- 代码展示（见 sidecar/source.py）
+  /** ★ 列项目根下**全部**文件与目录（⛔ 不按 .gitignore 过滤）*/
+  fileTree: (ref: string) =>
+    get<FileTreeData>(`/api/projects/${encodeURIComponent(ref)}/tree/`),
+
+  /** ★ 读一个文件的源码（只在项目根内、只认 UTF-8、≤512KB） */
+  readSource: (ref: string, path: string) =>
+    get<SourceFile>(
+      `/api/projects/${encodeURIComponent(ref)}/source/?path=${encodeURIComponent(path)}`,
+    ),
 }

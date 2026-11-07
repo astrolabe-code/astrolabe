@@ -509,6 +509,10 @@ export default function ThinkingBoard({
   const boardNotes = notes.filter((n) => onBoard.has(n.id))
   /** ★ 选中谁，按钮就对谁；没选中时回落到进入的那张卡 */
   const navTarget = selectedCardId || focusCardId || ''
+  const kids = linkTable[navTarget]?.children ?? []
+  const refs = linkTable[navTarget]?.links ?? []
+  const pendingKids = kids.filter((c) => !expanded.includes(c))
+  const pendingRefs = refs.filter((c) => !expanded.includes(c))
   const titleOf = (card: string) => {
     const n = notes.find((x) => (x.card_id || cardId(projectRef, x.ref)) === card)
     if (n) return n.title || n.ref
@@ -619,25 +623,31 @@ export default function ThinkingBoard({
                 type="button"
                 className="code-icon-btn"
                 style={{ gap: 4, border: '1px solid var(--card-border)' }}
-                disabled={
-                  (linkTable[navTarget]?.children ?? []).filter(
-                    (c) => !expanded.includes(c),
-                  ).length === 0
-                }
+                disabled={pendingKids.length === 0}
                 title="显示选中卡片的下一张（子代，可连续点逐个展开）"
                 onClick={() => {
-                  const nextChild = (linkTable[navTarget]?.children ?? []).find(
-                    (c) => !expanded.includes(c),
-                  )
-                  if (nextChild) void showCard(nextChild)
+                  if (pendingKids[0]) void showCard(pendingKids[0])
                 }}
               >
                 下一张
               </button>
+              {/* ★ 参见（引用）：和上下张一样逐张展开，画虚线 */}
+              <button
+                type="button"
+                className="code-icon-btn"
+                style={{ gap: 4, border: '1px solid var(--card-border)' }}
+                disabled={pendingRefs.length === 0}
+                title="展开选中卡片引用（参见）的卡片，可连续点逐个展开"
+                onClick={() => {
+                  if (pendingRefs[0]) void showCard(pendingRefs[0])
+                }}
+              >
+                参见{pendingRefs.length > 0 ? ` (${pendingRefs.length})` : ''}
+              </button>
               <span className="faint" style={{ fontSize: 11 }}>
                 选中《{titleOf(navTarget)}》· 父代{' '}
                 {linkTable[navTarget]?.parent ? 1 : 0} · 子代{' '}
-                {linkTable[navTarget]?.children.length ?? 0} · 已展开{' '}
+                {kids.length} · 引用 {refs.length} · 已展开{' '}
                 {expanded.length}
               </span>
             </>

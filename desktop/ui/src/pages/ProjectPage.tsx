@@ -166,7 +166,6 @@ export default function ProjectPage() {
         initial={300}
         min={220}
         otherMin={320}
-        gap={14}
         style={{ alignItems: 'flex-start' }}
       >
         <div

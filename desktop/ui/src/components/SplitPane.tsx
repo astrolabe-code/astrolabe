@@ -29,8 +29,6 @@ interface SplitPaneProps {
   min: number
   /** 另一栏的最小宽度（用来算动态上限） */
   otherMin: number
-  /** 两栏之间的间距；默认 0（图谱页），列表页传 14 */
-  gap?: number
   /** 需要读容器尺寸的页面传入自己的 ref（图谱页窄屏抓手要用） */
   containerRef?: RefObject<HTMLDivElement>
   /** 只用于页面特有的差异（列表页的 alignItems）；通用布局组件自己写死 */
@@ -74,7 +72,6 @@ export default function SplitPane({
   initial,
   min,
   otherMin,
-  gap = 0,
   containerRef,
   style,
 }: SplitPaneProps) {
@@ -145,7 +142,8 @@ export default function SplitPane({
       style={{
         display: 'flex',
         flexDirection: stacked ? 'column' : 'row',
-        gap: stacked ? gap : 0,
+        // ★ 两栏间隙统一为 0（所有者：「gap也要统一呀，都变成0就行了」）
+        gap: 0,
         minHeight: 0,
         minWidth: 0,
         flex: 1,
@@ -166,7 +164,7 @@ export default function SplitPane({
             alignSelf: 'stretch',
             minHeight: 24,
             touchAction: 'none',
-            margin: `0 ${gap / 2}px`,
+            margin: 0,
             cursor: 'col-resize',
             background: 'transparent',
             transition: 'background .15s',

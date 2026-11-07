@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { Pencil, Trash2 } from 'lucide-react'
+import { GitBranch, Link2, Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
 import { kindMeta } from './kindMeta'
@@ -32,6 +32,10 @@ interface NoteCardProps {
   onEdit: (note: Note) => void
   /** ★★ 删除（* 与编辑弹窗里的「删除」联动：* 同一个确认框、同一条软删路径）⚠ */
   onDelete?: (note: Note) => void
+  /** ★ 深入：从这张卡长出一张新卡 */
+  onDerive?: (note: Note) => void
+  /** ★ 参见：另开一篇笔记与它横向相连 */
+  onSeeAlso?: (note: Note) => void
 }
 
 /** ★ 摘要：取前两行非空内容，超过 160 字截断 */
@@ -50,6 +54,8 @@ export default function NoteCard({
   canWrite,
   onEdit,
   onDelete,
+  onDerive,
+  onSeeAlso,
 }: NoteCardProps) {
   const navigate = useNavigate()
   const meta = kindMeta(note.kind)
@@ -92,6 +98,14 @@ export default function NoteCard({
           {preview(note.body)}
         </div>
       )}
+      {/* ★ 卡片盒的链：深入自 / 子卡数 / 参见数（双向可见） */}
+      {(note.parent || (note.children?.length ?? 0) > 0 || (note.links?.length ?? 0) > 0) && (
+        <div className="faint" style={{ fontSize: 10.5, marginTop: 3, lineHeight: 1.6 }}>
+          {note.parent ? '↳ 深入自上一张' : ''}
+          {(note.children?.length ?? 0) > 0 ? `  └ ${note.children!.length} 个深入` : ''}
+          {(note.links?.length ?? 0) > 0 ? `  ↔ 参见 ${note.links!.length}` : ''}
+        </div>
+      )}
       <div className="flex items-center gap-3 mt-2 faint" style={{ fontSize: 11 }}>
         {canWrite && (
           <div
@@ -99,6 +113,32 @@ export default function NoteCard({
             style={{ marginLeft: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
+
+            {onDerive && (
+              <button
+                type="button"
+                className="flex items-center gap-1"
+                style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+                title="深入：从这张卡继续想，开一张新卡"
+                onClick={() => onDerive(note)}
+              >
+                <GitBranch size={11} />
+                深入
+              </button>
+            )}
+
+            {onSeeAlso && (
+              <button
+                type="button"
+                className="flex items-center gap-1"
+                style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+                title="参见：另开一篇笔记与这张横向相连"
+                onClick={() => onSeeAlso(note)}
+              >
+                <Link2 size={11} />
+                参见
+              </button>
+            )}
 
             <button
               type="button"

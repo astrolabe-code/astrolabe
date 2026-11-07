@@ -395,6 +395,23 @@ export default function NodePanel({
             )
           }
           onDeleteNote={setPendingDelete}
+          /* ★ 深入：新开一篇笔记，挂在这张下面 */
+          onDeriveNote={(n) =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&parent=${encodeURIComponent(`note:${n.ref}`)}` +
+                `&from=${encodeURIComponent(fromHere())}`,
+            )
+          }
+          /* ★ 参见：另开一篇笔记与这张横向相连
+             （所有者 2026-11-07：「笔记和仿写之间暂时不要联系」⇒ ⛔ 不再跳去仿写） */
+          onSeeAlsoNote={(n) =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&link=${encodeURIComponent(`note:${n.ref}`)}` +
+                `&from=${encodeURIComponent(fromHere())}`,
+            )
+          }
           autoThink={autoThink}
         />
       </div>

@@ -34,6 +34,8 @@ interface ThinkingBoardProps {
   projectRef: string
   nodeId: number
   notes: Note[]
+  /** ★ 从卡片「链」进来：自动展示这张卡的父代 / 子代 / 引用，⛔ 不用用户自己加 */
+  focusCardId?: string
   onClose: () => void
 }
 
@@ -84,6 +86,7 @@ export default function ThinkingBoard({
   projectRef,
   nodeId,
   notes,
+  focusCardId,
   onClose,
 }: ThinkingBoardProps) {
   const navigate = useNavigate()
@@ -104,6 +107,9 @@ export default function ThinkingBoard({
   const [linkMode, setLinkMode] = useState<'parent' | 'reference' | null>(null)
   const [linkFrom, setLinkFrom] = useState<string | null>(null)
   const [activeEdge, setActiveEdge] = useState<string | null>(null)
+  /** ★ 点「上一张 / 下一张」逐张展开的卡；开始为空 ⇒ 只显示进入的那一张 */
+  const [expanded, setExpanded] = useState<string[]>([])
+  const expandedRef = useRef<string[]>([])
   const resizeRef = useRef<{
     id: number
     startX: number
@@ -138,7 +144,15 @@ export default function ThinkingBoard({
     const board = new Set<number>(
       (savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)),
     )
-    setOnBoard(board)
+    // ★ 负 id = 跨项目外来卡（自动上板，⛔ 不被恢复逻辑清掉）；
+    //   点「链」进来时全部自动卡都保留
+    setOnBoard((prev) => {
+      const next = new Set(board)
+      prev.forEach((id) => {
+        if (!focusCardId && id < 0) next.add(id)
+      })
+      return next
+    })
     setSizes(savedSize ?? {})
 
     // ★ 保留**所有**已存位置（含跨项目外来卡的负 id），否则重开白板时它们会被重置
@@ -176,32 +190,47 @@ export default function ThinkingBoard({
 
   const notesKey = notes.map((n) => n.card_id || cardId(projectRef, n.ref)).join('|')
 
-  /** ★ 拉链：当前节点这批卡 + 与它们相连的所有卡（跨节点 / 跨项目） */
+  /** ★ 拉链：点「链」进来时只围绕**那一张卡**，自动把父 / 子 / 引用全放上板 */
   const refreshLinks = useCallback(async () => {
-    const ids = notes.map((n) => n.card_id || cardId(projectRef, n.ref))
-    if (ids.length === 0) return
+    const mine = notes.map((n) => ({ id: n.id, card: n.card_id || cardId(projectRef, n.ref) }))
+    const seed = focusCardId ? [focusCardId] : mine.map((m) => m.card)
+    if (seed.length === 0) return
     try {
-      const d = await personalApi.cardLinks(ids)
+      const d = await personalApi.cardLinks(seed)
       setLinkTable(d.links)
-      const all = Array.from(new Set([...ids, ...d.related]))
+      const all = Array.from(new Set([...seed, ...d.related]))
       const info = await personalApi.cardInfo(all)
       const ext: ExternalCard[] = all
-        .filter((c) => !ids.includes(c) && info.cards[c])
+        .filter((c) => !mine.some((m) => m.card === c) && info.cards[c])
         .map((c) => ({ id: externalLocalId(c), card: c, info: info.cards[c] }))
       setExternal(ext)
-      // 外来卡自动上板；第一次出现放右侧空白处，之后位置由用户拖
+
+      const localOf = (card: string): number | null => {
+        const m = mine.find((x) => x.card === card)
+        if (m) return m.id
+        return ext.find((e) => e.card === card)?.id ?? null
+      }
+
+      // ★★ 点「链」进来：**开始只显示这一张卡**；父代 / 子代由顶栏按钮逐张展开
+      const autoCards = focusCardId
+        ? [focusCardId, ...expandedRef.current]
+        : ext.map((e) => e.card)
+      const autoIds = autoCards
+        .map(localOf)
+        .filter((x): x is number => x != null)
       setOnBoard((prev) => {
-        const next = new Set(prev)
-        ext.forEach((e) => next.add(e.id))
+        const next = focusCardId ? new Set<number>() : new Set(prev)
+        autoIds.forEach((id) => next.add(id))
         return next
       })
       setPos((prev) => {
         const next = { ...prev }
-        let y = PAD
-        ext.forEach((e) => {
-          if (!next[e.id]) {
-            next[e.id] = { x: PAD + (DEF_W + GAP) * 2, y }
-            y += DEF_H + GAP
+        autoIds.forEach((id, i) => {
+          if (!next[id]) {
+            next[id] = {
+              x: PAD + (DEF_W + GAP) * (i % 3),
+              y: PAD + Math.floor(i / 3) * (DEF_H + GAP),
+            }
           }
         })
         return next
@@ -210,11 +239,43 @@ export default function ThinkingBoard({
       /* 拉不到链就只显示本节点卡片，不报错 */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notesKey, projectRef])
+  }, [notesKey, projectRef, focusCardId])
+
+  useEffect(() => {
+    expandedRef.current = []
+    setExpanded([])
+  }, [focusCardId, open])
 
   useEffect(() => {
     if (open) void refreshLinks()
   }, [open, refreshLinks])
+
+  /** ★ 上一张 / 下一张：只把**这一张**卡摆上板并连好线 */
+  const showCard = (card: string) => {
+    const local = localIdOf(card)
+    if (local == null) return
+    const next = expandedRef.current.includes(card)
+      ? expandedRef.current
+      : [...expandedRef.current, card]
+    expandedRef.current = next
+    setExpanded(next)
+    setOnBoard((prev) => {
+      const s2 = new Set(prev)
+      s2.add(local)
+      return s2
+    })
+    setPos((prev) => {
+      if (prev[local]) return prev
+      const i = Object.keys(prev).length
+      return {
+        ...prev,
+        [local]: {
+          x: PAD + (DEF_W + GAP) * (i % 3),
+          y: PAD + Math.floor(i / 3) * (DEF_H + GAP),
+        },
+      }
+    })
+  }
 
   /** ★ 两次点击连边：第一张 → 第二张（parent 时第一张是父） */
   const clickCard = async (global: string) => {
@@ -433,6 +494,8 @@ export default function ThinkingBoard({
     const la = localIdOf(e.a)
     const lb = localIdOf(e.b)
     if (la == null || lb == null) return null
+    // ★ 两张卡都真的在板上才画线 —— 否则点「链」进来会凭旧坐标画出幽灵线
+    if (!onBoard.has(la) || !onBoard.has(lb)) return null
     const pa = pos[la]
     const pb = pos[lb]
     if (!pa || !pb) return null
@@ -496,6 +559,47 @@ export default function ThinkingBoard({
           <span className="faint" style={{ fontSize: 11.5 }}>
             从下面五个盒子里挑笔记 · 拖动排布 · 右下角拖拽改大小 · 双击打开
           </span>
+          {focusCardId && (
+            <>
+              <button
+                type="button"
+                className="code-icon-btn"
+                style={{ gap: 4, border: '1px solid var(--card-border)' }}
+                disabled={!linkTable[focusCardId]?.parent}
+                title="显示上一张卡片（父代）"
+                onClick={() => {
+                  const p = linkTable[focusCardId]?.parent
+                  if (p) showCard(p)
+                }}
+              >
+                上一张
+              </button>
+              <button
+                type="button"
+                className="code-icon-btn"
+                style={{ gap: 4, border: '1px solid var(--card-border)' }}
+                disabled={
+                  (linkTable[focusCardId]?.children ?? []).filter(
+                    (c) => !expanded.includes(c),
+                  ).length === 0
+                }
+                title="显示下一张卡片（子代，可连续点逐个展开）"
+                onClick={() => {
+                  const nextChild = (linkTable[focusCardId]?.children ?? []).find(
+                    (c) => !expanded.includes(c),
+                  )
+                  if (nextChild) showCard(nextChild)
+                }}
+              >
+                下一张
+              </button>
+              <span className="faint" style={{ fontSize: 11 }}>
+                父代 {linkTable[focusCardId]?.parent ? 1 : 0} · 子代{' '}
+                {linkTable[focusCardId]?.children.length ?? 0} · 已展开{' '}
+                {expanded.length}
+              </span>
+            </>
+          )}
           <button
             type="button"
             className="code-icon-btn"

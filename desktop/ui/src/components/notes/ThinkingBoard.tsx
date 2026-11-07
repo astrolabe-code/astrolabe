@@ -109,6 +109,8 @@ export default function ThinkingBoard({
   const [activeEdge, setActiveEdge] = useState<string | null>(null)
   /** ★ 点「上一张 / 下一张」逐张展开的卡；开始为空 ⇒ 只显示进入的那一张 */
   const [expanded, setExpanded] = useState<string[]>([])
+  /** ★★ 当前选中的卡片：「上一张 / 下一张」相对它，而不是相对进入时的那张 */
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const expandedRef = useRef<string[]>([])
   const resizeRef = useRef<{
     id: number
@@ -198,26 +200,27 @@ export default function ThinkingBoard({
     try {
       const d = await personalApi.cardLinks(seed)
       setLinkTable(d.links)
-      const all = Array.from(new Set([...seed, ...d.related]))
+      const all = Array.from(
+        new Set([...seed, ...d.related, ...expandedRef.current]),
+      )
       const info = await personalApi.cardInfo(all)
       const ext: ExternalCard[] = all
         .filter((c) => !mine.some((m) => m.card === c) && info.cards[c])
         .map((c) => ({ id: externalLocalId(c), card: c, info: info.cards[c] }))
       setExternal(ext)
 
-      const localOf = (card: string): number | null => {
+      const localOf = (card: string): number => {
         const m = mine.find((x) => x.card === card)
         if (m) return m.id
-        return ext.find((e) => e.card === card)?.id ?? null
+        // ★ 孙辈 / 跨项目卡即使还没进 ext，也能按全局 id 算出稳定位置
+        return ext.find((e) => e.card === card)?.id ?? externalLocalId(card)
       }
 
       // ★★ 点「链」进来：**开始只显示这一张卡**；父代 / 子代由顶栏按钮逐张展开
       const autoCards = focusCardId
         ? [focusCardId, ...expandedRef.current]
         : ext.map((e) => e.card)
-      const autoIds = autoCards
-        .map(localOf)
-        .filter((x): x is number => x != null)
+      const autoIds = autoCards.map(localOf)
       setOnBoard((prev) => {
         const next = focusCardId ? new Set<number>() : new Set(prev)
         autoIds.forEach((id) => next.add(id))
@@ -244,16 +247,24 @@ export default function ThinkingBoard({
   useEffect(() => {
     expandedRef.current = []
     setExpanded([])
+    setSelectedCardId(focusCardId || null)
   }, [focusCardId, open])
 
   useEffect(() => {
     if (open) void refreshLinks()
   }, [open, refreshLinks])
 
-  /** ★ 上一张 / 下一张：只把**这一张**卡摆上板并连好线 */
-  const showCard = (card: string) => {
-    const local = localIdOf(card)
-    if (local == null) return
+  /** ★ 上一张 / 下一张：把**这一张**卡摆上板，并拉它自己的父/子关系
+      （⛔ 否则展开一张子卡后，点它的「下一张」就没有孙辈数据了） */
+  const showCard = async (card: string) => {
+    const mineCard = notes.find(
+      (n) => (n.card_id || cardId(projectRef, n.ref)) === card,
+    )
+    const local =
+      mineCard?.id ??
+      external.find((e) => e.card === card)?.id ??
+      externalLocalId(card)
+
     const next = expandedRef.current.includes(card)
       ? expandedRef.current
       : [...expandedRef.current, card]
@@ -275,6 +286,25 @@ export default function ThinkingBoard({
         },
       }
     })
+
+    try {
+      const d = await personalApi.cardLinks([card])
+      setLinkTable((prev) => ({ ...prev, ...d.links }))
+      const all = Array.from(new Set([card, ...d.related]))
+      const info = await personalApi.cardInfo(all)
+      setExternal((prev) => {
+        const have = new Set(prev.map((e) => e.card))
+        const mineIds = new Set(
+          notes.map((n) => n.card_id || cardId(projectRef, n.ref)),
+        )
+        const add: ExternalCard[] = all
+          .filter((c) => !have.has(c) && !mineIds.has(c) && info.cards[c])
+          .map((c) => ({ id: externalLocalId(c), card: c, info: info.cards[c] }))
+        return add.length ? [...prev, ...add] : prev
+      })
+    } catch {
+      /* 拉不到就只显示这张卡 */
+    }
   }
 
   /** ★ 两次点击连边：第一张 → 第二张（parent 时第一张是父） */
@@ -477,6 +507,17 @@ export default function ThinkingBoard({
   if (!open) return null
 
   const boardNotes = notes.filter((n) => onBoard.has(n.id))
+  /** ★ 选中谁，按钮就对谁；没选中时回落到进入的那张卡 */
+  const navTarget = selectedCardId || focusCardId || ''
+  const titleOf = (card: string) => {
+    const n = notes.find((x) => (x.card_id || cardId(projectRef, x.ref)) === card)
+    if (n) return n.title || n.ref
+    return (
+      external.find((e) => e.card === card)?.info.title ||
+      card.split('/').pop() ||
+      card
+    )
+  }
   /** ★ 两种边：实线箭头 = 深入（parent），虚线 = 参见（引用） */
   const edges: { key: string; type: 'parent' | 'reference'; a: string; b: string }[] = []
   Object.entries(linkTable).forEach(([cid, rec]) => {
@@ -565,11 +606,11 @@ export default function ThinkingBoard({
                 type="button"
                 className="code-icon-btn"
                 style={{ gap: 4, border: '1px solid var(--card-border)' }}
-                disabled={!linkTable[focusCardId]?.parent}
-                title="显示上一张卡片（父代）"
+                disabled={!linkTable[navTarget]?.parent}
+                title="显示选中卡片的上一张（父代）"
                 onClick={() => {
-                  const p = linkTable[focusCardId]?.parent
-                  if (p) showCard(p)
+                  const p = linkTable[navTarget]?.parent
+                  if (p) void showCard(p)
                 }}
               >
                 上一张
@@ -579,23 +620,24 @@ export default function ThinkingBoard({
                 className="code-icon-btn"
                 style={{ gap: 4, border: '1px solid var(--card-border)' }}
                 disabled={
-                  (linkTable[focusCardId]?.children ?? []).filter(
+                  (linkTable[navTarget]?.children ?? []).filter(
                     (c) => !expanded.includes(c),
                   ).length === 0
                 }
-                title="显示下一张卡片（子代，可连续点逐个展开）"
+                title="显示选中卡片的下一张（子代，可连续点逐个展开）"
                 onClick={() => {
-                  const nextChild = (linkTable[focusCardId]?.children ?? []).find(
+                  const nextChild = (linkTable[navTarget]?.children ?? []).find(
                     (c) => !expanded.includes(c),
                   )
-                  if (nextChild) showCard(nextChild)
+                  if (nextChild) void showCard(nextChild)
                 }}
               >
                 下一张
               </button>
               <span className="faint" style={{ fontSize: 11 }}>
-                父代 {linkTable[focusCardId]?.parent ? 1 : 0} · 子代{' '}
-                {linkTable[focusCardId]?.children.length ?? 0} · 已展开{' '}
+                选中《{titleOf(navTarget)}》· 父代{' '}
+                {linkTable[navTarget]?.parent ? 1 : 0} · 子代{' '}
+                {linkTable[navTarget]?.children.length ?? 0} · 已展开{' '}
                 {expanded.length}
               </span>
             </>
@@ -893,7 +935,9 @@ export default function ThinkingBoard({
                     onPointerDown(e, n.id)
                   }}
                   onClick={() => {
-                    if (linkMode) void clickCard(n.card_id || cardId(projectRef, n.ref))
+                    const gid = n.card_id || cardId(projectRef, n.ref)
+                    if (linkMode) void clickCard(gid)
+                    else setSelectedCardId(gid)
                   }}
                   onDoubleClick={() => {
                     if (linkMode) return
@@ -917,9 +961,11 @@ export default function ThinkingBoard({
                       : '0 2px 8px rgba(15,23,42,.10)',
                     cursor: linkMode ? 'pointer' : active ? 'grabbing' : 'grab',
                     outline:
-                      linkFrom && linkFrom === (n.card_id || cardId(projectRef, n.ref))
+                      selectedCardId === (n.card_id || cardId(projectRef, n.ref))
                         ? '2px solid var(--accent)'
-                        : undefined,
+                        : linkFrom === (n.card_id || cardId(projectRef, n.ref))
+                          ? '2px dashed var(--accent)'
+                          : undefined,
                     userSelect: 'none',
                     touchAction: 'none',
                     display: 'flex',
@@ -1018,7 +1064,8 @@ export default function ThinkingBoard({
               .filter((e) => onBoard.has(e.id))
               .map((e) => {
                 const p = pos[e.id] ?? { x: PAD, y: PAD }
-                const selected = linkFrom === e.card
+                const selected = selectedCardId === e.card
+                const linkPicked = linkFrom === e.card
                 return (
                   <div
                     key={e.id}
@@ -1028,6 +1075,7 @@ export default function ThinkingBoard({
                     }}
                     onClick={() => {
                       if (linkMode) void clickCard(e.card)
+                      else setSelectedCardId(e.card)
                     }}
                     onDoubleClick={() => {
                       if (linkMode) return
@@ -1050,7 +1098,11 @@ export default function ThinkingBoard({
                       borderLeft: '4px solid var(--accent, #2563eb)',
                       boxShadow: '0 2px 8px rgba(15,23,42,.08)',
                       cursor: linkMode ? 'pointer' : 'grab',
-                      outline: selected ? '2px solid var(--accent)' : undefined,
+                      outline: selected
+                        ? '2px solid var(--accent)'
+                        : linkPicked
+                          ? '2px dashed var(--accent)'
+                          : undefined,
                       userSelect: 'none',
                       touchAction: 'none',
                       fontSize: 12,

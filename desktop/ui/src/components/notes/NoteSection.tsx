@@ -3,7 +3,6 @@ import { Lightbulb, Plus } from 'lucide-react'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
-import Button from '../ui/Button'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
 import ThinkingBoard from './ThinkingBoard'
@@ -47,6 +46,8 @@ interface NoteSectionProps {
   /** ★ 由上层（卡片「链」按钮）打开白板 */
   externalBoardOpen?: boolean
   onExternalBoardClose?: () => void
+  /** ★ 要聚焦的那张卡（全局 id） */
+  focusCardId?: string
   /** ★ `?think=1`：* 进入后自动打开思考白板（* 只自动开一次）⚠ */
   autoThink?: boolean
 }
@@ -64,6 +65,7 @@ export default function NoteSection({
   onSeeChainNote,
   externalBoardOpen,
   onExternalBoardClose,
+  focusCardId,
   autoThink,
 }: NoteSectionProps) {
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
@@ -172,40 +174,12 @@ export default function NoteSection({
 
   return (
     <div className="note-section">
-      {/* ★★★ 2026-11-05：标题与按钮一行，**标签另起一行** ⚠
-          所有者：「思考模式的文字盖住了五个盒子……不能在收缩到一定程度时，
-          对一些按钮进行折叠吗？」
-          根因：按钮原来与标签共用一行 ⇒ 窄的时候标签换行，按钮被挤到中间，压住标签
-          ⇒ 拆成两行：① 标题 + 按钮  ② 标签（可换行）
-          ⇒ 容器变窄时按钮只留图标（`@container`，见 components.css 的 .note-head-actions） */}
-      <div
-        className="note-head"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
-      >
-        <span className="h2" style={{ fontSize: 14, flexShrink: 0 }}>
-          笔记
-        </span>
-        <div className="note-head-actions">
-          {/* ★★★ 思考模式入口（* 任何人都能用，* 只读用户也能摆着看）⚠ */}
-          <Button
-            icon={<Lightbulb size={14} />}
-            onClick={() => setThinkingOpen(true)}
-            title="在白板上自由排布笔记卡片，理清它们之间的联系"
-          >
-            <span className="btn-label">思考模式</span>
-          </Button>
-          {canWrite && (
-            <Button
-              variant="primary"
-              icon={<Plus size={14} />}
-              onClick={onCreateNote}
-              title="写笔记"
-            >
-              <span className="btn-label">写笔记</span>
-            </Button>
-          )}
-        </div>
-      </div>
+      {/* ★★★ 2026-11-07：标题行整行删掉，按钮并入 chips 行
+          所有者：「这些信息和功能按钮占了3排，而vscode没有，
+                    过于想把信息按钮放在显眼的位置了」
+          · 「笔记」标题与 tab 名重复 ⇒ 删
+          · 思考模式 / 写笔记 改成细线小图标按钮，靠右放在 chips 行末尾
+          ⇒ 从两排压成一排，功能一个不少 */}
 
       <div className="note-head-chips">
         {/* ★★★ **五个盒子各带数量** + 「全部」——* 点谁就只看谁 ⚠ */}
@@ -219,6 +193,28 @@ export default function NoteSection({
             activeKind === c.kind,
           ),
         )}
+        <div className="note-head-actions" style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="code-icon-btn"
+            onClick={() => setThinkingOpen(true)}
+            title="思考模式：在白板上排布笔记卡片，理清它们之间的联系"
+          >
+            <Lightbulb size={14} />
+            <span className="btn-label" style={{ fontSize: 11.5 }}>思考模式</span>
+          </button>
+          {canWrite && (
+            <button
+              type="button"
+              className="code-icon-btn"
+              onClick={onCreateNote}
+              title="写笔记"
+            >
+              <Plus size={14} />
+              <span className="btn-label" style={{ fontSize: 11.5 }}>写笔记</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -292,6 +288,7 @@ export default function NoteSection({
         projectRef={projectRef}
         nodeId={nodeId}
         notes={mine}
+        focusCardId={focusCardId}
         onClose={() => {
           setThinkingOpen(false)
           onExternalBoardClose?.()

@@ -416,8 +416,6 @@ body.page-hidden *::after { animation-play-state: paused !important; }
    ========================================================================== */
 .note-section { container-type: inline-size; }
 
-.note-head { margin-bottom: 8px; }
-
 .note-head-actions {
   display: flex;
   align-items: center;
@@ -434,14 +432,8 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 }
 
 @container (max-width: 420px) {
-  /* 窄：按钮只剩图标，省下的宽度留给标签 */
+  /* 窄：按钮只剩图标，省下的宽度留给五个盒子 */
   .note-head-actions .btn-label { display: none; }
-  .note-head-actions .btn { padding-left: 8px; padding-right: 8px; }
-}
-
-@container (max-width: 260px) {
-  /* 更窄：连图标按钮也允许换行，但绝不压住标签 */
-  .note-head { flex-wrap: wrap; }
 }
 
 /* ==========================================================================
@@ -597,15 +589,6 @@ body.page-hidden *::after { animation-play-state: paused !important; }
    所有者给的样式要点：tab 切换、可折叠文件树、右上角三枚同款细线图标
    ⛔ 不用紫色圆点 / 胶囊 / 黄色警告条 / 圆形底板按钮
    ========================================================================== */
-.code-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--card-border);
-}
-
 /* ★ 右上角三枚（+关闭）同规格细线图标：无背景/无边框/无阴影 */
 .code-icon-btn {
   display: inline-flex;
@@ -645,13 +628,6 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .code-tab.is-active {
   color: var(--accent, #2563eb);
   border-bottom-color: var(--accent, #2563eb);
-}
-
-.code-filebar {
-  flex: none;
-  padding: 6px 12px;
-  font-size: 11.5px;
-  border-bottom: 1px solid var(--card-border);
 }
 
 .code-tree-row {

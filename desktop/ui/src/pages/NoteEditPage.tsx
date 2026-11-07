@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, ChevronLeft, ChevronRight, GitBranch, Lock, LockOpen, Trash2 } from 'lucide-react'
+import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
@@ -218,7 +218,7 @@ export default function NoteEditPage() {
     setConfirmOpen(true)
   }
 
-  const save = async (stay = false) => {
+  const save = async () => {
     const text = pendingText
     // ★ 名字和推导值一致 ⇒ 传空，让后端自己截（* 语义仍是「自动」）⚠
     const finalTitle = draftTitle.trim() === suggested ? '' : draftTitle.trim()
@@ -241,22 +241,10 @@ export default function NoteEditPage() {
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
       //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
-      if (!stay) nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
+      nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
     } catch (e) {
       setErr(errorMessage(e))
     }
-  }
-
-  /** ★★ 深入（D139）：保存这篇 → 新开空白编辑界面，挂成子代
-      ⛔ 不弹确认框（用户点「深入」就是要继续写，别拦一道） */
-  const derive = async () => {
-    await save(true)
-    const backTo = sp.get('from') || ''
-    nav(
-      `/p/${encodeURIComponent(projectRef)}/notes/new?node=${note?.node_id ?? nodeId}` +
-        `&parent=${encodeURIComponent(cardId(projectRef, id || ''))}` +
-        `&from=${encodeURIComponent(backTo)}`,
-    )
   }
 
   const remove = async () => {
@@ -315,14 +303,6 @@ export default function NoteEditPage() {
           title="回到阅读页（未保存的改动会提示）"
           onClick={back}
         />
-        {editing && (
-          <RailButton
-            icon={<GitBranch size={13} />}
-            label="深入"
-            title="深入：保存这篇，再新开一张空白笔记，挂成它的子代"
-            onClick={() => void derive()}
-          />
-        )}
       </PageBar>
 
       {/* ★ 从父卡深入进来：标明来源，可点回去 */}

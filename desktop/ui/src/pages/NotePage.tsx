@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { List, Lock, Pencil } from 'lucide-react'
+import { GitBranch, List, Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
+import { cardId } from '../api/code'
 import { useProject } from '../query/projects'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
@@ -145,6 +146,26 @@ export default function NotePage() {
           title="回到节点列表"
           onClick={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
         />
+        {/* ★★ 深入在**阅读页**：看着这篇继续想，新开一张空白笔记挂成子代
+            （所有者：「深入按钮不要在编辑页，要在阅读页呀」） */}
+        {n && (
+          <RailButton
+            icon={<GitBranch size={13} />}
+            label="深入"
+            title="在这篇基础上继续写：新开一张空白笔记，挂成它的子代"
+            onClick={() =>
+              nav(
+                `/p/${encodeURIComponent(projectRef)}/notes/new?node=${
+                  n.node_snapshot?.vid ?? n.node_id ?? 0
+                }` +
+                  `&parent=${encodeURIComponent(cardId(projectRef, n.ref || ref))}` +
+                  `&from=${encodeURIComponent(
+                    `/p/${encodeURIComponent(projectRef)}/notes/${ref}`,
+                  )}`,
+              )
+            }
+          />
+        )}
       </PageBar>
 
       {/* ★★★ 2026-10-26（`D111` / `D114`）——

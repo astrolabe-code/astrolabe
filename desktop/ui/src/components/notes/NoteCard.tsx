@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { Link2, Network, Pencil, Trash2 } from 'lucide-react'
+import { GitBranch, Link2, Network, Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
 import { kindMeta } from './kindMeta'
@@ -32,6 +32,8 @@ interface NoteCardProps {
   onEdit: (note: Note) => void
   /** ★★ 删除（* 与编辑弹窗里的「删除」联动：* 同一个确认框、同一条软删路径）⚠ */
   onDelete?: (note: Note) => void
+  /** ★ 深入：基于这篇继续写，新开一张空白笔记，挂成子代 */
+  onDerive?: (note: Note) => void
   /** ★ 参见：引用另一张**已写好**的笔记 */
   onSeeAlso?: (note: Note) => void
   /** ★ 链：打开思考模式白板看父 / 子代 / 引用 */
@@ -54,6 +56,7 @@ export default function NoteCard({
   canWrite,
   onEdit,
   onDelete,
+  onDerive,
   onSeeAlso,
   onSeeChain,
 }: NoteCardProps) {
@@ -105,6 +108,19 @@ export default function NoteCard({
             style={{ marginLeft: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
+
+            {onDerive && (
+              <button
+                type="button"
+                className="flex items-center gap-1"
+                style={{ color: 'var(--text-sub)', cursor: 'pointer' }}
+                title="深入：在这篇基础上继续写，新开一张空白笔记，挂成它的子代"
+                onClick={() => onDerive(note)}
+              >
+                <GitBranch size={11} />
+                深入
+              </button>
+            )}
 
             {onSeeAlso && (
               <button

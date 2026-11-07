@@ -400,6 +400,15 @@ export default function NodePanel({
             )
           }
           onDeleteNote={setPendingDelete}
+          /* ★ 深入：新开空白编辑界面，挂成这篇文章的子代
+             （⛔ 别只放在编辑页里 —— 卡片层面也需要一个新建入口） */
+          onDeriveNote={(n) =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&parent=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}` +
+                `&from=${encodeURIComponent(fromHere())}`,
+            )
+          }
           /* ★ 参见：打开跨项目搜索，只挑**已写好**的卡挂引用（⛔ 不新建） */
           onSeeAlsoNote={(n) => setPickerCard(n.card_id || cardId(projectRef, n.ref))}
           /* ★ 链：打开思考模式白板 */

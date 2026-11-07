@@ -38,6 +38,8 @@ interface NoteSectionProps {
   onEditNote: (note: Note) => void
   /** ★★ 删除某篇（* 卡片上的「删除」与弹窗里的删除共用同一个确认框）⚠ */
   onDeleteNote?: (note: Note) => void
+  /** ★ 深入：新开一张空白笔记，挂成这篇文章的子代 */
+  onDeriveNote?: (note: Note) => void
   /** ★ 参见：引用已写好的笔记 */
   onSeeAlsoNote?: (note: Note) => void
   /** ★ 链：打开思考模式白板 */
@@ -57,6 +59,7 @@ export default function NoteSection({
   onCreateNote,
   onEditNote,
   onDeleteNote,
+  onDeriveNote,
   onSeeAlsoNote,
   onSeeChainNote,
   externalBoardOpen,
@@ -266,6 +269,7 @@ export default function NoteSection({
                   canWrite={canWrite}
                   onEdit={onEditNote}
                   onDelete={onDeleteNote}
+                  onDerive={onDeriveNote}
                   onSeeAlso={onSeeAlsoNote}
                   onSeeChain={onSeeChainNote}
                 />

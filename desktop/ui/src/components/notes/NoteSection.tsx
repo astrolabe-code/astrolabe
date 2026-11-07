@@ -38,6 +38,13 @@ interface NoteSectionProps {
   onEditNote: (note: Note) => void
   /** ★★ 删除某篇（* 卡片上的「删除」与弹窗里的删除共用同一个确认框）⚠ */
   onDeleteNote?: (note: Note) => void
+  /** ★ 参见：引用已写好的笔记 */
+  onSeeAlsoNote?: (note: Note) => void
+  /** ★ 链：打开思考模式白板 */
+  onSeeChainNote?: (note: Note) => void
+  /** ★ 由上层（卡片「链」按钮）打开白板 */
+  externalBoardOpen?: boolean
+  onExternalBoardClose?: () => void
   /** ★ `?think=1`：* 进入后自动打开思考白板（* 只自动开一次）⚠ */
   autoThink?: boolean
 }
@@ -50,6 +57,10 @@ export default function NoteSection({
   onCreateNote,
   onEditNote,
   onDeleteNote,
+  onSeeAlsoNote,
+  onSeeChainNote,
+  externalBoardOpen,
+  onExternalBoardClose,
   autoThink,
 }: NoteSectionProps) {
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
@@ -255,6 +266,8 @@ export default function NoteSection({
                   canWrite={canWrite}
                   onEdit={onEditNote}
                   onDelete={onDeleteNote}
+                  onSeeAlso={onSeeAlsoNote}
+                  onSeeChain={onSeeChainNote}
                 />
               ))}
             </div>
@@ -271,11 +284,14 @@ export default function NoteSection({
 
       {/* ★★★ 思考模式白板（* fixed 覆盖层，* 位置按节点存 localStorage）⚠ */}
       <ThinkingBoard
-        open={thinkingOpen}
+        open={thinkingOpen || !!externalBoardOpen}
         projectRef={projectRef}
         nodeId={nodeId}
         notes={mine}
-        onClose={() => setThinkingOpen(false)}
+        onClose={() => {
+          setThinkingOpen(false)
+          onExternalBoardClose?.()
+        }}
       />
 
     </div>

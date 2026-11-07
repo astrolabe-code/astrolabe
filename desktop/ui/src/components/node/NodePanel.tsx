@@ -10,6 +10,8 @@ import { personalApi } from '../../api/personal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import NoteSection from '../notes/NoteSection'
 import NodeHeading from './NodeHeading'
+import ReferencePicker from '../notes/ReferencePicker'
+import { cardId } from '../../api/code'
 
 // ★★ 节点类型配色（* 与 `GraphCanvas` 完全同一套 —— 头部圆点必须和图谱节点同色）⚠
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -87,6 +89,9 @@ export default function NodePanel({
   hideInfo,
 }: NodePanelProps) {
   const navigate = useNavigate()
+  /** ★ 参见选卡 / 链白板（D139） */
+  const [pickerCard, setPickerCard] = useState<string | null>(null)
+  const [chainOpen, setChainOpen] = useState(false)
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
@@ -395,23 +400,12 @@ export default function NodePanel({
             )
           }
           onDeleteNote={setPendingDelete}
-          /* ★ 深入：新开一篇笔记，挂在这张下面 */
-          onDeriveNote={(n) =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                `&parent=${encodeURIComponent(`note:${n.ref}`)}` +
-                `&from=${encodeURIComponent(fromHere())}`,
-            )
-          }
-          /* ★ 参见：另开一篇笔记与这张横向相连
-             （所有者 2026-11-07：「笔记和仿写之间暂时不要联系」⇒ ⛔ 不再跳去仿写） */
-          onSeeAlsoNote={(n) =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                `&link=${encodeURIComponent(`note:${n.ref}`)}` +
-                `&from=${encodeURIComponent(fromHere())}`,
-            )
-          }
+          /* ★ 参见：打开跨项目搜索，只挑**已写好**的卡挂引用（⛔ 不新建） */
+          onSeeAlsoNote={(n) => setPickerCard(n.card_id || cardId(projectRef, n.ref))}
+          /* ★ 链：打开思考模式白板 */
+          onSeeChainNote={() => setChainOpen(true)}
+          externalBoardOpen={chainOpen}
+          onExternalBoardClose={() => setChainOpen(false)}
           autoThink={autoThink}
         />
       </div>
@@ -438,6 +432,12 @@ export default function NodePanel({
           setDelErr('')
         }}
       />
+      {pickerCard && (
+        <ReferencePicker
+          currentCardId={pickerCard}
+          onClose={() => setPickerCard(null)}
+        />
+      )}
     </div>
   )
 }

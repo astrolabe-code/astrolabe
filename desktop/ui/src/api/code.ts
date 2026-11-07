@@ -56,3 +56,38 @@ export function langFromPath(path: string): string {
   const ext = (path.split('.').pop() || '').toLowerCase()
   return LANG_BY_EXT[ext] || ''
 }
+
+/** ★★★ 卡片 id：必须带项目，各项目 n0001 会重复（D139） */
+export const cardId = (projectRef: string, ref: string) => `note:${projectRef}/${ref}`
+
+/** 一张卡在链上的关系（parent = 深入；links = 参见/引用） */
+export interface CardLink {
+  parent: string | null
+  links: string[]
+  children: string[]
+}
+
+/** 白板要显示的卡片元信息（可跨节点 / 跨项目） */
+export interface CardInfo {
+  id: string
+  ref: string
+  project_ref: string
+  project: string
+  title: string
+  kind: string
+  node: string
+  node_vid: number
+}
+
+/** 跨项目搜索（复用 /api/search/）返回的一张笔记 */
+export interface CardSearchHit {
+  ref: string
+  no: number
+  title: string
+  kind: string
+  node: string
+  node_vid: number
+  snippet: string
+  project: string
+  project_ref: string
+}

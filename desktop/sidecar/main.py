@@ -42,6 +42,7 @@ import notefile
 import store
 import source
 import imitation
+import links
 
 VERSION = "0.3.0"
 
@@ -130,6 +131,10 @@ R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
 R_IMITS = re.compile(r"^/api/projects/([^/]+)/imitations/$")
+R_CARD_LINKS = re.compile(r"^/api/cards/links/$")
+R_CARDS = re.compile(r"^/api/cards/$")
+R_CARD_PARENT = re.compile(r"^/api/cards/parent/$")
+R_CARD_REF = re.compile(r"^/api/cards/reference/$")
 R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
 
 
@@ -472,6 +477,74 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             p = store.get_or_create_project(CONN, name, code_root, ref=entry["ref"])
             return ok({"project": dict(p)})
 
+    # ★★★ 卡片盒（D139）：全局 links.json、卡片 id 带项目、可跨项目 ⚠
+    #   · 深入 = parent（树，防环）；参见 = 引用（多对多，双向可见）
+    #   · ⛔ 仿写不进这张表
+    m = R_CARD_LINKS.match(path)
+    if m and method == "GET":
+        ids = [x for x in str(body.get("ids") or "").split(",") if x]
+        table = links.all_info()
+        if ids:
+            rel = set(links.related(ids))
+            table = {k: v for k, v in table.items() if k in rel}
+        return ok({"links": table, "related": sorted(table.keys())})
+
+    m = R_CARD_PARENT.match(path)
+    if m and method == "POST":
+        try:
+            return ok(
+                links.set_parent(
+                    str(body.get("child") or ""),
+                    str(body.get("parent") or "").strip() or None,
+                )
+            )
+        except links.LinkError as exc:
+            return bad(f"{exc.message}（{exc.code}）", 400)
+
+    m = R_CARD_REF.match(path)
+    if m and method in ("POST", "DELETE"):
+        try:
+            a, b = str(body.get("a") or ""), str(body.get("b") or "")
+            return ok(
+                links.add_reference(a, b)
+                if method == "POST"
+                else links.remove_reference(a, b)
+            )
+        except links.LinkError as exc:
+            return bad(f"{exc.message}（{exc.code}）", 400)
+
+    # ★ 白板要显示跨节点 / 跨项目的卡：按全局 id 批量取元信息
+    m = R_CARDS.match(path)
+    if m and method == "GET":
+        ids = [x for x in str(body.get("ids") or "").split(",") if x]
+        cards: dict = {}
+        for card in ids:
+            try:
+                pref, nref = links.parse_id(card)
+            except links.LinkError:
+                continue
+            entry = projectstore.get(pref)
+            if not entry:
+                continue
+            try:
+                _activate(entry)
+            except Exception:  # noqa: BLE001
+                continue
+            n = store.find_note(CONN, nref)
+            if n is None:
+                continue
+            cards[card] = {
+                "id": card,
+                "ref": nref,
+                "project_ref": pref,
+                "project": entry.get("name") or pref,
+                "title": n.get("title") or "",
+                "kind": n.get("kind") or "",
+                "node": n.get("node_name") or "",
+                "node_vid": n.get("node_vid") or 0,
+            }
+        return ok({"cards": cards})
+
     # ★★★ 仿写：一个节点下的多份代码卡（见 sidecar/imitation.py）⚠
     #   · 只写 <项目数据目录>/imitations/ —— ⛔ 绝不碰用户源码目录
     m = R_IMITS.match(path)
@@ -482,6 +555,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         try:
             vid = int(body.get("vid") or 0)
             if method == "GET":
+                # ⛔ 仿写不参与卡片盒：不补 parent / links / children
                 return ok(imitation.list_items(entry["data"], vid))
             if method == "POST":
                 return ok(
@@ -804,6 +878,14 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             items = store.notes_of(CONN, p["id"], int(nv) if nv else None)
             if kind:
                 items = [n for n in items if n["kind"] == kind]
+            # ★ 卡片盒的链（全局 links.json）：parent / 引用 / 子代
+            infos = links.all_info()
+            for n in items:
+                n["card_id"] = links.note_id(p["ref"], n["ref"])
+                li = infos.get(n["card_id"]) or {}
+                n["parent"] = li.get("parent")
+                n["links"] = li.get("links") or []
+                n["children"] = li.get("children") or []
             return ok({"items": items, "total": len(items)})
 
         if method == "POST":
@@ -855,6 +937,13 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             # ★ 先写文件（真相），再写索引 —— 顺序不能反
             notefile.write_file(abs_path, meta, text)
             st = os.stat(abs_path)
+            # ★ 深入：新卡挂到父卡下（全局 links.json）；参见不产生新卡
+            parent = str(body.get("parent") or "").strip() or None
+            try:
+                links.set_parent(links.note_id(p["ref"], ref), parent)
+            except links.LinkError:
+                # 坏 id 不该让笔记保存失败：先落盘，链以后再连
+                pass
             store.fts_sync(CONN, ref, meta["title"], text)
             store.insert_note(
                 CONN,
@@ -879,6 +968,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         # ★★★ 笔记 URL 里**没有项目信息**（`/api/notes/<ref>/`）⇒ 得挨个库里找 ⚠
         #   之前直接查全局 CONN，有多个项目时会查到别的项目的库里去（踩过：404）
         note = None
+        owner = None
         for entry in projectstore.list_all():
             try:
                 _activate(entry)
@@ -886,6 +976,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 continue
             note = store.find_note(CONN, ref)
             if note is not None:
+                owner = entry
                 break
         if note is None:
             return bad("笔记不存在", 404)
@@ -929,6 +1020,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             os.makedirs(trash, exist_ok=True)
             if os.path.exists(abs_path):
                 shutil.move(abs_path, os.path.join(trash, os.path.basename(abs_path)))
+            # ★★ 删卡不删链：子卡接到父卡上，指向它的参见一并清掉
+            if owner and owner.get("ref"):
+                try:
+                    links.on_delete(links.note_id(owner["ref"], ref))
+                except links.LinkError:
+                    pass
             store.delete_note(CONN, ref)
             store.fts_remove(CONN, ref)
             return ok({"deleted": ref})

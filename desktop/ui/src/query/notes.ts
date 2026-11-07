@@ -56,6 +56,8 @@ export interface CreateNoteBody {
   node_id: number
   title?: string
   is_public?: boolean
+  /** ★ 深入自哪张卡（全局 id） */
+  parent?: string
 }
 
 /** POST /api/projects/<ref>/notes/（② 型）⇒ {note, blocks} */

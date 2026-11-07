@@ -262,6 +262,14 @@ export interface Note {
     line_end: number
   }
   body: string
+  /** ★ 全局卡片 id（`note:<项目>/<ref>`）；与数字主键 id 不是一回事 */
+  card_id?: string
+  /** ★ 深入自哪张卡 */
+  parent?: string | null
+  /** ★ 引用了哪些已写好的卡（双向可见） */
+  links?: string[]
+  /** ★ 从这张卡深入出去的子卡 id */
+  children?: string[]
   card_skin: string
   is_public: boolean
   /** active / hidden（B208：管理员隐藏 ⇒ 只有作者可见） */

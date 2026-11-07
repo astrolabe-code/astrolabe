@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
+import { BookOpenText, ChevronLeft, ChevronRight, GitBranch, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
+import { cardId, type CardInfo } from '../api/code'
+import { personalApi } from '../api/personal'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
@@ -67,6 +69,23 @@ export default function NoteEditPage() {
   const id = noteId ?? null
   // ★ 新建时 node 从 query 来（* 弹窗时代是 props，* 页面化后只能走 URL）⚠
   const nodeId = Number(sp.get('node') || 0)
+  // ★ 深入：从父卡进来时带着全局卡片 id，保存时挂成子代
+  const parentCard = sp.get('parent') || ''
+  /** ★ 深入自哪张卡（跨项目也能显示标题） */
+  const [parentInfo, setParentInfo] = useState<CardInfo | null>(null)
+  useEffect(() => {
+    if (!parentCard) return
+    let alive = true
+    personalApi
+      .cardInfo([parentCard])
+      .then((d) => {
+        if (alive) setParentInfo(d.cards[parentCard] || null)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [parentCard])
   // ★★ 来源页（* 从节点面板进来时带）：保存后回跳 ⚠
   //   · · ⛔ 只接受站内相对路径 —— 防开放重定向 ⚠
   //   · · ⚠★ 必须**剥掉 SPA 的 basename**（`/app`）：
@@ -199,7 +218,7 @@ export default function NoteEditPage() {
     setConfirmOpen(true)
   }
 
-  const save = async () => {
+  const save = async (stay = false) => {
     const text = pendingText
     // ★ 名字和推导值一致 ⇒ 传空，让后端自己截（* 语义仍是「自动」）⚠
     const finalTitle = draftTitle.trim() === suggested ? '' : draftTitle.trim()
@@ -212,6 +231,7 @@ export default function NoteEditPage() {
             body: text,
             node_id: nodeId,
             is_public: isPublic,
+            parent: parentCard || undefined,
           })
 
       // ★★ 写完**立刻**记下位置（`D120` 补口 · 2026-10-27）⚠
@@ -221,16 +241,28 @@ export default function NoteEditPage() {
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
       //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
-      nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
+      if (!stay) nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
     } catch (e) {
       setErr(errorMessage(e))
     }
   }
 
+  /** ★★ 深入（D139）：保存这篇 → 新开空白编辑界面，挂成子代
+      ⛔ 不弹确认框（用户点「深入」就是要继续写，别拦一道） */
+  const derive = async () => {
+    await save(true)
+    const backTo = sp.get('from') || ''
+    nav(
+      `/p/${encodeURIComponent(projectRef)}/notes/new?node=${note?.node_id ?? nodeId}` +
+        `&parent=${encodeURIComponent(cardId(projectRef, id || ''))}` +
+        `&from=${encodeURIComponent(backTo)}`,
+    )
+  }
+
   const remove = async () => {
     if (!note) return
     const ok = window.confirm(
-      `删除「${note.title || '（无标题）'}」？\n删除后可从回收站恢复，评论和点赞都还在。`,
+      `删除「${note.title || '（无标题）'}」？\n删除后不可恢复。`,
     )
     if (!ok) return
     try {
@@ -283,7 +315,46 @@ export default function NoteEditPage() {
           title="回到阅读页（未保存的改动会提示）"
           onClick={back}
         />
+        {editing && (
+          <RailButton
+            icon={<GitBranch size={13} />}
+            label="深入"
+            title="深入：保存这篇，再新开一张空白笔记，挂成它的子代"
+            onClick={() => void derive()}
+          />
+        )}
       </PageBar>
+
+      {/* ★ 从父卡深入进来：标明来源，可点回去 */}
+      {parentCard && (
+        <div
+          className="faint"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 18px',
+            fontSize: 11.5,
+            borderBottom: '1px solid var(--card-border)',
+          }}
+        >
+          ↳ 深入自 {parentInfo ? `《${parentInfo.title || '无标题'}》` : parentCard}
+          {parentInfo && (
+            <button
+              type="button"
+              className="code-icon-btn"
+              onClick={() =>
+                nav(
+                  `/p/${encodeURIComponent(parentInfo.project_ref)}/notes/${parentInfo.ref}`,
+                )
+              }
+            >
+              打开
+            </button>
+          )}
+          <span>· 新卡空白</span>
+        </div>
+      )}
 
       {/* ★★★ 写作区两栏（`D131`）：左目录（可折叠）＋ 纸 ⚠
           · · 目录是正文里的 `#` / `##` / `###`（⛔ 不含名字）

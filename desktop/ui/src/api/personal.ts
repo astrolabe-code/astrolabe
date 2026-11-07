@@ -14,7 +14,14 @@
  * ```ts\n * const hooks = personalApi\n * queryFn: () => hooks ? hooks.graphNodes(ref, limit, offset) : unwrap(await apiGet(...))\n * ```\n */
 
 import type { Note, NoteKind } from './types'
-import type { FileTreeData, ImitationItem, SourceFile } from './code'
+import type {
+  CardInfo,
+  CardLink,
+  CardSearchHit,
+  FileTreeData,
+  ImitationItem,
+  SourceFile,
+} from './code'
 import type { GraphNode } from '../lib/mergeGraph'
 
 // ---------------------------------------------------------------- 基础请求
@@ -195,11 +202,24 @@ export const personalApi = {
 
   createNote: async (
     projectRef: string,
-    body: { node_id: number; kind: NoteKind; title?: string; body: string },
+    body: {
+      node_id: number
+      kind: NoteKind
+      title?: string
+      body: string
+      /** ★ 深入自哪张卡（全局 id） */
+      parent?: string
+    },
   ) => {
     const d = await post<{ note: any }>(
       `/api/projects/${encodeURIComponent(projectRef)}/notes/`,
-      { node_vid: body.node_id, kind: body.kind, title: body.title || '', body: body.body },
+      {
+        node_vid: body.node_id,
+        kind: body.kind,
+        title: body.title || '',
+        body: body.body,
+        parent: body.parent || '',
+      },
     )
     return { note: toNote(d.note, body.body), body: body.body }
   },
@@ -243,6 +263,7 @@ export const personalApi = {
     ),
 
   /** 新建一份空白仿写（标题自动「第 N 版」） */
+  /** ⛔ 仿写不参与卡片盒：没有 parent / link（D139） */
   createImitation: (ref: string, vid: number, ext: string) =>
     post<ImitationItem>(`/api/projects/${encodeURIComponent(ref)}/imitations/?vid=${vid}`, {
       ext,
@@ -257,5 +278,37 @@ export const personalApi = {
   deleteImitation: (ref: string, vid: number, name: string) =>
     del<{ removed: string }>(
       `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
+    ),
+
+  // ---- 卡片盒（D139）：全局关系表、跨项目 ----
+
+  /** 跨项目搜**已写好**的笔记（参见的候选；复用现成 /api/search/） */
+  searchCards: (q: string) =>
+    get<{ notes: CardSearchHit[] }>(`/api/search/?q=${encodeURIComponent(q)}`),
+
+  /** 链信息；传 ids 时只返回与这批卡相连的子集 */
+  cardLinks: (ids: string[] = []) =>
+    get<{ links: Record<string, CardLink>; related: string[] }>(
+      `/api/cards/links/${ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : ''}`,
+    ),
+
+  /** 按全局 id 批量取卡片元信息（白板显示跨节点 / 跨项目的卡） */
+  cardInfo: (ids: string[]) =>
+    get<{ cards: Record<string, CardInfo> }>(
+      `/api/cards/?ids=${encodeURIComponent(ids.join(','))}`,
+    ),
+
+  /** 挂 / 改 / 断「深入」；parent 传 null 即断链 */
+  setParent: (child: string, parent: string | null) =>
+    post<CardLink>('/api/cards/parent/', { child, parent: parent || '' }),
+
+  /** 挂一条引用（双向可见） */
+  addReference: (a: string, b: string) =>
+    post<{ a: string; b: string }>('/api/cards/reference/', { a, b }),
+
+  /** 去一条引用（双向都清） */
+  removeReference: (a: string, b: string) =>
+    del<{ a: string; b: string }>(
+      `/api/cards/reference/?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
     ),
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { GitBranch, Link2, Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 
 import { langFromPath, type ImitationItem } from '../../api/code'
 import { personalApi } from '../../api/personal'
@@ -118,33 +118,6 @@ export default function ImitationPanel({
     return () => window.clearTimeout(timer)
   }, [text, activeName, projectRef, vid])
 
-  /** ★ 深入：新建一份仿写，parent 指向当前这份 */
-  const deriveOne = async () => {
-    if (!vid || !activeName) return
-    try {
-      const d = await personalApi.createImitation(projectRef, vid, ext, {
-        parent: `copy:${vid}/${activeName}`,
-      })
-      await refresh(d.name)
-    } catch (e) {
-      setError((e as Error).message || '新建失败')
-    }
-  }
-
-  /** ★ 参见：另开一份**仿写**与这份横向相连
-      （所有者 2026-11-07：「笔记和仿写之间暂时不要联系」⇒ ⛔ 不再跳去笔记） */
-  const seeAlso = async () => {
-    if (!vid || !activeName) return
-    try {
-      const d = await personalApi.createImitation(projectRef, vid, ext, {
-        link: `copy:${vid}/${activeName}`,
-      })
-      await refresh(d.name)
-    } catch (e) {
-      setError((e as Error).message || '新建失败')
-    }
-  }
-
   const createOne = async () => {
     if (!vid) return
     try {
@@ -217,9 +190,7 @@ export default function ImitationPanel({
               color: activeName === it.name ? 'var(--accent)' : 'var(--text-sub)',
             }}
           >
-            {it.parent ? '↳ ' : ''}
             {it.title}
-            {(it.links?.length ?? 0) > 0 ? ' ↔' : ''}
           </button>
         ))}
         <button
@@ -283,26 +254,7 @@ export default function ImitationPanel({
               <button
                 type="button"
                 className="code-icon-btn"
-                style={{ marginLeft: 'auto', gap: 3 }}
-                title="深入：另开一份新仿写，挂在这一份下面"
-                onClick={() => void deriveOne()}
-              >
-                <GitBranch size={12} strokeWidth={1.5} />
-                深入
-              </button>
-              <button
-                type="button"
-                className="code-icon-btn"
-                style={{ gap: 3 }}
-                title="参见：另开一份仿写与这份横向相连"
-                onClick={() => void seeAlso()}
-              >
-                <Link2 size={12} strokeWidth={1.5} />
-                参见
-              </button>
-              <button
-                type="button"
-                className="code-icon-btn"
+                style={{ marginLeft: 'auto' }}
                 onClick={() => {
                   setRenameInput(activeName.replace(/\.[^.]+$/, ''))
                   setRenaming(true)

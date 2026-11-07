@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { X, MousePointer2, Plus, Check, Maximize2, Minimize2 } from 'lucide-react'
+import { X, MousePointer2, Plus, Check, Maximize2, Minimize2, GitBranch, Link2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { Note, NoteKind } from '../../api/types'
+import { cardId, type CardInfo, type CardLink } from '../../api/code'
+import { personalApi } from '../../api/personal'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
@@ -56,6 +58,22 @@ const INIT_H = 1200
 /** ★ 卡片拖到边缘时，画布一次扩多少 */
 const GROW_STEP = 400
 
+/** ★ 外来卡用全局卡片 id 的稳定哈希做本地 id（⛔ 不与本节点数字主键冲突） */
+function externalLocalId(card: string): number {
+  let h = 2166136261
+  for (let i = 0; i < card.length; i += 1) {
+    h ^= card.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return -(Math.abs(h >>> 0) % 1000000) - 1
+}
+
+interface ExternalCard {
+  id: number
+  card: string
+  info: CardInfo
+}
+
 const posKey = (nodeId: number) => `thinking:${nodeId}`
 const boardKey = (nodeId: number) => `thinking:${nodeId}:board`
 const sizeKey = (nodeId: number) => `thinking:${nodeId}:size`
@@ -80,6 +98,12 @@ export default function ThinkingBoard({
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [resizingId, setResizingId] = useState<number | null>(null)
   const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null)
+  /** ★★ D139：卡片盒的链（跨节点、跨项目） */
+  const [linkTable, setLinkTable] = useState<Record<string, CardLink>>({})
+  const [external, setExternal] = useState<ExternalCard[]>([])
+  const [linkMode, setLinkMode] = useState<'parent' | 'reference' | null>(null)
+  const [linkFrom, setLinkFrom] = useState<string | null>(null)
+  const [activeEdge, setActiveEdge] = useState<string | null>(null)
   const resizeRef = useRef<{
     id: number
     startX: number
@@ -117,7 +141,8 @@ export default function ThinkingBoard({
     setOnBoard(board)
     setSizes(savedSize ?? {})
 
-    const next: Record<number, Pos> = {}
+    // ★ 保留**所有**已存位置（含跨项目外来卡的负 id），否则重开白板时它们会被重置
+    const next: Record<number, Pos> = { ...(savedPos ?? {}) }
     let y = PAD
     for (const id of board) {
       const s = savedPos?.[id]
@@ -136,6 +161,95 @@ export default function ThinkingBoard({
     })
     setOpenBox(null)
   }, [open, nodeId, notes])
+
+  /** 本节点笔记 + 外来卡，统一用全局卡片 id 认人 */
+  const globalIdOf = (local: number): string | null => {
+    const n = notes.find((x) => x.id === local)
+    if (n) return n.card_id || cardId(projectRef, n.ref)
+    return external.find((x) => x.id === local)?.card ?? null
+  }
+  const localIdOf = (global: string): number | null => {
+    const n = notes.find((x) => (x.card_id || cardId(projectRef, x.ref)) === global)
+    if (n) return n.id
+    return external.find((x) => x.card === global)?.id ?? null
+  }
+
+  const notesKey = notes.map((n) => n.card_id || cardId(projectRef, n.ref)).join('|')
+
+  /** ★ 拉链：当前节点这批卡 + 与它们相连的所有卡（跨节点 / 跨项目） */
+  const refreshLinks = useCallback(async () => {
+    const ids = notes.map((n) => n.card_id || cardId(projectRef, n.ref))
+    if (ids.length === 0) return
+    try {
+      const d = await personalApi.cardLinks(ids)
+      setLinkTable(d.links)
+      const all = Array.from(new Set([...ids, ...d.related]))
+      const info = await personalApi.cardInfo(all)
+      const ext: ExternalCard[] = all
+        .filter((c) => !ids.includes(c) && info.cards[c])
+        .map((c) => ({ id: externalLocalId(c), card: c, info: info.cards[c] }))
+      setExternal(ext)
+      // 外来卡自动上板；第一次出现放右侧空白处，之后位置由用户拖
+      setOnBoard((prev) => {
+        const next = new Set(prev)
+        ext.forEach((e) => next.add(e.id))
+        return next
+      })
+      setPos((prev) => {
+        const next = { ...prev }
+        let y = PAD
+        ext.forEach((e) => {
+          if (!next[e.id]) {
+            next[e.id] = { x: PAD + (DEF_W + GAP) * 2, y }
+            y += DEF_H + GAP
+          }
+        })
+        return next
+      })
+    } catch {
+      /* 拉不到链就只显示本节点卡片，不报错 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesKey, projectRef])
+
+  useEffect(() => {
+    if (open) void refreshLinks()
+  }, [open, refreshLinks])
+
+  /** ★ 两次点击连边：第一张 → 第二张（parent 时第一张是父） */
+  const clickCard = async (global: string) => {
+    if (!linkMode || !global) return
+    if (!linkFrom) {
+      setLinkFrom(global)
+      return
+    }
+    if (linkFrom === global) return
+    try {
+      if (linkMode === 'parent') {
+        await personalApi.setParent(global, linkFrom)
+      } else {
+        await personalApi.addReference(linkFrom, global)
+      }
+      await refreshLinks()
+    } catch {
+      /* 防环被拒等，静默 */
+    }
+    setLinkMode(null)
+    setLinkFrom(null)
+  }
+
+  /** ★ 断边：不动卡片，只解关系 */
+  const cutEdge = async (key: string) => {
+    const [type, a, b] = key.split('|')
+    try {
+      if (type === 'parent') await personalApi.setParent(b, null)
+      else await personalApi.removeReference(a, b)
+      await refreshLinks()
+    } catch {
+      /* ignore */
+    }
+    setActiveEdge(null)
+  }
 
   // ---------------------------------------------------------- 持久化
   const save = (key: string, v: unknown) => {
@@ -302,6 +416,42 @@ export default function ThinkingBoard({
   if (!open) return null
 
   const boardNotes = notes.filter((n) => onBoard.has(n.id))
+  /** ★ 两种边：实线箭头 = 深入（parent），虚线 = 参见（引用） */
+  const edges: { key: string; type: 'parent' | 'reference'; a: string; b: string }[] = []
+  Object.entries(linkTable).forEach(([cid, rec]) => {
+    if (rec.parent) {
+      edges.push({ key: `parent|${rec.parent}|${cid}`, type: 'parent', a: rec.parent, b: cid })
+    }
+    rec.links.forEach((to) => {
+      if (cid < to) {
+        edges.push({ key: `reference|${cid}|${to}`, type: 'reference', a: cid, b: to })
+      }
+    })
+  })
+
+  const edgePoints = (e: (typeof edges)[number]) => {
+    const la = localIdOf(e.a)
+    const lb = localIdOf(e.b)
+    if (la == null || lb == null) return null
+    const pa = pos[la]
+    const pb = pos[lb]
+    if (!pa || !pb) return null
+    const sa = sizeOf(la)
+    const sb = sizeOf(lb)
+    return {
+      x1: pa.x + sa.w / 2,
+      y1: pa.y + sa.h / 2,
+      x2: pb.x + sb.w / 2,
+      y2: pb.y + sb.h / 2,
+    }
+  }
+  const activeEdgePts = activeEdge
+    ? edgePoints({ key: activeEdge, ...(() => {
+        const [type, a, b] = activeEdge.split('|')
+        return { type: type as 'parent' | 'reference', a, b }
+      })() })
+    : null
+
 
   return (
     <div
@@ -346,6 +496,51 @@ export default function ThinkingBoard({
           <span className="faint" style={{ fontSize: 11.5 }}>
             从下面五个盒子里挑笔记 · 拖动排布 · 右下角拖拽改大小 · 双击打开
           </span>
+          <button
+            type="button"
+            className="code-icon-btn"
+            style={{
+              marginLeft: 'auto',
+              gap: 4,
+              border: `1px solid ${linkMode === 'parent' ? 'var(--accent)' : 'var(--card-border)'}`,
+              color: linkMode === 'parent' ? 'var(--accent)' : 'var(--text-sub)',
+            }}
+            title="连深入：先点父卡，再点子卡（实线）"
+            onClick={() => {
+              setLinkMode(linkMode === 'parent' ? null : 'parent')
+              setLinkFrom(null)
+            }}
+          >
+            <GitBranch size={13} /> 连深入
+          </button>
+          <button
+            type="button"
+            className="code-icon-btn"
+            style={{
+              gap: 4,
+              border: `1px solid ${linkMode === 'reference' ? 'var(--accent)' : 'var(--card-border)'}`,
+              color: linkMode === 'reference' ? 'var(--accent)' : 'var(--text-sub)',
+            }}
+            title="连参见：点两张已写好的卡（虚线）"
+            onClick={() => {
+              setLinkMode(linkMode === 'reference' ? null : 'reference')
+              setLinkFrom(null)
+            }}
+          >
+            <Link2 size={13} /> 连参见
+          </button>
+          {linkMode && (
+            <span className="faint" style={{ fontSize: 11 }}>
+              {linkFrom ? '再点第二张卡' : '先点第一张卡'} · <button
+                type="button"
+                className="code-icon-btn"
+                onClick={() => {
+                  setLinkMode(null)
+                  setLinkFrom(null)
+                }}
+              >取消</button>
+            </span>
+          )}
           {/* ★★ 全屏切换（* 与图谱页右上角同款圆形按钮）⚠ */}
           <button
             type="button"
@@ -501,7 +696,73 @@ export default function ThinkingBoard({
           }}
         >
           <div style={{ position: 'relative', width: canvas.w, height: canvas.h }}>
-            {boardNotes.length === 0 && (
+            {/* ★★ 卡片盒的链：实线箭头 = 深入，虚线 = 参见 */}
+            <svg
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: canvas.w,
+                height: canvas.h,
+                pointerEvents: 'none',
+              }}
+            >
+              <defs>
+                <marker id="tbArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 z" fill="rgba(16,29,51,.55)" />
+                </marker>
+              </defs>
+              {edges.map((e) => {
+                const q = edgePoints(e)
+                if (!q) return null
+                const on = activeEdge === e.key
+                const common = {
+                  x1: q.x1, y1: q.y1, x2: q.x2, y2: q.y2,
+                  stroke: e.type === 'parent' ? 'rgba(16,29,51,.55)' : 'var(--accent, #2563eb)',
+                  strokeWidth: on ? 3 : 1.6,
+                  strokeDasharray: e.type === 'reference' ? '5 4' : undefined,
+                  markerEnd: e.type === 'parent' ? 'url(#tbArrow)' : undefined,
+                }
+                return (
+                  <g key={e.key}>
+                    <line {...common} />
+                    <line
+                      x1={q.x1} y1={q.y1} x2={q.x2} y2={q.y2}
+                      stroke="transparent"
+                      strokeWidth={14}
+                      style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+                      onClick={() => setActiveEdge(on ? null : e.key)}
+                    />
+                  </g>
+                )
+              })}
+            </svg>
+
+            {/* 点线后浮出 ×：点掉即断（不删卡） */}
+            {activeEdge && activeEdgePts && (
+              <button
+                type="button"
+                title="断掉这条链（卡片保留）"
+                onClick={() => void cutEdge(activeEdge)}
+                style={{
+                  position: 'absolute',
+                  left: (activeEdgePts.x1 + activeEdgePts.x2) / 2 - 11,
+                  top: (activeEdgePts.y1 + activeEdgePts.y2) / 2 - 11,
+                  width: 22,
+                  height: 22,
+                  borderRadius: '50%',
+                  border: '1px solid var(--card-border)',
+                  background: 'var(--card)',
+                  color: 'var(--err)',
+                  cursor: 'pointer',
+                  zIndex: 3,
+                }}
+              >
+                ×
+              </button>
+            )}
+
+            {boardNotes.length === 0 && external.filter((e) => onBoard.has(e.id)).length === 0 && (
               <div
                 style={{
                   position: 'absolute',
@@ -523,11 +784,18 @@ export default function ThinkingBoard({
               return (
                 <div
                   key={n.id}
-                  onPointerDown={(e) => onPointerDown(e, n.id)}
-                  onDoubleClick={() =>
+                  onPointerDown={(e) => {
+                    if (linkMode) return
+                    onPointerDown(e, n.id)
+                  }}
+                  onClick={() => {
+                    if (linkMode) void clickCard(n.card_id || cardId(projectRef, n.ref))
+                  }}
+                  onDoubleClick={() => {
+                    if (linkMode) return
                     navigate(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}`)
-                  }
-                  title="拖动排布 · 右下角改大小 · 双击打开"
+                  }}
+                  title={linkMode ? '连线模式：点两张卡建立关系' : '拖动排布 · 右下角改大小 · 双击打开'}
                   style={{
                     position: 'absolute',
                     left: p.x,
@@ -543,7 +811,11 @@ export default function ThinkingBoard({
                     boxShadow: active
                       ? '0 10px 24px rgba(15,23,42,.22)'
                       : '0 2px 8px rgba(15,23,42,.10)',
-                    cursor: active ? 'grabbing' : 'grab',
+                    cursor: linkMode ? 'pointer' : active ? 'grabbing' : 'grab',
+                    outline:
+                      linkFrom && linkFrom === (n.card_id || cardId(projectRef, n.ref))
+                        ? '2px solid var(--accent)'
+                        : undefined,
                     userSelect: 'none',
                     touchAction: 'none',
                     display: 'flex',
@@ -636,6 +908,65 @@ export default function ThinkingBoard({
                 </div>
               )
             })}
+
+            {/* ★★ 跨节点 / 跨项目的卡：只读，能看、能拖、能连，双击回它自己的项目 */}
+            {external
+              .filter((e) => onBoard.has(e.id))
+              .map((e) => {
+                const p = pos[e.id] ?? { x: PAD, y: PAD }
+                const selected = linkFrom === e.card
+                return (
+                  <div
+                    key={e.id}
+                    onPointerDown={(ev) => {
+                      if (linkMode) return
+                      onPointerDown(ev, e.id)
+                    }}
+                    onClick={() => {
+                      if (linkMode) void clickCard(e.card)
+                    }}
+                    onDoubleClick={() => {
+                      if (linkMode) return
+                      navigate(
+                        `/p/${encodeURIComponent(e.info.project_ref)}/notes/${e.info.ref}`,
+                      )
+                    }}
+                    title="只读 · 双击打开它所在的项目"
+                    style={{
+                      position: 'absolute',
+                      left: p.x,
+                      top: p.y,
+                      width: DEF_W,
+                      minHeight: 90,
+                      boxSizing: 'border-box',
+                      padding: '8px 10px',
+                      borderRadius: 10,
+                      background: '#f8fafc',
+                      border: '1px dashed rgba(15,23,42,.28)',
+                      borderLeft: '4px solid var(--accent, #2563eb)',
+                      boxShadow: '0 2px 8px rgba(15,23,42,.08)',
+                      cursor: linkMode ? 'pointer' : 'grab',
+                      outline: selected ? '2px solid var(--accent)' : undefined,
+                      userSelect: 'none',
+                      touchAction: 'none',
+                      fontSize: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 5,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, lineHeight: 1.5 }}>
+                      《{e.info.title || '无标题'}》
+                    </div>
+                    <div className="faint" style={{ fontSize: 11 }}>
+                      {e.info.project} · {e.info.node || e.info.kind}
+                    </div>
+                    <div className="faint" style={{ fontSize: 10.5, marginTop: 'auto' }}>
+                      只读 · 来自其它节点/项目
+                    </div>
+                  </div>
+                )
+              })}
           </div>
         </div>
       </div>

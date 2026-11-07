@@ -456,7 +456,8 @@ export default function ProjectGraphPage() {
           display: 'flex',
           flexDirection: 'column',
           gap: 0,
-          padding: fullscreen ? 12 : '10px 16px 0',
+          // ★ 与列表页完全一致：顶部 0、左右 18px ⇒ 顶栏下面直接是卡片，顶满
+          padding: fullscreen ? 12 : '0 18px',
           // ★★ 移动端用 `dvh`（* 动态视口高，* 避开地址栏伸缩）⚠
           height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
           minHeight: fullscreen ? undefined : 520,

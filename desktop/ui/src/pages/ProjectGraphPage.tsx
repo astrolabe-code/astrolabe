@@ -472,10 +472,7 @@ export default function ProjectGraphPage() {
           initial={340}
           min={280}
           otherMin={320}
-          gap={0}
-          stacked={isNarrow}
-          showHandle={!fullscreen && !panelFull && !isNarrow}
-          style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}
+          style={{ flex: 1, minHeight: 0, minWidth: 0 }}
         >
         {/* 写作区全屏时画布隐藏（* 两者互斥）⚠ */}
         <div

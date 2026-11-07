@@ -167,8 +167,7 @@ export default function ProjectPage() {
         min={220}
         otherMin={320}
         gap={14}
-        stacked={isNarrow}
-        style={{ position: 'relative', alignItems: 'flex-start' }}
+        style={{ alignItems: 'flex-start' }}
       >
         <div
           className="card"

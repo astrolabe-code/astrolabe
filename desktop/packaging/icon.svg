@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Astrolabe 定稿：L1 浅色 / D1 星盘照准尺 / T3 三角箭头 / S3 三层星链 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f7fbfd"/>
+    </linearGradient>
+    <linearGradient id="ringLit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0e7490"/>
+      <stop offset="1" stop-color="#38aeca"/>
+    </linearGradient>
+    <linearGradient id="ringDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#084e66"/>
+      <stop offset="1" stop-color="#0e7490"/>
+    </linearGradient>
+    <linearGradient id="ruleLit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3caac8"/>
+      <stop offset="1" stop-color="#afe2f0"/>
+    </linearGradient>
+    <linearGradient id="ruleDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c6c8a"/>
+      <stop offset="1" stop-color="#3caac8"/>
+    </linearGradient>
+    <clipPath id="ringHalf" clipPathUnits="userSpaceOnUse">
+      <polygon points="2.7239,-1.2572 -2.7239,1.2572 -1.4667,3.9811 3.9811,1.4667"/>
+    </clipPath>
+    <clipPath id="ruleHalf" clipPathUnits="userSpaceOnUse">
+      <polygon points="2.4871,1.6776 -2.4871,-1.6776 -4.1647,0.8095 0.8095,4.1647"/>
+    </clipPath>
+  </defs>
+  <rect x="33" y="33" width="958" height="958" rx="217" fill="url(#bg)"/>
+  <rect x="33" y="33" width="958" height="958" rx="217" fill="none"
+        stroke="#96becd" stroke-opacity="0.3" stroke-width="5"/>
+  <!-- 星链：连线 -->
+  <path d="M174.1 143.4 L450.6 87.0" stroke="#81b3c3" stroke-opacity="0.15" stroke-width="5.7" stroke-linecap="round"/>
+  <path d="M450.6 87.0 L737.3 112.6" stroke="#6fa7b9" stroke-opacity="0.22" stroke-width="5.7" stroke-linecap="round"/>
+  <path d="M737.3 112.6 L885.8 209.9" stroke="#86b6c6" stroke-opacity="0.13" stroke-width="5.7" stroke-linecap="round"/>
+  <path d="M409.6 926.7 L133.1 819.2" stroke="#7eb1c2" stroke-opacity="0.16" stroke-width="5.7" stroke-linecap="round"/>
+  <!-- 星链：8 颗星，三层明暗 -->
+  <path d="M696.6 112.6 H778.0 M737.3 71.9 V153.4" stroke="#06607e" stroke-opacity="0.39" stroke-width="4.1" stroke-linecap="round"/>
+  <circle cx="737.3" cy="112.6" r="18.9" fill="#06607e" fill-opacity="0.94"/>
+  <path d="M375.5 926.7 H443.7 M409.6 892.6 V960.8" stroke="#24748f" stroke-opacity="0.34" stroke-width="4.1" stroke-linecap="round"/>
+  <circle cx="409.6" cy="926.7" r="15.9" fill="#24748f" fill-opacity="0.82"/>
+  <circle cx="450.6" cy="87.0" r="13.8" fill="#65a0b4" fill-opacity="0.56"/>
+  <circle cx="174.1" cy="143.4" r="12.3" fill="#7cafc0" fill-opacity="0.47"/>
+  <circle cx="706.6" cy="906.2" r="12.8" fill="#8dbbca" fill-opacity="0.4"/>
+  <circle cx="885.8" cy="209.9" r="9.2" fill="#b5d6e1" fill-opacity="0.24"/>
+  <circle cx="921.6" cy="573.4" r="9.7" fill="#bfdde6" fill-opacity="0.2"/>
+  <circle cx="133.1" cy="819.2" r="8.7" fill="#abcfdb" fill-opacity="0.28"/>
+  <!-- 盘面（倾斜 -24° + 透视压扁 0.80） -->
+  <g transform="translate(512 512) scale(1024) rotate(24) scale(1 0.8)">
+    <circle r="0.285" fill="none" stroke="url(#ringDark)" stroke-width="0.172"/>
+    <circle r="0.285" fill="none" stroke="url(#ringLit)" stroke-width="0.172" clip-path="url(#ringHalf)"/>
+    <circle r="0.209" fill="none" stroke="#afe2f0" stroke-opacity="0.55" stroke-width="0.010"/>
+    <path d="M-0.3275 -0.2209 L0.3275 0.2209" stroke="url(#ruleDark)" stroke-width="0.066" stroke-linecap="round" fill="none"/>
+    <path d="M-0.3275 -0.2209 L0.3275 0.2209" stroke="url(#ruleLit)" stroke-width="0.066" stroke-linecap="round" fill="none" clip-path="url(#ruleHalf)"/>
+    <polygon points="-0.2991,-0.2415 -0.3360,-0.1868 -0.4004,-0.2701" fill="url(#ruleLit)" fill-opacity="0.98"/>
+    <polygon points="0.2991,0.2415 0.3360,0.1868 0.4004,0.2701" fill="url(#ruleLit)" fill-opacity="0.98"/>
+    <circle r="0.052" fill="#0a5c78"/>
+    <circle r="0.036" fill="#f0fbfe"/>
+  </g>
+</svg>

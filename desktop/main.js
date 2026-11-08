@@ -38,6 +38,11 @@ const DIST = IS_PACKAGED
   ? path.join(process.resourcesPath, 'dist')
   : path.join(__dirname, 'ui', 'dist')
 
+/** 应用图标：开发时在 packaging/，打包后随 asar 一起（见 build.files）
+ *  ⚠ exe 图标由 electron-builder 从 buildResources 取
+ *    （Windows 用 icon.ico、Linux 用 icon.png）；这里给 BrowserWindow 统一用 png */
+const APP_ICON = path.join(__dirname, 'packaging', 'icon.png')
+
 /** 边车：打包后是 resources/sidecar/astrolabe-sidecar(.exe)，开发时是 python 脚本 */
 const SIDECAR_CMD = IS_PACKAGED
   ? path.join(process.resourcesPath, 'sidecar', process.platform === 'win32' ? 'astrolabe-sidecar.exe' : 'astrolabe-sidecar')
@@ -211,6 +216,7 @@ function createWindow() {
     height: 920,
     minWidth: 900,
     minHeight: 600,
+    icon: APP_ICON,
     backgroundColor: '#ffffff', // ★ 个人版全白（见 POSITIONING / 主题 plain）
     autoHideMenuBar: true,
     webPreferences: {

@@ -218,6 +218,9 @@ function createWindow() {
     minHeight: 600,
     icon: APP_ICON,
     backgroundColor: '#ffffff', // ★ 个人版全白（见 POSITIONING / 主题 plain）
+    // ★★ 自绘标题栏（Obsidian 口径）：原生标题栏与顶栏合并成一行，
+    //    窗口按钮由前端画 —— ⛔ 不再有第二行、也不再显示构建时间戳
+    frame: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -235,6 +238,14 @@ function createWindow() {
   })
 
   win.loadURL('app://local/app/')
+
+  // ★ 最大化状态回传：自绘的 □ 按钮要在最大化后变成「还原」图标
+  const notifyMaximized = () => {
+    if (!win.isDestroyed()) win.webContents.send('win:maximized', win.isMaximized())
+  }
+  win.on('maximize', notifyMaximized)
+  win.on('unmaximize', notifyMaximized)
+  win.webContents.once('did-finish-load', notifyMaximized)
 
   /**
    * ★ 自检模式（`ASTROLABE_SMOKE=1`）——
@@ -353,6 +364,32 @@ ipcMain.handle('app:open-path', async (_e, target) => {
 ipcMain.handle('app:open-data-dir', async () => {
   await shell.openPath(DATA_DIR)
   return true
+})
+
+// ---------------------------------------------------------------- 自绘标题栏的窗口控制
+//  ⚠ frame:false 后原生 — □ × 没了，全部由前端按钮经这里转发。
+//    用 e.sender 定位窗口，不依赖模块级 win 变量（多窗口也安全）。
+
+ipcMain.handle('win:minimize', (e) => {
+  BrowserWindow.fromWebContents(e.sender)?.minimize()
+  return true
+})
+
+ipcMain.handle('win:toggle-maximize', (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  if (!w) return false
+  if (w.isMaximized()) w.unmaximize()
+  else w.maximize()
+  return w.isMaximized()
+})
+
+ipcMain.handle('win:close', (e) => {
+  BrowserWindow.fromWebContents(e.sender)?.close()
+  return true
+})
+
+ipcMain.handle('win:is-maximized', (e) => {
+  return !!BrowserWindow.fromWebContents(e.sender)?.isMaximized()
 })
 
 app.whenReady().then(() => {

@@ -27,10 +27,9 @@ applyCodePrefs()
 // ★ SPA 挂 /app/ 前缀（D26/D27）—— basename 必须与 vite base 一致
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '')
 
-// ★★ 构建时间写进**标签页标题** ——* 一眼看出浏览器加载的是不是最新包 ⚠
-//   · · ★ 标题里没有这串 ⇒* 旧包（* 缓存/没刷新）⚠
-const BUILD = typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__.slice(5, 16).replace('T', ' ') : ''
-if (BUILD) document.title = `Astrolabe · ${BUILD}`
+// ★ frame:false 自绘标题栏后，标题只用于任务栏 / Alt-Tab。
+//   ⛔ 不再挂构建时间戳（此前 `Astrolabe · 11-08 11:39` 看着像调试信息）。
+document.title = 'Astrolabe'
 
 const queryClient = new QueryClient({
   defaultOptions: {

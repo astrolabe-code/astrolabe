@@ -647,3 +647,11 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 }
 .code-tree-row:hover { background: rgba(15, 23, 42, .05); }
 
+
+/* ★★★ 自绘标题栏（frame:false）：整行可拖动，交互元素必须 no-drag */
+.app-titlebar { -webkit-app-region: drag; user-select: none; }
+.app-titlebar button,
+.app-titlebar input,
+.app-titlebar a,
+.app-titlebar .topbar-slot,
+.app-titlebar .topbar-slot * { -webkit-app-region: no-drag; }

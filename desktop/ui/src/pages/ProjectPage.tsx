@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { FileCode2, Lock, Settings, Workflow } from 'lucide-react'
+import { FileCode2, Lock, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -133,12 +133,6 @@ export default function ProjectPage() {
           onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/graph`)}
         />
         <RailButton
-          icon={<Settings size={13} />}
-          label="设置"
-          title="项目设置"
-          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/settings`)}
-        />
-        <RailButton
           icon={<FileCode2 size={13} />}
           label="源码"
           title="打开代码工作区（当前节点的源码 + 笔记）"
@@ -147,8 +141,15 @@ export default function ProjectPage() {
         />
       </PageBar>
 
-      {/* ★★ 内容区：* 左右只留 18px（移动 10px）⇒* 白面板尽量宽 ⚠ */}
-      <div style={{ padding: isNarrow ? '0 10px' : '0 18px' }}>
+      {/* ★★ 内容区：贴边、铺满视口，两栏内部各自滚动（VSCode 分屏口径） */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: isNarrow ? undefined : 'calc(100dvh - var(--nav-h, 40px))',
+          minHeight: isNarrow ? undefined : 520,
+        }}
+      >
       
 
       {p.desc && (
@@ -160,13 +161,12 @@ export default function ProjectPage() {
       {/* ★★★ 双栏（* 窄屏单列）：
           · · 所有者：「这个页面的左边没有列表之类的，完全平铺很长，导致页面看起来
             很怪」——* 列表有 137 个节点却没限高 ⇒ 左栏 5977px，整页被拉成一条长列 ⚠
-          · · ★ 左栏**独立滚动**（sticky + maxHeight）⇒ 页面高度只由右栏决定 ✅ */}
+          · · ★ 两栏由 SplitPane 撑满视口、各自内部滚动（VSCode 分屏口径）✅ */}
       <SplitPane
         fixed="left"
         initial={300}
         min={220}
         otherMin={320}
-        style={{ alignItems: 'flex-start' }}
       >
         <div
           className="card"
@@ -174,10 +174,10 @@ export default function ProjectPage() {
             padding: 12,
             display: 'flex',
             flexDirection: 'column',
-            // ★ 桌面：粘在视口内、自己滚；* 窄屏：只占 42vh，避免把页面撑长 ⚠
-            position: isNarrow ? 'static' : 'sticky',
-            top: isNarrow ? undefined : 76,
-            maxHeight: isNarrow ? '42vh' : 'calc(100vh - 96px)',
+            // ★ 桌面：由 SplitPane 撑满视口高度，左栏内部自己滚（⛔ 不再 sticky + 96px 留白）
+            //   窄屏仍限高 42vh，避免把页面撑成一条长列
+            maxHeight: isNarrow ? '42vh' : undefined,
+            minHeight: 0,
             overflow: 'hidden',
           }}
         >
@@ -258,12 +258,9 @@ export default function ProjectPage() {
         <div
           className="card"
           style={{
-            minHeight: isNarrow ? 320 : 480,
-            // ★★★ 给右栏一个**确定高度**（与左栏 maxHeight 同口径）⚠
-            //   否则 CodeWorkspace 的 height:100% 在 auto 父容器里不生效 ⇒
-            //   切到「代码」时 CodeMirror 把卡片撑高 ⇒ 整页变长、左栏 sticky 与右栏错开
-            //   （所有者：「点代码，上面就空出来一截……就不能一直是对齐的吗？」）
-            height: isNarrow ? undefined : 'calc(100vh - 96px)',
+            // ★ 高度由 SplitPane 的 stretch 撑满（⛔ 不再写死 100vh-96px）
+            //   CodeWorkspace 的 height:100% 因此生效，切 tab 不会撑高页面
+            minHeight: isNarrow ? 320 : 0,
             display: 'flex',
             flexDirection: 'column',
             padding: 0,

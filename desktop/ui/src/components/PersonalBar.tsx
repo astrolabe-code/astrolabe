@@ -1,100 +1,156 @@
 /**
- * ★★ **个人版顶栏**（替代社区版那个带登录/搜索/我的的 TopNav）
+ * ★★★ **自绘标题栏**（Obsidian 口径：整个窗口只有一行顶栏）
  *
- * 所有者：「不要做用户登陆功能，就只有用户一个人用……首页这些花里胡哨的不需要的。」
+ * 所有者：「主要是要合并成一行，自己绘制一个，还有把设置和搜索收进左栏」
  *
- * ```\n * Astrolabe                         [笔记位置 D:\我的笔记]  [数据]\n * ```\n *
- * ⚠ 只有三样：回项目的入口 · **笔记存哪** · 数据目录。
- *   ⛔ 不放搜索、头像、登录、通知 —— 单机单用户没有这些概念。
+ * ```
+ * [▣]  [页面工具 TopbarSlot] ······ 可拖动区 ······  [—] [□/❐] [×]
+ * ```
  *
- * ★★ 「笔记位置」是所有者 2026-10-30 要求的：
- *   「不能用户指定笔记的存放位置吗？……要是用户想指定其他位置呢？」
+ * ⚠ 主进程 `frame:false` ⇒ 原生 — □ × 没有了，这三个由这里画，
+ *   经 preload 的 win* 转发到主进程 IPC。浏览器里打开 ui/dist 时
+ *   `window.astrolabe` 不存在 ⇒ 窗口按钮不渲染，不会报错。
+ *
+ * ⚠ 拖动区用 `-webkit-app-region: drag`（见 components.css），
+ *   所有按钮 / 输入框必须 no-drag，否则点不动。
+ * ⚠ 品牌名、设置、搜索都不再占这一行：品牌折成左端方块（回首页），
+ *   设置与搜索收进左侧 Ribbon。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { Box, Copy, Minus, Square, X } from 'lucide-react'
 
 interface DesktopApi {
   isDesktop?: boolean
-  info?: () => Promise<{ version: string; dataDir: string }>
-  openDataDir?: () => Promise<boolean>
+  winMinimize?: () => Promise<boolean>
+  winToggleMaximize?: () => Promise<boolean>
+  winClose?: () => Promise<boolean>
+  winIsMaximized?: () => Promise<boolean>
+  onWinMaximized?: (cb: (value: boolean) => void) => () => void
+}
+
+/** 单个窗口控制按钮：46×40，关闭键 hover 变红 */
+function WinButton({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: ReactNode
+  label: string
+  onClick: () => void
+  danger?: boolean
+}) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'grid',
+        placeItems: 'center',
+        width: 46,
+        height: 40,
+        padding: 0,
+        border: 0,
+        borderRadius: 0,
+        background: hover ? (danger ? '#e81123' : 'rgba(15,23,42,.07)') : 'transparent',
+        color: hover && danger ? '#fff' : 'var(--text-sub, #6b7280)',
+        cursor: 'pointer',
+      }}
+    >
+      {icon}
+    </button>
+  )
 }
 
 export default function PersonalBar() {
   const nav = useNavigate()
-  const [dataDir, setDataDir] = useState('')
   const api = (window as unknown as { astrolabe?: DesktopApi }).astrolabe
+  const hasWinApi = !!api?.winClose
+  const [maximized, setMaximized] = useState(false)
 
   useEffect(() => {
-    // ★ 只在桌面版里有；浏览器里打开就什么都不显示（不报错）
-    api?.info?.().then((i) => setDataDir(i.dataDir)).catch(() => {})
-  }, [api])
+    if (!hasWinApi) return
+    api?.winIsMaximized?.().then((v) => setMaximized(!!v)).catch(() => {})
+    return api?.onWinMaximized?.(setMaximized)
+  }, [api, hasWinApi])
 
-  const btn = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 4,
-    padding: '3px 8px',
-    fontSize: 11.5,
-    fontFamily: 'inherit',
-    color: '#777',
-    background: 'transparent',
-    border: '1px solid #e5e5e5',
-    borderRadius: 6,
-    cursor: 'pointer',
-  } as const
+  const toggleMaximize = () => {
+    void api?.winToggleMaximize?.()
+  }
 
   return (
     <div
+      className="app-titlebar"
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
         height: 40,
-        padding: '0 14px',
+        padding: 0,
         borderBottom: '1px solid #eee',
         background: '#fff',
         fontFamily: 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
+        flexShrink: 0,
       }}
     >
+      {/* ★ 左端方块（借鉴 Obsidian 的工作区方块）：回首页 */}
       <button
         type="button"
+        title="Astrolabe · 回到首页"
+        aria-label="回到首页"
         onClick={() => nav('/')}
+        onDoubleClick={(e) => e.stopPropagation()}
         style={{
+          display: 'grid',
+          placeItems: 'center',
+          width: 40,
+          height: 40,
+          flexShrink: 0,
           padding: 0,
+          border: 0,
           background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          fontSize: 13,
-          fontWeight: 600,
           color: '#111',
-          fontFamily: 'inherit',
+          cursor: 'pointer',
         }}
       >
-        Astrolabe
+        <Box size={15} strokeWidth={1.6} />
       </button>
 
-      {/* ★★★ 2026-11-05：**页面级工具条的插槽** ⚠
-          所有者：「你把这些工具按钮直接移到上面的 astrolabe 行，不就完了？上面那么空」
-          ⇒ 页面用 `<TopbarSlot>` portal 进来（见 components/TopbarSlot.tsx） */}
+      {/* ★ 页面级工具条仍挂这一行（TopbarSlot portal） */}
       <div id="app-topbar-slot" className="topbar-slot" />
 
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-        {/* ★ 触发 Ctrl+K 面板（面板自己监听键盘，这里只是让它可发现）⚠ */}
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}
-          style={btn}
-          title="搜索笔记和节点（Ctrl+K）"
-        >
-          <Search size={12} />
-          搜索
-          <span className="faint" style={{ fontSize: 10, marginLeft: 2 }}>Ctrl+K</span>
-        </button>
-        {/* ★★★ 2026-11-05：设置 / 数据 已移进「工具」菜单（见 AppMenuItems）
-            ⚠ 顶栏右侧只留搜索 —— 所有者：「右侧依旧有除搜索外的按钮」 */}
-      </div>
+      {/* ★ 中间大片留白 = 系统拖动区（-webkit-app-region: drag）。
+          ⚠ drag 区域不派发 JS 鼠标事件 ⇒ 这里不做「双击最大化」，
+            最大化统一用右侧 □ 按钮（真能点） */}
+      <div style={{ flex: 1, minWidth: 0, height: '100%' }} />
+
+      {hasWinApi && (
+        <div style={{ display: 'flex', flexShrink: 0 }}>
+          <WinButton
+            icon={<Minus size={14} strokeWidth={1.5} />}
+            label="最小化"
+            onClick={() => void api?.winMinimize?.()}
+          />
+          <WinButton
+            icon={maximized ? <Copy size={12} strokeWidth={1.5} /> : <Square size={12} strokeWidth={1.5} />}
+            label={maximized ? '向下还原' : '最大化'}
+            onClick={toggleMaximize}
+          />
+          <WinButton
+            icon={<X size={15} strokeWidth={1.5} />}
+            label="关闭"
+            danger
+            onClick={() => void api?.winClose?.()}
+          />
+        </div>
+      )}
     </div>
   )
 }

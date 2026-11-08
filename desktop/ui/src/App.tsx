@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import QuickNote from './components/notes/QuickNote'
@@ -9,6 +9,10 @@ import ProjectPage from './pages/ProjectPage'
 import NotePage from './pages/NotePage'
 import NoteEditPage from './pages/NoteEditPage'
 import SettingsPage from './pages/SettingsPage'
+import Ribbon from './components/Ribbon'
+import RibbonPanel from './components/RibbonPanel'
+import type { PanelKind } from './lib/ribbonBus'
+import { patchRibbon } from './lib/ribbonBus'
 
 /** ★★ 图谱页懒加载 —— G6 是大件，只在打开图谱时才下载 ⚠ */
 const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
@@ -24,12 +28,34 @@ const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
  *    改那边不会影响这里（反之亦然）。
  */
 export default function App() {
+  const [panel, setPanel] = useState<PanelKind | null>(null)
+  const togglePanel = (k: PanelKind) => setPanel((cur) => (cur === k ? null : k))
+  useEffect(() => {
+    patchRibbon({ closePanel: () => setPanel(null) })
+  }, [])
   return (
-    <>
+    /* ★★ 根层锁死一屏：⛔ 窗口本身不再滚动（否则标题栏会被滚走、
+       最右侧还会露出一条 Win11 滚动条滑块）。滚动下放到内容区 div。 */
+    <div
+      style={{
+        height: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
       <PersonalBar />
       <CommandPalette />
       <QuickNote />
 
+      {/* ★★★ Obsidian 口径：左侧 36px ribbon + 挤压展开的功能面板，
+          内容区顶部不再摊功能按钮 */}
+      <div style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+        <Ribbon active={panel} onToggle={togglePanel} />
+        {panel && <RibbonPanel kind={panel} onClose={() => setPanel(null)} />}
+        {/* ★ 只让内容区滚：标题栏、ribbon、功能面板都固定不动。
+            .app-scroll 把滚动条滑块隐藏（滚轮 / 触控板仍可滚） */}
+        <div className="app-scroll" style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}>
       <Routes>
         <Route path="/" element={<PersonalHome />} />
 
@@ -58,6 +84,8 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </>
+        </div>
+      </div>
+    </div>
   )
 }

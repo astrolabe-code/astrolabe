@@ -655,3 +655,8 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .app-titlebar a,
 .app-titlebar .topbar-slot,
 .app-titlebar .topbar-slot * { -webkit-app-region: no-drag; }
+
+/* ★★ 内容区滚动条：滑块隐藏但滚轮/触控板/键盘仍可滚（Obsidian 口径）
+   ⚠ WebKit 用 ::-webkit-scrollbar，Firefox 用 scrollbar-width */
+.app-scroll { scrollbar-width: none; }
+.app-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }

@@ -224,7 +224,8 @@ export default function PersonalHome() {
   }
 
   const page: React.CSSProperties = {
-    minHeight: '100vh',
+    // ★ 根层已锁死一屏，这里不能再用 100vh（会多算 40px 顶栏 ⇒ 溢出）
+    minHeight: '100%',
     background: '#fff',
     color: '#111',
     fontFamily: 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',

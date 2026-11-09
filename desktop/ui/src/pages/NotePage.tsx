@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { GitBranch, List, Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
@@ -12,6 +12,20 @@ import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
 import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
+import { setTabTitle } from '../lib/tabBus'
+
+/** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
+function NoteShell({ children, embedded }: { children: ReactNode; embedded?: NoteEmbeddedProps }) {
+  if (!embedded) return <AppLayout>{children}</AppLayout>
+  return (
+    <div
+      className="note-pane-body"
+      style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 16px' }}
+    >
+      {children}
+    </div>
+  )
+}
 
 /** 标题字号按长度分档（`D112`⑥ 实测：25 字 22px = 624px，可用 712px）⚠ */
 function titleSize(len: number): number {
@@ -67,19 +81,40 @@ function panelWidth(): number {
  */
 
 
-export default function NotePage() {
-  const { projectRef = '', noteId = '' } = useParams<{ projectRef: string; noteId: string }>()
+/** ★ 2026-11-09：嵌进工作区容器时的可选参数（⛔ 不改任何业务逻辑） */
+export interface NoteEmbeddedProps {
+  projectRef?: string
+  noteRef?: string
+  /** 容器内的「跳转」：把站内路径交给 notePaneBus 翻译成容器动作 */
+  onNavigate?: (path: string) => void
+  /** 页面工具挂到工作区自己的插槽，避免与外层页面工具混在一起 */
+  toolsSlotId?: string
+}
+
+export default function NotePage(embedded?: NoteEmbeddedProps) {
+  const { projectRef: routeProject = '', noteId = '' } = useParams<{ projectRef: string; noteId: string }>()
   // ★ 路由里的这一段现在是**笔记 ref**（* 不是自增 pk）⚠
-  const ref = noteId
+  // ★ embedded 时改由容器注入（此时 URL 仍是项目/图谱页）
+  const projectRef = embedded?.projectRef ?? routeProject
+  const ref = embedded?.noteRef ?? noteId
   const note = useNote(ref || null)
   const project = useProject(projectRef)
-  const nav = useNavigate()
+  const routerNav = useNavigate()
+  const nav = embedded?.onNavigate ?? routerNav
   const [anchorOpen, setAnchorOpen] = useState(false)
+  const slotId = embedded?.toolsSlotId
 
   const n = note.data?.note
   // ★★ 改锚点用（`D125`）—— 必须放在 `n` 之后（* 它要 `n.ref`）⚠
   const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
+
+  // ★ 标签栏显示笔记真实标题（否则只显示推断的「笔记」）
+  const loc = useLocation()
+  useEffect(() => {
+    if (embedded) return  // 容器内嵌时不改顶栏标签（所有者：「标签这个先不管」）
+    if (n?.title) setTabTitle(loc.pathname, n.title)
+  }, [n?.title, loc.pathname, embedded])
 
 
   // ★★ 可写 = 作者 ∨ 项目成员（* `B207`③）✅
@@ -89,7 +124,7 @@ export default function NotePage() {
 
   if (note.isError) {
     return (
-      <AppLayout>
+      <NoteShell embedded={embedded}>
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
           {/* ★ 从搜索结果点进来时，索引可能比库慢半拍 ⇒ 明确告诉他"被移除了" ⚠ */}
           <div style={{ fontSize: 14, fontWeight: 600 }}>
@@ -108,15 +143,15 @@ export default function NotePage() {
             </Link>
           </div>
         </div>
-      </AppLayout>
+      </NoteShell>
     )
   }
 
   if (note.isLoading || !n) {
     return (
-      <AppLayout>
+      <NoteShell embedded={embedded}>
         <div className="faint" style={{ fontSize: 13 }}>加载中…</div>
-      </AppLayout>
+      </NoteShell>
     )
   }
 
@@ -137,9 +172,9 @@ export default function NotePage() {
   const displayName = n.created_by_display || n.created_by || ''
 
   return (
-    <AppLayout>
+    <NoteShell embedded={embedded}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
-      <PageBar>
+      <PageBar slotId={slotId}>
         <RailButton
           icon={<List size={13} />}
           label="节点"
@@ -358,6 +393,6 @@ export default function NotePage() {
         }}
       />
 
-    </AppLayout>
+    </NoteShell>
   )
 }

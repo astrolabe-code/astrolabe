@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
@@ -11,12 +11,34 @@ import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
+
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
 import { markResume } from '../lib/resume'
 import { extractToc, scrollToHeading, type TocItem } from '../lib/toc'
 import { useCollapsed } from '../lib/useCollapsed'
 import { useCreateNote, useDeleteNote, useNote, useUpdateNote } from '../query/notes'
+
+/** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
+function NoteShell({
+  children,
+  embedded,
+  title,
+}: {
+  children: ReactNode
+  embedded?: NoteEditEmbeddedProps
+  title?: string
+}) {
+  if (!embedded) return <AppLayout title={title}>{children}</AppLayout>
+  return (
+    <div
+      className="note-pane-body"
+      style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 16px' }}
+    >
+      {children}
+    </div>
+  )
+}
 
 /**
  * ★★ **笔记编辑页**（`/p/:projectRef/notes/new` · `/p/:projectRef/notes/:noteId/edit`）⚠
@@ -60,18 +82,33 @@ function stripBase(path: string): string {
 }
 
 
-export default function NoteEditPage() {
-  const { projectRef = '', noteId } = useParams()
-  const [sp] = useSearchParams()
-  const nav = useNavigate()
+/** ★ 2026-11-09：嵌进工作区容器时的可选参数（⛔ 不改任何业务逻辑） */
+export interface NoteEditEmbeddedProps {
+  projectRef?: string
+  noteRef?: string
+  nodeId?: number
+  parent?: string
+  onNavigate?: (path: string) => void
+  toolsSlotId?: string
+}
 
+export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
+  const { projectRef: routeProject = '', noteId: routeNoteId } = useParams()
+  const [sp] = useSearchParams()
+  const routerNav = useNavigate()
+  const nav = embedded?.onNavigate ?? routerNav
+
+  // ★ embedded 时改由容器注入（此时 URL 仍是项目/图谱页，query 里没有 node/parent）
+  const projectRef = embedded?.projectRef ?? routeProject
+  const noteId = embedded?.noteRef ?? routeNoteId
   const editing = Boolean(noteId)
   // ★ 路由这一段是**笔记 ref**（* 不是自增 pk）⚠
   const id = noteId ?? null
   // ★ 新建时 node 从 query 来（* 弹窗时代是 props，* 页面化后只能走 URL）⚠
-  const nodeId = Number(sp.get('node') || 0)
+  const nodeId = embedded?.nodeId ?? Number(sp.get('node') || 0)
   // ★ 深入：从父卡进来时带着全局卡片 id，保存时挂成子代
-  const parentCard = sp.get('parent') || ''
+  const parentCard = embedded?.parent ?? sp.get('parent') ?? ''
+  const slotId = embedded?.toolsSlotId
   /** ★ 深入自哪张卡（跨项目也能显示标题） */
   const [parentInfo, setParentInfo] = useState<CardInfo | null>(null)
   useEffect(() => {
@@ -93,7 +130,9 @@ export default function NoteEditPage() {
   //       `location.pathname` 是浏览器地址、含 `/app`，
   //       而 `nav('/app/p/…')` 会被路由再叠一层 ⇒ `/app/app/p/…`
   //       ⇒ 匹配不到任何路由 ⇒ 掉回首页（所有者实测踩到）⚠
-  const rawFrom = sp.get('from') || ''
+  // ★ embedded 时不认 from：保存后应切到容器内的「阅读」标签，
+  //   而不是跳回外层来源页
+  const rawFrom = embedded ? '' : sp.get('from') || ''
   const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? stripBase(rawFrom) : ''
 
   const noteQ = useNote(id)
@@ -116,8 +155,9 @@ export default function NoteEditPage() {
   //   ⚠ 必须放在 draftTitle 声明之后（否则 TDZ）
   const loc = useLocation()
   useEffect(() => {
+    if (embedded) return  // 容器内嵌时不改顶栏标签
     setTabTitle(loc.pathname, draftTitle.trim() || title.trim() || '新笔记')
-  }, [draftTitle, title, loc.pathname])
+  }, [draftTitle, title, loc.pathname, embedded])
   // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
   const [chars, setChars] = useState(0)
   const countTimer = useRef<number | null>(null)
@@ -256,12 +296,14 @@ export default function NoteEditPage() {
       //   ⚠ newPath 只取 pathname：from 可能带 ?query，而 tab 的 key 是 pathname
       const targetPath = target.split('?')[0]
       const realTitle = data.note?.title || draftTitle.trim() || '新笔记'
-      if (from) {
-        // 回来源页：那个页面本来就有标签 ⇒ 只把这个临时编辑标签收掉
-        closeTab(loc.pathname)
-      } else {
-        // 去阅读页：当前标签原地变成真实笔记
-        replaceTab(loc.pathname, targetPath, realTitle)
+      if (!embedded) {
+        if (from) {
+          // 回来源页：那个页面本来就有标签 ⇒ 只把这个临时编辑标签收掉
+          closeTab(loc.pathname)
+        } else {
+          // 去阅读页：当前标签原地变成真实笔记
+          replaceTab(loc.pathname, targetPath, realTitle)
+        }
       }
       nav(target)
     } catch (e) {
@@ -286,16 +328,16 @@ export default function NoteEditPage() {
   // ---- 编辑模式：加载 / 失败 ----
   if (editing && noteQ.isLoading) {
     return (
-      <AppLayout title="编辑笔记">
+      <NoteShell embedded={embedded} title="编辑笔记">
         <div className="faint" style={{ fontSize: 13 }}>
           加载中…
         </div>
-      </AppLayout>
+      </NoteShell>
     )
   }
   if (editing && (noteQ.isError || !note)) {
     return (
-      <AppLayout title="编辑笔记">
+      <NoteShell embedded={embedded} title="编辑笔记">
         <div className="card" style={{ padding: 24 }}>
           <div className="faint" style={{ fontSize: 12.5 }}>
             这篇笔记打不开 —— 可能已被删除，或者你没有权限。
@@ -304,7 +346,7 @@ export default function NoteEditPage() {
             <Button onClick={back}>返回</Button>
           </div>
         </div>
-      </AppLayout>
+      </NoteShell>
     )
   }
 
@@ -316,9 +358,9 @@ export default function NoteEditPage() {
   const kindColor = KIND_META[kind].color
 
   return (
-    <AppLayout>
+    <NoteShell embedded={embedded}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
-      <PageBar>
+      <PageBar slotId={slotId}>
         <RailButton
           icon={<BookOpenText size={13} />}
           label="阅读"
@@ -633,6 +675,6 @@ export default function NoteEditPage() {
           </div>
         </div>
       </Modal>
-    </AppLayout>
+    </NoteShell>
   )
 }

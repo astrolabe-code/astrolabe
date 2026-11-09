@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import {
-  Copy,
-  Maximize,
-  Minimize,
-  PanelLeft,
-  SquareChevronDown,
-  X,
-} from 'lucide-react'
+import { useCallback, useEffect, useId, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { X } from 'lucide-react'
 
 import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
+import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
+import {
+  closeNotePane,
+  notePaneView,
+  openNotePane,
+  parseNotePath,
+  setNotePaneMode,
+  subscribeNotePane,
+  type NotePaneMode,
+} from '../../lib/notePaneBus'
 import type { GraphNode } from '../../lib/mergeGraph'
+import NotePage from '../../pages/NotePage'
+import NoteEditPage from '../../pages/NoteEditPage'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
@@ -29,7 +34,8 @@ interface CodeWorkspaceProps {
   notePanel?: ReactNode
 }
 
-type Tab = 'code' | 'imitation' | 'notes'
+/** ★ 2026-11-09：拆成「阅读」「编辑」两个标签（所有者：「拆成两个标签，阅读和编辑」） */
+type Tab = 'code' | 'imitation' | 'notes' | 'read' | 'edit'
 
 const TREE_OPEN_KEY = 'astrolabe.code.treeOpen'
 
@@ -79,6 +85,27 @@ export default function CodeWorkspace({
   notePanel,
 }: CodeWorkspaceProps) {
   const [tab, setTab] = useState<Tab>(initialTab)
+  // ★ 当前在容器里打开的笔记（模块级 store，notePanel 是外层传入的 ReactNode，
+  //   用订阅比层层传 props 稳）。订阅本身也让 hasNotePane() 成立。
+  const pane = useSyncExternalStore(subscribeNotePane, notePaneView, notePaneView)
+  // ★ 每个工作区实例一个唯一工具插槽 id（图谱页/项目页各有多个 CodeWorkspace，
+  //   固定 id 会让 document.getElementById 拿到错的那个）
+  const toolsSlotId = `note-pane-tools-${useId().replace(/:/g, '')}`
+  useEffect(() => {
+    if (!pane) return
+    setTab(pane.mode)
+  }, [pane?.token, pane?.mode])
+
+  /** 页面内部 nav(...) 的落点：站内路径 → 容器动作；回项目页 → 收起回列表 */
+  const paneNavigate = (path: string) => {
+    const next = parseNotePath(path)
+    if (!next) {
+      closeNotePane()
+      setTab('notes')
+      return
+    }
+    openNotePane(next)
+  }
   const [treeOpen, setTreeOpen] = useState(() => {
     // ★ 文件树跟着「代码」页走：初始停在笔记就不显示
     if (initialTab === 'notes') return false
@@ -187,13 +214,34 @@ export default function CodeWorkspace({
     return () => document.removeEventListener('keydown', onKey)
   }, [fullscreen, immersive])
 
-  const copy = () => {
+  const copy = useCallback(() => {
     if (!source) return
     void navigator.clipboard.writeText(source.text).then(() => {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     })
-  }
+  }, [source])
+
+  // ★★ 把本工作区能做的事注册给全局 ribbon（Obsidian 口径：按钮不在内容区）
+  useEffect(() => {
+    patchRibbon({
+      projectRef,
+      activePath,
+      toggleTree,
+      copy,
+      toggleImmersive: () => setImmersive((v) => !v),
+      toggleFullscreen: () => setFullscreen((v) => !v),
+      openPath: pickFile,
+    })
+    return () =>
+      clearRibbon([
+        'toggleTree',
+        'copy',
+        'toggleImmersive',
+        'toggleFullscreen',
+        'openPath',
+      ])
+  }, [projectRef, activePath, toggleTree, copy, pickFile])
 
   const shellStyle: CSSProperties = fullscreen
     ? {
@@ -249,48 +297,11 @@ export default function CodeWorkspace({
           <NodeHeading
             node={node}
             trailing={
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                {source && (
-                  <>
-                    <span
-                      className="faint"
-                      style={{ fontSize: 11.5, whiteSpace: 'nowrap', marginRight: 4 }}
-                    >
-                      {source.lang || '文本'} · {source.lines} 行
-                    </span>
-                    <IconBtn title="复制全部代码" onClick={copy}>
-                      <Copy size={14} strokeWidth={1.5} />
-                      {copied ? '已复制' : ''}
-                    </IconBtn>
-                  </>
-                )}
-                <IconBtn
-                  title={treeOpen ? '收起文件树' : '展开文件树'}
-                  onClick={toggleTree}
-                  active={treeOpen}
-                >
-                  <PanelLeft size={16} strokeWidth={1.5} />
+              onClose ? (
+                <IconBtn title="关闭代码窗口" onClick={onClose}>
+                  <X size={16} strokeWidth={1.5} />
                 </IconBtn>
-                <IconBtn title="沉浸（隐藏标签页）" onClick={() => setImmersive(true)}>
-                  <SquareChevronDown size={16} strokeWidth={1.5} />
-                </IconBtn>
-                <IconBtn
-                  title={fullscreen ? '退出全屏' : '全屏'}
-                  onClick={() => setFullscreen((v) => !v)}
-                  active={fullscreen}
-                >
-                  {fullscreen ? (
-                    <Minimize size={16} strokeWidth={1.5} />
-                  ) : (
-                    <Maximize size={16} strokeWidth={1.5} />
-                  )}
-                </IconBtn>
-                {onClose && (
-                  <IconBtn title="关闭代码窗口" onClick={onClose}>
-                    <X size={16} strokeWidth={1.5} />
-                  </IconBtn>
-                )}
-              </div>
+              ) : null
             }
           />
         </div>
@@ -299,19 +310,43 @@ export default function CodeWorkspace({
       {/* ★ tab：代码 / 笔记（蓝色下划线选中态） */}
       {!immersive && (
         <div className="code-tabs">
-          {(['code', 'imitation', 'notes'] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => {
-                setTab(k)
-                setTreeOpen(k === 'code')
-              }}
-              className={`code-tab${tab === k ? ' is-active' : ''}`}
-            >
-              {k === 'code' ? '代码' : k === 'imitation' ? '仿写' : '笔记'}
-            </button>
-          ))}
+          {(['code', 'imitation', 'notes', 'read', 'edit'] as const).map((k) => {
+            const isNotePane = k === 'read' || k === 'edit'
+            const label = k === 'code' ? '代码'
+              : k === 'imitation' ? '仿写'
+              : k === 'notes' ? '笔记'
+              : k === 'read' ? '阅读' : '编辑'
+            return (
+              <button
+                key={k}
+                type="button"
+                disabled={isNotePane && !pane}
+                title={isNotePane && !pane ? '先在「笔记」里点开一篇' : label}
+                onClick={() => {
+                  if (isNotePane) {
+                    // ★ 先切 tab：从「笔记」切回来时 mode 可能没变，
+                    //   setNotePaneMode 会直接 return，不能只依赖订阅回调
+                    setTab(k)
+                    // 两个标签之间切 ⇒ 重建对应页面（阅读/编辑）
+                    setNotePaneMode(k as NotePaneMode)
+                    return
+                  }
+                  setTab(k)
+                  setTreeOpen(k === 'code')
+                }}
+                className={`code-tab${tab === k ? ' is-active' : ''}`}
+                style={isNotePane && !pane ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              >
+                {label}
+              </button>
+            )
+          })}
+          {/* ★ 容器内嵌页面自己的工具条插槽（与外层顶栏工具分离） */}
+          <div
+            id={toolsSlotId}
+            className="page-tools-slot"
+            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
+          />
         </div>
       )}
 
@@ -367,6 +402,31 @@ export default function CodeWorkspace({
               }}
             >
               {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
+            </div>
+          ) : (tab === 'read' || tab === 'edit') && pane ? (
+            /* ★ 两个页面原样嵌进这个容器，业务逻辑一行未改 */
+            <div
+              style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+            >
+              {tab === 'read' ? (
+                <NotePage
+                  key={`read-${pane.token}`}
+                  projectRef={projectRef}
+                  noteRef={pane.ref || undefined}
+                  onNavigate={paneNavigate}
+                  toolsSlotId={toolsSlotId}
+                />
+              ) : (
+                <NoteEditPage
+                  key={`edit-${pane.token}`}
+                  projectRef={projectRef}
+                  noteRef={pane.ref || undefined}
+                  nodeId={pane.nodeId}
+                  parent={pane.parent}
+                  onNavigate={paneNavigate}
+                  toolsSlotId={toolsSlotId}
+                />
+              )}
             </div>
           ) : tab === 'imitation' ? (
             <ImitationPanel projectRef={projectRef} node={node} />

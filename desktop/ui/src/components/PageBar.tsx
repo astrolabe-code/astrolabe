@@ -22,18 +22,29 @@ import TopbarSlot from './TopbarSlot'
  * ## 三条设计约束（都是踩过坑才定下来的）
  *
  * ```
- * ① 挂在**顶栏那一行**（portal），⛔ 不浮在内容上 —— 否则会压住文字
+ * ① 挂在**右上角**（portal，见 PersonalBar 的 page-tools-slot 插槽）
+ *    ⛔ 不挂左栏：左栏 ribbon 要全局固定、每个界面图标数一致
+ *    （所有者：「左栏的按钮，在每个界面的数量都不一样…
+ *      与页面强烈相关的就放到右上角」）
  * ② 扁平图标按钮：透明底 / 无边框 / 无阴影，悬停才出现浅底
  *    ⛔ 不用胶囊 + 阴影（所有者：「样子怪不说，还挡住了后面的字」）
+ *    .page-tools-slot 会隐藏文字只留图标
  * ③ 下拉菜单：点外面 / Esc 关闭，⛔ 不用 mouseleave
  *    （菜单与按钮之间有 6px 视觉缝，mouseleave 会被那块空隙误触发 ⇒ 菜单"一碰就消失"）
  * ```
  */
 
-export function PageBar({ children }: { children: ReactNode }) {
+export function PageBar({ children, slotId }: { children: ReactNode; slotId?: string }) {
   return (
-    <TopbarSlot>
-      <div className="graph-toolbar">{children}</div>
+    <TopbarSlot targetId={slotId}>
+      <div className="graph-toolbar">
+        {/* ★★★ 必须包成**一个组** ⚠
+            `.graph-toolbar` 早先是 space-between（左组工具 + 右组搜索）；
+            改成公共组件后搜索已归 PersonalBar，若子项直接散在容器里，
+            每个按钮都会成为 space-between 的一项 ⇒ 被均匀摊到整行
+            （所有者：「各个按钮之间怎么分的这么宽？」）*/}
+        <div className="rail-group">{children}</div>
+      </div>
     </TopbarSlot>
   )
 }

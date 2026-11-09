@@ -4,6 +4,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
+import { hasNotePane, openNotePane } from '../../lib/notePaneBus'
 
 import { errorMessage } from '../../api/errors'
 import { personalApi } from '../../api/personal'
@@ -91,7 +92,7 @@ export default function NodePanel({
   const navigate = useNavigate()
   /** ★ 参见选卡 / 链白板（D139） */
   const [pickerCard, setPickerCard] = useState<string | null>(null)
-  const [chainOpen, setChainOpen] = useState(false)
+  const [chainCard, setChainCard] = useState<string | null>(null)
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
@@ -385,36 +386,48 @@ export default function NodePanel({
             /* ★★ `F3`：点卡片进**阅读页**（NoteCard 内部 navigate）——
                这里不需要再做跳转，⛔ 不留空转的入口 ✅ */
           }}
-          /* ★ 新建 / 编辑都改成**独立页面**（* 弹窗太挤）⚠ */
-          /* ⚠ 带 `from=` ⇒ 保存后回跳到这个面板，* 而不是掉到阅读页 ⚠ */
+          /* ★ 有工作区容器 ⇒ 在「编辑」标签里就地打开；否则照旧跳独立页
+             （所有者：「应该把编辑笔记和阅读笔记都放在…大容器里」）⚠ */
           onCreateNote={() =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                `&from=${encodeURIComponent(fromHere())}`,
-            )
+            hasNotePane()
+              ? openNotePane({ mode: 'edit', ref: null, nodeId: node.vid })
+              : navigate(
+                  `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                    `&from=${encodeURIComponent(fromHere())}`,
+                )
           }
           onEditNote={(n) =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
-                `?from=${encodeURIComponent(fromHere())}`,
-            )
+            hasNotePane()
+              ? openNotePane({ mode: 'edit', ref: n.ref, nodeId: n.node_id })
+              : navigate(
+                  `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
+                    `?from=${encodeURIComponent(fromHere())}`,
+                )
           }
           onDeleteNote={setPendingDelete}
           /* ★ 深入：新开空白编辑界面，挂成这篇文章的子代
              （⛔ 别只放在编辑页里 —— 卡片层面也需要一个新建入口） */
           onDeriveNote={(n) =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                `&parent=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}` +
-                `&from=${encodeURIComponent(fromHere())}`,
-            )
+            hasNotePane()
+              ? openNotePane({
+                  mode: 'edit',
+                  ref: null,
+                  nodeId: node.vid,
+                  parent: n.card_id || cardId(projectRef, n.ref),
+                })
+              : navigate(
+                  `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                    `&parent=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}` +
+                    `&from=${encodeURIComponent(fromHere())}`,
+                )
           }
           /* ★ 参见：打开跨项目搜索，只挑**已写好**的卡挂引用（⛔ 不新建） */
           onSeeAlsoNote={(n) => setPickerCard(n.card_id || cardId(projectRef, n.ref))}
           /* ★ 链：打开思考模式白板 */
-          onSeeChainNote={() => setChainOpen(true)}
-          externalBoardOpen={chainOpen}
-          onExternalBoardClose={() => setChainOpen(false)}
+          onSeeChainNote={(n) => setChainCard(n.card_id || cardId(projectRef, n.ref))}
+          externalBoardOpen={!!chainCard}
+          onExternalBoardClose={() => setChainCard(null)}
+          focusCardId={chainCard || undefined}
           autoThink={autoThink}
         />
       </div>

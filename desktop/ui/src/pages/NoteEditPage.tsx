@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
@@ -10,6 +10,7 @@ import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
+import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
 import { markResume } from '../lib/resume'
@@ -109,6 +110,14 @@ export default function NoteEditPage() {
   const [draftTitle, setDraftTitle] = useState('')
   const [suggested, setSuggested] = useState('')
   const [pendingText, setPendingText] = useState('')
+  // ★ 标签栏跟着标题走：新建时「新笔记」，输入后实时改。
+  //   ⚠ draftTitle 是保存对话框里那个「名字（可改）」，才是最终存进后端的；
+  //     顶部输入框 title 只是它的初值，两者都要跟着变。
+  //   ⚠ 必须放在 draftTitle 声明之后（否则 TDZ）
+  const loc = useLocation()
+  useEffect(() => {
+    setTabTitle(loc.pathname, draftTitle.trim() || title.trim() || '新笔记')
+  }, [draftTitle, title, loc.pathname])
   // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
   const [chars, setChars] = useState(0)
   const countTimer = useRef<number | null>(null)
@@ -241,7 +250,20 @@ export default function NoteEditPage() {
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
       //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
-      nav(from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`)
+      const target = from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`
+      // ★★ 保存后让当前标签**原地变成真实笔记名**（Obsidian 口径）。
+      //   用后端返回的 title（可能由正文自动推导），不能只靠顶部输入框。
+      //   ⚠ newPath 只取 pathname：from 可能带 ?query，而 tab 的 key 是 pathname
+      const targetPath = target.split('?')[0]
+      const realTitle = data.note?.title || draftTitle.trim() || '新笔记'
+      if (from) {
+        // 回来源页：那个页面本来就有标签 ⇒ 只把这个临时编辑标签收掉
+        closeTab(loc.pathname)
+      } else {
+        // 去阅读页：当前标签原地变成真实笔记
+        replaceTab(loc.pathname, targetPath, realTitle)
+      }
+      nav(target)
     } catch (e) {
       setErr(errorMessage(e))
     }

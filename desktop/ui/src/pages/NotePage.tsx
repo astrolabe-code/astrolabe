@@ -17,11 +17,24 @@ import { setTabTitle } from '../lib/tabBus'
 
 /** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
 function NoteShell({ children, embedded }: { children: ReactNode; embedded?: NoteEmbeddedProps }) {
-  if (!embedded) return <AppLayout>{children}</AppLayout>
+  // ★ 独立页：包一层标记，让 CSS 给 .page 一个确定高度（flex:1 才撑得满）
+  if (!embedded) return (
+    <div className="note-pane-root note-page-full">
+      <AppLayout>{children}</AppLayout>
+    </div>
+  )
   return (
     <div
-      className="note-pane-body"
-      style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 16px' }}
+      className="note-pane-root note-pane-body"
+      style={{
+        flex: 1,
+        minHeight: 0,
+        // ★ flex 列 ⇒ 里面的 .note-layout 能 flex:1 撑满整个容器高度
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'auto',
+        padding: '10px 16px',
+      }}
     >
       {children}
     </div>

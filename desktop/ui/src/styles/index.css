@@ -396,20 +396,44 @@ a.profile-avatar:active {
 
 .note-layout {
   display: grid;
-  /* ★ 2026-11-09：目录移到**右边** ⇒ 纸在左列、目录在右列 */
-  grid-template-columns: minmax(0, 760px) 264px;
+  /* ★ 2026-11-09：纸铺满容器宽度（1fr），右栏目录固定宽、sticky 不拉伸 */
+  grid-template-columns: minmax(0, 1fr) 264px;
   gap: 24px;
-  align-items: start;
-  justify-content: center;
+  align-items: stretch;
 }
 /* DOM 里目录在纸前面，用 order 让视觉顺序变成「纸 → 目录」；
    窄屏单列时同样是纸在上、目录在下（与下方 @media 一致） */
 .note-layout > .note-article { order: 1; }
-.note-layout > .note-rail { order: 2; }
+.note-layout > .note-rail { order: 2; align-self: start; }
 
 /* ★ 折叠只收窄右栏，⛔ 不让正文重排（与编辑页同口径） */
-.note-layout.is-folded { grid-template-columns: minmax(0, 760px) 40px; }
+.note-layout.is-folded { grid-template-columns: minmax(0, 1fr) 40px; }
 .note-layout.is-folded .note-rail { gap: 0; }
+
+/* ★★ 2026-11-09（所有者：「阅读页能不能把整个容器占满？」）
+   把高度链打通：外壳 → layout → 纸 → 文末条，
+   ⛔ 只在阅读页自己的 .note-pane-root 作用域内生效，不碰其它页面。
+   · 独立页 .page 有 max-width/padding，给它一屏高度才能撑满
+   · embedded 外壳 .note-pane-body 本身是 flex:1，直接继承高度 */
+.note-page-full { min-height: 100%; display: flex; flex-direction: column; }
+.note-page-full > .page {
+  max-width: none;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 16px;
+}
+.note-pane-root .note-layout { flex: 1; min-height: 0; }
+.note-pane-root .note-layout > .note-article {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.note-pane-root .note-body-card { flex: 1; min-height: 0; }
+/* 文末操作条贴到纸的底边（内容少时不留一大片空白） */
+.note-pane-root .note-foot { margin-top: auto; }
 
 .note-rail {
   position: sticky;

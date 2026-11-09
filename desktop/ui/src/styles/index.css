@@ -385,17 +385,31 @@ a.profile-avatar:active {
      「方案戊看着顺眼多了，不过作者信息要放在目录上边」
      「这个居中显示，颜色字体与#不太一样就行，这样就真的是标题。#这些就承担目录的功能了」
 
-   结构：左栏 264（作者卡在上 / 目录在下，sticky）＋ 间距 24 ＋ 纸 760
-   ⛔ 操作按钮不在左栏 —— 章赞在文末（CSDN 口径）
+   ★ 2026-11-09 改：所有者「阅读页左边不需要用户标签和说明挂在哪里，
+     只需要一个可以折叠的目录或者说大纲就行，跟编辑页一样」
+     ⇒ 只留一个可折叠目录（折叠后 40px 竖条），作者卡 / 挂在哪卡片删除
+     ★ 2026-11-09 又改：「把编辑页和阅读页的目录放到右边去」
+     结构：纸 760 ＋ 间距 24 ＋ 右栏目录 264（sticky）；
+         折叠态 纸 760 ＋ 右栏 40px（⛔ 纸宽不变，不重排）
+     ⛔ 操作按钮不在右栏 —— 改挂 / 编辑都在文末
    ========================================================================== */
 
 .note-layout {
   display: grid;
-  grid-template-columns: 264px minmax(0, 760px);
+  /* ★ 2026-11-09：目录移到**右边** ⇒ 纸在左列、目录在右列 */
+  grid-template-columns: minmax(0, 760px) 264px;
   gap: 24px;
   align-items: start;
   justify-content: center;
 }
+/* DOM 里目录在纸前面，用 order 让视觉顺序变成「纸 → 目录」；
+   窄屏单列时同样是纸在上、目录在下（与下方 @media 一致） */
+.note-layout > .note-article { order: 1; }
+.note-layout > .note-rail { order: 2; }
+
+/* ★ 折叠只收窄右栏，⛔ 不让正文重排（与编辑页同口径） */
+.note-layout.is-folded { grid-template-columns: minmax(0, 760px) 40px; }
+.note-layout.is-folded .note-rail { gap: 0; }
 
 .note-rail {
   position: sticky;
@@ -413,15 +427,7 @@ a.profile-avatar:active {
   box-shadow: var(--shadow-card);
 }
 
-.note-author { display: flex; align-items: center; gap: 10px; }
-.note-avatar {
-  width: 34px; height: 34px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #67e8f9);
-  color: #fff; font-size: 13px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center; flex: none;
-}
-.note-author-name { font-size: 13px; font-weight: 600; }
-.note-author-sub { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+/* 作者卡相关样式已删：阅读页左栏现在只放可折叠目录（2026-11-09） */
 
 /* 目录：只来自正文的 # / ## / ###，名字不参与 ⚠ */
 .note-toc h4 {
@@ -485,15 +491,19 @@ a.profile-avatar:active {
 .link-btn:hover { color: var(--accent); background: var(--accent-dim); }
 .note-foot-right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 
-/* 窄屏：左栏收到正文下面（目录仍在，横向铺开） */
+/* 窄屏：单列，纸在上、目录在下（与全局 order 一致） */
 @media (max-width: 1100px) {
-  .note-layout { grid-template-columns: minmax(0, 1fr); }
+  .note-layout,
+  .note-layout.is-folded { grid-template-columns: minmax(0, 1fr); }
   .note-layout > .note-article { order: 1; }
   .note-rail {
     order: 2; position: static;
     flex-direction: row; flex-wrap: wrap;
   }
   .note-rail-card { flex: 1 1 200px; }
+  /* 折叠态在窄屏下别留一条 40px 竖条 */
+  .note-layout.is-folded .note-edit-fold-btn { flex-direction: row; width: auto; padding: 6px 10px; }
+  .note-layout.is-folded .note-edit-fold-btn .v { writing-mode: horizontal-tb; letter-spacing: 0; }
   .note-foot { margin: 18px -12px -14px; padding: 12px; }
 }
 
@@ -532,9 +542,10 @@ a.profile-avatar:active {
 
 
 /* ============================================================================
-   ★★★ 写作区两栏：左目录（可折叠）＋ 纸（`D131` · 2026-10-27）⚠
+   ★★★ 写作区两栏：纸 ＋ 右目录（可折叠）（`D131` · 2026-10-27）⚠
 
    所有者：「写作区加个目录，可折叠的，更好一点」
+           「把编辑页和阅读页的目录放到右边去」（2026-11-09）
 
    · · 目录 = 正文里的 # / ## / ###（⛔ 不含「名字」，那是身份不是章节）
    · · 跟着字数那次 1 秒防抖一起更新，⛔ 不额外接 onChange
@@ -543,16 +554,20 @@ a.profile-avatar:active {
 
 .note-edit-layout {
   display: grid;
-  /* ⚠ 纸宽**固定** 820：折叠只收左栏，⛔ 不让正文重排（否则眼睛要重新找行）⚠ */
-  grid-template-columns: 220px minmax(0, 820px);
+  /* ⚠ 纸宽**固定** 820：折叠只收右栏，⛔ 不让正文重排（否则眼睛要重新找行）⚠
+     ★ 2026-11-09：目录移到**右边** ⇒ 纸在左列、目录在右列 */
+  grid-template-columns: minmax(0, 820px) 220px;
   gap: 20px;
   align-items: start;
   /* ★ 和阅读页一致：整体居中，别让纸贴着屏幕左缘 ⚠ */
   justify-content: center;
 }
+/* 与阅读页同口径：DOM 顺序不变，用 order 交换视觉顺序 */
+.note-edit-layout > .note-edit-card { order: 1; }
+.note-edit-layout > .note-edit-rail { order: 2; }
 
 .note-edit-layout.is-folded {
-  grid-template-columns: 40px minmax(0, 820px);
+  grid-template-columns: minmax(0, 820px) 40px;
 }
 
 .note-edit-rail {

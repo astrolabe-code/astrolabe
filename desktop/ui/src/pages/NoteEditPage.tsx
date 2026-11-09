@@ -400,9 +400,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         </div>
       )}
 
-      {/* ★★★ 写作区两栏（`D131`）：左目录（可折叠）＋ 纸 ⚠
+      {/* ★★★ 写作区两栏（`D131`）：纸 ＋ 右目录（可折叠）⚠
           · · 目录是正文里的 `#` / `##` / `###`（⛔ 不含名字）
-          · · 折叠状态记在本地，下次打开还是收着的 ⚠ */}
+          · · 折叠状态记在本地，下次打开还是收着的 ⚠
+          · · 2026-11-09 目录移到右边（CSS 交换列 + order，DOM 顺序不变） */}
       <div className={`note-edit-layout${tocFolded ? ' is-folded' : ''}`}>
         <aside className={`note-edit-rail${tocFolded ? ' is-folded' : ''}`}>
           {tocFolded ? (
@@ -410,17 +411,17 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               type="button"
               className="note-edit-fold-btn"
               onClick={toggleToc}
-              title="展开目录"
+              title="展开目录（目录在右侧）"
             >
-              <ChevronRight size={13} />
+              <ChevronLeft size={13} />
               <span className="v">目录</span>
             </button>
           ) : (
             <div className="note-rail-card note-toc">
               <div className="note-toc-head">
                 <h4>目录</h4>
-                <button type="button" onClick={toggleToc} title="收起目录">
-                  <ChevronLeft size={13} />
+                <button type="button" onClick={toggleToc} title="收起目录（往右收）">
+                  <ChevronRight size={13} />
                 </button>
               </div>
               {heads.length === 0 ? (

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { GitBranch, List, Lock, Pencil } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, List, Lock, Pencil } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { cardId } from '../api/code'
@@ -12,6 +12,7 @@ import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
 import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
+import { useCollapsed } from '../lib/useCollapsed'
 import { setTabTitle } from '../lib/tabBus'
 
 /** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
@@ -102,6 +103,8 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   const routerNav = useNavigate()
   const nav = embedded?.onNavigate ?? routerNav
   const [anchorOpen, setAnchorOpen] = useState(false)
+  // ★ 右栏目录可折叠（与编辑页同款 hook；key 独立，两边互不干扰）
+  const { collapsed: tocFolded, toggle: toggleToc } = useCollapsed('read-toc')
   const slotId = embedded?.toolsSlotId
 
   const n = note.data?.note
@@ -203,82 +206,50 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
         )}
       </PageBar>
 
-      {/* ★★★ 2026-10-26（`D111` / `D114`）——
-          所有者：「还是要右栏好看一点，不过放在左边」
-                  「作者信息要放在目录上边」
-                  「这个居中显示，颜色字体与#不太一样就行，这样就真的是标题」
-          · · 页头彻底清空：大标题删掉（`D110`），操作移到文末（CSDN 口径）
-          · · 左栏 264（作者卡在上 / 目录在下，sticky）＋ 纸 760 ⚠ */}
-      <div className="note-layout">
-        {/* ---------------------------------------------------------- 左栏 */}
+      {/* ★★★ 2026-11-09（所有者）：
+          「阅读页左边不需要用户标签和说明挂在哪里，只需要一个可以折叠的
+            目录或者说大纲就行，跟编辑页一样」
+          ⇒ 作者卡 / 「挂在哪个节点」卡整块删掉，左栏只留可折叠目录。
+          折叠状态存 localStorage（useCollapsed('read-toc')），与编辑页独立。
+          ⚠ 「改挂到别的节点」功能不删 —— 移到文末操作条，跟「编辑」并排。 */}
+      <div className={`note-layout${tocFolded ? ' is-folded' : ''}`}>
         <aside className="note-rail">
-          <div className="note-rail-card">
-            <div className="note-author">
-              <div className="note-avatar">{(displayName || '?').slice(0, 1)}</div>
-              <div style={{ minWidth: 0 }}>
-                <div className="note-author-name">
-                  <Link
-                    to={`/u/${encodeURIComponent(n.created_by)}`}
-                    style={{ color: 'inherit', textDecoration: 'none' }}
-                  >
-                    {displayName}
-                  </Link>
-                </div>
-                {/* ★ 个人版只有你自己 ⇒ 没有"他的空间"可看 ⚠ */}
-              </div>
-            </div>
-          </div>
-
-          {/* ★★★ 「挂在哪个节点」（`D125`）——
-              结构要**看得见**：每篇笔记都明确知道自己挂在代码的哪个位置 ⚠ */}
-          <div className="note-rail-card">
-            <div
-              className="faint"
-              style={{ fontSize: 11, letterSpacing: 0.5, marginBottom: 6 }}
+          {tocFolded ? (
+            <button
+              type="button"
+              className="note-edit-fold-btn"
+              onClick={toggleToc}
+              title="展开目录（目录在右侧）"
             >
-              挂在
-            </div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5 }}>
-              {n.node_snapshot?.name || '（节点已不存在）'}
-            </div>
-            <div
-              className="faint"
-              style={{
-                fontSize: 11,
-                marginTop: 2,
-                fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                wordBreak: 'break-all',
-              }}
-            >
-              {n.node_snapshot?.file_path}
-              {n.node_snapshot?.line ? `:${n.node_snapshot.line}` : ''}
-            </div>
-            {canWrite && (
-              <button
-                type="button"
-                className="link-btn"
-                style={{ marginTop: 6, paddingLeft: 0 }}
-                onClick={() => setAnchorOpen(true)}
-              >
-                改挂到别的节点
-              </button>
-            )}
-          </div>
-
-          {/* ★ 正文没有 # 标题就整块不渲染（空框比没有更难看）⚠ */}
-          {toc.length > 0 && (
+              <ChevronLeft size={13} />
+              <span className="v">目录</span>
+            </button>
+          ) : (
             <div className="note-rail-card note-toc">
-              <h4>目录</h4>
-              {toc.map((h, i) => (
-                <button
-                  key={`${h.text}-${i}`}
-                  type="button"
-                  onClick={() => jumpToHeading(h.text, h.level)}
-                  className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
-                >
-                  {h.text}
+              <div className="note-toc-head">
+                <h4>目录</h4>
+                <button type="button" onClick={toggleToc} title="收起目录（往右收）">
+                  <ChevronRight size={13} />
                 </button>
-              ))}
+              </div>
+              {toc.length === 0 ? (
+                <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
+                  还没有章节。
+                  <br />
+                  正文里用 <code>#</code> 开头写一行，就会出现在这里。
+                </div>
+              ) : (
+                toc.map((h, i) => (
+                  <button
+                    key={`${h.text}-${i}`}
+                    type="button"
+                    onClick={() => jumpToHeading(h.text, h.level)}
+                    className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
+                  >
+                    {h.text}
+                  </button>
+                ))
+              )}
             </div>
           )}
         </aside>
@@ -357,15 +328,26 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
               <span className="note-foot-hint">读到这里才点得顺手</span>
               <span className="note-foot-right">
                 {canWrite && (
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => nav(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`)}
-                  >
-                    <Pencil size={12} /> 编辑
-                  </button>
+                  <>
+                    {/* ★ 左栏「挂在哪个节点」卡撤掉后，改挂入口移到文末操作条 */}
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => setAnchorOpen(true)}
+                      title="把这篇笔记改挂到别的节点"
+                    >
+                      <GitBranch size={12} /> 改挂
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => nav(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`)}
+                    >
+                      <Pencil size={12} /> 编辑
+                    </button>
+                  </>
                 )}
-              </span>
+                </span>
             </div>
           </div>
 

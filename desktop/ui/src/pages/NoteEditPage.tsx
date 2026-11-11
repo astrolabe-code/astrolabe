@@ -459,38 +459,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             ⛔ 去掉类别色描边（2px + 同色淡光）：贴边分页后纸已是平铺面板，
               再套一圈橙框很突兀。类别信息仍由右上角角标 + 底栏胶囊承担。
             ⚠ position:relative 必须留：右上角角标用它定位 */}
-        <div
-          className={`card ${mode === 'read' ? 'note-body-card' : 'note-edit-card'}`}
-          style={{ position: 'relative' }}
-        >
+        <div className="card note-body-card">
         {mode === 'edit' && (<>
-        {/* ★★ 右上角类别角标（`D132` / `D134` 定稿）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
-            · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠
-            · · ⚠ 类别说明**只放在这里的悬浮提示里**（所有者：版面加一行太怪）——
-              因此**不能**再写 `pointer-events: none`，否则鼠标根本悬浮不上去 ⚠ */}
-        <span
-          title={kindMeta(kind).hint}
-          style={{
-            position: 'absolute',
-            top: 12,
-            right: 14,
-            padding: '1px 9px',
-            fontSize: 11,
-            lineHeight: '18px',
-            fontFamily: 'var(--font-ui)',
-            whiteSpace: 'nowrap',
-            color: kindColor,
-            background: `${kindColor}14`,
-            border: `1px solid ${kindColor}66`,
-            borderRadius: 999,
-            cursor: 'default',
-          }}
-        >
-          {KIND_META[kind].label}
-        </span>
-        {/* ② 名字 —— ★★ 2026-10-27 依 CSDN 结构改版：提到**最上、大字** ⚠
-            · · 眼睛先落在「要写什么」，而不是「给这篇归哪类」⚠
-            · · 但**不强制填**（`D112`：名字只是身份，⛔ 不是文章标题）⚠ */}
+        {/* ② 名字 —— 与阅读页 note-title 同款：居中大字、可编辑 ⚠
+            · · 不强制填（`D112`：名字只是身份，⛔ 不是文章标题）⚠ */}
         <input
           id="note-title"
           maxLength={60}
@@ -502,25 +474,50 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             border: 'none',
             outline: 'none',
             background: 'transparent',
-            fontSize: 22,
+            textAlign: 'center',
+            fontSize: titleSize(title.length),
             fontWeight: 600,
             color: 'var(--text-main)',
             fontFamily: 'var(--font-ui)',
-            padding: '2px 96px 10px 0',  /* ⚠ 右边留 96px 给类别角标，长名字不会压上去 ⚠ */
-            borderBottom: '1px solid var(--card-border)',
+            padding: '2px 0 10px',
             marginBottom: 6,
           }}
         />
-        {/* ★★ 说明行：左边讲「名字」，右边讲「当前类别」（`D134` 修正）⚠
-            · · 所有者：「你这个放在顶部不行吗？正好哪里也有一个徽标」
-            · · ⇒ 说明不再挤在底栏（那里有保存按钮，抢注意力），
-                改到**徽标下面这一行**的右端 —— 正好接住右上角那个角标 ✅
-            · · ⛔ 不额外增加高度：和名字说明**同一行**，左右各一边 ⚠ */}
-        <div className="faint note-edit-subline">
-          <span className="sub-name">
-            留空则自动取正文第一行；名字只用于搜索列表，正文里的 <code>#</code> 才是章节标题。
+        {/* 信息行：与阅读页 note-meta 同款（类型徽标 + 私有 + 作者/时间） */}
+        <div className="note-meta">
+          <span
+            style={{
+              fontSize: 10.5,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              whiteSpace: 'nowrap',
+              padding: '1px 8px',
+              borderRadius: 999,
+              lineHeight: '16px',
+              color: kindColor,
+              border: `1px solid ${kindColor}`,
+              background: 'transparent',
+            }}
+          >
+            <KindIcon size={11} />
+            {KIND_META[kind].label}
           </span>
-
+          {!isPublic && (
+            <span
+              className="tag"
+              style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}
+              title="只有作者可见"
+            >
+              <Lock size={10} /> 私有
+            </span>
+          )}
+          {note?.created_by_display && (
+            <span>
+              {note.created_by_display}
+              {note?.created_at ? ` · ${note.created_at.replace('T', ' ').slice(0, 16)}` : ''}
+            </span>
+          )}
         </div>
         {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}
         {ready && (

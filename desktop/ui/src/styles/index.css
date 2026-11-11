@@ -416,6 +416,14 @@ a.profile-avatar:active {
   border-radius: 0;
   box-shadow: none;
 }
+/* ★ 2026-11-11 合一页（note-edit-layout）同样去框——
+ *   所有者：「不要用卡片装笔记内容了，把这个框取消掉」⚠
+ *   阅读态 / 编辑态共用 note-body-card，一起去框；白底保留，只去掉边框圆角阴影 */
+.note-edit-layout .note-body-card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
 .note-layout .note-rail-card {
   background: transparent;
   border: 0;

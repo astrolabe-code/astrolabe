@@ -244,8 +244,7 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
         fixed="right"
         initial={264}
         min={200}
-        otherMin={320}
-        breakpoint={1100}
+        otherMin={240}
         collapsed={tocFolded}
         preserveChildStyle
       >

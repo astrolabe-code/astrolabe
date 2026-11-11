@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useMediaQuery } from '../hooks/useMediaQuery'
 import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
@@ -51,7 +50,7 @@ interface SplitPaneProps {
   /** 收起时隐藏哪一栏（默认隐藏固定宽那一栏 = 侧栏） */
   collapsedSide?: 'fixed' | 'left' | 'right'
 
-  /** 窄屏断点（默认 900；阅读/编辑页传 1100） */
+  /** 转上下分栏的**容器宽度**阈值 px（默认 520；⛔ 不是窗口宽度） */
   breakpoint?: number
   /** 默认抹掉两栏的 border / 圆角 / 阴影；编辑页纸的类别色描边要保留 */
   preserveChildStyle?: boolean
@@ -63,11 +62,21 @@ interface SplitPaneProps {
 
 type StyledElement = ReactElement<{ style?: CSSProperties }>
 
-/** 上限是动态的：容器宽 − 分隔条 − 另一栏最小宽（⛔ 不写死 680 之类） */
+/**
+ * 上限是动态的：容器宽 − 分隔条 − 另一栏最小宽（⛔ 不写死 680 之类）
+ *
+ * ⚠★ 2026-11-11 修「完全拖不动」：嵌套分栏里**容器已经被上层吃掉一大截**，
+ *   调用方传的 otherMin 是按另一栏「内容需要多宽」估的（320/480/520），
+ *   再拿它去减这个被挤窄的容器 ⇒ max 被压到等于 min ⇒ 可拖范围 0px。
+ *   ⇒ otherMin 改成「占比上限」：最多只保留容器的 45%，且不小于调用方给的
+ *     绝对下限；这样每一层都留得出可拖空间。
+ */
 function clampWidth(w: number, min: number, otherMin: number, inner: number) {
-  const max = Math.max(min, inner - HANDLE_WIDTH - otherMin)
+  const budget = Math.min(otherMin, Math.floor(inner * 0.45))
+  const max = Math.max(min, inner - HANDLE_WIDTH - budget)
   return Math.min(max, Math.max(min, w))
 }
+
 
 /**
  * ★★★ **左右两栏 + 可拖拽分隔条的唯一组件**（2026-11-06）
@@ -110,16 +119,33 @@ export default function SplitPane({
   onCollapsedChange,
   renderToggle,
   collapsedSide = 'fixed',
-  breakpoint = 900,
+  breakpoint = 520,
   preserveChildStyle = false,
   resizable = true,
   divider = true,
 }: SplitPaneProps) {
-  // ★ 窄屏判定属于组件自己，断点可配：两页 900、note 页 1100
-  const stacked = useMediaQuery(`(max-width: ${breakpoint}px)`)
   const innerRef = useRef<HTMLDivElement>(null)
   const ref = containerRef ?? innerRef
   const [width, setWidth] = useState(initial)
+  /**
+   * ★★ 2026-11-11 修「把手都不见了」：断点必须看**容器宽度**，⛔ 不是窗口宽度。
+   *   嵌套到第 4 层时容器只有 500 多 px，但窗口可能有 1080px —— 用
+   *   matchMedia('(max-width:1100px)') 会在窗口 1080 时误判 stacked，
+   *   于是分隔条根本不渲染，用户看到「完全不能左右拉伸」。
+   */
+  const [innerWidth, setInnerWidth] = useState(0)
+  const stacked = innerWidth > 0 && innerWidth < breakpoint
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => setInnerWidth(el.clientWidth)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref])
   const dragRef = useRef<{ startX: number; startW: number } | null>(null)
   /** ★ hover / 拖动时的蓝色反馈（VSCode sash 口径）：常驻仍是 1px 灰线 */
   const [hover, setHover] = useState(false)

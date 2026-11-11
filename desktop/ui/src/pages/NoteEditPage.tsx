@@ -421,8 +421,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         fixed="right"
         initial={220}
         min={180}
-        otherMin={480}
-        breakpoint={1100}
+        otherMin={240}
         collapsed={tocFolded}
         preserveChildStyle
       >

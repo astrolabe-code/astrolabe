@@ -533,19 +533,11 @@ a.profile-avatar:active {
 .link-btn:hover { color: var(--accent); background: var(--accent-dim); }
 .note-foot-right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 
-/* 窄屏：SplitPane 的 breakpoint 自动转上下分栏，DOM 顺序即纸 → 大纲 */
-@media (max-width: 1100px) {
-  .note-layout > .note-rail {
-    border-top: 1px solid var(--card-border);
-    background: transparent;
-  }
-  .note-rail {
-    position: static;
-    flex-direction: row; flex-wrap: wrap;
-  }
-  .note-rail-card { flex: 1 1 200px; }
-  .note-foot { margin: 18px -12px -14px; padding: 12px; }
-}
+/* ⛔ 旧 @media(max-width:1100px) 已删：按**窗口**判定会在窗口 1080、
+   容器仍有 543px 时误把两栏改样式。窄屏与否统一由 SplitPane 按容器宽判定。
+   上下分栏时 SplitPane 自己不画竖分隔条，这里补一条横线即可。 */
+.note-layout > .note-rail,
+.note-edit-layout > .note-edit-rail { min-width: 0; }
 
 
 /* ============================================================================
@@ -631,9 +623,15 @@ a.profile-avatar:active {
 }
 .note-toc-head button:hover { color: var(--accent); background: var(--accent-dim); }
 
-/* 窄屏：目录整块不显示（写作时屏幕本来就窄，正文优先） */
-@media (max-width: 1100px) {
-  .note-edit-rail { display: none; }
+/* ⛔ 旧规则「@media(max-width:1100px) .note-edit-rail{display:none}」已删：
+   窗口 1080 但容器仍有 543px 时大纲会被整块隐藏（所有者反馈拖不动/看不见）。
+   现在窄屏与否由 SplitPane 按**容器宽度**判定，⛔ 不再看窗口。 */
+.note-edit-layout .note-rail-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
 }
 
 

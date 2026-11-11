@@ -358,10 +358,9 @@ export default function CodeWorkspace({
         fixed="left"
         initial={240}
         min={180}
-        otherMin={520}
+        otherMin={320}
         collapsed={!treeOpen}
         collapsedSide="left"
-        breakpoint={900}
         preserveChildStyle
       >
         <div

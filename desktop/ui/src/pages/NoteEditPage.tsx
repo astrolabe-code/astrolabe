@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
+import { BookOpenText, List, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
@@ -94,6 +94,8 @@ export interface NoteEditEmbeddedProps {
   toolsSlotId?: string
   /** ★ 2026-11-11 合一：容器打开时指定初始视图（read=阅读视图 / edit=编辑） */
   initialMode?: 'edit' | 'read'
+  /** ★ 2026-11-11 容器提供「回到笔记列表」入口（关掉当前 pane）；独立路由不传则不显示 */
+  onBackToList?: () => void
 }
 
 export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
@@ -298,6 +300,9 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             parent: parentCard || undefined,
           })
 
+      // ★★ 保存成功先关确认弹窗（合一页不跳路由，弹窗不会随组件卸载自动消失）⚠
+      setConfirmOpen(false)
+
       // ★★ 写完**立刻**记下位置（`D120` 补口 · 2026-10-27）⚠
       //   · · 停留计时只覆盖「读了一会儿」，⛔ 覆盖不到「停 5 秒写一条就走」⚠
       //   · · 用返回的锚点快照，⛔ 不要再查一次节点 ⚠
@@ -378,6 +383,15 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     <NoteShell embedded={embedded}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
+        {/* ★ 合一页回列表入口：关掉当前 pane，容器回到笔记列表（独立路由不渲染）⚠ */}
+        {embedded?.onBackToList && (
+          <RailButton
+            icon={<List size={13} />}
+            label="列表"
+            title="回到笔记列表"
+            onClick={embedded.onBackToList}
+          />
+        )}
         {/* ★ 与阅读页同款：顶栏大纲开关（高亮 = 面板展开） */}
         <RailButton
           icon={<ListTree size={13} />}

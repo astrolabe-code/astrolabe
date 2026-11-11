@@ -389,6 +389,7 @@ export default function CodeWorkspace({
                 onNavigate={paneNavigate}
                 toolsSlotId={toolsSlotId}
                 initialMode={pane.mode}
+                onBackToList={() => closeNotePane()}
               />
             ) : (
               <div

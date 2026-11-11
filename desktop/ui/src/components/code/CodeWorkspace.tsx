@@ -324,8 +324,14 @@ export default function CodeWorkspace({
               </button>
             )
           })}
-          {/* ★ 文件树开关（所有者：「把这个打开文件树的按钮移到阅读页上面」）⚠
-              Ribbon 上那枚仍在；这枚贴在 tab 行右侧，停在笔记页也能随时展开/收起左侧文件树 */}
+          {/* ★ 容器内嵌页面自己的工具条插槽（与外层顶栏工具分离） */}
+          <div
+            id={toolsSlotId}
+            className="page-tools-slot"
+            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
+          />
+          {/* ★ 文件树开关：放**最右**（所有者：「我上一轮都给你指定在右边了」）⚠
+              Ribbon 上那枚仍在；这枚停在任何页都能展开/收起左侧文件树 */}
           <IconBtn
             title={treeOpen ? '收起文件树' : '打开文件树'}
             active={treeOpen}
@@ -333,12 +339,6 @@ export default function CodeWorkspace({
           >
             <PanelLeft size={16} strokeWidth={1.5} />
           </IconBtn>
-          {/* ★ 容器内嵌页面自己的工具条插槽（与外层顶栏工具分离） */}
-          <div
-            id={toolsSlotId}
-            className="page-tools-slot"
-            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
-          />
         </div>
       )}
 

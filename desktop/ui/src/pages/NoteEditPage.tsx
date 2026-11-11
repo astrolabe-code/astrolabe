@@ -647,14 +647,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             <div id="note-body" className="flex flex-col gap-5">
               <MilkdownLazy text={body} blocks={noteQ.data?.blocks ?? []} />
             </div>
-            <div className="note-foot">
-              <span className="note-foot-hint">读到这里才点得顺手</span>
-              <span className="note-foot-right">
-                <button type="button" className="link-btn" onClick={() => setMode('edit')} title="切回编辑">
-                  <Pencil size={12} /> 编辑
-                </button>
-              </span>
-            </div>
           </>
         )}
         </div>

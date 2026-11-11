@@ -12,6 +12,7 @@ import {
   Undo2,
   FolderOpen,
   FilePlus2,
+  Save,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { Note, NoteKind } from '../../api/types'
@@ -173,6 +174,17 @@ export default function ThinkingBoard({
 
   // ---------------------------------------------------------- 读取已保存状态（后端）
   const loadedRef = useRef(false)
+  // ★ 显式「保存布局」按钮：点一下立即写回后端，并短暂提示「已保存」
+  const [saved, setSaved] = useState(false)
+  const handleSave = () => {
+    personalApi
+      .saveBoard(projectRef, nodeId, { pos, board: [...onBoard], sizes, canvas })
+      .then(() => {
+        setSaved(true)
+        window.setTimeout(() => setSaved(false), 1600)
+      })
+      .catch(() => {})
+  }
   useEffect(() => {
     if (!open) return
     let alive = true
@@ -786,6 +798,20 @@ export default function ThinkingBoard({
             }}
           >
             <FilePlus2 size={17} strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            title={saved ? '已保存' : '保存布局'}
+            aria-label="保存布局"
+            onClick={handleSave}
+            style={{
+              display: 'grid', placeItems: 'center', width: 32, height: 32,
+              border: 0, borderRadius: 6, background: 'transparent',
+              color: saved ? 'var(--accent, #2563eb)' : 'var(--text-sub)',
+              cursor: 'pointer',
+            }}
+          >
+            {saved ? <Check size={17} strokeWidth={1.5} /> : <Save size={17} strokeWidth={1.5} />}
           </button>
         </div>
 

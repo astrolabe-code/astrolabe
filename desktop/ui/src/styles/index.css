@@ -592,6 +592,12 @@ a.profile-avatar:active {
   background: var(--bg);
   padding: 14px 12px;
 }
+/* ★ 与阅读页一致：纸是贴边的分栏面板，⛔ 不要 .card 的边框 / 圆角 / 阴影 */
+.note-edit-layout .note-edit-card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
 
 /* 面板顶部工具行：左「大纲」右「× 关闭」（Obsidian 口径） */
 .note-toc-head {

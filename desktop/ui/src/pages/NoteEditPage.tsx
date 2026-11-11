@@ -425,14 +425,13 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         collapsed={tocFolded}
         preserveChildStyle
       >
+        {/* ★ 2026-11-11（所有者：「外面这个橙色框不要了，看着很怪」）
+            ⛔ 去掉类别色描边（2px + 同色淡光）：贴边分页后纸已是平铺面板，
+              再套一圈橙框很突兀。类别信息仍由右上角角标 + 底栏胶囊承担。
+            ⚠ position:relative 必须留：右上角角标用它定位 */}
         <div
           className="card note-edit-card"
-          style={{
-            position: 'relative',
-            borderColor: kindColor,
-            borderWidth: 2,
-            boxShadow: `0 0 0 3px ${kindColor}14, var(--shadow-card)`,
-          }}
+          style={{ position: 'relative' }}
         >
         {/* ★★ 右上角类别角标（`D132` / `D134` 定稿）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
             · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Lightbulb, Plus } from 'lucide-react'
+import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
@@ -73,7 +73,7 @@ export default function NoteSection({
   // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
   const [thinkingOpen, setThinkingOpen] = useState(false)
   // ★ 批量改公开 / 私有（* 所有者：勾选排除，其余批量改）⚠
-  const notes = useNotes(projectRef, { limit: 200 })
+  const notes = useNotes(projectRef)  // 取当前项目全部笔记
 
   // ★★ 首页「思考模式」卡片直达：* 数据就绪后自动开一次白板 ⚠
   const autoOpened = useRef(false)
@@ -83,6 +83,16 @@ export default function NoteSection({
     autoOpened.current = true
     setThinkingOpen(true)
   }, [autoThink, notes.isLoading])
+
+  // ★★ 思考模式 / 写笔记交给全局 ribbon（⛔ 内容区不再放功能按钮）
+  useEffect(() => {
+    patchRibbon({
+      openThinking: () => setThinkingOpen(true),
+      createNote: onCreateNote,
+      currentNodeVid: nodeId,
+    })
+    return () => clearRibbon(['openThinking', 'createNote', 'currentNodeVid'])
+  }, [onCreateNote, nodeId])
 
   if (notes.isError) {
     return (
@@ -193,28 +203,6 @@ export default function NoteSection({
             activeKind === c.kind,
           ),
         )}
-        <div className="note-head-actions" style={{ marginLeft: 'auto' }}>
-          <button
-            type="button"
-            className="code-icon-btn"
-            onClick={() => setThinkingOpen(true)}
-            title="思考模式：在白板上排布笔记卡片，理清它们之间的联系"
-          >
-            <Lightbulb size={14} />
-            <span className="btn-label" style={{ fontSize: 11.5 }}>思考模式</span>
-          </button>
-          {canWrite && (
-            <button
-              type="button"
-              className="code-icon-btn"
-              onClick={onCreateNote}
-              title="写笔记"
-            >
-              <Plus size={14} />
-              <span className="btn-label" style={{ fontSize: 11.5 }}>写笔记</span>
-            </button>
-          )}
-        </div>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -287,7 +275,7 @@ export default function NoteSection({
         open={thinkingOpen || !!externalBoardOpen}
         projectRef={projectRef}
         nodeId={nodeId}
-        notes={mine}
+        notes={notes.data || []}
         focusCardId={focusCardId}
         onClose={() => {
           setThinkingOpen(false)

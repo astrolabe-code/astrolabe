@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Search, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { personalApi } from '../api/personal'
-import { ribbonActions, type PanelKind } from '../lib/ribbonBus'
+import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
 
 interface RibbonPanelProps {
   kind: PanelKind
@@ -148,9 +148,13 @@ interface BoardItem {
 
 function ThinkingPane({ onClose }: { onClose: () => void }) {
   const nav = useNavigate()
-  // ★ 面板是全局的：从当前路径解析项目 ref（不在项目页时列表不显示）
-  const m = window.location.pathname.match(/^\/p\/([^/]+)/)
+  // ★ 面板是全局的：用 useLocation 拿**剥掉 basename(/app) 后**的路由路径解析项目 ref
+  //   （bug 修复：之前用 window.location.pathname，前缀 /app 使正则匹配失败，列表整个不显示）
+  const { pathname } = useLocation()
+  const m = pathname.match(/^\/p\/([^/]+)/)
   const projectRef = m ? decodeURIComponent(m[1]) : ''
+  // ★ 当前选中节点（NoteSection 注册到 ribbon 总线）⇒ 白板状态随节点切换变化
+  const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
   const [items, setItems] = useState<BoardItem[] | null>(null)
 
   useEffect(() => {
@@ -175,6 +179,9 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
     nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${vid}`)
   }
 
+  /** 当前节点的白板条目（在全部列表里找；没保存过布局则 undefined） */
+  const cur = curVid != null ? items?.find((it) => it.vid === curVid) : undefined
+
   return (
     <div style={{ padding: 12 }}>
       <button
@@ -189,10 +196,31 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
         打开思考模式白板
       </button>
 
+      {/* ★ 当前节点的白板：随选中节点变化（所有者：「随着选择的节点不同而变化」）⚠ */}
+      {curVid != null && (
+        <div style={{ marginTop: 14 }}>
+          <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
+            当前节点的白板
+          </div>
+          <div style={{ padding: '8px 10px', border: '1px solid var(--card-border)', borderRadius: 6 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+              {cur?.name || `节点 ${curVid}`}
+            </div>
+            {items === null ? null : (
+              <div className="faint" style={{ fontSize: 11 }}>
+                {cur
+                  ? `已保存过布局${cur.mtime ? ` · ${new Date(cur.mtime * 1000).toLocaleString()}` : ''}`
+                  : '这块白板还没保存过布局'}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {projectRef && (
         <div style={{ marginTop: 14 }}>
           <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
-            已保存的白板
+            项目里的全部白板
           </div>
           {items === null ? null : items.length === 0 ? (
             <Hint>还没有保存过白板</Hint>
@@ -209,7 +237,7 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
                   textAlign: 'left',
                   padding: '7px 8px',
                   marginBottom: 4,
-                  border: '1px solid var(--card-border)',
+                  border: `1px solid ${it.vid === curVid ? 'var(--accent, #2563eb)' : 'var(--card-border)'}`,
                   borderRadius: 6,
                   background: 'transparent',
                   cursor: 'pointer',

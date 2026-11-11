@@ -138,6 +138,7 @@ R_CARD_PARENT = re.compile(r"^/api/cards/parent/$")
 R_CARD_REF = re.compile(r"^/api/cards/reference/$")
 R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
 R_BOARD = re.compile(r"^/api/projects/([^/]+)/board/(\d+)/$")
+R_BOARDS = re.compile(r"^/api/projects/([^/]+)/boards/$")
 
 
 def _data_dir_is_ours(data_dir: str, code_root: str) -> bool:
@@ -617,6 +618,24 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return bad("不支持的方法", 405)
         except Exception as exc:
             return bad(str(exc), 400)
+
+    # ★★★ 白板列表：面板「思考模式」下显示有哪些白板（节点名查索引补上）⚠
+    m = R_BOARDS.match(path)
+    if m:
+        entry = projectstore.get(m.group(1))
+        if not entry or not entry.get("data"):
+            return bad("项目不存在", 404)
+        if method != "GET":
+            return bad("不支持的方法", 405)
+        items = board.list_boards(entry["data"])
+        pr = store.find_project(CONN, m.group(1))
+        if pr is not None:
+            for it in items:
+                node = store.node_by_vid(CONN, pr["id"], it["vid"])
+                it["name"] = node["name"] if node else f"节点 {it['vid']}"
+                it["qname"] = node["qname"] if node else ""
+                it["file_path"] = node["file_path"] if node else ""
+        return ok({"items": items})
 
     # ★★★ 代码展示：列文件树 / 读源码（见 sidecar/source.py）⚠
     #   · 文件树**全部显示**，⛔ 不按 .gitignore 过滤（所有者明确要求）

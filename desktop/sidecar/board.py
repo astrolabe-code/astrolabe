@@ -43,3 +43,28 @@ def save(data_dir: str, vid: int, layout: dict) -> dict:
             os.remove(tmp)
         raise
     return {"ok": True}
+
+
+def list_boards(data_dir: str) -> list[dict]:
+    """★★ 列出这个项目保存过的白板（面板「有哪些白板」列表用）⚠
+
+    · 只扫 `<项目数据目录>/boards/*.json`，按修改时间**新→旧**排
+    · 节点名由 main.py 再查索引补上（本模块不碰 sqlite）
+    """
+    d = os.path.join(data_dir, "boards")
+    items: list[dict] = []
+    if os.path.isdir(d):
+        for fn in os.listdir(d):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                vid = int(fn[:-5])
+            except ValueError:
+                continue
+            try:
+                mtime = int(os.path.getmtime(os.path.join(d, fn)))
+            except OSError:
+                mtime = 0
+            items.append({"vid": vid, "mtime": mtime})
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return items

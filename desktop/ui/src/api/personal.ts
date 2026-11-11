@@ -330,4 +330,10 @@ export const personalApi = {
     ),
   saveBoard: (projectRef: string, vid: number, layout: BoardLayout) =>
     put(`/api/projects/${encodeURIComponent(projectRef)}/board/${vid}/`, { layout }),
+
+  /** ★ 项目里保存过白板的节点列表（思考模式面板用；节点名后端已补） */
+  listBoards: (projectRef: string) =>
+    get<{
+      items: { vid: number; name?: string; qname?: string; file_path?: string; mtime: number }[]
+    }>(`/api/projects/${encodeURIComponent(projectRef)}/boards/`),
 }

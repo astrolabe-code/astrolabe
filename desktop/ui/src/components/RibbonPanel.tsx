@@ -137,7 +137,44 @@ function SearchPane({ onNavigate }: { onNavigate: (path: string) => void }) {
   )
 }
 
+/** ★ 白板列表项（后端 boards/*.json，节点名已由边车查索引补上） */
+interface BoardItem {
+  vid: number
+  name?: string
+  qname?: string
+  file_path?: string
+  mtime: number
+}
+
 function ThinkingPane({ onClose }: { onClose: () => void }) {
+  const nav = useNavigate()
+  // ★ 面板是全局的：从当前路径解析项目 ref（不在项目页时列表不显示）
+  const m = window.location.pathname.match(/^\/p\/([^/]+)/)
+  const projectRef = m ? decodeURIComponent(m[1]) : ''
+  const [items, setItems] = useState<BoardItem[] | null>(null)
+
+  useEffect(() => {
+    if (!projectRef) return
+    let alive = true
+    personalApi
+      .listBoards(projectRef)
+      .then((d) => {
+        if (alive) setItems(d.items || [])
+      })
+      .catch(() => {
+        if (alive) setItems([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [projectRef])
+
+  /** ★ 点列表项：跳到那个节点并自动开白板（复用 `?think=1&node=<vid>` 深链） */
+  const openBoard = (vid: number) => {
+    onClose()
+    nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${vid}`)
+  }
+
   return (
     <div style={{ padding: 12 }}>
       <button
@@ -151,6 +188,46 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
       >
         打开思考模式白板
       </button>
+
+      {projectRef && (
+        <div style={{ marginTop: 14 }}>
+          <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
+            已保存的白板
+          </div>
+          {items === null ? null : items.length === 0 ? (
+            <Hint>还没有保存过白板</Hint>
+          ) : (
+            items.map((it) => (
+              <button
+                key={it.vid}
+                type="button"
+                title={it.qname || it.name}
+                onClick={() => openBoard(it.vid)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '7px 8px',
+                  marginBottom: 4,
+                  border: '1px solid var(--card-border)',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                  {it.name || `节点 ${it.vid}`}
+                </div>
+                {it.qname && (
+                  <div className="faint" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {it.qname}
+                  </div>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -387,28 +387,46 @@ a.profile-avatar:active {
 
    ★ 2026-11-09 改：所有者「阅读页左边不需要用户标签和说明挂在哪里，
      只需要一个可以折叠的目录或者说大纲就行，跟编辑页一样」
-     ⇒ 只留一个可折叠目录（折叠后 40px 竖条），作者卡 / 挂在哪卡片删除
+     ⇒ 作者卡 / 挂在哪卡片删掉，只留大纲面板
      ★ 2026-11-09 又改：「把编辑页和阅读页的目录放到右边去」
-     结构：纸 760 ＋ 间距 24 ＋ 右栏目录 264（sticky）；
-         折叠态 纸 760 ＋ 右栏 40px（⛔ 纸宽不变，不重排）
+     ★ 2026-11-09 定稿（借鉴 Obsidian 大纲面板）：
+     顶栏「大纲」开关整块显示/隐藏面板，收起后单列、正文铺满，
+     ⛔ 不再留 40px 竖条；面板顶部自带 × 关闭
+     ★ 2026-11-11 又改：「目录和阅读区能不能左右分页呀，obsidian都是左右分页的」
+     结构：纸 1fr ｜ 1px 竖线 ｜ 右栏大纲 264，
+           两栏贴边、等高铺满、右栏自有底色；⛔ 无 gap、无卡片圆角阴影
      ⛔ 操作按钮不在右栏 —— 改挂 / 编辑都在文末
+     · · 窄屏 ≤1100px 改上下分栏，分隔线转成横线
    ========================================================================== */
 
-.note-layout {
-  display: grid;
-  /* ★ 2026-11-09：纸铺满容器宽度（1fr），右栏目录固定宽、sticky 不拉伸 */
-  grid-template-columns: minmax(0, 1fr) 264px;
-  gap: 24px;
-  align-items: stretch;
+/* ★★ 2026-11-11：骨架交给 SplitPane（display:flex + 注入宽度 + 1px 分隔条），
+   这里只留两栏的「样式」，⛔ 不再写 grid / order / gap / 折叠列宽。
+   · 两栏贴边铺满、中间一条竖线（SplitPane 的 handle）
+   · 折叠由 SplitPane 的 collapsed 控制（整块不渲染） */
+.note-layout > .note-rail {
+  align-self: stretch;
+  position: static;
+  gap: 0;
+  background: var(--bg);
+  padding: 14px 16px;
 }
-/* DOM 里目录在纸前面，用 order 让视觉顺序变成「纸 → 目录」；
-   窄屏单列时同样是纸在上、目录在下（与下方 @media 一致） */
-.note-layout > .note-article { order: 1; }
-.note-layout > .note-rail { order: 2; align-self: start; }
+/* 两栏都不再是「漂浮卡片」：去掉边框 / 圆角 / 阴影 */
+.note-layout .note-body-card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.note-layout .note-rail-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+/* 文末条跟着纸去掉圆角（负 margin 仍贴着纸的内边距） */
+.note-layout .note-foot { border-radius: 0; }
 
-/* ★ 折叠只收窄右栏，⛔ 不让正文重排（与编辑页同口径） */
-.note-layout.is-folded { grid-template-columns: minmax(0, 1fr) 40px; }
-.note-layout.is-folded .note-rail { gap: 0; }
+/* ★ 折叠：SplitPane 的 collapsed 整块隐藏、正文铺满（无占位） */
 
 /* ★★ 2026-11-09（所有者：「阅读页能不能把整个容器占满？」）
    把高度链打通：外壳 → layout → 纸 → 文末条，
@@ -515,19 +533,17 @@ a.profile-avatar:active {
 .link-btn:hover { color: var(--accent); background: var(--accent-dim); }
 .note-foot-right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 
-/* 窄屏：单列，纸在上、目录在下（与全局 order 一致） */
+/* 窄屏：SplitPane 的 breakpoint 自动转上下分栏，DOM 顺序即纸 → 大纲 */
 @media (max-width: 1100px) {
-  .note-layout,
-  .note-layout.is-folded { grid-template-columns: minmax(0, 1fr); }
-  .note-layout > .note-article { order: 1; }
+  .note-layout > .note-rail {
+    border-top: 1px solid var(--card-border);
+    background: transparent;
+  }
   .note-rail {
-    order: 2; position: static;
+    position: static;
     flex-direction: row; flex-wrap: wrap;
   }
   .note-rail-card { flex: 1 1 200px; }
-  /* 折叠态在窄屏下别留一条 40px 竖条 */
-  .note-layout.is-folded .note-edit-fold-btn { flex-direction: row; width: auto; padding: 6px 10px; }
-  .note-layout.is-folded .note-edit-fold-btn .v { writing-mode: horizontal-tb; letter-spacing: 0; }
   .note-foot { margin: 18px -12px -14px; padding: 12px; }
 }
 
@@ -566,7 +582,7 @@ a.profile-avatar:active {
 
 
 /* ============================================================================
-   ★★★ 写作区两栏：纸 ＋ 右目录（可折叠）（`D131` · 2026-10-27）⚠
+   ★★★ 写作区两栏：纸 ＋ 右大纲面板（`D131` · 2026-10-27）⚠
 
    所有者：「写作区加个目录，可折叠的，更好一点」
            「把编辑页和阅读页的目录放到右边去」（2026-11-09）
@@ -576,53 +592,16 @@ a.profile-avatar:active {
    · · 折叠状态存本地（useCollapsed），下次打开还是收着的
    ========================================================================== */
 
-.note-edit-layout {
-  display: grid;
-  /* ⚠ 纸宽**固定** 820：折叠只收右栏，⛔ 不让正文重排（否则眼睛要重新找行）⚠
-     ★ 2026-11-09：目录移到**右边** ⇒ 纸在左列、目录在右列 */
-  grid-template-columns: minmax(0, 820px) 220px;
-  gap: 20px;
-  align-items: start;
-  /* ★ 和阅读页一致：整体居中，别让纸贴着屏幕左缘 ⚠ */
-  justify-content: center;
-}
-/* 与阅读页同口径：DOM 顺序不变，用 order 交换视觉顺序 */
-.note-edit-layout > .note-edit-card { order: 1; }
-.note-edit-layout > .note-edit-rail { order: 2; }
-
-.note-edit-layout.is-folded {
-  grid-template-columns: minmax(0, 820px) 40px;
+/* ★★ 2026-11-11：骨架交给 SplitPane，DOM 顺序即视觉顺序（纸 → 大纲）。
+   ⚠ 纸的类别色描边由 JSX inline style 提供，SplitPane 传了 preserveChildStyle */
+.note-edit-layout > .note-edit-rail {
+  position: static;
+  align-self: stretch;
+  background: var(--bg);
+  padding: 14px 12px;
 }
 
-.note-edit-rail {
-  position: sticky;
-  top: 16px;
-}
-
-/* 折叠后：一条竖排的「目录」＋ 箭头，占 40px */
-.note-edit-fold-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 0 14px;
-  background: var(--card);
-  border: 1px solid var(--card-border);
-  border-radius: 12px;
-  cursor: pointer;
-  color: var(--text-faint);
-  font-family: var(--font-ui);
-  box-shadow: var(--shadow-card);
-}
-.note-edit-fold-btn:hover { color: var(--accent); border-color: var(--accent); }
-.note-edit-fold-btn .v {
-  writing-mode: vertical-rl;
-  font-size: 12px;
-  letter-spacing: 3px;
-}
-
-/* 目录标题行：左「目录」右「收起」箭头 */
+/* 面板顶部工具行：左「大纲」右「× 关闭」（Obsidian 口径） */
 .note-toc-head {
   display: flex;
   align-items: center;
@@ -654,8 +633,6 @@ a.profile-avatar:active {
 
 /* 窄屏：目录整块不显示（写作时屏幕本来就窄，正文优先） */
 @media (max-width: 1100px) {
-  .note-edit-layout,
-  .note-edit-layout.is-folded { grid-template-columns: minmax(0, 1fr); }
   .note-edit-rail { display: none; }
 }
 

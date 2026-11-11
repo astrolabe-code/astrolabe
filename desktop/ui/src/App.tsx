@@ -11,6 +11,7 @@ import NoteEditPage from './pages/NoteEditPage'
 import SettingsPage from './pages/SettingsPage'
 import Ribbon from './components/Ribbon'
 import RibbonPanel from './components/RibbonPanel'
+import SplitPane from './components/SplitPane'
 import type { PanelKind } from './lib/ribbonBus'
 import { patchRibbon } from './lib/ribbonBus'
 
@@ -48,14 +49,38 @@ export default function App() {
       <CommandPalette />
       <QuickNote />
 
-      {/* ★★★ Obsidian 口径：左侧 36px ribbon + 挤压展开的功能面板，
-          内容区顶部不再摊功能按钮 */}
-      <div style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+      {/* ★★★ 2026-11-11：四分页 = 二层 SplitPane 嵌套（外层 ribbon │ 内层）
+          内层再分「功能面板 │ 内容」，内容里的工作区/笔记页又各自嵌套 ⇒ N 栏
+          · ribbon / RibbonPanel 自带固定宽与 borderRight ⇒ divider=false 免双线
+          · 这两栏宽度固定不该被拖 ⇒ resizable=false
+          · 面板收起走 collapsed 接口（隐藏按钮本批不做） */}
+      <SplitPane
+        fixed="left"
+        initial={36}
+        min={36}
+        otherMin={320}
+        resizable={false}
+        divider={false}
+        preserveChildStyle
+      >
         <Ribbon active={panel} onToggle={togglePanel} />
-        {panel && <RibbonPanel kind={panel} onClose={() => setPanel(null)} />}
-        {/* ★ 只让内容区滚：标题栏、ribbon、功能面板都固定不动。
-            .app-scroll 把滚动条滑块隐藏（滚轮 / 触控板仍可滚） */}
-        <div className="app-scroll" style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+        <SplitPane
+          fixed="left"
+          initial={260}
+          min={200}
+          otherMin={320}
+          collapsed={!panel}
+          collapsedSide="left"
+          resizable={false}
+          divider={false}
+          preserveChildStyle
+        >
+          {/* ⚠ panel 为 null 时这一栏被 SplitPane 整块隐藏（不会挂载、不会取数），
+              兜底 kind 只为满足类型 */}
+          <RibbonPanel kind={panel ?? 'search'} onClose={() => setPanel(null)} />
+          {/* ★ 只让内容区滚：标题栏、ribbon、功能面板都固定不动。
+              .app-scroll 把滚动条滑块隐藏（滚轮 / 触控板仍可滚） */}
+          <div className="app-scroll" style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}>
       <Routes>
         <Route path="/" element={<PersonalHome />} />
 
@@ -84,8 +109,9 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-        </div>
-      </div>
+          </div>
+        </SplitPane>
+      </SplitPane>
     </div>
   )
 }

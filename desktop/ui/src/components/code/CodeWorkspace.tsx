@@ -20,6 +20,7 @@ import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
 import FileTree, { firstLevelDirs } from './FileTree'
+import SplitPane from '../SplitPane'
 import CodeViewer from './CodeViewer'
 
 interface CodeWorkspaceProps {
@@ -350,20 +351,26 @@ export default function CodeWorkspace({
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* ★★ 文件树只由 treeOpen 决定：切到笔记时由 tab 按钮把它收起，
-            右上角的按钮常驻，用户想看随时点开（⛔ 渲染处不加 tab 判断） */}
-        {treeOpen && (
-          <div
-            style={{
-              width: 240,
-              flex: 'none',
-              borderRight: '1px solid var(--card-border)',
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
+      {/* ★★ 2026-11-11：外层也改用 SplitPane ⇒ 与内层 note 页嵌套成三分页。
+          · 文件树仍是 treeOpen 控制，但走 collapsed 接口（整块不渲染）
+          · preserveChildStyle：文件树自己的 display:flex 列布局要保留 */}
+      <SplitPane
+        fixed="left"
+        initial={240}
+        min={180}
+        otherMin={520}
+        collapsed={!treeOpen}
+        collapsedSide="left"
+        breakpoint={900}
+        preserveChildStyle
+      >
+        <div
+          style={{
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
             {treeError ? (
               <div className="faint" style={{ padding: 12, fontSize: 12 }}>
                 {treeError}
@@ -386,8 +393,7 @@ export default function CodeWorkspace({
                 文件太多，只显示了一部分
               </div>
             )}
-          </div>
-        )}
+        </div>
 
         {/* 右侧：代码页 / 笔记页 */}
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -464,7 +470,7 @@ export default function CodeWorkspace({
             </>
           )}
         </div>
-      </div>
+      </SplitPane>
     </div>
   )
 }

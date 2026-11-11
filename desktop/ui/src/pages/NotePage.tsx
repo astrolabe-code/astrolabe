@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, GitBranch, List, Lock, Pencil } from 'lucide-react'
+import { GitBranch, List, ListTree, Lock, Pencil, X } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
 import { cardId } from '../api/code'
@@ -8,6 +8,7 @@ import { useProject } from '../query/projects'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
+import SplitPane from '../components/SplitPane'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import AnchorPicker from '../components/notes/AnchorPicker'
 import { kindMeta } from '../components/notes/kindMeta'
@@ -191,6 +192,15 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
     <NoteShell embedded={embedded}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
+        {/* ★ Obsidian 口径：顶栏的大纲开关（高亮 = 面板展开），
+            点一下整块面板消失、正文自动铺满 */}
+        <RailButton
+          icon={<ListTree size={13} />}
+          label="大纲"
+          title={tocFolded ? '显示大纲（目录）' : '隐藏大纲（目录）'}
+          active={!tocFolded}
+          onClick={toggleToc}
+        />
         <RailButton
           icon={<List size={13} />}
           label="节点"
@@ -225,49 +235,20 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
           ⇒ 作者卡 / 「挂在哪个节点」卡整块删掉，左栏只留可折叠目录。
           折叠状态存 localStorage（useCollapsed('read-toc')），与编辑页独立。
           ⚠ 「改挂到别的节点」功能不删 —— 移到文末操作条，跟「编辑」并排。 */}
-      <div className={`note-layout${tocFolded ? ' is-folded' : ''}`}>
-        <aside className="note-rail">
-          {tocFolded ? (
-            <button
-              type="button"
-              className="note-edit-fold-btn"
-              onClick={toggleToc}
-              title="展开目录（目录在右侧）"
-            >
-              <ChevronLeft size={13} />
-              <span className="v">目录</span>
-            </button>
-          ) : (
-            <div className="note-rail-card note-toc">
-              <div className="note-toc-head">
-                <h4>目录</h4>
-                <button type="button" onClick={toggleToc} title="收起目录（往右收）">
-                  <ChevronRight size={13} />
-                </button>
-              </div>
-              {toc.length === 0 ? (
-                <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
-                  还没有章节。
-                  <br />
-                  正文里用 <code>#</code> 开头写一行，就会出现在这里。
-                </div>
-              ) : (
-                toc.map((h, i) => (
-                  <button
-                    key={`${h.text}-${i}`}
-                    type="button"
-                    onClick={() => jumpToHeading(h.text, h.level)}
-                    className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
-                  >
-                    {h.text}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </aside>
-
-        {/* ---------------------------------------------------------- 纸 */}
+      {/* ★★ 2026-11-11：内层改用统一的 SplitPane（嵌套二分页）
+          · DOM 顺序 = children 顺序：纸在左、大纲在右，⛔ 不再靠 CSS order
+          · 折叠走 collapsed 接口；隐藏按钮仍用顶栏「大纲」/ 面板 ×
+          · preserveChildStyle：纸与大纲的边框由 CSS 管，别被组件抹掉 */}
+      <SplitPane
+        className="note-layout"
+        fixed="right"
+        initial={264}
+        min={200}
+        otherMin={320}
+        breakpoint={1100}
+        collapsed={tocFolded}
+        preserveChildStyle
+      >
         <div className="note-article">
           
 
@@ -324,7 +305,6 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
                 · {n.created_at?.replace('T', ' ').slice(0, 16)}
               </span>
             </div>
-
             {/* ②③ 正文：整篇 Milkdown 只读渲染（`D108` / `B242`）
                 ★★ 段评气泡由 MilkdownView 用 ProseMirror Decoration 挂在段落末尾 ✅ */}
             <div id="note-body" className="flex flex-col gap-5">
@@ -367,7 +347,39 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
           {/* ④ 章评区 —— ★ 个人版没有第二个用户，评论没有对象 ⇒ 整块不渲染 ⚠ */}
           
         </div>
-      </div>
+
+        {/* ------------------------------------------------------ 大纲（右栏） */}
+        <aside className="note-rail">
+          <div className="note-rail-card note-toc">
+            {/* ★ 面板自己的一行工具条：标题 + ×（Obsidian 口径） */}
+            <div className="note-toc-head">
+              <h4>大纲</h4>
+              <button type="button" onClick={toggleToc} title="关闭大纲（顶栏可再打开）" aria-label="关闭大纲">
+                <X size={13} />
+              </button>
+            </div>
+            {toc.length === 0 ? (
+              <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
+                还没有章节。
+                <br />
+                正文里用 <code>#</code> 开头写一行，就会出现在这里。
+              </div>
+            ) : (
+              toc.map((h, i) => (
+                <button
+                  key={`${h.text}-${i}`}
+                  type="button"
+                  onClick={() => jumpToHeading(h.text, h.level)}
+                  className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
+                >
+                  {h.text}
+                </button>
+              ))
+            )}
+          </div>
+        </aside>
+      </SplitPane>
+
 
       {/* ⑤ **选中文字后的浮动工具条**（* 一行按钮，以后可加更多）⚠
             · · ⛔ 不再用右键：所有者：「不要右键弹出评论按钮了……评论按钮和

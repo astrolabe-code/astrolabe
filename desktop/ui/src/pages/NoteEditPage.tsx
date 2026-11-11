@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, ChevronLeft, ChevronRight, Lock, LockOpen, Trash2 } from 'lucide-react'
+import { BookOpenText, ListTree, Lock, LockOpen, Trash2, X } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
 import { personalApi } from '../api/personal'
 import AppLayout from '../components/AppLayout'
+import SplitPane from '../components/SplitPane'
 import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
@@ -361,6 +362,14 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     <NoteShell embedded={embedded}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
+        {/* ★ 与阅读页同款：顶栏大纲开关（高亮 = 面板展开） */}
+        <RailButton
+          icon={<ListTree size={13} />}
+          label="大纲"
+          title={tocFolded ? '显示大纲（目录）' : '隐藏大纲（目录）'}
+          active={!tocFolded}
+          onClick={toggleToc}
+        />
         <RailButton
           icon={<BookOpenText size={13} />}
           label="阅读"
@@ -400,59 +409,23 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         </div>
       )}
 
-      {/* ★★★ 写作区两栏（`D131`）：纸 ＋ 右目录（可折叠）⚠
+      {/* ★★★ 写作区两栏（`D131`）：纸 ＋ 右大纲面板（顶栏开关整块收起）⚠
           · · 目录是正文里的 `#` / `##` / `###`（⛔ 不含名字）
           · · 折叠状态记在本地，下次打开还是收着的 ⚠
           · · 2026-11-09 目录移到右边（CSS 交换列 + order，DOM 顺序不变） */}
-      <div className={`note-edit-layout${tocFolded ? ' is-folded' : ''}`}>
-        <aside className={`note-edit-rail${tocFolded ? ' is-folded' : ''}`}>
-          {tocFolded ? (
-            <button
-              type="button"
-              className="note-edit-fold-btn"
-              onClick={toggleToc}
-              title="展开目录（目录在右侧）"
-            >
-              <ChevronLeft size={13} />
-              <span className="v">目录</span>
-            </button>
-          ) : (
-            <div className="note-rail-card note-toc">
-              <div className="note-toc-head">
-                <h4>目录</h4>
-                <button type="button" onClick={toggleToc} title="收起目录（往右收）">
-                  <ChevronRight size={13} />
-                </button>
-              </div>
-              {heads.length === 0 ? (
-                <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
-                  还没有章节。
-                  <br />
-                  正文里用 <code>#</code> 开头写一行，就会出现在这里。
-                </div>
-              ) : (
-                heads.map((h, i) => (
-                  <button
-                    key={`${h.text}-${i}`}
-                    type="button"
-                    onClick={() => scrollToHeading(h.text, h.level, '.milkdown .ProseMirror')}
-                    className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
-                  >
-                    {h.text}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </aside>
-
-        {/* ★★★ 2026-10-27（`D132`）：**纸张描边 = 当前类别色** ⚠
-            所有者：「现在灵光一现等标签，放在底部了，不明显了，能不能给纸张加上
-                    对应颜色的描边？让用户能一眼知道，自己在写的什么。」
-            · · 2px 实线 + 一圈 3px 同色淡光 —— 有颜色但不刺眼 ✅
-            · · ⚠ 别写 1.5px：Chrome 会把边框宽度**向下取整到整数设备像素**，
-              1.5px 实际渲染成 1px（实测 computed 仍报 1px）⚠
-            · · 改类别时边框**立刻**变色（点底栏胶囊即时反馈）✅ */}
+      {/* ★★ 2026-11-11：内层改用统一的 SplitPane（嵌套二分页）
+          · preserveChildStyle 必须开：纸的类别色描边不能被组件抹掉
+          · 折叠走 collapsed 接口；隐藏按钮仍用顶栏「大纲」/ 面板 × */}
+      <SplitPane
+        className="note-edit-layout"
+        fixed="right"
+        initial={220}
+        min={180}
+        otherMin={480}
+        breakpoint={1100}
+        collapsed={tocFolded}
+        preserveChildStyle
+      >
         <div
           className="card note-edit-card"
           style={{
@@ -519,9 +492,8 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           <span className="sub-name">
             留空则自动取正文第一行；名字只用于搜索列表，正文里的 <code>#</code> 才是章节标题。
           </span>
+
         </div>
-
-
         {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}
         {ready && (
           <MilkdownEditor
@@ -607,7 +579,39 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           </Button>
         </div>
         </div>
-      </div>
+
+        {/* ------------------------------------------------------ 大纲（右栏） */}
+        <aside className="note-edit-rail">
+          <div className="note-rail-card note-toc">
+            {/* ★ 面板自己的一行工具条：标题 + ×（Obsidian 口径） */}
+            <div className="note-toc-head">
+              <h4>大纲</h4>
+              <button type="button" onClick={toggleToc} title="关闭大纲（顶栏可再打开）" aria-label="关闭大纲">
+                <X size={13} />
+              </button>
+            </div>
+            {heads.length === 0 ? (
+              <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
+                还没有章节。
+                <br />
+                正文里用 <code>#</code> 开头写一行，就会出现在这里。
+              </div>
+            ) : (
+              heads.map((h, i) => (
+                <button
+                  key={`${h.text}-${i}`}
+                  type="button"
+                  onClick={() => scrollToHeading(h.text, h.level, '.milkdown .ProseMirror')}
+                  className={h.level > 1 ? `lv${Math.min(h.level, 3)}` : ''}
+                >
+                  {h.text}
+                </button>
+              ))
+            )}
+          </div>
+        </aside>
+      </SplitPane>
+
 
       {/*
         ★★★ 保存确认（`D112` 补 · 2026-10-27）——

@@ -9,12 +9,10 @@ import {
   notePaneView,
   openNotePane,
   parseNotePath,
-  setNotePaneMode,
   subscribeNotePane,
   type NotePaneMode,
 } from '../../lib/notePaneBus'
 import type { GraphNode } from '../../lib/mergeGraph'
-import NotePage from '../../pages/NotePage'
 import NoteEditPage from '../../pages/NoteEditPage'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
@@ -35,8 +33,8 @@ interface CodeWorkspaceProps {
   notePanel?: ReactNode
 }
 
-/** ★ 2026-11-09：拆成「阅读」「编辑」两个标签（所有者：「拆成两个标签，阅读和编辑」） */
-type Tab = 'code' | 'imitation' | 'notes' | 'read' | 'edit'
+/** ★ 2026-11-09 原先拆成「阅读」「编辑」两个标签；2026-11-11 合一为单页（见 NoteEditPage 内部 mode） */
+type Tab = 'code' | 'imitation' | 'notes'
 
 const TREE_OPEN_KEY = 'astrolabe.code.treeOpen'
 
@@ -92,10 +90,8 @@ export default function CodeWorkspace({
   // ★ 每个工作区实例一个唯一工具插槽 id（图谱页/项目页各有多个 CodeWorkspace，
   //   固定 id 会让 document.getElementById 拿到错的那个）
   const toolsSlotId = `note-pane-tools-${useId().replace(/:/g, '')}`
-  useEffect(() => {
-    if (!pane) return
-    setTab(pane.mode)
-  }, [pane?.token, pane?.mode])
+  // ★ 2026-11-11 合一后：pane 只代表「是否打开了某篇笔记」，tab 不再有 read/edit；
+  //   打开笔记统一停在 notes 页，由 NoteEditPage 内部 mode 控制视图（⛔ 不再 setTab(pane.mode)）
 
   /** 页面内部 nav(...) 的落点：站内路径 → 容器动作；回项目页 → 收起回列表 */
   const paneNavigate = (path: string) => {
@@ -311,32 +307,18 @@ export default function CodeWorkspace({
       {/* ★ tab：代码 / 笔记（蓝色下划线选中态） */}
       {!immersive && (
         <div className="code-tabs">
-          {(['code', 'imitation', 'notes', 'read', 'edit'] as const).map((k) => {
-            const isNotePane = k === 'read' || k === 'edit'
+          {(['code', 'imitation', 'notes'] as const).map((k) => {
             const label = k === 'code' ? '代码'
-              : k === 'imitation' ? '仿写'
-              : k === 'notes' ? '笔记'
-              : k === 'read' ? '阅读' : '编辑'
+              : k === 'imitation' ? '仿写' : '笔记'
             return (
               <button
                 key={k}
                 type="button"
-                disabled={isNotePane && !pane}
-                title={isNotePane && !pane ? '先在「笔记」里点开一篇' : label}
                 onClick={() => {
-                  if (isNotePane) {
-                    // ★ 先切 tab：从「笔记」切回来时 mode 可能没变，
-                    //   setNotePaneMode 会直接 return，不能只依赖订阅回调
-                    setTab(k)
-                    // 两个标签之间切 ⇒ 重建对应页面（阅读/编辑）
-                    setNotePaneMode(k as NotePaneMode)
-                    return
-                  }
                   setTab(k)
                   setTreeOpen(k === 'code')
                 }}
                 className={`code-tab${tab === k ? ' is-active' : ''}`}
-                style={isNotePane && !pane ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
               >
                 {label}
               </button>
@@ -397,42 +379,30 @@ export default function CodeWorkspace({
         {/* 右侧：代码页 / 笔记页 */}
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {tab === 'notes' ? (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
-            >
-              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
-            </div>
-          ) : (tab === 'read' || tab === 'edit') && pane ? (
-            /* ★ 两个页面原样嵌进这个容器，业务逻辑一行未改 */
-            <div
-              style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-            >
-              {tab === 'read' ? (
-                <NotePage
-                  key={`read-${pane.token}`}
-                  projectRef={projectRef}
-                  noteRef={pane.ref || undefined}
-                  onNavigate={paneNavigate}
-                  toolsSlotId={toolsSlotId}
-                />
-              ) : (
-                <NoteEditPage
-                  key={`edit-${pane.token}`}
-                  projectRef={projectRef}
-                  noteRef={pane.ref || undefined}
-                  nodeId={pane.nodeId}
-                  parent={pane.parent}
-                  onNavigate={paneNavigate}
-                  toolsSlotId={toolsSlotId}
-                />
-              )}
-            </div>
+            pane ? (
+              <NoteEditPage
+                key={`note-${pane.token}`}
+                projectRef={projectRef}
+                noteRef={pane.ref || undefined}
+                nodeId={pane.nodeId}
+                parent={pane.parent}
+                onNavigate={paneNavigate}
+                toolsSlotId={toolsSlotId}
+                initialMode={pane.mode}
+              />
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
+              </div>
+            )
           ) : tab === 'imitation' ? (
             <ImitationPanel projectRef={projectRef} node={node} />
           ) : (

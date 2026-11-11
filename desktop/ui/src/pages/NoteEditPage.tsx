@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, ListTree, Lock, LockOpen, Trash2, X } from 'lucide-react'
+import { BookOpenText, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
@@ -11,6 +11,7 @@ import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
+import MilkdownLazy from '../components/notes/MilkdownLazy'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
 
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
@@ -91,6 +92,8 @@ export interface NoteEditEmbeddedProps {
   parent?: string
   onNavigate?: (path: string) => void
   toolsSlotId?: string
+  /** ★ 2026-11-11 合一：容器打开时指定初始视图（read=阅读视图 / edit=编辑） */
+  initialMode?: 'edit' | 'read'
 }
 
 export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
@@ -175,6 +178,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   /** ★ 初值灌进编辑器**只做一次**（* 否则一改就重建编辑器、光标丢失）⚠ */
   const [ready, setReady] = useState(!editing)
   const editorApi = useRef<MilkdownEditorApi | null>(null)
+
+  // ★ 2026-11-11（所有者：「阅读和编辑合一，像 obsidian」）：同一页内切换
+  //   编辑（所见即所得）/ 阅读（只读沉浸 + 段评气泡），⛔ 不跳路由、⛔ 不丢未保存
+  const [mode, setMode] = useState<'edit' | 'read'>(embedded?.initialMode ?? 'edit')
 
   const create = useCreateNote(projectRef)
   const update = useUpdateNote(id)
@@ -289,24 +296,24 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
       //   · · 用返回的锚点快照，⛔ 不要再查一次节点 ⚠
       const snap = data?.note?.node_snapshot
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
-      // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
-      //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
-      const target = from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`
-      // ★★ 保存后让当前标签**原地变成真实笔记名**（Obsidian 口径）。
-      //   用后端返回的 title（可能由正文自动推导），不能只靠顶部输入框。
-      //   ⚠ newPath 只取 pathname：from 可能带 ?query，而 tab 的 key 是 pathname
-      const targetPath = target.split('?')[0]
       const realTitle = data.note?.title || draftTitle.trim() || '新笔记'
       if (!embedded) {
+        // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
+        //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
+        const target = from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`
+        // ★★ 保存后让当前标签**原地变成真实笔记名**（Obsidian 口径）。
+        const targetPath = target.split('?')[0]
         if (from) {
-          // 回来源页：那个页面本来就有标签 ⇒ 只把这个临时编辑标签收掉
           closeTab(loc.pathname)
         } else {
-          // 去阅读页：当前标签原地变成真实笔记
           replaceTab(loc.pathname, targetPath, realTitle)
         }
+        nav(target)
+      } else {
+        // ★ 容器内合一页（Obsidian 式）：保存后停在同一页的阅读视图，⛔ 不跳路由
+        setBody(text)
+        setMode('read')
       }
-      nav(target)
     } catch (e) {
       setErr(errorMessage(e))
     }
@@ -370,12 +377,26 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           active={!tocFolded}
           onClick={toggleToc}
         />
-        <RailButton
-          icon={<BookOpenText size={13} />}
-          label="阅读"
-          title="回到阅读页（未保存的改动会提示）"
-          onClick={back}
-        />
+        {mode === 'edit' ? (
+          <RailButton
+            icon={<BookOpenText size={13} />}
+            label="阅读视图"
+            title="切换为只读阅读视图（不丢失未保存内容）"
+            onClick={() => {
+              const text = editorApi.current?.getMarkdown() ?? body
+              setBody(text)
+              setHeads(extractToc(text))
+              setMode('read')
+            }}
+          />
+        ) : (
+          <RailButton
+            icon={<Pencil size={13} />}
+            label="编辑"
+            title="切换为编辑"
+            onClick={() => setMode('edit')}
+          />
+        )}
       </PageBar>
 
       {/* ★ 从父卡深入进来：标明来源，可点回去 */}
@@ -458,6 +479,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           {KIND_META[kind].label}
         </span>
 
+        {mode === 'edit' && (<>
         {/* ② 名字 —— ★★ 2026-10-27 依 CSDN 结构改版：提到**最上、大字** ⚠
             · · 眼睛先落在「要写什么」，而不是「给这篇归哪类」⚠
             · · 但**不强制填**（`D112`：名字只是身份，⛔ 不是文章标题）⚠ */}
@@ -576,6 +598,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             {editing ? '保存' : '写下'}
           </Button>
         </div>
+        </>)}
+        {mode === 'read' && (
+          <MilkdownLazy text={body} blocks={noteQ.data?.blocks ?? []} />
+        )}
         </div>
 
         {/* ------------------------------------------------------ 大纲（右栏） */}

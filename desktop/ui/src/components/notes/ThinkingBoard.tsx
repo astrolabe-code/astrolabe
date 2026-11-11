@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { X, MousePointer2, Plus, Check, Maximize2, Minimize2, GitBranch, Link2 } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import {
+  X,
+  Plus,
+  Check,
+  GitBranch,
+  GitFork,
+  Link2,
+  ChevronUp,
+  ChevronDown,
+  Undo2,
+  FolderOpen,
+  FilePlus2,
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { Note, NoteKind } from '../../api/types'
-import { cardId, type CardInfo, type CardLink } from '../../api/code'
+import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../api/code'
 import { personalApi } from '../../api/personal'
+import type { BoardLayout } from '../../api/personal'
+import { ribbonActions } from '../../lib/ribbonBus'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
@@ -76,11 +91,6 @@ interface ExternalCard {
   info: CardInfo
 }
 
-const posKey = (nodeId: number) => `thinking:${nodeId}`
-const boardKey = (nodeId: number) => `thinking:${nodeId}:board`
-const sizeKey = (nodeId: number) => `thinking:${nodeId}:size`
-const canvasKey = (nodeId: number) => `thinking:${nodeId}:canvas`
-
 export default function ThinkingBoard({
   open,
   projectRef,
@@ -94,9 +104,27 @@ export default function ThinkingBoard({
   const [sizes, setSizes] = useState<Record<number, Size>>({})
   const [canvas, setCanvas] = useState<Size>({ w: INIT_W, h: INIT_H })
   const [onBoard, setOnBoard] = useState<Set<number>>(new Set())
-  const [openBox, setOpenBox] = useState<NoteKind | null>(null)
+  /** ★ Obsidian 式取笔记：顶部搜索框 + 平铺笔记列表（⛔ 不再先分五个盒子） */
+  const [pickQuery, setPickQuery] = useState('')
+  /** ★ 搜索结果（null=未搜，用默认前 N 条）；输入即走后端 FTS 按需取，不一次性拉全量 */
+  const [searchHits, setSearchHits] = useState<CardSearchHit[] | null>(null)
+  useEffect(() => {
+    const q = pickQuery.trim()
+    if (!q) {
+      setSearchHits(null)
+      return
+    }
+    const t = setTimeout(() => {
+      personalApi
+        .searchCards(q, projectRef)
+        .then((r) => setSearchHits(r.notes || []))
+        .catch(() => setSearchHits([]))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [pickQuery, projectRef])
+
+
   // ★★ 思考模式**自身全屏**（* 去掉外框留白，* 白布铺满整个屏幕）⚠
-  const [fullscreen, setFullscreen] = useState(false)
 
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [resizingId, setResizingId] = useState<number | null>(null)
@@ -107,6 +135,26 @@ export default function ThinkingBoard({
   const [linkMode, setLinkMode] = useState<'parent' | 'reference' | null>(null)
   const [linkFrom, setLinkFrom] = useState<string | null>(null)
   const [activeEdge, setActiveEdge] = useState<string | null>(null)
+  /** ★ 底部图标打开「取笔记」浮层（⛔ 五个盒子不再常驻顶部） */
+  const [pickerOpen, setPickerOpen] = useState(false)
+
+  // ★ 点击浮层与按钮之外任意处关闭取笔记浮层
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const pickerBtnRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!pickerOpen) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (pickerRef.current?.contains(t)) return
+      if (pickerBtnRef.current?.contains(t)) return
+      setPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [pickerOpen])
+  useEffect(() => {
+    if (open) ribbonActions().closePanel?.()
+  }, [open])
   /** ★ 点「上一张 / 下一张」逐张展开的卡；开始为空 ⇒ 只显示进入的那一张 */
   const [expanded, setExpanded] = useState<string[]>([])
   /** ★★ 当前选中的卡片：「上一张 / 下一张」相对它，而不是相对进入时的那张 */
@@ -123,60 +171,74 @@ export default function ThinkingBoard({
 
   const sizeOf = (id: number): Size => sizes[id] ?? { w: DEF_W, h: DEF_H }
 
-  // ---------------------------------------------------------- 读取已保存状态
+  // ---------------------------------------------------------- 读取已保存状态（后端）
+  const loadedRef = useRef(false)
   useEffect(() => {
     if (!open) return
-    let savedPos: Record<number, Pos> | null = null
-    let savedSize: Record<number, Size> | null = null
-    let savedBoard: number[] | null = null
-    let savedCanvas: Size | null = null
-    try {
-      const rp = localStorage.getItem(posKey(nodeId))
-      if (rp) savedPos = JSON.parse(rp)
-      const rs = localStorage.getItem(sizeKey(nodeId))
-      if (rs) savedSize = JSON.parse(rs)
-      const rb = localStorage.getItem(boardKey(nodeId))
-      if (rb) savedBoard = JSON.parse(rb)
-      const rc = localStorage.getItem(canvasKey(nodeId))
-      if (rc) savedCanvas = JSON.parse(rc)
-    } catch {
-      /* 坏数据当没有 */
-    }
+    let alive = true
+    ;(async () => {
+      let layout: BoardLayout | null = null
+      try {
+        layout = await personalApi.board(projectRef, nodeId)
+      } catch {
+        layout = null
+      }
+      if (!alive) return
+      const savedPos = layout?.pos ?? null
+      const savedSize = layout?.sizes ?? null
+      const savedBoard = layout?.board ?? null
+      const savedCanvas = layout?.canvas ?? null
 
-    const board = new Set<number>(
-      (savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)),
-    )
-    // ★ 负 id = 跨项目外来卡（自动上板，⛔ 不被恢复逻辑清掉）；
-    //   点「链」进来时全部自动卡都保留
-    setOnBoard((prev) => {
-      const next = new Set(board)
-      prev.forEach((id) => {
-        if (!focusCardId && id < 0) next.add(id)
+      const board = new Set<number>(
+        (savedBoard ?? []).filter((id) => notes.some((n) => n.id === id)),
+      )
+      // ★ 负 id = 跨项目外来卡（自动上板，⛔ 不被恢复逻辑清掉）；
+      //   点「链」进来时全部自动卡都保留
+      setOnBoard((prev) => {
+        const next = new Set(board)
+        prev.forEach((id) => {
+          if (!focusCardId && id < 0) next.add(id)
+        })
+        return next
       })
-      return next
-    })
-    setSizes(savedSize ?? {})
+      setSizes(savedSize ?? {})
 
-    // ★ 保留**所有**已存位置（含跨项目外来卡的负 id），否则重开白板时它们会被重置
-    const next: Record<number, Pos> = { ...(savedPos ?? {}) }
-    let y = PAD
-    for (const id of board) {
-      const s = savedPos?.[id]
-      const h = (savedSize?.[id] ?? { w: DEF_W, h: DEF_H }).h
-      next[id] = s && Number.isFinite(s.x) && Number.isFinite(s.y) ? s : { x: PAD, y }
-      y += h + GAP
+      // ★ 保留**所有**已存位置（含跨项目外来卡的负 id），否则重开白板时它们会被重置
+      const next: Record<number, Pos> = { ...(savedPos ?? {}) }
+      let y = PAD
+      for (const id of board) {
+        const s = savedPos?.[id]
+        const h = (savedSize?.[id] ?? { w: DEF_W, h: DEF_H }).h
+        next[id] = s && Number.isFinite(s.x) && Number.isFinite(s.y) ? s : { x: PAD, y }
+        y += h + GAP
+      }
+      setPos(next)
+
+      // ★ 画布至少能装下所有卡片（* 老数据用默认尺寸兜底）⚠
+      const maxX = Math.max(0, ...Object.values(next).map((p) => p.x))
+      const maxY = Math.max(0, ...Object.values(next).map((p) => p.y))
+      setCanvas({
+        w: Math.max(INIT_W, savedCanvas?.w ?? 0, maxX + DEF_W + GROW_STEP),
+        h: Math.max(INIT_H, savedCanvas?.h ?? 0, maxY + DEF_H + GROW_STEP),
+      })
+      setPickQuery('')
+      loadedRef.current = true
+    })()
+    return () => {
+      alive = false
     }
-    setPos(next)
-
-    // ★ 画布至少能装下所有卡片（* 老数据用默认尺寸兜底）⚠
-    const maxX = Math.max(0, ...Object.values(next).map((p) => p.x))
-    const maxY = Math.max(0, ...Object.values(next).map((p) => p.y))
-    setCanvas({
-      w: Math.max(INIT_W, savedCanvas?.w ?? 0, maxX + DEF_W + GROW_STEP),
-      h: Math.max(INIT_H, savedCanvas?.h ?? 0, maxY + DEF_H + GROW_STEP),
-    })
-    setOpenBox(null)
   }, [open, nodeId, notes])
+
+  // ★★★ 布局变更后防抖写回后端（替代原 localStorage 即时写）
+  useEffect(() => {
+    if (!loadedRef.current) return
+    const t = setTimeout(() => {
+      personalApi
+        .saveBoard(projectRef, nodeId, { pos, board: [...onBoard], sizes, canvas })
+        .catch(() => {})
+    }, 400)
+    return () => clearTimeout(t)
+  }, [pos, sizes, onBoard, canvas, projectRef, nodeId])
 
   /** 本节点笔记 + 外来卡，统一用全局卡片 id 认人 */
   const globalIdOf = (local: number): string | null => {
@@ -342,15 +404,6 @@ export default function ThinkingBoard({
     setActiveEdge(null)
   }
 
-  // ---------------------------------------------------------- 持久化
-  const save = (key: string, v: unknown) => {
-    try {
-      localStorage.setItem(key, JSON.stringify(v))
-    } catch {
-      /* 隐私模式忽略 */
-    }
-  }
-
   /** ★★ 画布**无边界**：卡片拖/缩到超出范围 ⇒ 自动扩（* 只增不减）⚠ */
   const growCanvas = useCallback((x: number, y: number, w: number, h: number) => {
     setCanvas((prev) => {
@@ -358,7 +411,6 @@ export default function ThinkingBoard({
       const needH = y + h + GROW_STEP
       if (needW <= prev.w && needH <= prev.h) return prev
       const next = { w: Math.max(prev.w, needW), h: Math.max(prev.h, needH) }
-      save(canvasKey(nodeId), next)
       return next
     })
   }, [nodeId])
@@ -369,7 +421,6 @@ export default function ThinkingBoard({
       if (prev.has(n.id)) return prev
       const next = new Set(prev)
       next.add(n.id)
-      save(boardKey(nodeId), [...next])
       return next
     })
     setPos((prev) => {
@@ -381,7 +432,6 @@ export default function ThinkingBoard({
       }
       const y = Object.keys(prev).length ? maxBottom + GAP : PAD
       const next = { ...prev, [n.id]: { x: PAD, y } }
-      save(posKey(nodeId), next)
       growCanvas(PAD, y, DEF_W, DEF_H)
       return next
     })
@@ -392,7 +442,6 @@ export default function ThinkingBoard({
     setOnBoard((prev) => {
       const next = new Set(prev)
       next.delete(id)
-      save(boardKey(nodeId), [...next])
       return next
     })
   }
@@ -435,7 +484,6 @@ export default function ThinkingBoard({
     window.removeEventListener('pointerup', onPointerUp)
     if (!d) return
     setPos((prev) => {
-      save(posKey(nodeId), prev)
       const p = prev[d.id]
       if (p) growCanvas(p.x, p.y, DEF_W, DEF_H)
       return prev
@@ -481,10 +529,7 @@ export default function ThinkingBoard({
     window.removeEventListener('pointermove', onResizeMove)
     window.removeEventListener('pointerup', onResizeUp)
     if (!r) return
-    setSizes((prev) => {
-      save(sizeKey(nodeId), prev)
-      return prev
-    })
+    setSizes((prev) => prev)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, onResizeMove])
 
@@ -561,16 +606,16 @@ export default function ThinkingBoard({
     : null
 
 
-  return (
+  return createPortal(
     <div
       style={{
         position: 'fixed',
-        inset: 0,
+        // ★ 从全局顶栏下面开始，铺满其余视口（⛔ 不再只占右栏半边）
+        inset: 'var(--nav-h, 40px) 0 0 0',
         zIndex: 90,
-        background: fullscreen ? 'var(--card)' : 'rgba(15,23,42,.45)',
+        background: 'var(--card)',
         display: 'flex',
         flexDirection: 'column',
-        padding: fullscreen ? 0 : 12,
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
@@ -583,258 +628,297 @@ export default function ThinkingBoard({
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--card)',
-          borderRadius: fullscreen ? 0 : 14,
+          borderRadius: 0,
           overflow: 'hidden',
-          boxShadow: fullscreen ? 'none' : '0 24px 60px rgba(15,23,42,.35)',
+          position: 'relative',
         }}
       >
-        {/* ---- 顶栏 ---- */}
+        {/* ★★★ 顶部零工具行：功能全部浮动到右侧 / 底部 / 右下角
+            所有者：「只有一个问题，那就是顶部标题行太多，
+                    obsidian取文件是从下面三个图标里取的」 */}
+
+        {/* 右侧浮动竖栏：上一张 / 下一张 / 参见 / 连深入 / 连参见 / 取消 / 关闭 */}
         <div
           style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            zIndex: 5,
             display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 14px',
-            borderBottom: '1px solid var(--card-border)',
-            flexShrink: 0,
+            flexDirection: 'column',
+            gap: 2,
+            padding: 4,
+            borderRadius: 10,
+            border: '1px solid var(--card-border)',
+            background: 'var(--card)',
           }}
         >
-          <MousePointer2 size={15} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontSize: 13.5, fontWeight: 650 }}>思考模式</span>
-          <span className="faint" style={{ fontSize: 11.5 }}>
-            从下面五个盒子里挑笔记 · 拖动排布 · 右下角拖拽改大小 · 双击打开
-          </span>
-          {focusCardId && (
-            <>
-              <button
-                type="button"
-                className="code-icon-btn"
-                style={{ gap: 4, border: '1px solid var(--card-border)' }}
-                disabled={!linkTable[navTarget]?.parent}
-                title="显示选中卡片的上一张（父代）"
-                onClick={() => {
-                  const p = linkTable[navTarget]?.parent
-                  if (p) void showCard(p)
-                }}
-              >
-                上一张
-              </button>
-              <button
-                type="button"
-                className="code-icon-btn"
-                style={{ gap: 4, border: '1px solid var(--card-border)' }}
-                disabled={pendingKids.length === 0}
-                title="显示选中卡片的下一张（子代，可连续点逐个展开）"
-                onClick={() => {
-                  if (pendingKids[0]) void showCard(pendingKids[0])
-                }}
-              >
-                下一张
-              </button>
-              {/* ★ 参见（引用）：和上下张一样逐张展开，画虚线 */}
-              <button
-                type="button"
-                className="code-icon-btn"
-                style={{ gap: 4, border: '1px solid var(--card-border)' }}
-                disabled={pendingRefs.length === 0}
-                title="展开选中卡片引用（参见）的卡片，可连续点逐个展开"
-                onClick={() => {
-                  if (pendingRefs[0]) void showCard(pendingRefs[0])
-                }}
-              >
-                参见{pendingRefs.length > 0 ? ` (${pendingRefs.length})` : ''}
-              </button>
-              <span className="faint" style={{ fontSize: 11 }}>
-                选中《{titleOf(navTarget)}》· 父代{' '}
-                {linkTable[navTarget]?.parent ? 1 : 0} · 子代{' '}
-                {kids.length} · 引用 {refs.length} · 已展开{' '}
-                {expanded.length}
-              </span>
-            </>
-          )}
+          {[
+            {
+              icon: <ChevronUp size={16} strokeWidth={1.5} />,
+              title: '上一张：显示选中卡片的父代',
+              disabled: !navTarget || !linkTable[navTarget]?.parent,
+              onClick: () => {
+                const p = linkTable[navTarget]?.parent
+                if (p) void showCard(p)
+              },
+            },
+            {
+              icon: <ChevronDown size={16} strokeWidth={1.5} />,
+              title: '下一张：逐张展开选中卡片的子代',
+              disabled: !navTarget || pendingKids.length === 0,
+              onClick: () => {
+                if (pendingKids[0]) void showCard(pendingKids[0])
+              },
+            },
+            {
+              icon: <Link2 size={16} strokeWidth={1.5} />,
+              title: '参见：逐张展开引用的卡片',
+              disabled: !navTarget || pendingRefs.length === 0,
+              onClick: () => {
+                if (pendingRefs[0]) void showCard(pendingRefs[0])
+              },
+            },
+            {
+              icon: <GitBranch size={16} strokeWidth={1.5} />,
+              title: '连深入：先点父卡，再点子卡',
+              active: linkMode === 'parent',
+              onClick: () => {
+                setLinkMode(linkMode === 'parent' ? null : 'parent')
+                setLinkFrom(null)
+              },
+            },
+            {
+              icon: <GitFork size={16} strokeWidth={1.5} />,
+              title: '连参见：点两张已写好的卡',
+              active: linkMode === 'reference',
+              onClick: () => {
+                setLinkMode(linkMode === 'reference' ? null : 'reference')
+                setLinkFrom(null)
+              },
+            },
+            ...(linkMode
+              ? [{
+                  icon: <Undo2 size={16} strokeWidth={1.5} />,
+                  title: '取消连线',
+                  onClick: () => {
+                    setLinkMode(null)
+                    setLinkFrom(null)
+                  },
+                }]
+              : []),
+            {
+              icon: <X size={16} strokeWidth={1.5} />,
+              title: '关闭思考模式',
+              onClick: onClose,
+            },
+          ].map((b, i) => (
+            <button
+              key={i}
+              type="button"
+              title={b.title}
+              aria-label={b.title}
+              disabled={b.disabled}
+              onClick={b.onClick}
+              style={{
+                display: 'grid',
+                placeItems: 'center',
+                width: 30,
+                height: 30,
+                padding: 0,
+                border: 0,
+                borderRadius: 6,
+                background: b.active ? 'var(--accent-dim, rgba(37,99,235,.08))' : 'transparent',
+                color: b.active ? 'var(--accent, #2563eb)' : 'var(--text-sub)',
+                opacity: b.disabled ? 0.35 : 1,
+                cursor: b.disabled ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {b.icon}
+            </button>
+          ))}
+        </div>
+
+        {/* 底部中间：从图标「取笔记 / 新建笔记」（⛔ 不再占顶部一排） */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 5,
+            display: 'flex',
+            gap: 4,
+            padding: 4,
+            borderRadius: 10,
+            border: '1px solid var(--card-border)',
+            background: 'var(--card)',
+          }}
+        >
           <button
             type="button"
-            className="code-icon-btn"
-            style={{
-              marginLeft: 'auto',
-              gap: 4,
-              border: `1px solid ${linkMode === 'parent' ? 'var(--accent)' : 'var(--card-border)'}`,
-              color: linkMode === 'parent' ? 'var(--accent)' : 'var(--text-sub)',
-            }}
-            title="连深入：先点父卡，再点子卡（实线）"
+            title="取笔记：搜索并挑选"
+            aria-label="取笔记"
+            ref={pickerBtnRef}
             onClick={() => {
-              setLinkMode(linkMode === 'parent' ? null : 'parent')
-              setLinkFrom(null)
+              setPickerOpen((v) => !v)
+              setPickQuery('')
             }}
-          >
-            <GitBranch size={13} /> 连深入
-          </button>
-          <button
-            type="button"
-            className="code-icon-btn"
             style={{
-              gap: 4,
-              border: `1px solid ${linkMode === 'reference' ? 'var(--accent)' : 'var(--card-border)'}`,
-              color: linkMode === 'reference' ? 'var(--accent)' : 'var(--text-sub)',
-            }}
-            title="连参见：点两张已写好的卡（虚线）"
-            onClick={() => {
-              setLinkMode(linkMode === 'reference' ? null : 'reference')
-              setLinkFrom(null)
-            }}
-          >
-            <Link2 size={13} /> 连参见
-          </button>
-          {linkMode && (
-            <span className="faint" style={{ fontSize: 11 }}>
-              {linkFrom ? '再点第二张卡' : '先点第一张卡'} · <button
-                type="button"
-                className="code-icon-btn"
-                onClick={() => {
-                  setLinkMode(null)
-                  setLinkFrom(null)
-                }}
-              >取消</button>
-            </span>
-          )}
-          {/* ★★ 全屏切换（* 与图谱页右上角同款圆形按钮）⚠ */}
-          <button
-            type="button"
-            onClick={() => setFullscreen((v) => !v)}
-            aria-label={fullscreen ? '退出全屏' : '全屏'}
-            title={fullscreen ? '退出全屏' : '全屏（白布铺满屏幕）'}
-            style={{
-              marginLeft: 'auto',
-              display: 'grid',
-              placeItems: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              border: '1px solid var(--card-border)',
-              background: 'transparent',
-              color: 'var(--text-sub)',
+              display: 'grid', placeItems: 'center', width: 32, height: 32,
+              border: 0, borderRadius: 6,
+              background: pickerOpen ? 'var(--accent-dim, rgba(37,99,235,.08))' : 'transparent',
+              color: pickerOpen ? 'var(--accent, #2563eb)' : 'var(--text-sub)',
               cursor: 'pointer',
             }}
           >
-            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            <FolderOpen size={17} strokeWidth={1.5} />
           </button>
           <button
             type="button"
-            onClick={onClose}
-            aria-label="关闭思考模式"
+            title="新建笔记"
+            aria-label="新建笔记"
+            onClick={() => ribbonActions().createNote?.()}
             style={{
-              display: 'grid',
-              placeItems: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              border: '1px solid var(--card-border)',
-              background: 'transparent',
-              color: 'var(--text-sub)',
-              cursor: 'pointer',
+              display: 'grid', placeItems: 'center', width: 32, height: 32,
+              border: 0, borderRadius: 6, background: 'transparent',
+              color: 'var(--text-sub)', cursor: 'pointer',
             }}
           >
-            <X size={15} />
+            <FilePlus2 size={17} strokeWidth={1.5} />
           </button>
         </div>
 
-        {/* ---- 五个盒子（点开选笔记） ---- */}
-        <div
-          style={{
-            padding: '8px 14px 10px',
-            borderBottom: '1px solid var(--card-border)',
-            flexShrink: 0,
-            background: 'var(--bg)',
-          }}
-        >
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {NOTE_KINDS.map((k) => {
-              const m = kindMeta(k)
-              const items = notes.filter((n) => n.kind === k)
-              const active = openBox === k
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setOpenBox(active ? null : k)}
-                  title={`打开「${m.label}」盒子`}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    padding: '3px 10px',
-                    borderRadius: 999,
-                    fontSize: 11.5,
-                    lineHeight: '18px',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    border: `1px solid ${active ? m.color : 'var(--card-border)'}`,
-                    background: active ? `${m.color}1f` : 'var(--card)',
-                    color: active ? m.color : 'var(--text-sub)',
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: 4,
-                      background: m.color,
-                      opacity: active ? 1 : 0.6,
-                    }}
-                  />
-                  {m.label}
-                  <span style={{ opacity: 0.65 }}>{items.length}</span>
-                </button>
-              )
-            })}
-          </div>
-
-          {openBox && (
-            <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {notes.filter((n) => n.kind === openBox).length === 0 && (
-                <span className="faint" style={{ fontSize: 11.5 }}>
-                  这个盒子里还没有笔记
-                </span>
-              )}
-              {notes
-                .filter((n) => n.kind === openBox)
-                .map((n) => {
-                  const inBoard = onBoard.has(n.id)
-                  const c = kindMeta(n.kind).color
+        {/* 取笔记浮层：Obsidian 式「＋」—— 顶部搜索框 + 平铺笔记列表（点一条上板） */}
+        {pickerOpen && (
+          <div
+            ref={pickerRef}
+            style={{
+              position: 'absolute',
+              bottom: 62,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 6,
+              width: 440,
+              maxWidth: '90vw',
+              maxHeight: '48vh',
+              overflow: 'auto',
+              padding: 10,
+              borderRadius: 12,
+              border: '1px solid var(--card-border)',
+              background: 'var(--card)',
+              boxShadow: '0 12px 32px rgba(15,23,42,.16)',
+            }}
+          >
+            <input
+              autoFocus
+              value={pickQuery}
+              onChange={(e) => setPickQuery(e.target.value)}
+              placeholder="搜索…"
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--card-border)',
+                background: 'var(--card)',
+                color: 'var(--text-main)',
+                fontSize: 13,
+                outline: 'none',
+              }}
+            />
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column' }}>
+              {(() => {
+                // ★ 默认：本节点优先排序后取前 15 条；搜索：用后端 FTS 命中（可搜正文，按需取）
+                const items = searchHits
+                  ? searchHits.map((h) => {
+                      const note = notes.find((n) => n.ref === h.ref) || null
+                      return {
+                        key: h.ref,
+                        note,
+                        inBoard: note ? onBoard.has(note.id) : false,
+                        color: kindMeta(h.kind as NoteKind).color,
+                        label: h.title || h.snippet,
+                      }
+                    })
+                  : notes
+                      .slice()
+                      .sort((a, b) => {
+                        const am = a.node_id === nodeId ? 0 : 1
+                        const bm = b.node_id === nodeId ? 0 : 1
+                        return am !== bm ? am - bm : (a.title || '').localeCompare(b.title || '')
+                      })
+                      .slice(0, 15)
+                      .map((n) => ({
+                        key: String(n.id),
+                        note: n,
+                        inBoard: onBoard.has(n.id),
+                        color: kindMeta(n.kind).color,
+                        label: n.title || n.body.replace(/\s+/g, ' ').slice(0, 32),
+                      }))
+                if (items.length === 0) {
+                  return (
+                    <span className="faint" style={{ fontSize: 11.5, padding: '8px 4px' }}>
+                      {searchHits ? '没有匹配的笔记' : '这个节点下还没有笔记'}
+                    </span>
+                  )
+                }
+                return items.map((it) => {
+                  if (!it.note) return null
+                  const n = it.note
+                  const inBoard = it.inBoard
+                  const c = it.color
                   return (
                     <button
-                      key={n.id}
+                      key={it.key}
                       type="button"
                       onClick={() => (inBoard ? removeFromBoard(n.id) : addToBoard(n))}
                       title={inBoard ? '从白布移除' : '放到白布'}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(15,23,42,.06)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                       style={{
-                        display: 'inline-flex',
+                        display: 'flex',
                         alignItems: 'center',
-                        gap: 4,
-                        maxWidth: 260,
-                        padding: '3px 9px',
+                        gap: 8,
+                        width: '100%',
+                        padding: '6px 8px',
                         borderRadius: 8,
-                        fontSize: 11.5,
-                        lineHeight: '18px',
+                        border: 0,
+                        background: 'transparent',
+                        color: 'var(--text-main)',
+                        fontSize: 12.5,
                         cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        border: `1px solid ${inBoard ? c : 'var(--card-border)'}`,
-                        background: inBoard ? `${c}14` : 'var(--card)',
-                        color: inBoard ? c : 'var(--text-main)',
+                        textAlign: 'left',
                       }}
                     >
-                      {inBoard ? <Check size={12} /> : <Plus size={12} />}
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {n.title || n.body.replace(/\s+/g, ' ').slice(0, 24)}
+                      <span style={{ width: 7, height: 7, borderRadius: 4, flexShrink: 0, background: c, opacity: inBoard ? 1 : 0.55 }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {it.label}
                       </span>
+                      {inBoard ? (
+                        <Check size={13} style={{ flexShrink: 0, color: c }} />
+                      ) : (
+                        <Plus size={13} style={{ flexShrink: 0, color: 'var(--text-sub)' }} />
+                      )}
                     </button>
                   )
-                })}
+                })
+              })()}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* 右下角：当前选中状态（不占顶部行） */}
+        {focusCardId && (
+          <div
+            className="faint"
+            style={{ position: 'absolute', bottom: 12, right: 14, fontSize: 11, zIndex: 4 }}
+          >
+            选中《{titleOf(navTarget)}》· 父代 {linkTable[navTarget]?.parent ? 1 : 0}
+            · 子代 {kids.length} · 引用 {refs.length} · 已展开 {expanded.length}
+            {linkMode ? ` · ${linkFrom ? '再点第二张卡' : '先点第一张卡'}` : ''}
+          </div>
+        )}
 
         {/* ---- 白布（点阵，**无边界**） ---- */}
         <div
@@ -916,20 +1000,6 @@ export default function ThinkingBoard({
               >
                 ×
               </button>
-            )}
-
-            {boardNotes.length === 0 && external.filter((e) => onBoard.has(e.id)).length === 0 && (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: PAD,
-                  top: PAD,
-                  fontSize: 12.5,
-                  color: 'rgba(16,29,51,.45)',
-                }}
-              >
-                白布还是空的 —— 点上面的盒子，挑几篇笔记放上来
-              </div>
             )}
 
             {boardNotes.map((n) => {
@@ -1136,6 +1206,7 @@ export default function ThinkingBoard({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

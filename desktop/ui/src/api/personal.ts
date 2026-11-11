@@ -132,6 +132,14 @@ export function toProjectSummary(raw: any, stats?: any): any {
 
 // ---------------------------------------------------------------- 对外
 
+// ★ 思考白板布局（存后端；pos/board/sizes 用卡片 localId 作 key，与历史 localStorage 形态一致）
+export interface BoardLayout {
+  pos?: Record<number, { x: number; y: number }>
+  board?: number[]
+  sizes?: Record<number, { w: number; h: number }>
+  canvas?: { w: number; h: number }
+}
+
 export const personalApi = {
   // ---- 项目
   listProjects: () => get<{ items: any[] }>('/api/projects/'),
@@ -282,9 +290,12 @@ export const personalApi = {
 
   // ---- 卡片盒（D139）：全局关系表、跨项目 ----
 
-  /** 跨项目搜**已写好**的笔记（参见的候选；复用现成 /api/search/） */
-  searchCards: (q: string) =>
-    get<{ notes: CardSearchHit[] }>(`/api/search/?q=${encodeURIComponent(q)}`),
+  /** 搜**已写好**的笔记（参见的候选；复用现成 /api/search/）。
+   *  ⛔ project 给定时只搜该项目（思考白板用，不跨项目） */
+  searchCards: (q: string, project?: string) =>
+    get<{ notes: CardSearchHit[] }>(
+      `/api/search/?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`,
+    ),
 
   /** 链信息；传 ids 时只返回与这批卡相连的子集 */
   cardLinks: (ids: string[] = []) =>
@@ -311,4 +322,12 @@ export const personalApi = {
     del<{ a: string; b: string }>(
       `/api/cards/reference/?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
     ),
+
+  // ★★★ 思考白板布局（存后端，跟笔记一样按节点持久化）
+  board: (projectRef: string, vid: number) =>
+    get<BoardLayout | null>(
+      `/api/projects/${encodeURIComponent(projectRef)}/board/${vid}/`,
+    ),
+  saveBoard: (projectRef: string, vid: number, layout: BoardLayout) =>
+    put(`/api/projects/${encodeURIComponent(projectRef)}/board/${vid}/`, { layout }),
 }

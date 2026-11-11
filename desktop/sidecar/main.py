@@ -43,6 +43,7 @@ import store
 import source
 import imitation
 import links
+import board
 
 VERSION = "0.3.0"
 
@@ -136,6 +137,7 @@ R_CARDS = re.compile(r"^/api/cards/$")
 R_CARD_PARENT = re.compile(r"^/api/cards/parent/$")
 R_CARD_REF = re.compile(r"^/api/cards/reference/$")
 R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
+R_BOARD = re.compile(r"^/api/projects/([^/]+)/board/(\d+)/$")
 
 
 def _data_dir_is_ours(data_dir: str, code_root: str) -> bool:
@@ -211,8 +213,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         notes: list[dict] = []
         nodes: list[dict] = []
         like = f"%{q}%"
+        # ★ 限定项目：白板搜索只搜当前项目（⛔ 不跨项目）
+        scope = str(body.get("project") or "").strip()
 
         for entry in projectstore.list_all():
+            if scope and entry.get("ref") != scope:
+                continue
             try:
                 _activate(entry)
             except Exception:  # noqa: BLE001
@@ -594,6 +600,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return bad("不支持的方法", 405)
         except imitation.ImitationError as exc:
             return bad(f"{exc.message}（{exc.code}）", 400)
+
+    # ★★★ 思考白板布局：一个节点一块画布，文件式 JSON 持久化（见 sidecar/board.py）
+    m = R_BOARD.match(path)
+    if m:
+        entry = projectstore.get(m.group(1))
+        if not entry or not entry.get("data"):
+            return bad("项目不存在", 404)
+        try:
+            vid = int(m.group(2))
+            if method == "GET":
+                return ok(board.load(entry["data"], vid))
+            if method in ("POST", "PUT"):
+                layout = body.get("layout") or {}
+                return ok(board.save(entry["data"], vid, layout))
+            return bad("不支持的方法", 405)
+        except Exception as exc:
+            return bad(str(exc), 400)
 
     # ★★★ 代码展示：列文件树 / 读源码（见 sidecar/source.py）⚠
     #   · 文件树**全部显示**，⛔ 不按 .gitignore 过滤（所有者明确要求）

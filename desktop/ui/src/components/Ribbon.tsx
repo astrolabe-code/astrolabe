@@ -1,11 +1,10 @@
 import { useSyncExternalStore, useState, type ReactNode } from 'react'
 import {
   Copy,
+  FolderOpen,
   Lightbulb,
   Maximize,
   MoreHorizontal,
-  PanelLeft,
-  Plus,
   Search,
   SquareChevronDown,
   Settings,
@@ -17,6 +16,10 @@ import {
   subscribeRibbon,
   type PanelKind,
 } from '../lib/ribbonBus'
+
+interface DesktopApi {
+  openDataDir?: () => Promise<boolean>
+}
 
 interface RibbonProps {
   active: PanelKind | null
@@ -35,6 +38,7 @@ const BTN = 30
 export default function Ribbon({ active, onToggle }: RibbonProps) {
   const actions = useSyncExternalStore(subscribeRibbon, ribbonActions, ribbonActions)
   const [menu, setMenu] = useState(false)
+  const api = (window as unknown as { astrolabe?: DesktopApi }).astrolabe
   const nav = useNavigate()
   const location = useLocation()
   const m = location.pathname.match(/\/p\/([^/]+)/)
@@ -109,13 +113,6 @@ export default function Ribbon({ active, onToggle }: RibbonProps) {
         zIndex: 40,
       }}
     >
-      {/* ★ 只留右边那棵文件树：这里只负责显示/隐藏，不再展开第二个树
-          （所有者：「出现两个文件树吗？重复了，就留右边的就行」） */}
-      <Item
-        icon={<PanelLeft size={ICON} strokeWidth={1.5} />}
-        label="显示 / 隐藏文件树"
-        onClick={() => run(actions.toggleTree)}
-      />
       <Item
         icon={<Search size={ICON} strokeWidth={1.5} />}
         label="搜索 · 打开功能面板"
@@ -134,13 +131,10 @@ export default function Ribbon({ active, onToggle }: RibbonProps) {
           onToggle('thinking')
         }}
       />
-      <Item
-        icon={<Plus size={ICON} strokeWidth={1.5} />}
-        label="写笔记"
-        onClick={() => run(actions.createNote)}
-      />
-      <div style={{ flex: 1 }} />
-      {/* ★ 设置 / 搜索从顶栏收进左栏（所有者：「合并成一行…把设置和搜索收进左栏」） */}
+      {/* ★ 写笔记已移到标签栏的 ＋ 按钮（所有者：「新建笔记的按钮就移到在旁边」）
+          ⇒ 左栏只保留全局固定图标，不随页面变化 */}
+      {/* ★ 设置从「左栏最底部」挪到上方图标组 —— 之前被 flex:1 推到窗口底端，
+          所有者截图只截到顶部 280px 找不到它：「左栏的设置按钮在哪里？」 */}
       <Item
         icon={<Settings size={ICON} strokeWidth={1.5} />}
         label="设置"
@@ -149,6 +143,20 @@ export default function Ribbon({ active, onToggle }: RibbonProps) {
           nav(projectRef ? `/p/${encodeURIComponent(projectRef)}/settings` : '/me/settings')
         }}
       />
+      {/* ★ 原「工具」下拉里的全局动作，拆成常驻图标（浏览器里没有该 API ⇒ 不渲染） */}
+      {api?.openDataDir && (
+        <Item
+          icon={<FolderOpen size={ICON} strokeWidth={1.5} />}
+          label="打开数据目录"
+          onClick={() => void api.openDataDir?.()}
+        />
+      )}
+
+      {/* ★★ 左栏只放**全局固定**图标 ⛔
+          所有者：「左栏的按钮，在每个界面的数量都不一样。要借鉴一下 obsidian，
+                  做成一样的呀。与页面强烈相关的就放到右上角」
+          ⇒ 页面级 <PageBar> 不再 portal 到这里，改挂顶栏右侧 #page-tools-slot */}
+      <div style={{ flex: 1 }} />
       <Item
         icon={<MoreHorizontal size={ICON} strokeWidth={1.5} />}
         label="更多功能"

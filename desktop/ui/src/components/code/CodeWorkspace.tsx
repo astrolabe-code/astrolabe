@@ -224,7 +224,6 @@ export default function CodeWorkspace({
     patchRibbon({
       projectRef,
       activePath,
-      toggleTree,
       copy,
       toggleImmersive: () => setImmersive((v) => !v),
       toggleFullscreen: () => setFullscreen((v) => !v),
@@ -232,7 +231,6 @@ export default function CodeWorkspace({
     })
     return () =>
       clearRibbon([
-        'toggleTree',
         'copy',
         'toggleImmersive',
         'toggleFullscreen',

@@ -183,6 +183,13 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //   编辑（所见即所得）/ 阅读（只读沉浸 + 段评气泡），⛔ 不跳路由、⛔ 不丢未保存
   const [mode, setMode] = useState<'edit' | 'read'>(embedded?.initialMode ?? 'edit')
 
+  // ★ 2026-11-11 还原阅读视图版式：标题字号按长度分档（与 NotePage 同款）
+  const titleSize = (len: number): number => {
+    if (len <= 12) return 26
+    if (len <= 18) return 24
+    return 22
+  }
+
   const create = useCreateNote(projectRef)
   const update = useUpdateNote(id)
   const del = useDeleteNote()
@@ -364,6 +371,8 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //   · · 编辑态和新建态的切换，靠纸里的类型条和按钮文字已经能看出来 ✅
   // ★★ 纸张描边跟着当前类别走（`D132`）—— 类别挪到底栏后，靠边框颜色自报身份 ⚠
   const kindColor = KIND_META[kind].color
+  const KindIcon = kindMeta(kind).icon
+  const titleText = title || note?.title || '（无标题）'
 
   return (
     <NoteShell embedded={embedded}>
@@ -451,9 +460,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               再套一圈橙框很突兀。类别信息仍由右上角角标 + 底栏胶囊承担。
             ⚠ position:relative 必须留：右上角角标用它定位 */}
         <div
-          className="card note-edit-card"
+          className={`card ${mode === 'read' ? 'note-body-card' : 'note-edit-card'}`}
           style={{ position: 'relative' }}
         >
+        {mode === 'edit' && (<>
         {/* ★★ 右上角类别角标（`D132` / `D134` 定稿）：颜色 + 文字都有 ⇒ 不用记"琥珀色=灵光一闪" ⚠
             · · 纯展示，⛔ 不可点（改类别仍在底栏，避免两处都能改而造成困惑）⚠
             · · ⚠ 类别说明**只放在这里的悬浮提示里**（所有者：版面加一行太怪）——
@@ -478,8 +488,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         >
           {KIND_META[kind].label}
         </span>
-
-        {mode === 'edit' && (<>
         {/* ② 名字 —— ★★ 2026-10-27 依 CSDN 结构改版：提到**最上、大字** ⚠
             · · 眼睛先落在「要写什么」，而不是「给这篇归哪类」⚠
             · · 但**不强制填**（`D112`：名字只是身份，⛔ 不是文章标题）⚠ */}
@@ -600,7 +608,57 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         </div>
         </>)}
         {mode === 'read' && (
-          <MilkdownLazy text={body} blocks={noteQ.data?.blocks ?? []} />
+          <>
+            <h1 className="note-title" style={{ fontSize: titleSize(titleText.length) }}>
+              {titleText}
+            </h1>
+            <div className="note-meta">
+              <span
+                style={{
+                  fontSize: 10.5,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  whiteSpace: 'nowrap',
+                  padding: '1px 8px',
+                  borderRadius: 999,
+                  lineHeight: '16px',
+                  color: kindColor,
+                  border: `1px solid ${kindColor}`,
+                  background: 'transparent',
+                }}
+              >
+                <KindIcon size={11} />
+                {KIND_META[kind].label}
+              </span>
+              {!isPublic && (
+                <span
+                  className="tag"
+                  style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}
+                  title="只有作者可见"
+                >
+                  <Lock size={10} /> 私有
+                </span>
+              )}
+              {note?.created_by_display && (
+                <span>
+                  {note.created_by_display}
+                  {note?.created_at ? ` · ${note.created_at.replace('T', ' ').slice(0, 16)}` : ''}
+                </span>
+              )}
+            </div>
+            <div id="note-body" className="flex flex-col gap-5">
+              <MilkdownLazy text={body} blocks={noteQ.data?.blocks ?? []} />
+            </div>
+            <div className="note-foot">
+              <span className="note-foot-hint">读到这里才点得顺手</span>
+              <span className="note-foot-right">
+                <button type="button" className="link-btn" onClick={() => setMode('edit')} title="切回编辑">
+                  <Pencil size={12} /> 编辑
+                </button>
+              </span>
+            </div>
+          </>
         )}
         </div>
 

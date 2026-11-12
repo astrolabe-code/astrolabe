@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
+import { patchRibbon, clearRibbon, ribbonActions } from '../../lib/ribbonBus'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
@@ -85,14 +85,23 @@ export default function NoteSection({
   }, [autoThink, notes.isLoading, nodeId])
 
   // ★★ 思考模式 / 写笔记交给全局 ribbon（⛔ 内容区不再放功能按钮）
+  //   ⚠ currentNodeVid 由 ProjectPage 注册（这里会随内嵌笔记卸载，不能管）
   useEffect(() => {
     patchRibbon({
       openThinking: (boardId?: string) => setThinkingBoardId(boardId || String(nodeId)),
       createNote: onCreateNote,
-      currentNodeVid: nodeId,
     })
-    return () => clearRibbon(['openThinking', 'createNote', 'currentNodeVid'])
+    return () => clearRibbon(['openThinking', 'createNote'])
   }, [onCreateNote, nodeId])
+
+  // ★★ 从笔记页开白板：笔记 pane 关掉后本组件重新挂载，消费「待打开白板」
+  useEffect(() => {
+    const pending = ribbonActions().pendingBoardId
+    if (!pending) return
+    clearRibbon(['pendingBoardId'])
+    autoOpened.current = true // ⛔ 别让 ?think=1 的自动开覆盖掉这一块
+    setThinkingBoardId(pending)
+  }, [])
 
   // ★★ 顶栏标签：白板是覆盖层（不改 URL），把当前打开的那块报给 ribbonBus
   const boardOpen = thinkingBoardId !== null || !!externalBoardOpen

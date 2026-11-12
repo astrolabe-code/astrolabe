@@ -3,7 +3,8 @@ import { Search, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { personalApi, type BoardItem } from '../api/personal'
-import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
+import { patchRibbon, ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
+import { closeNotePane } from '../lib/notePaneBus'
 
 interface RibbonPanelProps {
   kind: PanelKind
@@ -27,12 +28,18 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   const projectRef = m ? decodeURIComponent(m[1]) : ''
   const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
 
-  /** ★ 打开这个节点挂载的某一块白板（面板列表项用） */
+  /** ★ 打开这个节点挂载的某一块白板（面板列表项 / 新建白板用） */
   const openBoard = (boardId: string) => {
     const a = ribbonActions().openThinking
     onClose()
-    if (a) a(boardId)
-    else if (curVid != null) nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${curVid}`)
+    if (a) {
+      a(boardId)
+      return
+    }
+    // ★ 内嵌笔记打开时 notePanel 被卸载（openThinking 没注册）⇒
+    //   先关掉笔记 pane 让 NoteSection 重新挂载，再把白板 id 留给它消费
+    closeNotePane()
+    patchRibbon({ pendingBoardId: boardId })
   }
 
   /** ★★ 新建白板（跟「新建笔记」一样的动作）：后端建一块空白白板并打开它 ⚠ */
@@ -241,7 +248,7 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
               }}
             >
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-                白板 {boards.length - i}{it.name ? ` · ${it.name}` : ''}
+                {it.name || `白板 ${boards.length - i}`}
               </div>
               <div className="faint" style={{ fontSize: 11 }}>
                 {it.mtime ? `保存于 ${new Date(it.mtime * 1000).toLocaleString()}` : '空白白板'}

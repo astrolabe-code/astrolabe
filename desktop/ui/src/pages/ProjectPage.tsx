@@ -14,6 +14,7 @@ import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
 import WritingProgress from '../components/graph/WritingProgress'
 import { clearResume, markResume, readResume } from '../lib/resume'
+import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
 
@@ -52,6 +53,15 @@ export default function ProjectPage() {
   const siteCfg = useSiteConfig()
   const dwellMs = Math.max(0, Number(siteCfg.data?.resumeDwellSeconds ?? 20)) * 1000
   const [selected, setSelected] = useState<GraphNode | null>(null)
+  // ★★ 当前选中节点由**项目页**统一上报 ⚠
+  //   ⛔ 不能放在 NoteSection：打开内嵌笔记时 notePanel 会整块卸载，
+  //      那里的注册被清掉后，思考模式面板会误以为「没选中节点」⇒ 列表空、不能新建白板
+  useEffect(() => {
+    if (!selected || !projectRef) return
+    patchRibbon({ currentNodeVid: selected.vid })
+    return () => clearRibbon(['currentNodeVid'])
+  }, [selected?.vid, projectRef])
+
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
   // ★ 代码工作区（顶栏「源码」按钮打开；关闭后回到原来的两栏）

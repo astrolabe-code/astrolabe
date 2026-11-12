@@ -20,6 +20,8 @@ export interface RibbonActions {
   activeBoardTitle?: string
   /** ★ 关掉当前白板（TabBar 点标签的 × 用） */
   closeThinking?: () => void
+  /** ★ 笔记 pane 打开时从面板请求开白板：先关 pane，NoteSection 挂载后消费它 */
+  pendingBoardId?: string
   /** ★ 当前选中节点的 vid（NoteSection 注册；思考面板随节点切换变化用）⚠ */
   currentNodeVid?: number
   /** ★ 白板打开时由 App 注册：收起左侧功能面板 */

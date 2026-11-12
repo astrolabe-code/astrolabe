@@ -38,6 +38,7 @@ export function inferTabTitle(pathname: string): string {
   if (!sub) return proj || '项目'
   if (sub === 'graph') return `${proj} · 图谱`
   if (sub === 'settings') return `${proj} · 设置`
+  if (sub === 'board') return '白板'
   if (sub === 'notes') {
     if (seg[3] === 'new') return '新笔记'
     if (seg[4] === 'edit') return '编辑笔记'

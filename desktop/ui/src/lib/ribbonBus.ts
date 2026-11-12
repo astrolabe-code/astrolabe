@@ -13,16 +13,7 @@ export interface RibbonActions {
   toggleImmersive?: () => void
   toggleFullscreen?: () => void
   toggleCanvasFullscreen?: () => void
-  /** ★ 打开白板：传白板 id 打开指定那块，不传则打开该节点的默认白板 */
-  openThinking?: (boardId?: string) => void
-  /** ★ 当前打开的白板标签（TabBar 据此显示虚拟标签；关掉就没） */
-  activeBoardKey?: string
-  activeBoardTitle?: string
-  /** ★ 关掉当前白板（TabBar 点标签的 × 用） */
-  closeThinking?: () => void
-  /** ★ 笔记 pane 打开时从面板请求开白板：先关 pane，NoteSection 挂载后消费它 */
-  pendingBoardId?: string
-  /** ★ 当前选中节点的 vid（NoteSection 注册；思考面板随节点切换变化用）⚠ */
+  /** ★ 当前选中节点的 vid（ProjectPage 注册；思考面板新建白板用）⚠ */
   currentNodeVid?: number
   /** ★ 白板打开时由 App 注册：收起左侧功能面板 */
   closePanel?: () => void

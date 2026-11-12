@@ -2,36 +2,22 @@
  * ★★★ **文件选项卡（标签栏）**（2026-11-08，模仿 Obsidian）
  *
  * 所有者：「现在来模仿 obsidian，做这个文件选项吧，新建笔记的按钮就移到在旁边」
- * 所有者（2026-11-12）：「打开了什么页面，某篇笔记，或白板之类的，都要显示」
+ * 所有者（2026-11-12）：「让笔记和白板都有真实路由……标签栏只按 URL」
  *
- * 顶栏布局：
- * ```
- * [▣] [标签1 ×][标签2][标签3] …  [＋ 新建笔记][∨ 标签列表] ··· [页面工具][— □ ×]
- * ```
- *
- * ★ 两类标签：
- *   · **路由标签**：访问过的 pathname（首页 / 项目 / 图谱 / 设置 / 独立笔记页），来自 tabBus
- *   · **虚拟标签**：白板与工作区内嵌笔记都是**覆盖层**，不改变 URL ⇒
- *     从 ribbonBus（当前白板）/ notePaneBus（当前笔记）动态派生，关掉视图标签就没了
+ * ★ 唯一数据源：`tabBus` 里访问过的 **pathname**。
+ *   笔记、白板、页面都各有真实路由 ⇒ 打开什么就导航到什么，标签自动出现；
+ *   ⛔ 不再有虚拟标签、不再订阅覆盖层状态（那套双轨机制已删）。
  *
  * ⚠ 标签栏空白处继承 .app-titlebar 的 drag（可以拖窗口），
  *   只有按钮设 no-drag（见 components.css），否则点不动。
- * ⚠ 标签是**会话内**的，刷新不持久化（当前页会由 useLocation 自动重新打开）。
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, FileText, LayoutDashboard, Plus, X } from 'lucide-react'
+import { ChevronDown, Plus, X } from 'lucide-react'
 
 import { closeTab, openTab, subscribeTabs, tabs } from '../lib/tabBus'
-import { ribbonActions, subscribeRibbon } from '../lib/ribbonBus'
-import {
-  closeNotePane,
-  notePaneTitle,
-  notePaneView,
-  subscribeNotePane,
-  subscribeNotePaneTitle,
-} from '../lib/notePaneBus'
+import { ribbonActions } from '../lib/ribbonBus'
 
 const BTN = 26
 
@@ -73,28 +59,14 @@ function IconButton({
   )
 }
 
-/** 统一的一行标签：路由标签走 nav，虚拟标签走各自的关闭 / 激活动作 */
-interface Row {
-  key: string
-  title: string
-  icon?: ReactNode
-  active: boolean
-  onOpen: () => void
-  onClose: () => void
-}
-
 export default function TabBar() {
   const location = useLocation()
   const nav = useNavigate()
-  const routeTabs = useSyncExternalStore(subscribeTabs, tabs, tabs)
-  const rib = useSyncExternalStore(subscribeRibbon, ribbonActions, ribbonActions)
-  const pane = useSyncExternalStore(subscribeNotePane, notePaneView, notePaneView)
-  const paneTitle = useSyncExternalStore(subscribeNotePaneTitle, notePaneTitle, notePaneTitle)
+  const list = useSyncExternalStore(subscribeTabs, tabs, tabs)
   const [menu, setMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // ★ 每次路由变化：打开（或更新）对应标签。用 pathname 作 key，
-  //   同一篇笔记换 ?node= / ?parent= 不会开出第二个标签。
+  // ★ 每次路由变化：打开（或更新）对应标签。用 pathname 作 key
   useEffect(() => {
     openTab(location.pathname)
   }, [location.pathname])
@@ -131,102 +103,52 @@ export default function TabBar() {
     if (projectRef) nav(`/p/${projectRef}/notes/new`)
   }
 
-  // ★★ 虚拟标签：当前打开的白板 / 内嵌笔记（都是覆盖层，不改 URL）
-  const viewRows: Row[] = []
-  if (rib.activeBoardKey) {
-    viewRows.push({
-      key: rib.activeBoardKey,
-      title: rib.activeBoardTitle || '白板',
-      icon: <LayoutDashboard size={11} strokeWidth={1.6} />,
-      active: true,
-      // 白板就是这个标签派生出来的，本来已经开着
-      onOpen: () => {},
-      onClose: () => rib.closeThinking?.(),
-    })
+  const close = (path: string) => {
+    const next = closeTab(path)
+    setMenu(false)
+    if (path === currentPath) nav(next)
   }
-  if (pane) {
-    viewRows.push({
-      key: `note:${pane.ref ?? 'new'}`,
-      title: paneTitle || (pane.ref ? '笔记' : '新笔记'),
-      icon: <FileText size={11} strokeWidth={1.6} />,
-      active: !rib.activeBoardKey,
-      // 白板盖在最上层 ⇒ 点笔记标签就把白板收掉，露出笔记
-      onOpen: () => rib.closeThinking?.(),
-      onClose: () => closeNotePane(),
-    })
-  }
-  const hasView = viewRows.length > 0
-
-  const rows: Row[] = [
-    ...routeTabs.map((t) => ({
-      key: t.path,
-      title: t.title,
-      active: !hasView && t.path === currentPath,
-      onOpen: () => {
-        // 切回页面标签时，先把覆盖层视图收掉（否则白板还盖着）
-        if (hasView) {
-          rib.closeThinking?.()
-          closeNotePane()
-        }
-        nav(t.path)
-      },
-      onClose: () => {
-        const next = closeTab(t.path)
-        setMenu(false)
-        if (!hasView && t.path === currentPath) nav(next)
-      },
-    })),
-    ...viewRows,
-  ]
 
   return (
     <div
       className="app-tabs"
       style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, height: '100%' }}
     >
-      {/* ★ flex:0 1 auto ⇒ ＋/∨ 紧跟最后一个标签（Obsidian 口径），
-          空白留给右侧的拖动区，不会被推到最右端 */}
       <div
         className="app-tabs-scroll"
         style={{ display: 'flex', alignItems: 'center', minWidth: 0, flex: '0 1 auto', height: '100%' }}
       >
-        {rows.map((r) => (
-          <div
-            key={r.key}
-            className={`app-tab${r.active ? ' active' : ''}`}
-            title={r.title}
-          >
-            <button
-              type="button"
-              className="app-tab-label"
-              onClick={r.onOpen}
-              onDoubleClick={(e) => e.stopPropagation()}
+        {list.map((t) => {
+          const active = t.path === currentPath
+          return (
+            <div
+              key={t.path}
+              className={`app-tab${active ? ' active' : ''}`}
+              title={t.title}
             >
-              {r.icon && (
-                <span style={{ display: 'inline-flex', marginRight: 4, opacity: 0.7 }}>
-                  {r.icon}
-                </span>
-              )}
-              {r.title}
-            </button>
-            <button
-              type="button"
-              className="app-tab-close"
-              title={`关闭 ${r.title}`}
-              aria-label={`关闭 ${r.title}`}
-              onClick={() => {
-                r.onClose()
-                setMenu(false)
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              <X size={11} strokeWidth={1.6} />
-            </button>
-          </div>
-        ))}
+              <button
+                type="button"
+                className="app-tab-label"
+                onClick={() => nav(t.path)}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                {t.title}
+              </button>
+              <button
+                type="button"
+                className="app-tab-close"
+                title={`关闭 ${t.title}`}
+                aria-label={`关闭 ${t.title}`}
+                onClick={() => close(t.path)}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                <X size={11} strokeWidth={1.6} />
+              </button>
+            </div>
+          )
+        })}
       </div>
 
-      {/* ★ 新建笔记按钮：从左栏 ribbon 移到标签旁边（所有者要求） */}
       <IconButton
         label={canCreate ? '新建笔记' : '先打开一个项目才能写笔记'}
         onClick={canCreate ? createNote : () => {}}
@@ -234,7 +156,6 @@ export default function TabBar() {
         <Plus size={14} strokeWidth={1.6} />
       </IconButton>
 
-      {/* ★ ∨ 标签列表：标签多到横向滚动时，从这里快速跳转 / 关闭 */}
       <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
         <IconButton label="标签列表" onClick={() => setMenu((v) => !v)}>
           <ChevronDown size={14} strokeWidth={1.6} />
@@ -254,24 +175,24 @@ export default function TabBar() {
               zIndex: 120,
             }}
           >
-            {rows.length === 0 && (
+            {list.length === 0 && (
               <div className="faint" style={{ padding: 8, fontSize: 12 }}>还没有打开的标签</div>
             )}
-            {rows.map((r) => (
+            {list.map((t) => (
               <div
-                key={r.key}
+                key={t.path}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
                   borderRadius: 5,
-                  background: r.active ? 'rgba(37,99,235,.08)' : 'transparent',
+                  background: t.path === currentPath ? 'rgba(37,99,235,.08)' : 'transparent',
                 }}
               >
                 <button
                   type="button"
                   onClick={() => {
-                    r.onOpen()
+                    nav(t.path)
                     setMenu(false)
                   }}
                   style={{
@@ -284,27 +205,19 @@ export default function TabBar() {
                     border: 0,
                     borderRadius: 5,
                     background: 'transparent',
-                    color: r.active ? 'var(--accent)' : 'var(--text-main)',
+                    color: t.path === currentPath ? 'var(--accent)' : 'var(--text-main)',
                     fontSize: 12,
                     textAlign: 'left',
                     cursor: 'pointer',
                   }}
                 >
-                  {r.icon && (
-                    <span style={{ display: 'inline-flex', marginRight: 5, opacity: 0.7 }}>
-                      {r.icon}
-                    </span>
-                  )}
-                  {r.title}
+                  {t.title}
                 </button>
                 <button
                   type="button"
                   title="关闭标签"
                   aria-label="关闭标签"
-                  onClick={() => {
-                    r.onClose()
-                    setMenu(false)
-                  }}
+                  onClick={() => close(t.path)}
                   style={{
                     display: 'grid',
                     placeItems: 'center',
@@ -325,7 +238,6 @@ export default function TabBar() {
         )}
       </div>
 
-      {/* ★ 标签与按钮右侧的空白继承 drag，仍可拖动窗口 */}
       <div style={{ flex: 1, minWidth: 0, height: '100%' }} />
     </div>
   )

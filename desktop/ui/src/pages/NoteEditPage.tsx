@@ -13,7 +13,6 @@ import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
-import { setNotePaneTitle } from '../lib/notePaneBus'
 
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
@@ -162,9 +161,8 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //   ⚠ 必须放在 draftTitle 声明之后（否则 TDZ）
   const loc = useLocation()
   useEffect(() => {
-    const name = draftTitle.trim() || title.trim() || '新笔记'
-    if (embedded) setNotePaneTitle(name)
-    else setTabTitle(loc.pathname, name)
+    if (embedded) return
+    setTabTitle(loc.pathname, draftTitle.trim() || title.trim() || '新笔记')
   }, [draftTitle, title, loc.pathname, embedded])
   // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
   const [chars, setChars] = useState(0)

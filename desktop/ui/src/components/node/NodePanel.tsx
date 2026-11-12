@@ -4,7 +4,6 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
-import { hasNotePane, openNotePane } from '../../lib/notePaneBus'
 
 import { errorMessage } from '../../api/errors'
 import { personalApi } from '../../api/personal'
@@ -48,8 +47,6 @@ interface NodePanelProps {
   canEditPath?: boolean
   /** ★ 移动端：* 不画自己的卡片（* 由外层写作区统一提供背景/边框）⚠ */
   flat?: boolean
-  /** ★ `?think=1`：* 节点就绪后自动打开思考白板（* 首页直达用）⚠ */
-  autoThink?: boolean
   /** ★ 代码工作区顶部已经显示同一份节点头部 ⇒ 这里传 true，避免重复 */
   hideInfo?: boolean
   /** ★★ `D106`：加入路径 */
@@ -86,13 +83,11 @@ export default function NodePanel({
   onAddToPath,
   onRemoveFromPath,
   flat,
-  autoThink,
   hideInfo,
 }: NodePanelProps) {
   const navigate = useNavigate()
-  /** ★ 参见选卡 / 链白板（D139） */
+  /** ★ 参见选卡（D139） */
   const [pickerCard, setPickerCard] = useState<string | null>(null)
-  const [chainCard, setChainCard] = useState<string | null>(null)
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
@@ -386,49 +381,37 @@ export default function NodePanel({
             /* ★★ `F3`：点卡片进**阅读页**（NoteCard 内部 navigate）——
                这里不需要再做跳转，⛔ 不留空转的入口 ✅ */
           }}
-          /* ★ 有工作区容器 ⇒ 在「编辑」标签里就地打开；否则照旧跳独立页
-             （所有者：「应该把编辑笔记和阅读笔记都放在…大容器里」）⚠ */
+          /* ★ 笔记的新建 / 编辑 / 深入都有自己的真实路由 */
           onCreateNote={() =>
-            hasNotePane()
-              ? openNotePane({ mode: 'edit', ref: null, nodeId: node.vid })
-              : navigate(
-                  `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                    `&from=${encodeURIComponent(fromHere())}`,
-                )
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&from=${encodeURIComponent(fromHere())}`,
+            )
           }
           onEditNote={(n) =>
-            hasNotePane()
-              ? openNotePane({ mode: 'edit', ref: n.ref, nodeId: n.node_id })
-              : navigate(
-                  `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
-                    `?from=${encodeURIComponent(fromHere())}`,
-                )
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
+                `?from=${encodeURIComponent(fromHere())}`,
+            )
           }
           onDeleteNote={setPendingDelete}
-          /* ★ 深入：新开空白编辑界面，挂成这篇文章的子代
-             （⛔ 别只放在编辑页里 —— 卡片层面也需要一个新建入口） */
+          /* ★ 深入：新开空白编辑页，挂成这篇文章的子代 */
           onDeriveNote={(n) =>
-            hasNotePane()
-              ? openNotePane({
-                  mode: 'edit',
-                  ref: null,
-                  nodeId: node.vid,
-                  parent: n.card_id || cardId(projectRef, n.ref),
-                })
-              : navigate(
-                  `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
-                    `&parent=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}` +
-                    `&from=${encodeURIComponent(fromHere())}`,
-                )
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/notes/new?node=${node.vid}` +
+                `&parent=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}` +
+                `&from=${encodeURIComponent(fromHere())}`,
+            )
           }
           /* ★ 参见：打开跨项目搜索，只挑**已写好**的卡挂引用（⛔ 不新建） */
           onSeeAlsoNote={(n) => setPickerCard(n.card_id || cardId(projectRef, n.ref))}
-          /* ★ 链：打开思考模式白板 */
-          onSeeChainNote={(n) => setChainCard(n.card_id || cardId(projectRef, n.ref))}
-          externalBoardOpen={!!chainCard}
-          onExternalBoardClose={() => setChainCard(null)}
-          focusCardId={chainCard || undefined}
-          autoThink={autoThink}
+          /* ★ 链：打开这个节点挂载的白板并聚焦那张卡（白板 = 特殊笔记，真实路由） */
+          onSeeChainNote={(n) =>
+            navigate(
+              `/p/${encodeURIComponent(projectRef)}/board/${node.vid}` +
+                `?node=${node.vid}&focus=${encodeURIComponent(n.card_id || cardId(projectRef, n.ref))}`,
+            )
+          }
         />
       </div>
 

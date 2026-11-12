@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { patchRibbon, clearRibbon, ribbonActions } from '../../lib/ribbonBus'
+import { useEffect, useState } from 'react'
+import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
 import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
 import NoteCard from './NoteCard'
 import { NOTE_KINDS, KIND_META } from './kindMeta'
-import ThinkingBoard from './ThinkingBoard'
 
 /**
  * ★ 一个节点的笔记区（`F2` · D92）
@@ -41,15 +40,8 @@ interface NoteSectionProps {
   onDeriveNote?: (note: Note) => void
   /** ★ 参见：引用已写好的笔记 */
   onSeeAlsoNote?: (note: Note) => void
-  /** ★ 链：打开思考模式白板 */
+  /** ★ 链：打开这个节点的白板（走真实路由） */
   onSeeChainNote?: (note: Note) => void
-  /** ★ 由上层（卡片「链」按钮）打开白板 */
-  externalBoardOpen?: boolean
-  onExternalBoardClose?: () => void
-  /** ★ 要聚焦的那张卡（全局 id） */
-  focusCardId?: string
-  /** ★ `?think=1`：* 进入后自动打开思考白板（* 只自动开一次）⚠ */
-  autoThink?: boolean
 }
 
 export default function NoteSection({
@@ -63,62 +55,17 @@ export default function NoteSection({
   onDeriveNote,
   onSeeAlsoNote,
   onSeeChainNote,
-  externalBoardOpen,
-  onExternalBoardClose,
-  focusCardId,
-  autoThink,
 }: NoteSectionProps) {
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
   const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
-  // ★★★ **思考模式**：打开的白板 id（null=没开；一个节点可挂多块白板）⚠
-  const [thinkingBoardId, setThinkingBoardId] = useState<string | null>(null)
-  // ★ 批量改公开 / 私有（* 所有者：勾选排除，其余批量改）⚠
   const notes = useNotes(projectRef)  // 取当前项目全部笔记
 
-  // ★★ 首页「思考模式」卡片直达：* 数据就绪后自动开一次白板 ⚠
-  const autoOpened = useRef(false)
+  // ★ 只把「新建笔记」注册给全局 ribbon（TabBar 的 ＋ 用）
+  //   ★★ 白板是节点下的一篇特殊笔记，有自己的真实路由 ⇒ 不再在这里挂覆盖层
   useEffect(() => {
-    if (!autoThink || autoOpened.current) return
-    if (notes.isLoading) return
-    autoOpened.current = true
-    setThinkingBoardId(String(nodeId))
-  }, [autoThink, notes.isLoading, nodeId])
-
-  // ★★ 思考模式 / 写笔记交给全局 ribbon（⛔ 内容区不再放功能按钮）
-  //   ⚠ currentNodeVid 由 ProjectPage 注册（这里会随内嵌笔记卸载，不能管）
-  useEffect(() => {
-    patchRibbon({
-      openThinking: (boardId?: string) => setThinkingBoardId(boardId || String(nodeId)),
-      createNote: onCreateNote,
-    })
-    return () => clearRibbon(['openThinking', 'createNote'])
-  }, [onCreateNote, nodeId])
-
-  // ★★ 从笔记页开白板：笔记 pane 关掉后本组件重新挂载，消费「待打开白板」
-  useEffect(() => {
-    const pending = ribbonActions().pendingBoardId
-    if (!pending) return
-    clearRibbon(['pendingBoardId'])
-    autoOpened.current = true // ⛔ 别让 ?think=1 的自动开覆盖掉这一块
-    setThinkingBoardId(pending)
-  }, [])
-
-  // ★★ 顶栏标签：白板是覆盖层（不改 URL），把当前打开的那块报给 ribbonBus
-  const boardOpen = thinkingBoardId !== null || !!externalBoardOpen
-  const activeBoardId = thinkingBoardId ?? (externalBoardOpen ? String(nodeId) : null)
-  const closeExternalRef = useRef(onExternalBoardClose)
-  closeExternalRef.current = onExternalBoardClose
-  useEffect(() => {
-    if (!boardOpen || activeBoardId == null) return
-    patchRibbon({
-      activeBoardKey: `board:${projectRef}:${activeBoardId}`,
-      closeThinking: () => {
-        setThinkingBoardId(null)
-        closeExternalRef.current?.()
-      },
-    })
-    return () => clearRibbon(['activeBoardKey', 'closeThinking'])
-  }, [boardOpen, activeBoardId, projectRef])
+    patchRibbon({ createNote: onCreateNote })
+    return () => clearRibbon(['createNote'])
+  }, [onCreateNote])
 
   if (notes.isError) {
     return (
@@ -295,20 +242,6 @@ export default function NoteSection({
           </div>
         )}
       </div>
-
-      {/* ★★★ 思考模式白板（* fixed 覆盖层，* 位置按节点存 localStorage）⚠ */}
-      <ThinkingBoard
-        open={boardOpen}
-        projectRef={projectRef}
-        nodeId={nodeId}
-        boardId={activeBoardId ?? String(nodeId)}
-        notes={notes.data || []}
-        focusCardId={focusCardId}
-        onClose={() => {
-          setThinkingBoardId(null)
-          onExternalBoardClose?.()
-        }}
-      />
 
     </div>
   )

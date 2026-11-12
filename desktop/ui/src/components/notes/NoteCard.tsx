@@ -2,7 +2,6 @@ import { Link, useNavigate } from 'react-router-dom'
 import { GitBranch, Link2, Network, Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
-import { hasNotePane, openNotePane } from '../../lib/notePaneBus'
 import { kindMeta } from './kindMeta'
 
 /**
@@ -70,12 +69,8 @@ export default function NoteCard({
       className="card w-full text-left"
       style={{ padding: '10px 12px', cursor: 'pointer', position: 'relative' }}
       onClick={() => {
-        // ★ 有工作区容器 ⇒ 在「阅读」标签里就地打开；否则照旧跳全屏阅读页
-        if (hasNotePane()) {
-          openNotePane({ mode: 'read', ref: note.ref, nodeId: note.node_id })
-        } else {
-          navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.ref}`)
-        }
+        // ★ 笔记有自己的真实路由 ⇒ 打开它 = 导航，标签栏按 URL 自动显示
+        navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.ref}`)
       }}
       >
       <div className="flex items-center gap-2 flex-wrap">

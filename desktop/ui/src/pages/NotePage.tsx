@@ -15,7 +15,6 @@ import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
 import { useCollapsed } from '../lib/useCollapsed'
 import { setTabTitle } from '../lib/tabBus'
-import { setNotePaneTitle } from '../lib/notePaneBus'
 
 /** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
 function NoteShell({ children, embedded }: { children: ReactNode; embedded?: NoteEmbeddedProps }) {
@@ -101,7 +100,7 @@ function panelWidth(): number {
 export interface NoteEmbeddedProps {
   projectRef?: string
   noteRef?: string
-  /** 容器内的「跳转」：把站内路径交给 notePaneBus 翻译成容器动作 */
+  /** 容器内跳转回调（保留给外部容器复用） */
   onNavigate?: (path: string) => void
   /** 页面工具挂到工作区自己的插槽，避免与外层页面工具混在一起 */
   toolsSlotId?: string
@@ -127,12 +126,11 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
 
-  // ★ 标签栏显示笔记真实标题：独立路由改 tabBus，内嵌 pane 报给 notePaneBus
+  // ★ 标签栏显示笔记真实标题（key 就是当前路由 pathname）
   const loc = useLocation()
   useEffect(() => {
-    if (!n?.title) return
-    if (embedded) setNotePaneTitle(n.title)
-    else setTabTitle(loc.pathname, n.title)
+    if (embedded) return
+    if (n?.title) setTabTitle(loc.pathname, n.title)
   }, [n?.title, loc.pathname, embedded])
 
 

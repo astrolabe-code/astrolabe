@@ -1,19 +1,10 @@
-import { useCallback, useEffect, useId, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
 import { PanelLeft, X } from 'lucide-react'
 
 import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
 import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
-import {
-  closeNotePane,
-  notePaneView,
-  openNotePane,
-  parseNotePath,
-  subscribeNotePane,
-  type NotePaneMode,
-} from '../../lib/notePaneBus'
 import type { GraphNode } from '../../lib/mergeGraph'
-import NoteEditPage from '../../pages/NoteEditPage'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
@@ -84,25 +75,11 @@ export default function CodeWorkspace({
   notePanel,
 }: CodeWorkspaceProps) {
   const [tab, setTab] = useState<Tab>(initialTab)
-  // ★ 当前在容器里打开的笔记（模块级 store，notePanel 是外层传入的 ReactNode，
-  //   用订阅比层层传 props 稳）。订阅本身也让 hasNotePane() 成立。
-  const pane = useSyncExternalStore(subscribeNotePane, notePaneView, notePaneView)
   // ★ 每个工作区实例一个唯一工具插槽 id（图谱页/项目页各有多个 CodeWorkspace，
   //   固定 id 会让 document.getElementById 拿到错的那个）
   const toolsSlotId = `note-pane-tools-${useId().replace(/:/g, '')}`
-  // ★ 2026-11-11 合一后：pane 只代表「是否打开了某篇笔记」，tab 不再有 read/edit；
-  //   打开笔记统一停在 notes 页，由 NoteEditPage 内部 mode 控制视图（⛔ 不再 setTab(pane.mode)）
-
-  /** 页面内部 nav(...) 的落点：站内路径 → 容器动作；回项目页 → 收起回列表 */
-  const paneNavigate = (path: string) => {
-    const next = parseNotePath(path)
-    if (!next) {
-      closeNotePane()
-      setTab('notes')
-      return
-    }
-    openNotePane(next)
-  }
+  // ★★ 2026-11-12：笔记都有自己的真实路由，⛔ 不再有「内嵌 pane」这套双轨机制；
+  //    notes 页恒定显示节点面板（笔记列表），点笔记就导航出去
   const [treeOpen, setTreeOpen] = useState(() => {
     // ★ 文件树跟着「代码」页走：初始停在笔记就不显示
     if (initialTab === 'notes') return false
@@ -386,31 +363,17 @@ export default function CodeWorkspace({
         {/* 右侧：代码页 / 笔记页 */}
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {tab === 'notes' ? (
-            pane ? (
-              <NoteEditPage
-                key={`note-${pane.token}`}
-                projectRef={projectRef}
-                noteRef={pane.ref || undefined}
-                nodeId={pane.nodeId}
-                parent={pane.parent}
-                onNavigate={paneNavigate}
-                toolsSlotId={toolsSlotId}
-                initialMode={pane.mode}
-                onBackToList={() => closeNotePane()}
-              />
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                }}
-              >
-                {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
-              </div>
-            )
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
+            </div>
           ) : tab === 'imitation' ? (
             <ImitationPanel projectRef={projectRef} node={node} />
           ) : (

@@ -14,7 +14,7 @@ import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
 import WritingProgress from '../components/graph/WritingProgress'
 import { clearResume, markResume, readResume } from '../lib/resume'
-import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
+import { patchRibbon } from '../lib/ribbonBus'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
 
@@ -53,14 +53,21 @@ export default function ProjectPage() {
   const siteCfg = useSiteConfig()
   const dwellMs = Math.max(0, Number(siteCfg.data?.resumeDwellSeconds ?? 20)) * 1000
   const [selected, setSelected] = useState<GraphNode | null>(null)
-  // ★★ 当前选中节点由**项目页**统一上报 ⚠
-  //   ⛔ 不能放在 NoteSection：打开内嵌笔记时 notePanel 会整块卸载，
-  //      那里的注册被清掉后，思考模式面板会误以为「没选中节点」⇒ 列表空、不能新建白板
+  // ★★ 当前选中节点由**项目页**统一上报（思考模式面板新建白板要用）
+  //   ⚠ 卸载时**不清**：打开笔记/白板会离开项目页，但全局面板还在，
+  //      「最近选中节点」应一直有效；换项目时这里会重新 patch 覆盖
   useEffect(() => {
-    if (!selected || !projectRef) return
-    patchRibbon({ currentNodeVid: selected.vid })
-    return () => clearRibbon(['currentNodeVid'])
+    if (selected && projectRef) patchRibbon({ currentNodeVid: selected.vid })
   }, [selected?.vid, projectRef])
+
+  // ★★ 首页「思考模式」卡片直达：白板是真实路由，直接导航过去（不再自动弹覆盖层）
+  useEffect(() => {
+    if (!autoThink || !selected) return
+    navigate(
+      `/p/${encodeURIComponent(projectRef)}/board/${selected.vid}?node=${selected.vid}`,
+      { replace: true },
+    )
+  }, [autoThink, selected?.vid, projectRef, navigate])
 
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
@@ -288,7 +295,6 @@ export default function ProjectPage() {
                 projectRef={projectRef}
                 node={selected}
                 canWrite={canWrite}
-                autoThink={autoThink}
                 flat
                 hideInfo
               />

@@ -14,7 +14,7 @@ import {
   FilePlus2,
   Save,
 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 import type { Note, NoteKind } from '../../api/types'
@@ -22,7 +22,7 @@ import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../
 import { personalApi } from '../../api/personal'
 import type { BoardLayout } from '../../api/personal'
 import { ribbonActions } from '../../lib/ribbonBus'
-import { openTab } from '../../lib/tabBus'
+import { openTab, setTabTitle } from '../../lib/tabBus'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
@@ -107,6 +107,7 @@ export default function ThinkingBoard({
   onClose,
 }: ThinkingBoardProps) {
   const navigate = useNavigate()
+  const loc = useLocation()
   const [pos, setPos] = useState<Record<number, Pos>>({})
   const [sizes, setSizes] = useState<Record<number, Size>>({})
   const [canvas, setCanvas] = useState<Size>({ w: INIT_W, h: INIT_H })
@@ -203,6 +204,8 @@ export default function ThinkingBoard({
         ...(name ? { name } : {}),
       })
       .then(() => {
+        // ★★ 保存后把弹窗里改过的名字同步给这条白板标签
+        if (name) setTabTitle(loc.pathname, name)
         setSaved(true)
         window.setTimeout(() => setSaved(false), 1600)
       })
@@ -820,7 +823,13 @@ export default function ThinkingBoard({
             type="button"
             title="新建笔记"
             aria-label="新建笔记"
-            onClick={() => ribbonActions().createNote?.()}
+            onClick={() => {
+              // ★ 白板路由下 NoteSection 没挂载 ⇒ createNote 回调不可用，直接走真实路由
+              const vid = nodeId || ribbonActions().currentNodeVid || 0
+              const path = `/p/${encodeURIComponent(projectRef)}/notes/new?node=${vid}`
+              openTab(path.split('?')[0], '新笔记')
+              navigate(path)
+            }}
             style={{
               display: 'grid', placeItems: 'center', width: 32, height: 32,
               border: 0, borderRadius: 6, background: 'transparent',

@@ -13,6 +13,7 @@ import Modal from '../components/ui/Modal'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
+import { ribbonActions } from '../lib/ribbonBus'
 
 import { NOTE_KINDS, KIND_META, kindMeta } from '../components/notes/kindMeta'
 import { autoTitle } from '../components/notes/autoTitle'
@@ -113,8 +114,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   const editing = Boolean(noteId)
   // ★ 路由这一段是**笔记 ref**（* 不是自增 pk）⚠
   const id = noteId ?? null
-  // ★ 新建时 node 从 query 来（* 弹窗时代是 props，* 页面化后只能走 URL）⚠
-  const nodeId = embedded?.nodeId ?? Number(sp.get('node') || 0)
+  // ★ 新建时 node 从 query 来；没带就用「最近选中的节点」兜底
+  //   （直接输网址 / 命令面板等入口不该再报「缺少节点信息」）
+  const nodeId =
+    (embedded?.nodeId ?? Number(sp.get('node') || 0)) || ribbonActions().currentNodeVid || 0
   // ★ 深入：从父卡进来时带着全局卡片 id，保存时挂成子代
   const parentCard = embedded?.parent ?? sp.get('parent') ?? ''
   const slotId = embedded?.toolsSlotId
@@ -314,6 +317,11 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
       const snap = data?.note?.node_snapshot
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       const realTitle = data.note?.title || draftTitle.trim() || '新笔记'
+      // ★★ 保存后把弹窗里改过的名字同步给标签栏：当前编辑标签 + 已打开的阅读页标签
+      setTabTitle(loc.pathname, realTitle)
+      if (data.note?.ref) {
+        setTabTitle(`/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`, realTitle)
+      }
       if (!isEmbedded) {
         // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
         //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠

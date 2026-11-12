@@ -91,16 +91,15 @@ export default function TabBar() {
   const m = currentPath.match(/\/p\/([^/]+)/)
   const projectRef = m ? m[1] : ''
 
-  // ★ 新建笔记：优先用当前笔记区注册的 createNote（带节点上下文），
-  //   否则按当前项目直接进编辑器；首页没有项目 ⇒ 按钮禁用（不做假按钮）
-  const canCreate = !!ribbonActions().createNote || !!projectRef
+  // ★ 新建笔记：一律走真实路由并带上「当前 / 最近选中节点」
+  //   ⚠ 不用 ribbon 的 createNote 回调：它由 NoteSection 注册，在笔记页/白板页
+  //      会随组件卸载被清掉，那时兜底路径不带 ?node= ⇒ 新建页报「缺少节点信息」
+  const canCreate = !!projectRef
   const createNote = () => {
-    const fn = ribbonActions().createNote
-    if (fn) {
-      fn()
-      return
-    }
-    if (projectRef) nav(`/p/${projectRef}/notes/new`)
+    if (!projectRef) return
+    const vid = ribbonActions().currentNodeVid
+    const q = vid != null ? `?node=${vid}` : ''
+    nav(`/p/${projectRef}/notes/new${q}`)
   }
 
   const close = (path: string) => {

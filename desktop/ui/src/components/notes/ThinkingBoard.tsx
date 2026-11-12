@@ -15,6 +15,8 @@ import {
   Save,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import Modal from '../ui/Modal'
+import Button from '../ui/Button'
 import type { Note, NoteKind } from '../../api/types'
 import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../api/code'
 import { personalApi } from '../../api/personal'
@@ -177,16 +179,33 @@ export default function ThinkingBoard({
 
   // ---------------------------------------------------------- 读取已保存状态（后端）
   const loadedRef = useRef(false)
-  // ★ 显式「保存布局」按钮：点一下立即写回后端，并短暂提示「已保存」
+  // ★ 白板名字：不在工具条里写，跟笔记一样在「保存」弹窗里确认（可改，有默认名）
+  const [boardName, setBoardName] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
   const [saved, setSaved] = useState(false)
+
+  /** ★ 点保存按钮：先弹窗，预填当前 / 默认名字，让人看一眼、可改 */
   const handleSave = () => {
+    setDraftTitle(boardName)
+    setConfirmOpen(true)
+  }
+
+  /** ★ 弹窗确认：名字 + 布局一起写回后端 */
+  const doSave = () => {
+    const name = draftTitle.trim() || boardName
+    setBoardName(name)
     personalApi
-      .saveBoard(projectRef, boardId, { pos, board: [...onBoard], sizes, canvas })
+      .saveBoard(projectRef, boardId, {
+        pos, board: [...onBoard], sizes, canvas,
+        ...(name ? { name } : {}),
+      })
       .then(() => {
         setSaved(true)
         window.setTimeout(() => setSaved(false), 1600)
       })
       .catch(() => {})
+    setConfirmOpen(false)
   }
   useEffect(() => {
     if (!open) return
@@ -200,6 +219,7 @@ export default function ThinkingBoard({
         layout = null
       }
       if (!alive) return
+      setBoardName(layout?.name ?? '')
       const savedPos = layout?.pos ?? null
       const savedSize = layout?.sizes ?? null
       const savedBoard = layout?.board ?? null
@@ -245,16 +265,20 @@ export default function ThinkingBoard({
     }
   }, [open, nodeId, notes, boardId])
 
-  // ★★★ 布局变更后防抖写回后端（替代原 localStorage 即时写）
+  // ★★★ 布局 / 名字变更后防抖写回后端（替代原 localStorage 即时写）
   useEffect(() => {
     if (!loadedRef.current) return
     const t = setTimeout(() => {
+      const name = boardName.trim()
       personalApi
-        .saveBoard(projectRef, boardId, { pos, board: [...onBoard], sizes, canvas })
+        .saveBoard(projectRef, boardId, {
+          pos, board: [...onBoard], sizes, canvas,
+          ...(name ? { name } : {}),
+        })
         .catch(() => {})
     }, 400)
     return () => clearTimeout(t)
-  }, [pos, sizes, onBoard, canvas, projectRef, boardId])
+  }, [pos, sizes, onBoard, canvas, projectRef, boardId, boardName])
 
   /** 本节点笔记 + 外来卡，统一用全局卡片 id 认人 */
   const globalIdOf = (local: number): string | null => {
@@ -1236,6 +1260,59 @@ export default function ThinkingBoard({
           </div>
         </div>
       </div>
+
+      {/* ★★ 保存白板弹窗（跟笔记「保存这篇笔记」同款）：点保存后才弹，
+          预填默认名 / 已有名字，可改；留空就用默认名 ⚠ */}
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="保存白板"
+        width={480}
+        footer={
+          <div className="flex items-center gap-2">
+            <div style={{ marginLeft: 'auto' }} />
+            <Button onClick={() => setConfirmOpen(false)}>再改改</Button>
+            <Button variant="primary" onClick={doSave}>确认保存</Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <div>
+            <label
+              className="block text-xs font-medium tracking-wide text-text-sub mb-1.5"
+              htmlFor="board-save-title"
+            >
+              名字（可改）
+            </label>
+            <input
+              id="board-save-title"
+              className="input"
+              maxLength={60}
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  doSave()
+                }
+              }}
+            />
+          </div>
+          <div
+            style={{
+              fontSize: 11.5,
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'var(--accent-dim)',
+              color: 'var(--text-sub)',
+              lineHeight: 1.7,
+            }}
+          >
+            留空则使用默认名：
+            <b style={{ color: 'var(--text-main)', marginLeft: 4 }}>{boardName}</b>
+          </div>
+        </div>
+      </Modal>
     </div>,
     document.body,
   )

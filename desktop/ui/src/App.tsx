@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import QuickNote from './components/notes/QuickNote'
 import PersonalBar from './components/PersonalBar'
@@ -30,6 +30,7 @@ const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
  *    改那边不会影响这里（反之亦然）。
  */
 export default function App() {
+  const location = useLocation()
   const [panel, setPanel] = useState<PanelKind | null>(null)
   const togglePanel = (k: PanelKind) => setPanel((cur) => (cur === k ? null : k))
   useEffect(() => {
@@ -48,7 +49,8 @@ export default function App() {
     >
       <PersonalBar />
       <CommandPalette />
-      <QuickNote />
+      {/* ★ 「写一笔」只在首页出现：进项目后已经能看到节点，用标签栏的 ＋ 新建即可 */}
+      {location.pathname === '/' && <QuickNote />}
 
       {/* ★★★ 2026-11-11：四分页 = 二层 SplitPane 嵌套（外层 ribbon │ 内层）
           内层再分「功能面板 │ 内容」，内容里的工作区/笔记页又各自嵌套 ⇒ N 栏

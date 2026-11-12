@@ -1,8 +1,10 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Search, X } from 'lucide-react'
+import { Search, Trash2, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { personalApi, type BoardItem } from '../api/personal'
+import { errorMessage } from '../api/errors'
+import ConfirmDialog from './ui/ConfirmDialog'
 import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
 import { closeTab, openTab } from '../lib/tabBus'
 
@@ -200,8 +202,10 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
   onOpen: (boardId: string, name?: string) => void
 }) {
   const [items, setItems] = useState<BoardItem[] | null>(null)
-  /** ★ 删除要二次点击确认（⛔ 不用原生 confirm，Electron 里不可靠） */
-  const [pendingDel, setPendingDel] = useState<string | null>(null)
+  // ★ 删除走和笔记同一套：小文字按钮 + ConfirmDialog 确认框
+  const [pendingDel, setPendingDel] = useState<BoardItem | null>(null)
+  const [delBusy, setDelBusy] = useState(false)
+  const [delErr, setDelErr] = useState('')
   const nav = useNavigate()
   const loc = useLocation()
 
@@ -221,21 +225,23 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
     }
   }, [projectRef])
 
-  /** 点 ×：第一次变「确认」，再点才真删；同时清掉对应标签与内容区 */
-  const removeBoard = async (id: string) => {
-    if (pendingDel !== id) {
-      setPendingDel(id)
-      return
-    }
+  /** 确认框里点「删除」后才真正删除；同时清掉对应标签与内容区 */
+  const confirmDelete = async () => {
+    if (!pendingDel) return
+    const id = pendingDel.id
+    setDelBusy(true)
+    setDelErr('')
     try {
       await personalApi.deleteBoard(projectRef, id)
       setItems((prev) => (prev ?? []).filter((x) => x.id !== id))
-      setPendingDel(null)
       const path = `/p/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(id)}`
       closeTab(path)
       if (loc.pathname === path) nav(`/p/${encodeURIComponent(projectRef)}`)
-    } catch {
-      /* 删除失败静默 */
+      setPendingDel(null)
+    } catch (e) {
+      setDelErr(errorMessage(e))
+    } finally {
+      setDelBusy(false)
     }
   }
 
@@ -259,12 +265,10 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
             <div
               key={it.id}
               style={{
-                display: 'flex',
-                alignItems: 'stretch',
+                padding: '7px 8px',
                 marginBottom: 4,
                 border: '1px solid var(--card-border)',
                 borderRadius: 6,
-                overflow: 'hidden',
               }}
             >
               <button
@@ -272,10 +276,10 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
                 title={it.qname || it.name || it.id}
                 onClick={() => onOpen(it.id, it.name)}
                 style={{
-                  flex: 1,
-                  minWidth: 0,
+                  display: 'block',
+                  width: '100%',
                   textAlign: 'left',
-                  padding: '7px 8px',
+                  padding: 0,
                   border: 0,
                   background: 'transparent',
                   cursor: 'pointer',
@@ -288,28 +292,52 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
                   {it.mtime ? `保存于 ${new Date(it.mtime * 1000).toLocaleString()}` : '空白白板'}
                 </div>
               </button>
-              <button
-                type="button"
-                title={pendingDel === it.id ? '再点一次确认删除' : '删除这块白板'}
-                aria-label="删除这块白板"
-                onClick={() => void removeBoard(it.id)}
-                style={{
-                  flexShrink: 0,
-                  width: pendingDel === it.id ? 44 : 26,
-                  border: 0,
-                  borderLeft: '1px solid var(--card-border)',
-                  background: pendingDel === it.id ? 'var(--accent-dim, rgba(37,99,235,.08))' : 'transparent',
-                  color: pendingDel === it.id ? 'var(--err, #b00)' : 'var(--text-faint)',
-                  fontSize: 11,
-                  cursor: 'pointer',
-                }}
-              >
-                {pendingDel === it.id ? '确认' : <X size={12} strokeWidth={1.6} />}
-              </button>
+              {/* ★ 和笔记卡片同款：一行细线文字操作按钮（Trash2 + 删除），靠右下角 */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="flex items-center gap-1"
+                  style={{
+                    color: 'var(--text-sub)',
+                    cursor: 'pointer',
+                    border: 0,
+                    background: 'transparent',
+                    fontSize: 11,
+                    padding: 0,
+                  }}
+                  onClick={() => {
+                    setDelErr('')
+                    setPendingDel(it)
+                  }}
+                >
+                  <Trash2 size={11} />
+                  删除
+                </button>
+              </div>
             </div>
           ))
         )}
       </div>
+
+      {/* ★ 和笔记同一个确认框（删除笔记 / 删除白板同款） */}
+      <ConfirmDialog
+        open={!!pendingDel}
+        title="删除白板"
+        danger
+        loading={delBusy}
+        error={delErr}
+        confirmText="删除"
+        message={
+          pendingDel
+            ? `删除「${pendingDel.name || '（未命名）'}」？\n删除后不可恢复。`
+            : ''
+        }
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          setPendingDel(null)
+          setDelErr('')
+        }}
+      />
     </div>
   )
 }

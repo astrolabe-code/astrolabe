@@ -22,6 +22,18 @@ const TITLE: Record<PanelKind, string> = {
  */
 export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   const nav = useNavigate()
+  const { pathname } = useLocation()
+  const m = pathname.match(/^\/p\/([^/]+)/)
+  const projectRef = m ? decodeURIComponent(m[1]) : ''
+  const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
+
+  /** ★ 打开当前节点挂载的白板（标题栏按钮 / 面板里的白板项共用） */
+  const openBoard = () => {
+    const a = ribbonActions().openThinking
+    onClose()
+    if (a) a()
+    else if (curVid != null) nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${curVid}`)
+  }
 
   return (
     <div
@@ -46,25 +58,48 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
         }}
       >
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{TITLE[kind]}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          title="收起面板"
-          style={{
-            marginLeft: 'auto',
-            border: 0,
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--text-sub)',
-          }}
-        >
-          <X size={14} />
-        </button>
+        {kind === 'thinking' ? (
+          /* ★ 所有者：「把打开思考模式的按钮移到右上角取代关闭按钮，关闭按钮不要了」⚠ */
+          <button
+            type="button"
+            onClick={openBoard}
+            title="打开当前节点的白板"
+            style={{
+              marginLeft: 'auto',
+              padding: '3px 8px',
+              fontSize: 11,
+              border: '1px solid var(--card-border)',
+              borderRadius: 6,
+              background: 'transparent',
+              color: 'var(--text-sub)',
+              cursor: 'pointer',
+            }}
+          >
+            打开思考模式白板
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            title="收起面板"
+            style={{
+              marginLeft: 'auto',
+              border: 0,
+              background: 'transparent',
+              cursor: 'pointer',
+              color: 'var(--text-sub)',
+            }}
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {kind === 'search' && <SearchPane onNavigate={(p) => { nav(p); onClose() }} />}
-        {kind === 'thinking' && <ThinkingPane onClose={onClose} />}
+        {kind === 'thinking' && (
+          <ThinkingPane projectRef={projectRef} curVid={curVid} onOpen={openBoard} />
+        )}
       </div>
     </div>
   )
@@ -146,15 +181,11 @@ interface BoardItem {
   mtime: number
 }
 
-function ThinkingPane({ onClose }: { onClose: () => void }) {
-  const nav = useNavigate()
-  // ★ 面板是全局的：用 useLocation 拿**剥掉 basename(/app) 后**的路由路径解析项目 ref
-  //   （bug 修复：之前用 window.location.pathname，前缀 /app 使正则匹配失败，列表整个不显示）
-  const { pathname } = useLocation()
-  const m = pathname.match(/^\/p\/([^/]+)/)
-  const projectRef = m ? decodeURIComponent(m[1]) : ''
-  // ★ 当前选中节点（NoteSection 注册到 ribbon 总线）⇒ 白板状态随节点切换变化
-  const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
+function ThinkingPane({ projectRef, curVid, onOpen }: {
+  projectRef: string
+  curVid: number | undefined
+  onOpen: () => void
+}) {
   const [items, setItems] = useState<BoardItem[] | null>(null)
 
   useEffect(() => {
@@ -173,31 +204,14 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
     }
   }, [projectRef])
 
-  /** ★ 打开当前节点挂载的白板（优先直接开当前 NoteSection，未注册时走深链） */
-  const openCurrentBoard = () => {
-    const a = ribbonActions().openThinking
-    onClose()
-    if (a) a()
-    else if (curVid != null) nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${curVid}`)
-  }
-
   /** 当前节点挂载的白板（没保存过布局则 undefined） */
   const cur = curVid != null ? items?.find((it) => it.vid === curVid) : undefined
 
   return (
     <div style={{ padding: 12 }}>
-      <button
-        type="button"
-        className="code-icon-btn"
-        style={{ border: '1px solid var(--card-border)' }}
-        onClick={openCurrentBoard}
-      >
-        打开思考模式白板
-      </button>
-
       {/* ★★ 只显示**当前选中节点**挂载的白板（所有者：「点了哪个节点，就显示挂载这个节点上的白板」）⚠
           节点一换，这一项立刻跟着换；没保存过就提示，不再列全项目白板 */}
-      <div style={{ marginTop: 14 }}>
+      <div>
         <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
           这个节点上的白板
         </div>
@@ -207,7 +221,7 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             title={cur.qname || cur.name}
-            onClick={openCurrentBoard}
+            onClick={onOpen}
             style={{
               display: 'block',
               width: '100%',
@@ -227,7 +241,7 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
             </div>
           </button>
         ) : (
-          <Hint>这个节点还没有白板，点上方按钮打开并保存</Hint>
+          <Hint>这个节点还没有白板，点右上角按钮打开并保存</Hint>
         )}
       </div>
     </div>

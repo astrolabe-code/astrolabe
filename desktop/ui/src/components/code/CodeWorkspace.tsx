@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { PanelLeft, X } from 'lucide-react'
 
 import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
-import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
+import { patchRibbon, clearRibbon, ribbonActions } from '../../lib/ribbonBus'
 import type { GraphNode } from '../../lib/mergeGraph'
+import { useNotes } from '../../query/notes'
+import NoteEditPage from '../../pages/NoteEditPage'
+import ThinkingBoard from '../notes/ThinkingBoard'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
@@ -22,10 +26,31 @@ interface CodeWorkspaceProps {
   initialTab?: Tab
   /** ★ 笔记页内容：调用方可贴自己的 NodePanel（右栏要保留学习路径等能力） */
   notePanel?: ReactNode
+  /** ★ URL 指定要在这个框里显示的笔记（阅读 / 编辑 / 新建）；不传则显示笔记列表 */
+  noteView?: {
+    mode: 'read' | 'edit'
+    ref: string | null
+    nodeId: number
+    parent?: string
+  }
+  /** ★ URL 指定要在这个框里显示的白板（挂在节点上的特殊笔记） */
+  boardView?: {
+    boardId: string
+    nodeId: number
+    focus?: string
+  }
 }
 
-/** ★ 2026-11-09 原先拆成「阅读」「编辑」两个标签；2026-11-11 合一为单页（见 NoteEditPage 内部 mode） */
-type Tab = 'code' | 'imitation' | 'notes'
+/** ★ 5 个视图：代码 / 笔记列表 / 阅读（笔记内容） / 白板 / 仿写 */
+type Tab = 'code' | 'notes' | 'read' | 'board' | 'imitation'
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'code', label: '代码' },
+  { key: 'notes', label: '笔记' },
+  { key: 'read', label: '阅读' },
+  { key: 'board', label: '白板' },
+  { key: 'imitation', label: '仿写' },
+]
 
 const TREE_OPEN_KEY = 'astrolabe.code.treeOpen'
 
@@ -73,13 +98,56 @@ export default function CodeWorkspace({
   onClose,
   initialTab = 'code',
   notePanel,
+  noteView,
+  boardView,
 }: CodeWorkspaceProps) {
   const [tab, setTab] = useState<Tab>(initialTab)
   // ★ 每个工作区实例一个唯一工具插槽 id（图谱页/项目页各有多个 CodeWorkspace，
   //   固定 id 会让 document.getElementById 拿到错的那个）
   const toolsSlotId = `note-pane-tools-${useId().replace(/:/g, '')}`
-  // ★★ 2026-11-12：笔记都有自己的真实路由，⛔ 不再有「内嵌 pane」这套双轨机制；
-  //    notes 页恒定显示节点面板（笔记列表），点笔记就导航出去
+  // ★★ 笔记有真实路由，但内容仍在这个框里显示：URL 决定显示哪篇，
+  //   ⛔ 不再有 notePaneBus 那套双轨状态（导航就是唯一状态源）
+  const nav = useNavigate()
+  // ★ 白板里的卡片就是笔记，用和笔记列表同一份数据
+  const notesQ = useNotes(projectRef)
+
+  // ★★ URL 决定「阅读 / 白板」两个视图：打开笔记或白板时自动切到对应 tab
+  useEffect(() => {
+    if (noteView) setTab('read')
+    else if (boardView) setTab('board')
+  }, [noteView?.ref, noteView?.mode, boardView?.boardId])
+
+  /** ★ 点 tab：需要内容的两个视图走真实路由，其余回到项目页 */
+  const pickTab = (k: Tab) => {
+    if (k === 'board' && !boardView) {
+      // 当前节点的默认白板（每个节点最早那块），没有也能直接建
+      const vid = node?.vid ?? ribbonActions().currentNodeVid ?? 0
+      nav(`/p/${encodeURIComponent(projectRef)}/board/${vid}?node=${vid}`)
+      setTab('board')
+      return
+    }
+    const stayOnUrl = (k === 'read' && !!noteView) || (k === 'board' && !!boardView)
+    if (!stayOnUrl && (noteView || boardView)) {
+      nav(`/p/${encodeURIComponent(projectRef)}`)
+    }
+    setTab(k)
+    setTreeOpen(k === 'code')
+  }
+
+  // 笔记列表（notes / 阅读未指定笔记 / 白板未指定时共用）
+  const listPane = (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
+    </div>
+  )
   const [treeOpen, setTreeOpen] = useState(() => {
     // ★ 文件树跟着「代码」页走：初始停在笔记就不显示
     if (initialTab === 'notes') return false
@@ -279,26 +347,19 @@ export default function CodeWorkspace({
         </div>
       )}
 
-      {/* ★ tab：代码 / 笔记（蓝色下划线选中态） */}
+      {/* ★ tab：代码 / 笔记 / 阅读 / 白板 / 仿写（蓝色下划线选中态） */}
       {!immersive && (
         <div className="code-tabs">
-          {(['code', 'imitation', 'notes'] as const).map((k) => {
-            const label = k === 'code' ? '代码'
-              : k === 'imitation' ? '仿写' : '笔记'
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() => {
-                  setTab(k)
-                  setTreeOpen(k === 'code')
-                }}
-                className={`code-tab${tab === k ? ' is-active' : ''}`}
-              >
-                {label}
-              </button>
-            )
-          })}
+          {TABS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => pickTab(key)}
+              className={`code-tab${tab === key ? ' is-active' : ''}`}
+            >
+              {label}
+            </button>
+          ))}
           {/* ★ 容器内嵌页面自己的工具条插槽（与外层顶栏工具分离） */}
           <div
             id={toolsSlotId}
@@ -362,21 +423,7 @@ export default function CodeWorkspace({
 
         {/* 右侧：代码页 / 笔记页 */}
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          {tab === 'notes' ? (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
-            >
-              {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
-            </div>
-          ) : tab === 'imitation' ? (
-            <ImitationPanel projectRef={projectRef} node={node} />
-          ) : (
+          {tab === 'code' ? (
             <>
               {loading ? (
                 <div className="faint" style={{ padding: 20, fontSize: 12.5 }}>正在读取…</div>
@@ -408,6 +455,36 @@ export default function CodeWorkspace({
                 </div>
               )}
             </>
+          ) : tab === 'imitation' ? (
+            <ImitationPanel projectRef={projectRef} node={node} />
+          ) : tab === 'read' ? (
+            noteView ? (
+              <NoteEditPage
+                key={`${noteView.ref ?? 'new'}-${noteView.mode}`}
+                projectRef={projectRef}
+                noteRef={noteView.ref || undefined}
+                nodeId={noteView.nodeId}
+                parent={noteView.parent}
+                initialMode={noteView.mode}
+                onNavigate={(p) => nav(p)}
+                toolsSlotId={toolsSlotId}
+                onBackToList={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
+              />
+            ) : listPane
+          ) : tab === 'board' ? (
+            boardView ? (
+              <ThinkingBoard
+                open
+                projectRef={projectRef}
+                nodeId={boardView.nodeId}
+                boardId={boardView.boardId}
+                notes={notesQ.data || []}
+                focusCardId={boardView.focus}
+                onClose={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
+              />
+            ) : listPane
+          ) : (
+            listPane
           )}
         </div>
       </SplitPane>

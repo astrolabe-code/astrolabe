@@ -615,6 +615,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             if method in ("POST", "PUT"):
                 layout = body.get("layout") or {}
                 return ok(board.save(entry["data"], bid, layout))
+            if method == "DELETE":
+                return ok(board.delete_board(entry["data"], bid))
             return bad("不支持的方法", 405)
         except Exception as exc:
             return bad(str(exc), 400)
@@ -639,7 +641,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if pr is not None:
             for it in items:
                 node = store.node_by_vid(CONN, pr["id"], it["vid"])
-                it["name"] = node["name"] if node else f"节点 {it['vid']}"
+                # ★ it["name"] 是白板自己的名字，别覆盖；节点名另给一个字段
+                it["node_name"] = node["name"] if node else f"节点 {it['vid']}"
                 it["qname"] = node["qname"] if node else ""
                 it["file_path"] = node["file_path"] if node else ""
         return ok({"items": items})

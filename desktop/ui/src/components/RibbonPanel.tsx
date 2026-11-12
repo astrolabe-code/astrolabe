@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 import { personalApi, type BoardItem } from '../api/personal'
 import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
-import { openTab } from '../lib/tabBus'
+import { closeTab, openTab } from '../lib/tabBus'
 
 interface RibbonPanelProps {
   kind: PanelKind
@@ -200,6 +200,10 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
   onOpen: (boardId: string, name?: string) => void
 }) {
   const [items, setItems] = useState<BoardItem[] | null>(null)
+  /** ★ 删除要二次点击确认（⛔ 不用原生 confirm，Electron 里不可靠） */
+  const [pendingDel, setPendingDel] = useState<string | null>(null)
+  const nav = useNavigate()
+  const loc = useLocation()
 
   useEffect(() => {
     if (!projectRef) return
@@ -216,6 +220,24 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
       alive = false
     }
   }, [projectRef])
+
+  /** 点 ×：第一次变「确认」，再点才真删；同时清掉对应标签与内容区 */
+  const removeBoard = async (id: string) => {
+    if (pendingDel !== id) {
+      setPendingDel(id)
+      return
+    }
+    try {
+      await personalApi.deleteBoard(projectRef, id)
+      setItems((prev) => (prev ?? []).filter((x) => x.id !== id))
+      setPendingDel(null)
+      const path = `/p/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(id)}`
+      closeTab(path)
+      if (loc.pathname === path) nav(`/p/${encodeURIComponent(projectRef)}`)
+    } catch {
+      /* 删除失败静默 */
+    }
+  }
 
   /** 当前节点挂载的**所有**白板（按修改时间新→旧；一个节点可以有多块） */
   const boards = curVid != null ? (items ?? []).filter((it) => it.vid === curVid) : []
@@ -234,30 +256,57 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
           <Hint>这个节点还没有白板，点右上角「新建白板」</Hint>
         ) : (
           boards.map((it, i) => (
-            <button
+            <div
               key={it.id}
-              type="button"
-              title={it.qname || it.name || it.id}
-              onClick={() => onOpen(it.id, it.name)}
               style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '7px 8px',
+                display: 'flex',
+                alignItems: 'stretch',
                 marginBottom: 4,
                 border: '1px solid var(--card-border)',
                 borderRadius: 6,
-                background: 'transparent',
-                cursor: 'pointer',
+                overflow: 'hidden',
               }}
             >
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-                {it.name || `白板 ${boards.length - i}`}
-              </div>
-              <div className="faint" style={{ fontSize: 11 }}>
-                {it.mtime ? `保存于 ${new Date(it.mtime * 1000).toLocaleString()}` : '空白白板'}
-              </div>
-            </button>
+              <button
+                type="button"
+                title={it.qname || it.name || it.id}
+                onClick={() => onOpen(it.id, it.name)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  textAlign: 'left',
+                  padding: '7px 8px',
+                  border: 0,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                  {it.name || `白板 ${boards.length - i}`}
+                </div>
+                <div className="faint" style={{ fontSize: 11 }}>
+                  {it.mtime ? `保存于 ${new Date(it.mtime * 1000).toLocaleString()}` : '空白白板'}
+                </div>
+              </button>
+              <button
+                type="button"
+                title={pendingDel === it.id ? '再点一次确认删除' : '删除这块白板'}
+                aria-label="删除这块白板"
+                onClick={() => void removeBoard(it.id)}
+                style={{
+                  flexShrink: 0,
+                  width: pendingDel === it.id ? 44 : 26,
+                  border: 0,
+                  borderLeft: '1px solid var(--card-border)',
+                  background: pendingDel === it.id ? 'var(--accent-dim, rgba(37,99,235,.08))' : 'transparent',
+                  color: pendingDel === it.id ? 'var(--err, #b00)' : 'var(--text-faint)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                {pendingDel === it.id ? '确认' : <X size={12} strokeWidth={1.6} />}
+              </button>
+            </div>
           ))
         )}
       </div>

@@ -138,6 +138,8 @@ export interface BoardLayout {
   board?: number[]
   sizes?: Record<number, { w: number; h: number }>
   canvas?: { w: number; h: number }
+  /** ★ 白板名字（用户留空就不写这个字段，列表显示默认名） */
+  name?: string
 }
 
 /** ★ 一块白板（挂在一个节点上；一个节点可以有多块，跟笔记一样） */
@@ -145,7 +147,9 @@ export interface BoardItem {
   /** 白板 id：<vid>_<毫秒时间戳>；历史白板是纯数字 <vid> */
   id: string
   vid: number
+  /** 白板自己的名字；空 = 用户没写，显示默认名 */
   name?: string
+  node_name?: string
   qname?: string
   file_path?: string
   mtime: number
@@ -347,6 +351,12 @@ export const personalApi = {
     post<{ item: BoardItem }>(
       `/api/projects/${encodeURIComponent(projectRef)}/boards/`,
       { node_vid: vid },
+    ),
+
+  /** ★ 删除一块白板（思考模式列表里的 ×） */
+  deleteBoard: (projectRef: string, boardId: string) =>
+    del<{ deleted: string }>(
+      `/api/projects/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(boardId)}/`,
     ),
 
   /** ★ 项目里的白板列表（思考模式面板按 vid 过滤；节点名后端已补） */

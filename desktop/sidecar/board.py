@@ -129,6 +129,16 @@ def save(data_dir: str, board_id: str, layout: dict) -> dict:
     return {"ok": True}
 
 
+def delete_board(data_dir: str, board_id: str) -> dict:
+    """★★ 删除一块白板（思考模式列表里的 × 用）"""
+    p = _path(data_dir, board_id)
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        pass
+    return {"deleted": str(board_id)}
+
+
 def new_board(data_dir: str, vid: int) -> dict:
     """★★ 在当前节点下**新建一块空白白板**（默认名 `白板 N`，保存弹窗里可改）"""
     vid = int(vid)

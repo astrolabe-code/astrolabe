@@ -3,6 +3,7 @@ import { GitBranch, Link2, Network, Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
 import { kindMeta } from './kindMeta'
+import { openTab } from '../../lib/tabBus'
 
 /**
  * ★ 单篇笔记卡片（`F2` 建 · `F3` 改点击行为）
@@ -69,8 +70,10 @@ export default function NoteCard({
       className="card w-full text-left"
       style={{ padding: '10px 12px', cursor: 'pointer', position: 'relative' }}
       onClick={() => {
-        // ★ 笔记有自己的真实路由 ⇒ 打开它 = 导航，标签栏按 URL 自动显示
-        navigate(`/p/${encodeURIComponent(projectRef)}/notes/${note.ref}`)
+        // ★ 点卡片时手里就有笔记标题 ⇒ 直接用它开标签，再导航（一步到位）
+        const path = `/p/${encodeURIComponent(projectRef)}/notes/${note.ref}`
+        openTab(path, note.title || '笔记')
+        navigate(path)
       }}
       >
       <div className="flex items-center gap-2 flex-wrap">

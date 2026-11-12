@@ -163,9 +163,11 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //     顶部输入框 title 只是它的初值，两者都要跟着变。
   //   ⚠ 必须放在 draftTitle 声明之后（否则 TDZ）
   const loc = useLocation()
+  // ★ 入口已用真实标题开标签；这里只在编辑中改名时同步（加载中别用「新笔记」盖掉）
   useEffect(() => {
     if (isEmbedded) return
-    setTabTitle(loc.pathname, draftTitle.trim() || title.trim() || '新笔记')
+    const name = draftTitle.trim() || title.trim()
+    if (name) setTabTitle(loc.pathname, name)
   }, [draftTitle, title, loc.pathname, isEmbedded])
   // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
   const [chars, setChars] = useState(0)

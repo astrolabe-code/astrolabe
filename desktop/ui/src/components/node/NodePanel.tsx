@@ -4,6 +4,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Note } from '../../api/types'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useDeleteNote } from '../../query/notes'
+import { openTab } from '../../lib/tabBus'
 
 import { errorMessage } from '../../api/errors'
 import { personalApi } from '../../api/personal'
@@ -388,12 +389,11 @@ export default function NodePanel({
                 `&from=${encodeURIComponent(fromHere())}`,
             )
           }
-          onEditNote={(n) =>
-            navigate(
-              `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit` +
-                `?from=${encodeURIComponent(fromHere())}`,
-            )
-          }
+          onEditNote={(n) => {
+            const path = `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}/edit`
+            openTab(path, n.title || '编辑笔记')
+            navigate(`${path}?from=${encodeURIComponent(fromHere())}`)
+          }}
           onDeleteNote={setPendingDelete}
           /* ★ 深入：新开空白编辑页，挂成这篇文章的子代 */
           onDeriveNote={(n) =>

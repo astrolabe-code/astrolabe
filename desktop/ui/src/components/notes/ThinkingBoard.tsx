@@ -14,7 +14,7 @@ import {
   FilePlus2,
   Save,
 } from 'lucide-react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 import type { Note, NoteKind } from '../../api/types'
@@ -22,7 +22,7 @@ import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../
 import { personalApi } from '../../api/personal'
 import type { BoardLayout } from '../../api/personal'
 import { ribbonActions } from '../../lib/ribbonBus'
-import { setTabTitle } from '../../lib/tabBus'
+import { openTab } from '../../lib/tabBus'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
@@ -182,12 +182,7 @@ export default function ThinkingBoard({
   const loadedRef = useRef(false)
   // ★ 白板名字：不在工具条里写，跟笔记一样在「保存」弹窗里确认（可改，有默认名）
   const [boardName, setBoardName] = useState('')
-  // ★ 标签栏：白板有自己的真实路由，把白板名写到当前 pathname 的标签上
-  const loc = useLocation()
-  useEffect(() => {
-    if (!open || !boardName) return
-    setTabTitle(loc.pathname, boardName)
-  }, [open, boardName, loc.pathname])
+
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const [saved, setSaved] = useState(false)
@@ -1082,7 +1077,9 @@ export default function ThinkingBoard({
                   }}
                   onDoubleClick={() => {
                     if (linkMode) return
-                    navigate(`/p/${encodeURIComponent(projectRef)}/notes/${n.ref}`)
+                    const path = `/p/${encodeURIComponent(projectRef)}/notes/${n.ref}`
+                    openTab(path, n.title || '笔记')
+                    navigate(path)
                   }}
                   title={linkMode ? '连线模式：点两张卡建立关系' : '拖动排布 · 右下角改大小 · 双击打开'}
                   style={{
@@ -1220,9 +1217,9 @@ export default function ThinkingBoard({
                     }}
                     onDoubleClick={() => {
                       if (linkMode) return
-                      navigate(
-                        `/p/${encodeURIComponent(e.info.project_ref)}/notes/${e.info.ref}`,
-                      )
+                      const path = `/p/${encodeURIComponent(e.info.project_ref)}/notes/${e.info.ref}`
+                      openTab(path, e.info.title || '笔记')
+                      navigate(path)
                     }}
                     title="只读 · 双击打开它所在的项目"
                     style={{

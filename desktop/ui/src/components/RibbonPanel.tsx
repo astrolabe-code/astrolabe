@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 import { personalApi, type BoardItem } from '../api/personal'
 import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
+import { openTab } from '../lib/tabBus'
 
 interface RibbonPanelProps {
   kind: PanelKind
@@ -27,13 +28,19 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   const projectRef = m ? decodeURIComponent(m[1]) : ''
   const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
 
-  /** ★ 打开这个节点挂载的某一块白板：跟笔记一样，直接导航到它自己的路由 */
-  const openBoard = (boardId: string) => {
+  /** ★ 搜索结果跳笔记：命中里就有标题，直接拿它开标签 */
+  const go = (path: string, title?: string) => {
+    if (title) openTab(path, title)
     onClose()
-    nav(
-      `/p/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(boardId)}` +
-        `?node=${curVid ?? 0}`,
-    )
+    nav(path)
+  }
+
+  /** ★ 打开这个节点挂载的某一块白板：列表里就有名字，直接拿它开标签 */
+  const openBoard = (boardId: string, name?: string) => {
+    const path = `/p/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(boardId)}`
+    openTab(path, name || '白板')
+    onClose()
+    nav(`${path}?node=${curVid ?? 0}`)
   }
 
   /** ★★ 新建白板（跟「新建笔记」一样的动作）：后端建一块空白白板并打开它 ⚠ */
@@ -41,7 +48,7 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
     if (curVid == null || !projectRef) return
     try {
       const d = await personalApi.newBoard(projectRef, curVid)
-      openBoard(d.item.id)
+      openBoard(d.item.id, d.item.name)
     } catch {
       /* 新建失败静默 */
     }
@@ -108,7 +115,7 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {kind === 'search' && <SearchPane onNavigate={(p) => { nav(p); onClose() }} />}
+        {kind === 'search' && <SearchPane onNavigate={go} />}
         {kind === 'thinking' && (
           <ThinkingPane projectRef={projectRef} curVid={curVid} onOpen={openBoard} />
         )}
@@ -117,7 +124,7 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   )
 }
 
-function SearchPane({ onNavigate }: { onNavigate: (path: string) => void }) {
+function SearchPane({ onNavigate }: { onNavigate: (path: string, title?: string) => void }) {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<
     { ref: string; title: string; project_ref: string; project: string; snippet: string }[]
@@ -160,7 +167,10 @@ function SearchPane({ onNavigate }: { onNavigate: (path: string) => void }) {
             key={`${h.project_ref}/${h.ref}`}
             type="button"
             onClick={() =>
-              onNavigate(`/p/${encodeURIComponent(h.project_ref)}/notes/${h.ref}`)
+              onNavigate(
+                `/p/${encodeURIComponent(h.project_ref)}/notes/${h.ref}`,
+                h.title || '笔记',
+              )
             }
             style={{
               display: 'block',
@@ -187,7 +197,7 @@ function SearchPane({ onNavigate }: { onNavigate: (path: string) => void }) {
 function ThinkingPane({ projectRef, curVid, onOpen }: {
   projectRef: string
   curVid: number | undefined
-  onOpen: (boardId: string) => void
+  onOpen: (boardId: string, name?: string) => void
 }) {
   const [items, setItems] = useState<BoardItem[] | null>(null)
 
@@ -228,7 +238,7 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
               key={it.id}
               type="button"
               title={it.qname || it.name || it.id}
-              onClick={() => onOpen(it.id)}
+              onClick={() => onOpen(it.id, it.name)}
               style={{
                 display: 'block',
                 width: '100%',

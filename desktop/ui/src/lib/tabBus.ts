@@ -89,7 +89,7 @@ export function replaceTab(oldPath: string, newPath: string, title: string) {
   emit()
 }
 
-/** 笔记页拿到真实标题后覆盖（⛔ 不新增标签） */
+/** 编辑中改了标题时同步标签（标签由入口 openTab 建立，⛔ 不新增） */
 export function setTabTitle(pathname: string, title: string) {
   if (!title) return
   const i = current.findIndex((x) => x.path === pathname)

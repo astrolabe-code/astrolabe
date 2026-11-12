@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { GitBranch, List, ListTree, Lock, Pencil, X } from 'lucide-react'
 import { ApiRequestError, errorMessage } from '../api/errors'
 import { useNote, useUpdateNote } from '../query/notes'
@@ -14,7 +14,6 @@ import AnchorPicker from '../components/notes/AnchorPicker'
 import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
 import { useCollapsed } from '../lib/useCollapsed'
-import { setTabTitle } from '../lib/tabBus'
 
 /** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
 function NoteShell({ children, embedded }: { children: ReactNode; embedded?: NoteEmbeddedProps }) {
@@ -128,14 +127,6 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   // ★★ 改锚点用（`D125`）—— 必须放在 `n` 之后（* 它要 `n.ref`）⚠
   const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
-
-  // ★ 标签栏显示笔记真实标题（key 就是当前路由 pathname）
-  const loc = useLocation()
-  useEffect(() => {
-    if (isEmbedded) return
-    if (n?.title) setTabTitle(loc.pathname, n.title)
-  }, [n?.title, loc.pathname, isEmbedded])
-
 
   // ★★ 可写 = 作者 ∨ 项目成员（* `B207`③）✅
   // ★ 个人版：没有身份判断 —— 能打开就能编辑

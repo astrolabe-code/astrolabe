@@ -99,6 +99,9 @@ export interface NoteEditEmbeddedProps {
 }
 
 export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
+  // ★★ React 即使 <NoteEditPage /> 不写 props，也会传一个空对象 {}（truthy）⚠
+  //   必须按「有没有实际字段」判断，否则独立路由会被误当成内嵌页
+  const isEmbedded = !!embedded && Object.keys(embedded).length > 0
   const { projectRef: routeProject = '', noteId: routeNoteId } = useParams()
   const [sp] = useSearchParams()
   const routerNav = useNavigate()
@@ -138,7 +141,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //       ⇒ 匹配不到任何路由 ⇒ 掉回首页（所有者实测踩到）⚠
   // ★ embedded 时不认 from：保存后应切到容器内的「阅读」标签，
   //   而不是跳回外层来源页
-  const rawFrom = embedded ? '' : sp.get('from') || ''
+  const rawFrom = isEmbedded ? '' : sp.get('from') || ''
   const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? stripBase(rawFrom) : ''
 
   const noteQ = useNote(id)
@@ -161,9 +164,9 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   //   ⚠ 必须放在 draftTitle 声明之后（否则 TDZ）
   const loc = useLocation()
   useEffect(() => {
-    if (embedded) return
+    if (isEmbedded) return
     setTabTitle(loc.pathname, draftTitle.trim() || title.trim() || '新笔记')
-  }, [draftTitle, title, loc.pathname, embedded])
+  }, [draftTitle, title, loc.pathname, isEmbedded])
   // ★ 字数（`D129`）：**停止输入 1 秒**后算一次 —— 所有者明确要求，⛔ 不许每击键算 ⚠
   const [chars, setChars] = useState(0)
   const countTimer = useRef<number | null>(null)
@@ -309,7 +312,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
       const snap = data?.note?.node_snapshot
       if (snap?.vid) markResume(projectRef, snap.vid, snap.name)
       const realTitle = data.note?.title || draftTitle.trim() || '新笔记'
-      if (!embedded) {
+      if (!isEmbedded) {
         // ★ 有 from ⇒ 回原处（* 节点面板）；否则回阅读页
         //   · · 阅读页要用后端重算后的 blocks（* 段评锚点）⚠
         const target = from || `/p/${encodeURIComponent(projectRef)}/notes/${data.note.ref}`
@@ -348,7 +351,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   // ---- 编辑模式：加载 / 失败 ----
   if (editing && noteQ.isLoading) {
     return (
-      <NoteShell embedded={embedded} title="编辑笔记">
+      <NoteShell embedded={isEmbedded ? embedded : undefined} title="编辑笔记">
         <div className="faint" style={{ fontSize: 13 }}>
           加载中…
         </div>
@@ -357,7 +360,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   }
   if (editing && (noteQ.isError || !note)) {
     return (
-      <NoteShell embedded={embedded} title="编辑笔记">
+      <NoteShell embedded={isEmbedded ? embedded : undefined} title="编辑笔记">
         <div className="card" style={{ padding: 24 }}>
           <div className="faint" style={{ fontSize: 12.5 }}>
             这篇笔记打不开 —— 可能已被删除，或者你没有权限。
@@ -380,7 +383,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   const titleText = title || note?.title || '（无标题）'
 
   return (
-    <NoteShell embedded={embedded}>
+    <NoteShell embedded={isEmbedded ? embedded : undefined}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
         {/* ★ 合一页回列表入口：关掉当前 pane，容器回到笔记列表（独立路由不渲染）⚠ */}

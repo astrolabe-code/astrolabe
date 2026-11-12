@@ -107,6 +107,9 @@ export interface NoteEmbeddedProps {
 }
 
 export default function NotePage(embedded?: NoteEmbeddedProps) {
+  // ★★ React 即使 <NotePage /> 不写 props，也会传一个空对象 {}（truthy）⚠
+  //   必须按「有没有实际字段」判断，否则独立路由会被误当成内嵌页
+  const isEmbedded = !!embedded && Object.keys(embedded).length > 0
   const { projectRef: routeProject = '', noteId = '' } = useParams<{ projectRef: string; noteId: string }>()
   // ★ 路由里的这一段现在是**笔记 ref**（* 不是自增 pk）⚠
   // ★ embedded 时改由容器注入（此时 URL 仍是项目/图谱页）
@@ -129,9 +132,9 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   // ★ 标签栏显示笔记真实标题（key 就是当前路由 pathname）
   const loc = useLocation()
   useEffect(() => {
-    if (embedded) return
+    if (isEmbedded) return
     if (n?.title) setTabTitle(loc.pathname, n.title)
-  }, [n?.title, loc.pathname, embedded])
+  }, [n?.title, loc.pathname, isEmbedded])
 
 
   // ★★ 可写 = 作者 ∨ 项目成员（* `B207`③）✅
@@ -141,7 +144,7 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
 
   if (note.isError) {
     return (
-      <NoteShell embedded={embedded}>
+      <NoteShell embedded={isEmbedded ? embedded : undefined}>
         <div className="card" style={{ padding: 28, textAlign: 'center' }}>
           {/* ★ 从搜索结果点进来时，索引可能比库慢半拍 ⇒ 明确告诉他"被移除了" ⚠ */}
           <div style={{ fontSize: 14, fontWeight: 600 }}>
@@ -166,7 +169,7 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
 
   if (note.isLoading || !n) {
     return (
-      <NoteShell embedded={embedded}>
+      <NoteShell embedded={isEmbedded ? embedded : undefined}>
         <div className="faint" style={{ fontSize: 13 }}>加载中…</div>
       </NoteShell>
     )
@@ -189,7 +192,7 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   const displayName = n.created_by_display || n.created_by || ''
 
   return (
-    <NoteShell embedded={embedded}>
+    <NoteShell embedded={isEmbedded ? embedded : undefined}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
         {/* ★ Obsidian 口径：顶栏的大纲开关（高亮 = 面板展开），

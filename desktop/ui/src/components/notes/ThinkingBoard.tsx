@@ -21,7 +21,7 @@ import type { Note, NoteKind } from '../../api/types'
 import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../api/code'
 import { personalApi } from '../../api/personal'
 import type { BoardLayout } from '../../api/personal'
-import { ribbonActions } from '../../lib/ribbonBus'
+import { patchRibbon, ribbonActions } from '../../lib/ribbonBus'
 import { NOTE_KINDS, kindMeta } from './kindMeta'
 
 /**
@@ -181,6 +181,11 @@ export default function ThinkingBoard({
   const loadedRef = useRef(false)
   // ★ 白板名字：不在工具条里写，跟笔记一样在「保存」弹窗里确认（可改，有默认名）
   const [boardName, setBoardName] = useState('')
+  // ★ 顶栏标签：把白板名字报给 ribbonBus（TabBar 据此显示，改名即时跟着变）
+  useEffect(() => {
+    if (!open) return
+    patchRibbon({ activeBoardTitle: boardName || '白板' })
+  }, [open, boardName])
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const [saved, setSaved] = useState(false)

@@ -22,9 +22,34 @@ export interface NotePaneView {
 let view: NotePaneView | null = null
 let seq = 0
 const listeners = new Set<() => void>()
+// ★ 顶栏虚拟标签用的笔记标题：单独一套订阅，避免通知容器重建编辑器 ⚠
+let noteTitle = ''
+const titleListeners = new Set<() => void>()
 
 function emit() {
   listeners.forEach((l) => l())
+}
+
+function emitTitle() {
+  titleListeners.forEach((l) => l())
+}
+
+/** 页面拿到真实标题后上报（只影响 TabBar，不影响内嵌编辑器） */
+export function setNotePaneTitle(title: string) {
+  if (noteTitle === title) return
+  noteTitle = title
+  emitTitle()
+}
+
+export function notePaneTitle(): string {
+  return noteTitle
+}
+
+export function subscribeNotePaneTitle(l: () => void): () => void {
+  titleListeners.add(l)
+  return () => {
+    titleListeners.delete(l)
+  }
 }
 
 /** 页面上是否有工作区容器在监听（决定点卡片是就地打开还是照旧跳全屏页） */
@@ -34,7 +59,9 @@ export function hasNotePane(): boolean {
 
 export function openNotePane(v: Omit<NotePaneView, 'token'>) {
   view = { ...v, token: ++seq }
+  noteTitle = ''
   emit()
+  emitTitle()
 }
 
 /** 容器里两个标签之间切换：会重建页面 */
@@ -46,7 +73,9 @@ export function setNotePaneMode(mode: NotePaneMode) {
 
 export function closeNotePane() {
   view = null
+  noteTitle = ''
   emit()
+  emitTitle()
 }
 
 export function notePaneView(): NotePaneView | null {

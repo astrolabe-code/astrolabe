@@ -15,6 +15,7 @@ import { kindMeta } from '../components/notes/kindMeta'
 import { extractToc, scrollToHeading } from '../lib/toc'
 import { useCollapsed } from '../lib/useCollapsed'
 import { setTabTitle } from '../lib/tabBus'
+import { setNotePaneTitle } from '../lib/notePaneBus'
 
 /** ★ embedded 时用「铺满容器的滚动壳」代替整页 .page 外壳，业务 JSX 原样包裹 */
 function NoteShell({ children, embedded }: { children: ReactNode; embedded?: NoteEmbeddedProps }) {
@@ -126,11 +127,12 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
   const updateNote = useUpdateNote(n?.ref)
   const blocks = note.data?.blocks || []
 
-  // ★ 标签栏显示笔记真实标题（否则只显示推断的「笔记」）
+  // ★ 标签栏显示笔记真实标题：独立路由改 tabBus，内嵌 pane 报给 notePaneBus
   const loc = useLocation()
   useEffect(() => {
-    if (embedded) return  // 容器内嵌时不改顶栏标签（所有者：「标签这个先不管」）
-    if (n?.title) setTabTitle(loc.pathname, n.title)
+    if (!n?.title) return
+    if (embedded) setNotePaneTitle(n.title)
+    else setTabTitle(loc.pathname, n.title)
   }, [n?.title, loc.pathname, embedded])
 
 

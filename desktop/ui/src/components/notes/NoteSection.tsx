@@ -94,6 +94,23 @@ export default function NoteSection({
     return () => clearRibbon(['openThinking', 'createNote', 'currentNodeVid'])
   }, [onCreateNote, nodeId])
 
+  // ★★ 顶栏标签：白板是覆盖层（不改 URL），把当前打开的那块报给 ribbonBus
+  const boardOpen = thinkingBoardId !== null || !!externalBoardOpen
+  const activeBoardId = thinkingBoardId ?? (externalBoardOpen ? String(nodeId) : null)
+  const closeExternalRef = useRef(onExternalBoardClose)
+  closeExternalRef.current = onExternalBoardClose
+  useEffect(() => {
+    if (!boardOpen || activeBoardId == null) return
+    patchRibbon({
+      activeBoardKey: `board:${projectRef}:${activeBoardId}`,
+      closeThinking: () => {
+        setThinkingBoardId(null)
+        closeExternalRef.current?.()
+      },
+    })
+    return () => clearRibbon(['activeBoardKey', 'closeThinking'])
+  }, [boardOpen, activeBoardId, projectRef])
+
   if (notes.isError) {
     return (
       <div className="text-sm" style={{ color: 'var(--err)' }}>
@@ -272,10 +289,10 @@ export default function NoteSection({
 
       {/* ★★★ 思考模式白板（* fixed 覆盖层，* 位置按节点存 localStorage）⚠ */}
       <ThinkingBoard
-        open={thinkingBoardId !== null || !!externalBoardOpen}
+        open={boardOpen}
         projectRef={projectRef}
         nodeId={nodeId}
-        boardId={thinkingBoardId ?? String(nodeId)}
+        boardId={activeBoardId ?? String(nodeId)}
         notes={notes.data || []}
         focusCardId={focusCardId}
         onClose={() => {

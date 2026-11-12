@@ -173,13 +173,15 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
     }
   }, [projectRef])
 
-  /** ★ 点列表项：跳到那个节点并自动开白板（复用 `?think=1&node=<vid>` 深链） */
-  const openBoard = (vid: number) => {
+  /** ★ 打开当前节点挂载的白板（优先直接开当前 NoteSection，未注册时走深链） */
+  const openCurrentBoard = () => {
+    const a = ribbonActions().openThinking
     onClose()
-    nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${vid}`)
+    if (a) a()
+    else if (curVid != null) nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${curVid}`)
   }
 
-  /** 当前节点的白板条目（在全部列表里找；没保存过布局则 undefined） */
+  /** 当前节点挂载的白板（没保存过布局则 undefined） */
   const cur = curVid != null ? items?.find((it) => it.vid === curVid) : undefined
 
   return (
@@ -188,74 +190,46 @@ function ThinkingPane({ onClose }: { onClose: () => void }) {
         type="button"
         className="code-icon-btn"
         style={{ border: '1px solid var(--card-border)' }}
-        onClick={() => {
-          ribbonActions().openThinking?.()
-          onClose()
-        }}
+        onClick={openCurrentBoard}
       >
         打开思考模式白板
       </button>
 
-      {/* ★ 当前节点的白板：随选中节点变化（所有者：「随着选择的节点不同而变化」）⚠ */}
-      {curVid != null && (
-        <div style={{ marginTop: 14 }}>
-          <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
-            当前节点的白板
-          </div>
-          <div style={{ padding: '8px 10px', border: '1px solid var(--card-border)', borderRadius: 6 }}>
+      {/* ★★ 只显示**当前选中节点**挂载的白板（所有者：「点了哪个节点，就显示挂载这个节点上的白板」）⚠
+          节点一换，这一项立刻跟着换；没保存过就提示，不再列全项目白板 */}
+      <div style={{ marginTop: 14 }}>
+        <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
+          这个节点上的白板
+        </div>
+        {curVid == null ? (
+          <Hint>先在节点列表里选中一个节点</Hint>
+        ) : items === null ? null : cur ? (
+          <button
+            type="button"
+            title={cur.qname || cur.name}
+            onClick={openCurrentBoard}
+            style={{
+              display: 'block',
+              width: '100%',
+              textAlign: 'left',
+              padding: '7px 8px',
+              border: '1px solid var(--card-border)',
+              borderRadius: 6,
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+          >
             <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-              {cur?.name || `节点 ${curVid}`}
+              {cur.name || `节点 ${curVid}`}
             </div>
-            {items === null ? null : (
-              <div className="faint" style={{ fontSize: 11 }}>
-                {cur
-                  ? `已保存过布局${cur.mtime ? ` · ${new Date(cur.mtime * 1000).toLocaleString()}` : ''}`
-                  : '这块白板还没保存过布局'}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {projectRef && (
-        <div style={{ marginTop: 14 }}>
-          <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
-            项目里的全部白板
-          </div>
-          {items === null ? null : items.length === 0 ? (
-            <Hint>还没有保存过白板</Hint>
-          ) : (
-            items.map((it) => (
-              <button
-                key={it.vid}
-                type="button"
-                title={it.qname || it.name}
-                onClick={() => openBoard(it.vid)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '7px 8px',
-                  marginBottom: 4,
-                  border: `1px solid ${it.vid === curVid ? 'var(--accent, #2563eb)' : 'var(--card-border)'}`,
-                  borderRadius: 6,
-                  background: 'transparent',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-                  {it.name || `节点 ${it.vid}`}
-                </div>
-                {it.qname && (
-                  <div className="faint" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {it.qname}
-                  </div>
-                )}
-              </button>
-            ))
-          )}
-        </div>
-      )}
+            <div className="faint" style={{ fontSize: 11 }}>
+              {cur.mtime ? `保存于 ${new Date(cur.mtime * 1000).toLocaleString()}` : '已保存过布局'}
+            </div>
+          </button>
+        ) : (
+          <Hint>这个节点还没有白板，点上方按钮打开并保存</Hint>
+        )}
+      </div>
     </div>
   )
 }

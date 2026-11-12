@@ -5,6 +5,7 @@ import { PanelLeft, X } from 'lucide-react'
 import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
 import { patchRibbon, clearRibbon, ribbonActions } from '../../lib/ribbonBus'
+import { openTab } from '../../lib/tabBus'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useNotes } from '../../query/notes'
 import NoteEditPage from '../../pages/NoteEditPage'
@@ -117,6 +118,26 @@ export default function CodeWorkspace({
     else if (boardView) setTab('board')
   }, [noteView?.ref, noteView?.mode, boardView?.boardId])
 
+  const hasNoteView = !!noteView
+  const hasBoardView = !!boardView
+
+  // ★★ 「阅读」tab：URL 没指定笔记时，自动打开**当前选中节点的第一篇笔记**；
+  //   这个节点没有笔记 ⇒ 阅读页留空（⛔ 不回退到笔记列表）
+  useEffect(() => {
+    if (tab !== 'read' || hasNoteView || !notesQ.data) return
+    const vid = node?.vid ?? ribbonActions().currentNodeVid
+    if (vid == null) return
+    const first = notesQ.data.find((n) => n.node_id === vid)
+    if (!first) {
+      // 还停在白板路由就回项目页，保持 URL 与空白阅读页一致
+      if (hasBoardView) nav(`/p/${encodeURIComponent(projectRef)}`)
+      return
+    }
+    const path = `/p/${encodeURIComponent(projectRef)}/notes/${first.ref}`
+    openTab(path, first.title || '笔记')
+    nav(path)
+  }, [tab, hasNoteView, hasBoardView, notesQ.data, node?.vid, projectRef, nav])
+
   /** ★ 点 tab：需要内容的两个视图走真实路由，其余回到项目页 */
   const pickTab = (k: Tab) => {
     if (k === 'board' && !boardView) {
@@ -124,6 +145,12 @@ export default function CodeWorkspace({
       const vid = node?.vid ?? ribbonActions().currentNodeVid ?? 0
       nav(`/p/${encodeURIComponent(projectRef)}/board/${vid}?node=${vid}`)
       setTab('board')
+      return
+    }
+    if (k === 'read' && !noteView) {
+      // 上面的 effect 会打开第一篇笔记（或留空），这里只切 tab
+      setTab('read')
+      setTreeOpen(false)
       return
     }
     const stayOnUrl = (k === 'read' && !!noteView) || (k === 'board' && !!boardView)
@@ -134,7 +161,7 @@ export default function CodeWorkspace({
     setTreeOpen(k === 'code')
   }
 
-  // 笔记列表（notes / 阅读未指定笔记 / 白板未指定时共用）
+  // 笔记列表（notes / 白板未指定时共用；阅读没笔记是空白，不共用）
   const listPane = (
     <div
       style={{
@@ -470,7 +497,9 @@ export default function CodeWorkspace({
                 toolsSlotId={toolsSlotId}
                 onBackToList={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
               />
-            ) : listPane
+            ) : (
+              <div style={{ flex: 1, minHeight: 0 }} />
+            )
           ) : tab === 'board' ? (
             boardView ? (
               <ThinkingBoard

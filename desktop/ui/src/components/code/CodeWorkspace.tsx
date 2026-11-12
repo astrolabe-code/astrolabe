@@ -4,8 +4,7 @@ import { PanelLeft, X } from 'lucide-react'
 
 import type { FileTreeData, SourceFile } from '../../api/code'
 import { personalApi } from '../../api/personal'
-import { patchRibbon, clearRibbon, ribbonActions } from '../../lib/ribbonBus'
-import { openTab } from '../../lib/tabBus'
+import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useNotes } from '../../query/notes'
 import NoteEditPage from '../../pages/NoteEditPage'
@@ -27,7 +26,7 @@ interface CodeWorkspaceProps {
   initialTab?: Tab
   /** ★ 笔记页内容：调用方可贴自己的 NodePanel（右栏要保留学习路径等能力） */
   notePanel?: ReactNode
-  /** ★ URL 指定要在这个框里显示的笔记（阅读 / 编辑 / 新建）；不传则显示笔记列表 */
+  /** ★ URL 指定内容区显示的笔记（阅读 / 编辑 / 新建） */
   noteView?: {
     mode: 'read' | 'edit'
     ref: string | null
@@ -42,14 +41,13 @@ interface CodeWorkspaceProps {
   }
 }
 
-/** ★ 5 个视图：代码 / 笔记列表 / 阅读（笔记内容） / 白板 / 仿写 */
-type Tab = 'code' | 'notes' | 'read' | 'board' | 'imitation'
+/** ★ 4 个视图：代码 / 笔记（文件树） / 内容（Obsidian 的内容区） / 仿写 */
+type Tab = 'code' | 'notes' | 'content' | 'imitation'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'code', label: '代码' },
   { key: 'notes', label: '笔记' },
-  { key: 'read', label: '阅读' },
-  { key: 'board', label: '白板' },
+  { key: 'content', label: '内容' },
   { key: 'imitation', label: '仿写' },
 ]
 
@@ -112,56 +110,19 @@ export default function CodeWorkspace({
   // ★ 白板里的卡片就是笔记，用和笔记列表同一份数据
   const notesQ = useNotes(projectRef)
 
-  // ★★ URL 决定「阅读 / 白板」两个视图：打开笔记或白板时自动切到对应 tab
+  // ★★ 唯一的状态流（单向）：URL 打开了笔记 / 白板 ⇒ 内部视图自动回到「内容」。
+  //    ⛔ 反向一律没有：手动切 tab 不改 URL、不建标签、不自动打开任何文件
   useEffect(() => {
-    if (noteView) setTab('read')
-    else if (boardView) setTab('board')
+    if (noteView || boardView) setTab('content')
   }, [noteView?.ref, noteView?.mode, boardView?.boardId])
 
-  const hasNoteView = !!noteView
-  const hasBoardView = !!boardView
-
-  // ★★ 「阅读」tab：URL 没指定笔记时，自动打开**当前选中节点的第一篇笔记**；
-  //   这个节点没有笔记 ⇒ 阅读页留空（⛔ 不回退到笔记列表）
-  useEffect(() => {
-    if (tab !== 'read' || hasNoteView || !notesQ.data) return
-    const vid = node?.vid ?? ribbonActions().currentNodeVid
-    if (vid == null) return
-    const first = notesQ.data.find((n) => n.node_id === vid)
-    if (!first) {
-      // 还停在白板路由就回项目页，保持 URL 与空白阅读页一致
-      if (hasBoardView) nav(`/p/${encodeURIComponent(projectRef)}`)
-      return
-    }
-    const path = `/p/${encodeURIComponent(projectRef)}/notes/${first.ref}`
-    openTab(path, first.title || '笔记')
-    nav(path)
-  }, [tab, hasNoteView, hasBoardView, notesQ.data, node?.vid, projectRef, nav])
-
-  /** ★ 点 tab：需要内容的两个视图走真实路由，其余回到项目页 */
+  /** ★ 点 tab 只是切换本地面板，不参与「打开了什么」 */
   const pickTab = (k: Tab) => {
-    if (k === 'board' && !boardView) {
-      // 当前节点的默认白板（每个节点最早那块），没有也能直接建
-      const vid = node?.vid ?? ribbonActions().currentNodeVid ?? 0
-      nav(`/p/${encodeURIComponent(projectRef)}/board/${vid}?node=${vid}`)
-      setTab('board')
-      return
-    }
-    if (k === 'read' && !noteView) {
-      // 上面的 effect 会打开第一篇笔记（或留空），这里只切 tab
-      setTab('read')
-      setTreeOpen(false)
-      return
-    }
-    const stayOnUrl = (k === 'read' && !!noteView) || (k === 'board' && !!boardView)
-    if (!stayOnUrl && (noteView || boardView)) {
-      nav(`/p/${encodeURIComponent(projectRef)}`)
-    }
     setTab(k)
     setTreeOpen(k === 'code')
   }
 
-  // 笔记列表（notes / 白板未指定时共用；阅读没笔记是空白，不共用）
+  // 「笔记」tab 的文件树面板
   const listPane = (
     <div
       style={{
@@ -175,6 +136,8 @@ export default function CodeWorkspace({
       {notePanel ?? <NodePanel projectRef={projectRef} node={node} canWrite flat hideInfo />}
     </div>
   )
+  // ★ 没有打开文件（激活标签不是笔记/白板）⇒ 内容区空白，跟 Obsidian 一样
+  const emptyPane = <div style={{ flex: 1, minHeight: 0 }} />
   const [treeOpen, setTreeOpen] = useState(() => {
     // ★ 文件树跟着「代码」页走：初始停在笔记就不显示
     if (initialTab === 'notes') return false
@@ -484,7 +447,7 @@ export default function CodeWorkspace({
             </>
           ) : tab === 'imitation' ? (
             <ImitationPanel projectRef={projectRef} node={node} />
-          ) : tab === 'read' ? (
+          ) : tab === 'content' ? (
             noteView ? (
               <NoteEditPage
                 key={`${noteView.ref ?? 'new'}-${noteView.mode}`}
@@ -497,11 +460,7 @@ export default function CodeWorkspace({
                 toolsSlotId={toolsSlotId}
                 onBackToList={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
               />
-            ) : (
-              <div style={{ flex: 1, minHeight: 0 }} />
-            )
-          ) : tab === 'board' ? (
-            boardView ? (
+            ) : boardView ? (
               <ThinkingBoard
                 open
                 projectRef={projectRef}
@@ -511,7 +470,9 @@ export default function CodeWorkspace({
                 focusCardId={boardView.focus}
                 onClose={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
               />
-            ) : listPane
+            ) : (
+              emptyPane
+            )
           ) : (
             listPane
           )}

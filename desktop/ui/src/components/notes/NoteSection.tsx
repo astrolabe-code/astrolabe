@@ -70,8 +70,8 @@ export default function NoteSection({
 }: NoteSectionProps) {
   // ★★★ 当前选中的「盒子」：* 'all' = 全部（按分组展示）；* 否则只看这一类 ⚠
   const [activeKind, setActiveKind] = useState<NoteKind | 'all'>('all')
-  // ★★★ **思考模式**：* 白布上自由排布卡片（* 所有者要求）⚠
-  const [thinkingOpen, setThinkingOpen] = useState(false)
+  // ★★★ **思考模式**：打开的白板 id（null=没开；一个节点可挂多块白板）⚠
+  const [thinkingBoardId, setThinkingBoardId] = useState<string | null>(null)
   // ★ 批量改公开 / 私有（* 所有者：勾选排除，其余批量改）⚠
   const notes = useNotes(projectRef)  // 取当前项目全部笔记
 
@@ -81,13 +81,13 @@ export default function NoteSection({
     if (!autoThink || autoOpened.current) return
     if (notes.isLoading) return
     autoOpened.current = true
-    setThinkingOpen(true)
-  }, [autoThink, notes.isLoading])
+    setThinkingBoardId(String(nodeId))
+  }, [autoThink, notes.isLoading, nodeId])
 
   // ★★ 思考模式 / 写笔记交给全局 ribbon（⛔ 内容区不再放功能按钮）
   useEffect(() => {
     patchRibbon({
-      openThinking: () => setThinkingOpen(true),
+      openThinking: (boardId?: string) => setThinkingBoardId(boardId || String(nodeId)),
       createNote: onCreateNote,
       currentNodeVid: nodeId,
     })
@@ -272,13 +272,14 @@ export default function NoteSection({
 
       {/* ★★★ 思考模式白板（* fixed 覆盖层，* 位置按节点存 localStorage）⚠ */}
       <ThinkingBoard
-        open={thinkingOpen || !!externalBoardOpen}
+        open={thinkingBoardId !== null || !!externalBoardOpen}
         projectRef={projectRef}
         nodeId={nodeId}
+        boardId={thinkingBoardId ?? String(nodeId)}
         notes={notes.data || []}
         focusCardId={focusCardId}
         onClose={() => {
-          setThinkingOpen(false)
+          setThinkingBoardId(null)
           onExternalBoardClose?.()
         }}
       />

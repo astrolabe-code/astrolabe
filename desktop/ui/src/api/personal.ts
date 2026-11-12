@@ -140,6 +140,17 @@ export interface BoardLayout {
   canvas?: { w: number; h: number }
 }
 
+/** ★ 一块白板（挂在一个节点上；一个节点可以有多块，跟笔记一样） */
+export interface BoardItem {
+  /** 白板 id：<vid>_<毫秒时间戳>；历史白板是纯数字 <vid> */
+  id: string
+  vid: number
+  name?: string
+  qname?: string
+  file_path?: string
+  mtime: number
+}
+
 export const personalApi = {
   // ---- 项目
   listProjects: () => get<{ items: any[] }>('/api/projects/'),
@@ -323,17 +334,22 @@ export const personalApi = {
       `/api/cards/reference/?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
     ),
 
-  // ★★★ 思考白板布局（存后端，跟笔记一样按节点持久化）
-  board: (projectRef: string, vid: number) =>
+  // ★★★ 思考白板（存后端；按**白板 id** 读写，一个节点可挂多块）
+  board: (projectRef: string, boardId: string) =>
     get<BoardLayout | null>(
-      `/api/projects/${encodeURIComponent(projectRef)}/board/${vid}/`,
+      `/api/projects/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(boardId)}/`,
     ),
-  saveBoard: (projectRef: string, vid: number, layout: BoardLayout) =>
-    put(`/api/projects/${encodeURIComponent(projectRef)}/board/${vid}/`, { layout }),
+  saveBoard: (projectRef: string, boardId: string, layout: BoardLayout) =>
+    put(`/api/projects/${encodeURIComponent(projectRef)}/board/${encodeURIComponent(boardId)}/`, { layout }),
 
-  /** ★ 项目里保存过白板的节点列表（思考模式面板用；节点名后端已补） */
+  /** ★ 新建一块空白白板，挂到指定节点（跟「新建笔记」一样） */
+  newBoard: (projectRef: string, vid: number) =>
+    post<{ item: BoardItem }>(
+      `/api/projects/${encodeURIComponent(projectRef)}/boards/`,
+      { node_vid: vid },
+    ),
+
+  /** ★ 项目里的白板列表（思考模式面板按 vid 过滤；节点名后端已补） */
   listBoards: (projectRef: string) =>
-    get<{
-      items: { vid: number; name?: string; qname?: string; file_path?: string; mtime: number }[]
-    }>(`/api/projects/${encodeURIComponent(projectRef)}/boards/`),
+    get<{ items: BoardItem[] }>(`/api/projects/${encodeURIComponent(projectRef)}/boards/`),
 }

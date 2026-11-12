@@ -13,7 +13,8 @@ export interface RibbonActions {
   toggleImmersive?: () => void
   toggleFullscreen?: () => void
   toggleCanvasFullscreen?: () => void
-  openThinking?: () => void
+  /** ★ 打开白板：传白板 id 打开指定那块，不传则打开该节点的默认白板 */
+  openThinking?: (boardId?: string) => void
   /** ★ 当前选中节点的 vid（NoteSection 注册；思考面板随节点切换变化用）⚠ */
   currentNodeVid?: number
   /** ★ 白板打开时由 App 注册：收起左侧功能面板 */

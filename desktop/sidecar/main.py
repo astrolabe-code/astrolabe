@@ -137,7 +137,7 @@ R_CARDS = re.compile(r"^/api/cards/$")
 R_CARD_PARENT = re.compile(r"^/api/cards/parent/$")
 R_CARD_REF = re.compile(r"^/api/cards/reference/$")
 R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
-R_BOARD = re.compile(r"^/api/projects/([^/]+)/board/(\d+)/$")
+R_BOARD = re.compile(r"^/api/projects/([^/]+)/board/([^/]+)/$")
 R_BOARDS = re.compile(r"^/api/projects/([^/]+)/boards/$")
 
 
@@ -602,29 +602,36 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except imitation.ImitationError as exc:
             return bad(f"{exc.message}（{exc.code}）", 400)
 
-    # ★★★ 思考白板布局：一个节点一块画布，文件式 JSON 持久化（见 sidecar/board.py）
+    # ★★★ 思考白板：一个节点可挂多块白板，按**白板 id** 读写（见 sidecar/board.py）
     m = R_BOARD.match(path)
     if m:
         entry = projectstore.get(m.group(1))
         if not entry or not entry.get("data"):
             return bad("项目不存在", 404)
         try:
-            vid = int(m.group(2))
+            bid = m.group(2)
             if method == "GET":
-                return ok(board.load(entry["data"], vid))
+                return ok(board.load(entry["data"], bid))
             if method in ("POST", "PUT"):
                 layout = body.get("layout") or {}
-                return ok(board.save(entry["data"], vid, layout))
+                return ok(board.save(entry["data"], bid, layout))
             return bad("不支持的方法", 405)
         except Exception as exc:
             return bad(str(exc), 400)
 
-    # ★★★ 白板列表：面板「思考模式」下显示有哪些白板（节点名查索引补上）⚠
+    # ★★★ 白板列表 / 新建白板（面板「思考模式」用；节点名查索引补上）⚠
     m = R_BOARDS.match(path)
     if m:
         entry = projectstore.get(m.group(1))
         if not entry or not entry.get("data"):
             return bad("项目不存在", 404)
+        if method == "POST":
+            # ★ 新建一块空白白板，挂到指定节点（跟「新建笔记」一样的动作）
+            try:
+                vid = int(body.get("node_vid") or body.get("vid") or 0)
+                return ok({"item": board.new_board(entry["data"], vid)})
+            except Exception as exc:
+                return bad(str(exc), 400)
         if method != "GET":
             return bad("不支持的方法", 405)
         items = board.list_boards(entry["data"])

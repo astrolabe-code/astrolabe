@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import { Search, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-import { personalApi } from '../api/personal'
+import { personalApi, type BoardItem } from '../api/personal'
 import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
 
 interface RibbonPanelProps {
@@ -27,12 +27,23 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   const projectRef = m ? decodeURIComponent(m[1]) : ''
   const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
 
-  /** ★ 打开当前节点挂载的白板（标题栏按钮 / 面板里的白板项共用） */
-  const openBoard = () => {
+  /** ★ 打开这个节点挂载的某一块白板（面板列表项用） */
+  const openBoard = (boardId: string) => {
     const a = ribbonActions().openThinking
     onClose()
-    if (a) a()
+    if (a) a(boardId)
     else if (curVid != null) nav(`/p/${encodeURIComponent(projectRef)}?think=1&node=${curVid}`)
+  }
+
+  /** ★★ 新建白板（跟「新建笔记」一样的动作）：后端建一块空白白板并打开它 ⚠ */
+  const createBoard = async () => {
+    if (curVid == null || !projectRef) return
+    try {
+      const d = await personalApi.newBoard(projectRef, curVid)
+      openBoard(d.item.id)
+    } catch {
+      /* 新建失败静默 */
+    }
   }
 
   return (
@@ -59,11 +70,11 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
       >
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>{TITLE[kind]}</span>
         {kind === 'thinking' ? (
-          /* ★ 所有者：「把打开思考模式的按钮移到右上角取代关闭按钮，关闭按钮不要了」⚠ */
+          /* ★ 所有者：「不是打开思考模式，而是新建白板，逻辑跟笔记是一样的」⚠ */
           <button
             type="button"
-            onClick={openBoard}
-            title="打开当前节点的白板"
+            onClick={createBoard}
+            title="在当前节点新建一块白板"
             style={{
               marginLeft: 'auto',
               padding: '3px 8px',
@@ -75,7 +86,7 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
               cursor: 'pointer',
             }}
           >
-            打开思考模式白板
+            新建白板
           </button>
         ) : (
           <button
@@ -172,19 +183,10 @@ function SearchPane({ onNavigate }: { onNavigate: (path: string) => void }) {
   )
 }
 
-/** ★ 白板列表项（后端 boards/*.json，节点名已由边车查索引补上） */
-interface BoardItem {
-  vid: number
-  name?: string
-  qname?: string
-  file_path?: string
-  mtime: number
-}
-
 function ThinkingPane({ projectRef, curVid, onOpen }: {
   projectRef: string
   curVid: number | undefined
-  onOpen: () => void
+  onOpen: (boardId: string) => void
 }) {
   const [items, setItems] = useState<BoardItem[] | null>(null)
 
@@ -204,44 +206,48 @@ function ThinkingPane({ projectRef, curVid, onOpen }: {
     }
   }, [projectRef])
 
-  /** 当前节点挂载的白板（没保存过布局则 undefined） */
-  const cur = curVid != null ? items?.find((it) => it.vid === curVid) : undefined
+  /** 当前节点挂载的**所有**白板（按修改时间新→旧；一个节点可以有多块） */
+  const boards = curVid != null ? (items ?? []).filter((it) => it.vid === curVid) : []
 
   return (
     <div style={{ padding: 12 }}>
       {/* ★★ 只显示**当前选中节点**挂载的白板（所有者：「点了哪个节点，就显示挂载这个节点上的白板」）⚠
-          节点一换，这一项立刻跟着换；没保存过就提示，不再列全项目白板 */}
+          一个节点可以有多块：右上角「新建白板」创建，点某一块打开编辑，跟笔记一样 */}
       <div>
         <div className="faint" style={{ fontSize: 11, marginBottom: 6 }}>
           这个节点上的白板
         </div>
         {curVid == null ? (
           <Hint>先在节点列表里选中一个节点</Hint>
-        ) : items === null ? null : cur ? (
-          <button
-            type="button"
-            title={cur.qname || cur.name}
-            onClick={onOpen}
-            style={{
-              display: 'block',
-              width: '100%',
-              textAlign: 'left',
-              padding: '7px 8px',
-              border: '1px solid var(--card-border)',
-              borderRadius: 6,
-              background: 'transparent',
-              cursor: 'pointer',
-            }}
-          >
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-              {cur.name || `节点 ${curVid}`}
-            </div>
-            <div className="faint" style={{ fontSize: 11 }}>
-              {cur.mtime ? `保存于 ${new Date(cur.mtime * 1000).toLocaleString()}` : '已保存过布局'}
-            </div>
-          </button>
+        ) : items === null ? null : boards.length === 0 ? (
+          <Hint>这个节点还没有白板，点右上角「新建白板」</Hint>
         ) : (
-          <Hint>这个节点还没有白板，点右上角按钮打开并保存</Hint>
+          boards.map((it, i) => (
+            <button
+              key={it.id}
+              type="button"
+              title={it.qname || it.name || it.id}
+              onClick={() => onOpen(it.id)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '7px 8px',
+                marginBottom: 4,
+                border: '1px solid var(--card-border)',
+                borderRadius: 6,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                白板 {boards.length - i}{it.name ? ` · ${it.name}` : ''}
+              </div>
+              <div className="faint" style={{ fontSize: 11 }}>
+                {it.mtime ? `保存于 ${new Date(it.mtime * 1000).toLocaleString()}` : '空白白板'}
+              </div>
+            </button>
+          ))
         )}
       </div>
     </div>

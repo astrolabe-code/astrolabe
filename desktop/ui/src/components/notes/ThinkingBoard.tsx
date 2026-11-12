@@ -49,6 +49,8 @@ interface ThinkingBoardProps {
   open: boolean
   projectRef: string
   nodeId: number
+  /** ★ 白板 id（一个节点可挂多块；默认白板就是 String(nodeId)） */
+  boardId: string
   notes: Note[]
   /** ★ 从卡片「链」进来：自动展示这张卡的父代 / 子代 / 引用，⛔ 不用用户自己加 */
   focusCardId?: string
@@ -96,6 +98,7 @@ export default function ThinkingBoard({
   open,
   projectRef,
   nodeId,
+  boardId,
   notes,
   focusCardId,
   onClose,
@@ -178,7 +181,7 @@ export default function ThinkingBoard({
   const [saved, setSaved] = useState(false)
   const handleSave = () => {
     personalApi
-      .saveBoard(projectRef, nodeId, { pos, board: [...onBoard], sizes, canvas })
+      .saveBoard(projectRef, boardId, { pos, board: [...onBoard], sizes, canvas })
       .then(() => {
         setSaved(true)
         window.setTimeout(() => setSaved(false), 1600)
@@ -187,11 +190,12 @@ export default function ThinkingBoard({
   }
   useEffect(() => {
     if (!open) return
+    loadedRef.current = false
     let alive = true
     ;(async () => {
       let layout: BoardLayout | null = null
       try {
-        layout = await personalApi.board(projectRef, nodeId)
+        layout = await personalApi.board(projectRef, boardId)
       } catch {
         layout = null
       }
@@ -239,18 +243,18 @@ export default function ThinkingBoard({
     return () => {
       alive = false
     }
-  }, [open, nodeId, notes])
+  }, [open, nodeId, notes, boardId])
 
   // ★★★ 布局变更后防抖写回后端（替代原 localStorage 即时写）
   useEffect(() => {
     if (!loadedRef.current) return
     const t = setTimeout(() => {
       personalApi
-        .saveBoard(projectRef, nodeId, { pos, board: [...onBoard], sizes, canvas })
+        .saveBoard(projectRef, boardId, { pos, board: [...onBoard], sizes, canvas })
         .catch(() => {})
     }, 400)
     return () => clearTimeout(t)
-  }, [pos, sizes, onBoard, canvas, projectRef, nodeId])
+  }, [pos, sizes, onBoard, canvas, projectRef, boardId])
 
   /** 本节点笔记 + 外来卡，统一用全局卡片 id 认人 */
   const globalIdOf = (local: number): string | null => {

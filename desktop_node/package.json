@@ -1,0 +1,44 @@
+{
+  "name": "astrolabe-desktop-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Astrolabe 个人版 · Node 全栈（Electron + SQLite + React）",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite",
+    "start": "electron .",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "dist": "npm run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "lucide-react": "^1.43.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  },
+  "build": {
+    "appId": "app.astrolabe.node",
+    "productName": "Astrolabe",
+    "directories": { "output": "dist_electron" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "backend/**/*",
+      "shared/**/*",
+      "ui/dist/**/*"
+    ]
+  }
+}

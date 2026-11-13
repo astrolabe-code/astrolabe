@@ -93,6 +93,22 @@ export interface ParseReport {
   files: number
 }
 
+/** 仿写：一个节点下的多份默写 / 重写代码卡 */
+export interface ImitationItem {
+  id: string
+  nodeVid: number
+  title: string
+  ext: string
+  mtime: number
+}
+
+export interface ImitationDoc {
+  id: string
+  title: string
+  ext: string
+  text: string
+}
+
 export interface Api {
   'window.minimize': () => void
   'window.toggleMaximize': () => void
@@ -112,6 +128,12 @@ export interface Api {
   'boards.create': (projectRef: string, nodeVid: number, name: string) => BoardItem
   'boards.save': (projectRef: string, id: string, layout: BoardLayoutData, name?: string) => BoardItem
   'boards.remove': (projectRef: string, id: string) => void
+
+  'imitation.list': (projectRef: string, nodeVid: number) => ImitationItem[]
+  'imitation.get': (projectRef: string, id: string) => ImitationDoc
+  'imitation.create': (projectRef: string, nodeVid: number, ext: string) => ImitationItem
+  'imitation.save': (projectRef: string, id: string, text: string, title?: string) => ImitationItem
+  'imitation.remove': (projectRef: string, id: string) => void
 
   'graph.nodes': (projectRef: string) => GraphNode[]
   'graph.full': (projectRef: string) => Graph

@@ -8,6 +8,7 @@ import NoteView from '../components/NoteView'
 import BoardListView from '../components/BoardListView'
 import BoardView from '../components/BoardView'
 import CodePane from '../components/CodePane'
+import ImitationPanel from '../components/ImitationPanel'
 import type { Project } from '../../../shared/contract'
 
 type Tab = 'code' | 'notes' | 'content' | 'imitation'
@@ -143,7 +144,7 @@ export default function ProjectPage() {
             ) : tab === 'notes' ? (
               <NoteListView projectRef={ref} nodeVid={selected.vid} onOpen={openNote} />
             ) : tab === 'imitation' ? (
-              <div className="pane-empty faint">仿写</div>
+              <ImitationPanel projectRef={ref} nodeVid={selected.vid} />
             ) : noteRef ? (
               <NoteView projectRef={ref} noteRef={noteRef} />
             ) : boardId ? (

@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS board (
   layout TEXT NOT NULL DEFAULT '{}', mtime REAL NOT NULL DEFAULT 0, deleted_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_board_node ON board (node_vid);
+CREATE TABLE IF NOT EXISTS imitation (
+  id TEXT PRIMARY KEY, node_vid INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '',
+  ext TEXT NOT NULL DEFAULT 'txt', text TEXT NOT NULL DEFAULT '',
+  mtime REAL NOT NULL DEFAULT 0, deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_imitation_node ON imitation (node_vid);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
 

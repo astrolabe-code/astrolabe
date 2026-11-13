@@ -1,6 +1,7 @@
 const store = require('./store')
 const notes = require('./notes')
 const boards = require('./boards')
+const imitation = require('./imitation')
 const source = require('./source')
 
 /** @type {import('../shared/contract').BackendHandlers} */
@@ -19,6 +20,12 @@ const handlers = {
   'boards.create': (ref, nodeVid, name) => boards.create(ref, nodeVid, name),
   'boards.save': (ref, id, layout, name) => boards.save(ref, id, layout, name),
   'boards.remove': (ref, id) => boards.remove(ref, id),
+
+  'imitation.list': (ref, nodeVid) => imitation.list(ref, nodeVid),
+  'imitation.get': (ref, id) => imitation.get(ref, id),
+  'imitation.create': (ref, nodeVid, ext) => imitation.create(ref, nodeVid, ext),
+  'imitation.save': (ref, id, text, title) => imitation.save(ref, id, text, title),
+  'imitation.remove': (ref, id) => imitation.remove(ref, id),
 
   'graph.nodes': (ref) => store.graphNodes(ref),
   'graph.full': (ref) => {

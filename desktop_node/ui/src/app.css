@@ -432,14 +432,55 @@ button {
   background: var(--accent-dim);
   color: var(--text-main);
 }
-.code-text {
+.code-view {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.code-view-bar {
+  flex: none;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 11px;
+}
+.code-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: auto;
+  background: var(--card);
+}
+.code-placeholder {
+  padding: 20px;
+  font-size: 12.5px;
+}
+.code-gutter {
+  flex: none;
+  position: sticky;
+  left: 0;
+  padding: 16px 8px 16px 12px;
+  border-right: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--text-faint);
+  text-align: right;
+  font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: none;
+}
+.code-scroll .code-text {
+  flex: none;
   margin: 0;
   padding: 16px;
-  overflow: auto;
   font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre;
+  tab-size: 2;
+}
+.filetree-empty {
+  padding: 8px 12px;
+  font-size: 11px;
+}
+.token.macro {
+  color: #a16207;
 }
 
 .modal-mask {

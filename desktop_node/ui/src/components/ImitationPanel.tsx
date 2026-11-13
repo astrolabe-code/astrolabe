@@ -2,49 +2,9 @@ import { useEffect, useState } from 'react'
 import Editor from 'react-simple-code-editor'
 import { Plus, Trash2 } from 'lucide-react'
 import { invoke } from '../api'
+import { highlightCode } from '../lib/highlight'
 import ConfirmDialog from './ConfirmDialog'
 import type { ImitationItem } from '../../../shared/contract'
-
-/** 通用关键字集合：覆盖仿写常见的 C/C++/Java/Python/JS */
-const KEYWORDS = new Set([
-  'if', 'else', 'elif', 'for', 'while', 'return', 'break', 'continue', 'class', 'struct',
-  'enum', 'union', 'typedef', 'const', 'static', 'void', 'int', 'char', 'float', 'double',
-  'long', 'short', 'unsigned', 'signed', 'public', 'private', 'protected', 'new', 'delete',
-  'this', 'import', 'from', 'package', 'try', 'catch', 'except', 'finally', 'throw', 'raise',
-  'function', 'var', 'let', 'def', 'lambda', 'yield', 'pass', 'None', 'True', 'False',
-  'null', 'true', 'false', 'async', 'await', 'in', 'is', 'not', 'and', 'or', 'with', 'as',
-  'include', 'define', 'namespace', 'using', 'template', 'typename', 'interface',
-  'extends', 'implements', 'self', 'super',
-])
-
-const TOKEN =
-  /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|\b(\d+(?:\.\d+)?)\b|\b([A-Za-z_]\w*)\b/g
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/** 先转义再包 span，绝不会把代码当 HTML 执行 */
-function highlight(code: string): string {
-  let out = ''
-  let last = 0
-  for (const m of code.matchAll(TOKEN)) {
-    const at = m.index ?? 0
-    out += escapeHtml(code.slice(last, at))
-    const token = m[0]
-    if (m[1]) out += `<span class="token comment">${escapeHtml(token)}</span>`
-    else if (m[2]) out += `<span class="token string">${escapeHtml(token)}</span>`
-    else if (m[3]) out += `<span class="token number">${escapeHtml(token)}</span>`
-    else if (KEYWORDS.has(m[4])) out += `<span class="token keyword">${escapeHtml(token)}</span>`
-    else out += escapeHtml(token)
-    last = at + token.length
-  }
-  return out + escapeHtml(code.slice(last))
-}
 
 interface Props {
   projectRef: string
@@ -194,7 +154,7 @@ export default function ImitationPanel({ projectRef, nodeVid }: Props) {
                 setDirty(true)
                 setStatus('')
               }}
-              highlight={highlight}
+              highlight={(code) => highlightCode(code, ext)}
               padding={16}
               className="imitation-code"
               textareaClassName="imitation-code-input"

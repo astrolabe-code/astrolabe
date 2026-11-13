@@ -404,14 +404,6 @@ button {
   overflow: auto;
   background: var(--bg);
 }
-.board-stage-card {
-  position: absolute;
-  width: 160px;
-  min-height: 60px;
-  padding: 10px;
-  font-size: 12px;
-}
-
 .code-pane {
   flex-direction: row;
 }
@@ -609,4 +601,219 @@ button {
 .node-hint {
   padding: 12px;
   font-size: 11.5px;
+}
+
+/* ---------------- 富文本编辑器 ---------------- */
+.note-title-text {
+  font-size: 14px;
+  font-weight: 600;
+}
+.pane-loading {
+  padding: 18px 24px;
+  font-size: 12px;
+}
+.rich-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.rich-toolbar {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--card-border);
+}
+.rich-tool {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-sub);
+  display: grid;
+  place-items: center;
+}
+.rich-tool:hover {
+  background: var(--tr-hover);
+}
+.rich-tool.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.rich-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.rich-content .ProseMirror {
+  min-height: 100%;
+  padding: 18px 24px;
+  outline: none;
+  font-size: 13.5px;
+  line-height: 1.85;
+}
+.rich-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-faint);
+  pointer-events: none;
+  height: 0;
+}
+.rich-content .ProseMirror h1,
+.rich-content .ProseMirror h2,
+.rich-content .ProseMirror h3 {
+  margin: 1em 0 0.4em;
+  line-height: 1.4;
+}
+.rich-content .ProseMirror h1 { font-size: 1.6em; }
+.rich-content .ProseMirror h2 { font-size: 1.35em; }
+.rich-content .ProseMirror h3 { font-size: 1.15em; }
+.rich-content .ProseMirror ul,
+.rich-content .ProseMirror ol { padding-left: 1.6em; }
+.rich-content .ProseMirror blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1em 0;
+  padding-left: 12px;
+  color: var(--text-sub);
+}
+.rich-content .ProseMirror pre {
+  background: var(--th-bg);
+  padding: 12px;
+  border-radius: 6px;
+  font: 12px/1.6 ui-monospace, monospace;
+}
+.rich-content .ProseMirror code {
+  background: var(--th-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.rich-content .ProseMirror hr {
+  border: 0;
+  border-top: 1px solid var(--card-border);
+  margin: 1.5em 0;
+}
+
+/* ---------------- 白板画布 ---------------- */
+.board-canvas {
+  position: relative;
+}
+.board-layer {
+  position: relative;
+  transform-origin: 0 0;
+}
+.board-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.board-link {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 0.55;
+}
+.board-stage .board-card {
+  position: absolute;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.board-card-handle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  background: var(--th-bg);
+  border-bottom: 1px solid var(--card-border);
+  cursor: grab;
+  user-select: none;
+  font-size: 11px;
+  color: var(--text-sub);
+  touch-action: none;
+}
+.board-card-handle:active {
+  cursor: grabbing;
+}
+.board-card-handle-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-link-handle {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 2px;
+  display: grid;
+  place-items: center;
+  cursor: crosshair;
+}
+.board-link-handle.active,
+.board-link-handle:hover {
+  color: var(--accent);
+}
+.board-card-text {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  padding: 8px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.board-note-select {
+  flex: none;
+  margin: 0 6px 4px;
+  padding: 3px 5px;
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  background: var(--input-bg, #fff);
+  font-size: 11px;
+}
+.board-stage .board-card-footer {
+  margin-top: 0;
+  padding: 0 6px 5px;
+}
+.board-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--text-main);
+  color: #fff;
+  font-size: 11.5px;
+  pointer-events: none;
+}
+.board-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.board-zoom button {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+.board-zoom span {
+  font-size: 11px;
+  min-width: 36px;
+  text-align: center;
 }

@@ -28,10 +28,32 @@ export interface BoardItem {
   mtime: number
 }
 
+export interface BoardCard {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  text: string
+  /** 关联一篇笔记：双击卡片就打开它 */
+  noteRef?: string
+}
+
+export interface BoardEdge {
+  from: string
+  to: string
+}
+
+export interface BoardLayoutData {
+  cards: BoardCard[]
+  edges: BoardEdge[]
+  canvas: { w: number; h: number }
+}
+
 export interface BoardDoc {
   id: string
   name: string
-  layout: Record<string, unknown>
+  layout: BoardLayoutData
 }
 
 export interface GraphNode {
@@ -88,7 +110,7 @@ export interface Api {
   'boards.list': (projectRef: string, nodeVid: number) => BoardItem[]
   'boards.get': (projectRef: string, id: string) => BoardDoc
   'boards.create': (projectRef: string, nodeVid: number, name: string) => BoardItem
-  'boards.save': (projectRef: string, id: string, layout: Record<string, unknown>, name?: string) => BoardItem
+  'boards.save': (projectRef: string, id: string, layout: BoardLayoutData, name?: string) => BoardItem
   'boards.remove': (projectRef: string, id: string) => void
 
   'graph.nodes': (projectRef: string) => GraphNode[]

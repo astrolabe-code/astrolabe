@@ -6,17 +6,18 @@ import type { NoteItem } from '../../../shared/contract'
 
 interface Props {
   projectRef: string
+  nodeVid: number
   onOpen: (ref: string, title: string) => void
 }
 
-export default function NoteListView({ projectRef, onOpen }: Props) {
+export default function NoteListView({ projectRef, nodeVid, onOpen }: Props) {
   const [items, setItems] = useState<NoteItem[]>([])
   const [pending, setPending] = useState<NoteItem | null>(null)
   const [error, setError] = useState('')
 
   const load = async () => {
     try {
-      setItems(await invoke('notes.list', projectRef))
+      setItems(await invoke('notes.list', projectRef, nodeVid || undefined))
     } catch (e) {
       setError(String(e))
     }
@@ -24,11 +25,11 @@ export default function NoteListView({ projectRef, onOpen }: Props) {
 
   useEffect(() => {
     void load()
-  }, [projectRef])
+  }, [projectRef, nodeVid])
 
   const create = async () => {
     try {
-      const n = await invoke('notes.save', projectRef, '', '', '未命名笔记', 0)
+      const n = await invoke('notes.save', projectRef, '', '', '未命名笔记', nodeVid)
       await load()
       onOpen(n.ref, n.title || '未命名笔记')
     } catch (e) {
@@ -46,7 +47,7 @@ export default function NoteListView({ projectRef, onOpen }: Props) {
   return (
     <div className="pane list-pane">
       <div className="pane-bar">
-        <span>笔记</span>
+        <span>{nodeVid ? '这个节点的笔记' : '全部笔记'}</span>
         <button type="button" className="btn ghost" onClick={() => void create()}>
           <Plus size={13} /> 新建
         </button>

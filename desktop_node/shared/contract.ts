@@ -65,6 +65,12 @@ export interface SourceText {
   lang: string
 }
 
+export interface ParseReport {
+  nodes: number
+  edges: number
+  files: number
+}
+
 export interface Api {
   'window.minimize': () => void
   'window.toggleMaximize': () => void
@@ -85,7 +91,9 @@ export interface Api {
   'boards.save': (projectRef: string, id: string, layout: Record<string, unknown>, name?: string) => BoardItem
   'boards.remove': (projectRef: string, id: string) => void
 
+  'graph.nodes': (projectRef: string) => GraphNode[]
   'graph.full': (projectRef: string) => Graph
+  'project.parse': (projectRef: string) => ParseReport
   'source.tree': (projectRef: string) => SourceFile
   'source.read': (projectRef: string, relPath: string) => SourceText
 }
@@ -96,5 +104,5 @@ export type Handlers = {
   ) => ReturnType<Api[K]> | Promise<ReturnType<Api[K]>>
 }
 
-/** 后端实现的那部分（窗口控制由 Electron 主进程自己处理） */
-export type BackendHandlers = Omit<Handlers, `window.${string}`>
+/** 后端实现的那部分（窗口控制与解析调度由 Electron 主进程自己处理） */
+export type BackendHandlers = Omit<Handlers, `window.${string}` | 'project.parse'>

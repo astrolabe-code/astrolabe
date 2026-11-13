@@ -1,7 +1,8 @@
-const { app, BrowserWindow, protocol, ipcMain } = require('electron')
+const { app, BrowserWindow, protocol, ipcMain, utilityProcess } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const backend = require('./backend')
+const store = require('./backend/store')
 
 const DIST = path.join(__dirname, 'ui', 'dist')
 const DATA_DIR = app.isPackaged
@@ -54,7 +55,38 @@ function createWindow() {
   if (process.env.ASTROLABE_DEVTOOLS === '1') win.webContents.openDevTools()
 }
 
-const windowHandlers = {
+// 解析是唯一的长任务：一个进程、一个任务、一条结果消息，主进程只负责写库
+let parseWorker = null
+
+function runParse(root) {
+  if (parseWorker) return Promise.reject(new Error('已有解析任务在进行'))
+  return new Promise((resolve, reject) => {
+    const w = utilityProcess.fork(path.join(__dirname, 'backend', 'worker.js'), [], { stdio: 'inherit' })
+    parseWorker = w
+    let done = false
+    const finish = (err, value) => {
+      if (done) return
+      done = true
+      parseWorker = null
+      w.kill()
+      if (err) reject(err)
+      else resolve(value)
+    }
+    w.on('message', (msg) => {
+      if (msg && msg.error) finish(new Error(msg.error))
+      else finish(null, msg && msg.result)
+    })
+    w.on('exit', (code) => finish(new Error(`解析进程退出 (${code})`)))
+    w.postMessage({ root })
+  })
+}
+
+const shellHandlers = {
+  'project.parse': async (ref) => {
+    const graph = await runParse(store.getProject(ref).root)
+    store.writeGraph(ref, graph)
+    return { nodes: graph.nodes.length, edges: graph.edges.length, files: graph.files }
+  },
   'window.minimize': () => BrowserWindow.getFocusedWindow()?.minimize(),
   'window.toggleMaximize': () => {
     const w = BrowserWindow.getFocusedWindow()
@@ -65,7 +97,7 @@ const windowHandlers = {
   'window.close': () => BrowserWindow.getFocusedWindow()?.close(),
 }
 
-const handlers = { ...backend.handlers, ...windowHandlers }
+const handlers = { ...backend.handlers, ...shellHandlers }
 
 ipcMain.handle('invoke', async (_event, method, args = []) => {
   const fn = handlers[method]

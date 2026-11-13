@@ -101,6 +101,28 @@ function db(ref) {
   return conn
 }
 
+function graphNodes(ref) {
+  return db(ref).prepare('SELECT vid, kind, name, qname, file, line FROM node ORDER BY file, line').all()
+}
+
+function writeGraph(ref, graph) {
+  const conn = db(ref)
+  conn.transaction(() => {
+    conn.exec('DELETE FROM edge')
+    conn.exec('DELETE FROM node')
+    const insNode = conn.prepare(
+      'INSERT OR REPLACE INTO node (vid, kind, name, qname, file, line) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    for (const n of graph.nodes) {
+      insNode.run(n.vid, n.kind, n.name, n.qname, n.file, n.line)
+    }
+    const insEdge = conn.prepare('INSERT INTO edge (src, dst, type) VALUES (?, ?, ?)')
+    for (const e of graph.edges) {
+      insEdge.run(e.src, e.dst, e.type)
+    }
+  })()
+}
+
 function notesDir(ref) {
   return path.join(getProject(ref).dataDir, 'notes')
 }
@@ -116,6 +138,8 @@ module.exports = {
   addProject,
   removeProject,
   db,
+  graphNodes,
+  writeGraph,
   notesDir,
   trashDir,
   get dataDir() {

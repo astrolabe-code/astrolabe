@@ -16,7 +16,12 @@
     "lucide-react": "^1.43.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.6"
+    "react-router-dom": "^6.30.6",
+    "tree-sitter": "^0.25.1",
+    "tree-sitter-c": "^0.24.1",
+    "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-python": "^0.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -31,7 +36,9 @@
   "build": {
     "appId": "app.astrolabe.node",
     "productName": "Astrolabe",
-    "directories": { "output": "dist_electron" },
+    "directories": {
+      "output": "dist_electron"
+    },
     "files": [
       "main.js",
       "preload.js",

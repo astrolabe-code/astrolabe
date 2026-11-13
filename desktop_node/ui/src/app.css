@@ -496,3 +496,117 @@ button {
   display: grid;
   place-items: center;
 }
+.graph-svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--bg);
+}
+.graph-edge {
+  stroke: var(--card-border);
+  stroke-width: 1;
+}
+.graph-edge.call {
+  stroke: rgba(8, 145, 178, 0.45);
+}
+.graph-edge.include {
+  stroke: rgba(148, 163, 184, 0.5);
+}
+.graph-node circle {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.graph-node circle.file {
+  fill: #0369a1;
+}
+.graph-node circle.type {
+  fill: #d97706;
+}
+.graph-node text {
+  font-size: 10px;
+  fill: var(--text-sub);
+}
+
+.project-head-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.project-node {
+  font-size: 11.5px;
+}
+.node-search {
+  margin: 8px 10px 4px;
+  width: calc(100% - 20px);
+  padding: 5px 8px;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  background: var(--input-bg, #fff);
+  outline: none;
+  font-size: 11.5px;
+}
+.node-report {
+  padding: 2px 12px 6px;
+  font-size: 11px;
+}
+.node-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 6px 12px;
+}
+.node-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 6px;
+  margin-bottom: 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 11.5px;
+}
+.node-item:hover {
+  background: var(--tr-hover);
+}
+.node-item.active {
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+}
+.node-kind {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  background: var(--th-bg);
+  color: var(--text-sub);
+}
+.node-kind.file {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.node-kind.type {
+  background: #fef3c7;
+  color: #92400e;
+}
+.node-kind.function {
+  background: #dcfce7;
+  color: #166534;
+}
+.node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-hint {
+  padding: 12px;
+  font-size: 11.5px;
+}

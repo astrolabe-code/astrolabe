@@ -20,6 +20,7 @@ const handlers = {
   'boards.save': (ref, id, layout, name) => boards.save(ref, id, layout, name),
   'boards.remove': (ref, id) => boards.remove(ref, id),
 
+  'graph.nodes': (ref) => store.graphNodes(ref),
   'graph.full': (ref) => {
     const conn = store.db(ref)
     return {

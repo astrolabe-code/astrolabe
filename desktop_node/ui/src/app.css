@@ -885,3 +885,97 @@ button {
 .token.punctuation {
   color: var(--text-sub);
 }
+
+/* ---------------- 图谱：力导向画布 ---------------- */
+.graph-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 12px;
+}
+.graph-legend {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  color: var(--text-sub);
+  font-size: 11px;
+}
+.graph-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.graph-legend .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--accent);
+}
+.graph-legend .dot.file { background: #0369a1; }
+.graph-legend .dot.type { background: #d97706; }
+.graph-legend .dot.function { background: var(--accent); }
+.graph-legend .line {
+  width: 14px;
+  height: 2px;
+  display: inline-block;
+}
+.graph-legend .line.call { background: rgba(8, 145, 178, 0.6); }
+.graph-legend .line.include { background: rgba(148, 163, 184, 0.8); }
+.graph-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.graph-canvas-wrap .graph-svg {
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.graph-node {
+  cursor: grab;
+}
+.graph-node:active {
+  cursor: grabbing;
+}
+.graph-node:hover circle {
+  stroke: var(--text-main);
+  stroke-width: 2;
+}
+.graph-node.dimmed,
+.graph-edge.dimmed {
+  opacity: 0.14;
+}
+.graph-node text {
+  pointer-events: none;
+}
+.graph-detail {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: 240px;
+  padding: 14px;
+  font-size: 12px;
+  z-index: 2;
+}
+.graph-detail-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding-right: 18px;
+  word-break: break-all;
+}
+.graph-detail .faint {
+  margin-top: 4px;
+}
+.graph-detail-close {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-sub);
+}

@@ -245,9 +245,12 @@ export default function GraphCanvas({
       setHover(null)
       
       // ★ 没命中节点就判边：点到「聚合边」线段的距离
+      // ⚠⚠ 只判**画布上真的画出来的边** —— `graph` 是已展示子集；
+      //    ⛔ 不能用 `fullGraph`：它含被 showImports 过滤掉的 imports/includes
+      //    ⇒ 会出现「两点之间根本没有线，却弹出这条边的详情」
       let bestEdge: GraphEdge | null = null
       let bestED = Infinity
-      for (const e of fullGraph?.edges ?? []) {
+      for (const e of graph?.edges ?? []) {
         if (!visibleRef.current.has(String(e.from)) || !visibleRef.current.has(String(e.to))) continue
         let pa: ArrayLike<number> | undefined
         let pb: ArrayLike<number> | undefined
@@ -277,7 +280,7 @@ export default function GraphCanvas({
       box.removeEventListener('pointerleave', onLeave)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [graph, nodeSizePx, fullGraph])
+  }, [graph, nodeSizePx])
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {

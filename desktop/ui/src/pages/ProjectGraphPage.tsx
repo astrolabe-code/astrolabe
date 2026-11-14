@@ -10,7 +10,6 @@ import {ChevronDown,
   Workflow,
   X,
   GitBranch,
-  Share2,
 } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
@@ -110,10 +109,6 @@ export default function ProjectGraphPage() {
   const [curateOpen, setCurateOpen] = useState(false)
   // ★ 搜索胶囊是否展开
   const [searchOpen, setSearchOpen] = useState(false)
-  // ★★ 依赖线（imports / includes）默认**不显示** ⚠
-  //   · 文件级依赖对"读一个函数"帮助有限，一屏几十条会把主干糊住
-  //   · 需要看模块边界时点「依赖」打开
-  const [showImports, setShowImports] = useState(false)
   // ★ 画布全屏（* 形似 code_network：右上角圆形按钮，* 全屏时隐藏右侧面板）⚠
   const [fullscreen, setFullscreen] = useState(false)
   // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
@@ -278,10 +273,8 @@ export default function ProjectGraphPage() {
       .sort((a, b) => (rank.get(a.vid) ?? 0) - (rank.get(b.vid) ?? 0))
     const edges = g.edges
       .filter((e) => shownVids.has(e.from) && shownVids.has(e.to))
-      // ★ 依赖线默认隐藏（`showImports` 打开才画）
-      .filter((e) => showImports || (e.type !== 'imports' && e.type !== 'includes'))
     return { ...g, nodes, edges }
-  }, [g, shownVids, orderVids, showImports])
+  }, [g, shownVids, orderVids])
 
   // ★★★ 2026-11-05：**默认选中第一个节点**（所有者要求图谱页与列表页一致）
   //   排序口径与"首批展示"相同（路径优先 → 度数高优先）⇒ 选中的就是左栏第一个
@@ -435,13 +428,6 @@ export default function ProjectGraphPage() {
         {/* ★★ 2026-11-08：原「工具」下拉拆成独立图标，全部直接排在左栏
             所有者：「工具点了，不要出现一个弹窗，把里面的按钮都拆到左栏」
             ⛔ 不再有 RailMenu 折叠项；开关态用 active（aria-pressed）显示 */}
-        <RailButton
-          icon={<Share2 size={13} />}
-          label="依赖线"
-          title="文件之间的 import / include 连线（默认关，会糊住主干）"
-          active={showImports}
-          onClick={() => setShowImports((v) => !v)}
-        />
         <RailButton
           icon={<Route size={13} />}
           label="学习路径"

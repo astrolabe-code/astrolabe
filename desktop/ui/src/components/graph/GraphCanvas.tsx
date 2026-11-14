@@ -2,9 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Graph } from '@antv/g6'
 import { startMeteor } from '../../lib/meteorFx'
 import { useTheme } from '../../hooks/useTheme'
-import type { EffectiveGraph, GraphNode } from '../../lib/mergeGraph'
+import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
 import { kindColor } from '../../lib/kindLabel'
 import NodeHoverCard from '../node/NodeHoverCard'
+import EdgeHoverCard from './EdgeHoverCard'
+
+/** 点到线段的距离（画布单位），用来判定鼠标是否落在某条聚合边上 */
+function distToSegment(p: ArrayLike<number>, a: ArrayLike<number>, b: ArrayLike<number>): number {
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const l2 = dx * dx + dy * dy
+  if (!l2) return Math.hypot(p[0] - a[0], p[1] - a[1])
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2
+  t = Math.max(0, Math.min(1, t))
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
+}
 
 /**
  * ★ 图谱画布（`D98` · AntV G6 v5）
@@ -142,6 +154,7 @@ export default function GraphCanvas({
   // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
   // ★★ 悬停浮窗（所有者：图谱上鼠标移上去就显示详情，⛔ 不打断阅读、不用点开右栏）
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
+  const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
@@ -224,14 +237,38 @@ export default function GraphCanvas({
       const n = bestId ? nodeInfoRef.current.get(bestId) : undefined
       // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
       const hit = !!n && bestD <= nodeSizePx / 2 + 4
-      setHover(hit && n ? { node: n, x: last.clientX, y: last.clientY } : null)
+      if (hit && n) {
+        setHover({ node: n, x: last.clientX, y: last.clientY })
+        setEdgeHover(null)
+        return
+      }
+      setHover(null)
+      
+      // ★ 没命中节点就判边：点到「聚合边」线段的距离
+      let bestEdge: GraphEdge | null = null
+      let bestED = Infinity
+      for (const e of fullGraph?.edges ?? []) {
+        if (!visibleRef.current.has(String(e.from)) || !visibleRef.current.has(String(e.to))) continue
+        let pa: ArrayLike<number> | undefined
+        let pb: ArrayLike<number> | undefined
+        try {
+          pa = g.getElementPosition(String(e.from)) as ArrayLike<number>
+          pb = g.getElementPosition(String(e.to)) as ArrayLike<number>
+        } catch { continue }
+        if (!pa || !pb) continue
+        const d = distToSegment(p, pa, pb)
+        if (d < bestED) { bestED = d; bestEdge = e }
+      }
+      setEdgeHover(
+        bestEdge && bestED <= 8 ? { edge: bestEdge, x: last.clientX, y: last.clientY } : null,
+      )
     }
 
     const onMove = (ev: PointerEvent) => {
       last = ev
       if (!raf) raf = requestAnimationFrame(update)
     }
-    const onLeave = () => setHover(null)
+    const onLeave = () => { setHover(null); setEdgeHover(null) }
 
     box.addEventListener('pointermove', onMove)
     box.addEventListener('pointerleave', onLeave)
@@ -240,7 +277,7 @@ export default function GraphCanvas({
       box.removeEventListener('pointerleave', onLeave)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [graph, nodeSizePx])
+  }, [graph, nodeSizePx, fullGraph])
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {
@@ -827,6 +864,7 @@ export default function GraphCanvas({
 
       {/* ★★ 悬停浮窗（名字 / 类型 / 签名 / 文件行号）—— 重载靠签名分辨 ⚠ */}
       {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
+      {edgeHover && <EdgeHoverCard edge={edgeHover.edge} x={edgeHover.x} y={edgeHover.y} />}
     </div>
   )
 }

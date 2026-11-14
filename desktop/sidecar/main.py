@@ -76,19 +76,15 @@ class GraphSyncError(RuntimeError):
     """图库写入失败：SQLite 已经落库，但图不一致，提示用户重建。"""
 
 
-def _parse_edge_id(eid) -> tuple[int, int]:
-    """图库的关系表没有主键 ⇒ 边的标识就是它的两个端点 `src-dst`。
-
-    ⚠ 兼容老的 `src-dst-kind` 三段写法（早期版本把 type 也拼进去了），
-       第三段起一律忽略：type 是可改属性，不该参与标识。
-    """
+def _parse_edge_id(eid) -> tuple[int, int, str, int]:
+    """边的标识 = 全部属性 `src-dst-kind-line`（两点之间可有多条边）。"""
     parts = str(eid or "").split("-")
-    if len(parts) < 2:
-        raise ValueError("边 id 不合法（应为 src-dst）")
+    if len(parts) < 4:
+        raise ValueError("边 id 不合法（应为 src-dst-kind-line）")
     src, dst = int(parts[0]), int(parts[1])
     if not src or not dst:
         raise ValueError("边 id 不合法")
-    return src, dst
+    return src, dst, parts[2] or "call", int(parts[3] or 0)
 
 
 def _fill_note_nodes(notes) -> list[dict]:
@@ -935,23 +931,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     return bad("两端的节点不对")
                 kind = str(body.get("type") or "call")
                 graphdb.add_rel(ROOT, src, dst, kind)
-                # ★ 边的标识 = 两个端点（关系表没有主键），type 是可改属性
-                eid = f"{src}-{dst}"
+                # ★ 标识含全部属性：两点之间可以有不同 kind / line 的多条边
+                eid = f"{src}-{dst}-{kind}-0"
                 store.log_curate(CONN, p["id"], action, eid, reason, {"from": src, "to": dst})
                 return ok({"id": eid})
 
             if action == "update_edge":
                 # ⚠ 只允许改类型（改端点 = 删了重加，语义更清楚）
-                src, dst = _parse_edge_id(body.get("id"))
+                src, dst, old_kind, line = _parse_edge_id(body.get("id"))
                 kind = str(body.get("type") or "call")
-                graphdb.update_rel(ROOT, src, dst, None, kind)
-                eid = f"{src}-{dst}"
+                graphdb.update_rel(ROOT, src, dst, old_kind, kind, line)
+                eid = f"{src}-{dst}-{kind}-{line}"
                 store.log_curate(CONN, p["id"], action, eid, reason, {"type": kind})
                 return ok({"id": eid})
 
             if action == "remove_edge":
-                src, dst = _parse_edge_id(body.get("id"))
-                n = graphdb.remove_rel(ROOT, src, dst)
+                src, dst, kind, line = _parse_edge_id(body.get("id"))
+                n = graphdb.remove_rel(ROOT, src, dst, kind, line)
                 store.log_curate(CONN, p["id"], action, str(body.get("id")), reason)
                 return ok({"removed": body.get("id"), "ok": n > 0})
 

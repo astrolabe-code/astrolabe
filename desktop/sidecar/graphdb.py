@@ -147,35 +147,33 @@ def sync_code(data_dir: str, nodes: list[dict], edges: list[dict]) -> dict:
     # ★ vid 撞不撞车交给数据库判断（主键索引 O(log n)），
     #   ⛔ 不预读全表、不自己建索引；真撞了在插入时捕获再重算（见 _create_code）
 
-    # ★★ 任意两点之间（不分方向）只留一条：把端点排序成无向对再判重，
-    #    但**保留先到的那条边原本的方向**（⛔ 不把 B→A 改写成 A→B）
+    # ★★ 只去掉「属性完全一样」的重复边；不同 kind / origin / line 的边全部保留
+    #    （图上两点之间只画一条，是展示层聚合的事，⛔ 不在存储层砍数据）
     erows: list[dict] = []
-    seen_pairs: set[tuple[int, int]] = set()
+    seen: set[tuple] = set()
 
-    def pair(src, dst) -> tuple[int, int]:
-        a, b = int(src), int(dst)
-        return (a, b) if a <= b else (b, a)
+    def ekey(e: dict) -> tuple:
+        return (int(e["a"]), int(e["b"]), str(e["kind"]), str(e["origin"]), int(e["line"]))
 
     for e in _edge_rows(edges):
-        key = pair(e["a"], e["b"])
-        if key in seen_pairs:
+        key = ekey(e)
+        if key in seen:
             continue
-        seen_pairs.add(key)
+        seen.add(key)
         erows.append(e)
     for a, b, kind, line in manual_edges:
-        key = pair(a, b)
-        if key in seen_pairs:
+        row = {
+            "a": int(a),
+            "b": int(b),
+            "kind": str(kind or "call"),
+            "origin": "manual",
+            "line": int(line or 0),
+        }
+        key = ekey(row)
+        if key in seen:
             continue
-        seen_pairs.add(key)
-        erows.append(
-            {
-                "a": int(a),
-                "b": int(b),
-                "kind": str(kind or "call"),
-                "origin": "manual",
-                "line": int(line or 0),
-            }
-        )
+        seen.add(key)
+        erows.append(row)
 
     remounted = 0
     missed = 0
@@ -277,30 +275,48 @@ def has_code(data_dir: str) -> bool:
     return int(conn.execute("MATCH (c:Code) RETURN count(c)").get_next()[0]) > 0
 
 
+_TYPE_PRIORITY = {"call": 0, "calls": 0, "extends": 1, "implements": 1,
+                  "include": 2, "includes": 2, "imports": 2, "contains": 3}
+
+
 def graph_full(data_dir: str) -> dict:
-    """整张代码图（图谱页用，⛔ 不含笔记/白板节点）。"""
+    """整张代码图（图谱页用）。★ 两点之间**聚合成一条展示边**，details 带全部原始边。"""
     conn = _open(data_dir)
     nodes = conn.execute(
         "MATCH (c:Code) RETURN c.vid, c.kind, c.name, c.qname, c.file, c.line, c.lineEnd, c.origin"
     ).get_all()
-    # ★ 固定排序 ⇒ 序号稳定；边没有主键，序号只作渲染 key，不参与任何业务定位
     edges = conn.execute(
         "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind, r.origin, r.line "
-        "ORDER BY a.vid, b.vid, r.kind"
+        "ORDER BY a.vid, b.vid, r.kind, r.line"
     ).get_all()
-    ncols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "origin"]
-    return {
-        "nodes": [dict(zip(ncols, r)) for r in nodes],
-        # ★★ id 必须是**纯数字**：G6 会把 id 转成数字，
-        #    "901-902" 这类带连字符的串会被转成 NaN ⇒ "Edge already exists: NaN" 白屏。
-        #    纯数字对新旧前端都安全（新前端 String(1)="1"，旧前端 Number(1)=1）。
-        #    ⚠ 这只是渲染 key；删边/改边仍走 /edges/ 的 "src-dst" 标识，不受影响。
-        "edges": [
-            {"id": i, "from": r[0], "to": r[1], "type": r[2], "origin": r[3], "line": r[4]}
-            for i, r in enumerate(edges, 1)
-        ],
-    }
 
+    groups: dict[tuple[int, int], list[dict]] = {}
+    for a, b, kind, origin, line in edges:
+        key = (min(a, b), max(a, b))
+        groups.setdefault(key, []).append(
+            {"from": a, "to": b, "type": kind, "origin": origin, "line": line}
+        )
+
+    shown = []
+    # 端点对排序固定 ⇒ 渲染用的数字 id 稳定
+    for idx, key in enumerate(sorted(groups), 1):
+        items = sorted(groups[key], key=lambda x: (_TYPE_PRIORITY.get(x["type"], 4), x["line"]))
+        head = items[0]
+        shown.append(
+            {
+                "id": idx,
+                "from": head["from"],
+                "to": head["to"],
+                "type": head["type"],
+                "origin": "manual" if any(x["origin"] == "manual" for x in items) else "parsed",
+                "line": head["line"],
+                "count": len(items),
+                "details": items,
+            }
+        )
+
+    ncols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "origin"]
+    return {"nodes": [dict(zip(ncols, r)) for r in nodes], "edges": shown}
 
 def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
     conn = _open(data_dir)
@@ -546,7 +562,7 @@ def remove_code(data_dir: str, vid: int) -> int:
 
 
 def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
-    """加一条边。★ 任意两点之间（**不分方向**）总共只允许一条 ⇒ 边不需要主键。"""
+    """加一条边。★ 只拒绝属性完全相同的重复边；两点之间允许多条不同属性的边。"""
     conn = _open(data_dir)
     if not int(src) or not int(dst):
         raise ValueError("两端都要有 vid")
@@ -558,14 +574,13 @@ def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
         raise ValueError("终点节点不存在")
     dup = int(
         conn.execute(
-            "MATCH (a:Code)-[r:Rel]->(b:Code) "
-            "WHERE (a.vid = $a AND b.vid = $b) OR (a.vid = $b AND b.vid = $a) "
-            "RETURN count(r)",
-            {"a": int(src), "b": int(dst)},
+            "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) "
+            "WHERE r.kind = $k AND r.line = $l RETURN count(r)",
+            {"a": int(src), "b": int(dst), "k": kind or "call", "l": 0},
         ).get_next()[0]
     )
     if dup:
-        raise ValueError("这两个节点之间已经有边了（不分方向，只允许一条）")
+        raise ValueError("已经有一条属性完全相同的边了")
     conn.execute(
         "MATCH (a:Code {vid:$a}), (b:Code {vid:$b}) "
         "CREATE (a)-[:Rel {kind:$k, origin:'manual', line:0}]->(b)",
@@ -573,40 +588,39 @@ def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
     )
 
 
-_REL_BY_PAIR = (
-    "MATCH (a:Code)-[r:Rel]->(b:Code) "
-    "WHERE (a.vid = $a AND b.vid = $b) OR (a.vid = $b AND b.vid = $a) "
+# ★ 两点之间可有多条边 ⇒ 必须按「方向 + kind + line」定位到具体一条
+_REL_BY_ATTR = (
+    "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) "
+    "WHERE r.kind = $k AND r.line = $l "
 )
 
 
-def remove_rel(data_dir: str, src: int, dst: int, kind: str | None = None) -> int:
-    """删边。★ 两点之间不分方向只有一条 ⇒ 按端点对定位（传反方向也能删）。"""
+def remove_rel(data_dir: str, src: int, dst: int, kind: str, line: int = 0) -> int:
+    """删一条边（按全部属性定位）。"""
     conn = _open(data_dir)
-    params = {"a": int(src), "b": int(dst)}
-    found = int(
-        conn.execute(_REL_BY_PAIR + "RETURN count(r)", params).get_next()[0]
-    )
+    params = {"a": int(src), "b": int(dst), "k": str(kind), "l": int(line)}
+    found = int(conn.execute(_REL_BY_ATTR + "RETURN count(r)", params).get_next()[0])
     if not found:
         raise ValueError("这条边不存在")
-    conn.execute(_REL_BY_PAIR + "DELETE r", params)
+    conn.execute(_REL_BY_ATTR + "DELETE r", params)
     return found
 
 
-def update_rel(data_dir: str, src: int, dst: int, old_kind: str | None, new_kind: str) -> None:
-    """改边的类型。★ 类型不参与标识 ⇒ 改完 id 不变，前端不会当成「换了条边」。"""
+def update_rel(data_dir: str, src: int, dst: int, old_kind: str, new_kind: str, line: int = 0) -> None:
+    """改一条边的类型（按全部属性定位到那一条）。"""
     conn = _open(data_dir)
     kind = (new_kind or "").strip()
     if not kind:
         return
-    params = {"a": int(src), "b": int(dst)}
-    got = conn.execute(_REL_BY_PAIR + "RETURN r.kind", params).get_all()
+    params = {"a": int(src), "b": int(dst), "k": str(old_kind), "l": int(line)}
+    got = conn.execute(_REL_BY_ATTR + "RETURN r.kind", params).get_all()
     if not got:
         raise ValueError("这条边不存在")
     if str(got[0][0]) == kind:
         return
     conn.execute(
-        _REL_BY_PAIR + "SET r.kind = $k, r.origin = 'manual'",
-        {**params, "k": kind},
+        _REL_BY_ATTR + "SET r.kind = $new, r.origin = 'manual'",
+        {**params, "new": kind},
     )
 
 
@@ -627,7 +641,7 @@ def edges_of(data_dir: str, vid: int) -> dict:
     def row(r, upwards: bool):
         src, dst, kind, origin, line, name, file = r
         return {
-            "id": f"{src}-{dst}",
+            "id": f"{src}-{dst}-{kind}-{line}",
             "src_vid": src,
             "dst_vid": dst,
             "kind": kind,

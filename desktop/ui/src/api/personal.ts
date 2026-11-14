@@ -186,10 +186,9 @@ export const personalApi = {
     )
     const nodes = (d.nodes || []).map(toGraphNode)
     const edges = (d.edges || []).map((e) => ({
-      // ★★★ G6 会把 id 当数字用：带连字符的串（"901-902"）会被转成 NaN，
-      //    多条边都成 NaN ⇒ "Edge already exists: NaN" ⇒ React 崩、整窗白屏。
-      //    后端 /graph/ 现在给**纯数字**渲染序号；这里 String(1)="1" 仍然安全。
-      //    ⚠ 删边/改边用的是 /edges/ 的 "src-dst" 标识，不走这里。
+      // ★ G6 v5 的 id 本来就是 string；统一 String() 只防旧代码用 Number()
+      //    把 "901-902" 转成 NaN（那会 Edge already exists: NaN 白屏）。
+      //    /graph/ 给聚合后的数字渲染序号；/edges/ 才用 "src-dst-kind-line"。
       id: String(e.id),
       from: Number(e.from),
       to: Number(e.to),
@@ -198,6 +197,12 @@ export const personalApi = {
       line: Number(e.line || 0) || null,
       origin: String(e.origin || 'parsed'),
       confidence: 'syntax',
+      // ★ 图上画的是聚合后的一条线，details 是底下全部原始边（hover 浮窗用）
+      details: (e.details || []).map((x: any) => ({
+        from: Number(x.from), to: Number(x.to), type: String(x.type || ''),
+        origin: String(x.origin || 'parsed'), line: Number(x.line || 0),
+      })),
+      count: Number(e.count || 1),
     }))
     return { rev: Number(d.rev || 0), nodes, edges }
   },

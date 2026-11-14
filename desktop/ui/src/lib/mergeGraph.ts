@@ -53,6 +53,15 @@ export interface GraphNode {
 }
 
 /** ★ 基图边（★ 与后端 `GET …/graph/edges/` 的单项对应）*/
+/** 聚合展示边背后的某一条原始边（两点之间可有多条） */
+export interface EdgeDetail {
+  from: number
+  to: number
+  type: string
+  origin: string
+  line: number
+}
+
 export interface GraphEdge {
   /** ★★ 边的权威标识 —— ★ 补丁靠它指认"我改的是哪条边"
    *  ⚠ 图库的关系表没有主键 ⇒ 这里是 `src-dst-kind` 字符串，⛔ 不是自增数字 */
@@ -65,6 +74,9 @@ export interface GraphEdge {
   confidence: string
   /** ★★ 前端加的：★ 这条边被改过 */
   patched?: boolean
+  /** ★ 展示层聚合：两点之间底下所有原始边（hover 浮窗用） */
+  details?: EdgeDetail[]
+  count?: number
 }
 
 /** ★★ 一条修改（★ 与后端 `GET …/graph/patches/` 的单项**逐字对应**）*/

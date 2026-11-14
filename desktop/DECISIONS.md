@@ -568,6 +568,9 @@ RETURN z._id         → Binder exception: _id is reserved for system usage.
 **结论**：**任意两个代码节点之间总共只有一条边**，方向只是这条边的属性，
 不是区分两条边的依据。推翻 G8 里「反向可并存」的理解。
 
+> ⚠ **本条已被 `G32` 推翻**：把「图上只画一条」错当成了存储约束，
+> 会静默丢掉同一对节点上的其它关系。保留原文以读出演进路径。
+
 | 位置 | 改法 |
 |---|---|
 | `add_rel` | 双向查重：`(a,b)` 或 `(b,a)` 已存在即拒，提示「不分方向，只允许一条」 |
@@ -581,3 +584,60 @@ RETURN z._id         → Binder exception: _id is reserved for system usage.
 
 **落实**：`sidecar/graphdb.py`（`add_rel` / `sync_code` / `remove_rel` / `update_rel`）。
 **状态**：已实施。
+
+---
+
+## 八、补录（三）：多边与聚合展示
+
+### G32 · 2026-11-14 14:39 · 展示聚合、存储多边、属性去重
+
+> 「嗯，就这样，前端展示的时候聚合，就是和节点展示的时候一样，鼠标移到边上时，
+> 弹出一个展示详细信息的窗口，这样两点之间多边就没问题了，
+> 只要保证属性没有重复的边就行」
+
+**引发这条的追问**：
+
+> 「多条边只有一个问题，图上展示的时候，用那一条边？
+> 难道要有多少条边就展示多少条边？」
+
+**结论**：**展示唯一 ≠ 存储唯一**（我之前把两件事绑死了）。
+
+| 层 | 规则 |
+|---|---|
+| 存储 `Rel` | 允许多条；只去掉「属性完全相同」的重复边。属性 = 方向 + `kind` + `origin` + `line` |
+| `/graph/` | 按无向端点对**聚合成一条展示边**，主类型按优先级择一，附 `details` 列出全部原始边 |
+| 前端 | 两点之间只画一条线；鼠标悬停弹窗（`EdgeHoverCard`）列出每条关系的类型 / 同向反向 / 行号 / 来源 |
+| `/edges/` | 返回每一条原始边，标识 `src-dst-kind-line`，改图面板可逐条改、逐条删 |
+
+**推翻**：G31「不分方向只许一条」、`add_rel` 双向查重、`sync_code` 无向对去重。
+**落实**：`graphdb.py`、`main.py`、`ui/src/api/personal.ts`、`ui/src/lib/mergeGraph.ts`、
+`ui/src/components/graph/GraphCanvas.tsx`，新增 `ui/src/components/graph/EdgeHoverCard.tsx`。
+**状态**：已实施。
+
+---
+
+### G33 · 2026-11-14 14:39 · 对照 GitNexus 后的自我纠错
+
+> 「等一下，gitnexus同样没用数字当主键，为什么还能很好地显示节点呢？它是如何处理的？」
+
+**调查**（只读源码 + 复制 `.gitnexus/lbug` 到 `/tmp` 后打开）：
+GitNexus 的 `id STRING`（`Function:路径:名字`）**从未进入渲染库**——
+它只有 `graphology`（跑 Leiden 社区发现的算法库），没有 d3 / G6 / cytoscape；
+`html-viewer.js` 是 Wiki 的 markdown 查看器，输出走 Cypher / MCP / CLI 文本。
+它的 id 带前缀是为了路由到正确的 `FROM|TO` 表对，不是为了显示。
+
+**我错在**：
+1. 把 dist 里 `function MC(r,e){return Number(r.id)-Number(e.id)}` 当成「把边 id 转数字」——
+   那是 G6 **动画时间线**的排序比较，紧邻 `animations / ticking`。
+2. 据此断言「G6 会把 id 当数字」——错，G6 v5 的 id 类型本来就是 `string`（多个 `.d.ts` 可证）。
+3. 由此把 `/graph/` 边 id 改成纯数字序号，并告诉所有者「前端不用重打」——
+   **这才是 `Edge already exists: NaN` 持续出现的真正原因**：
+   `personal.ts` 里的 `Number(e.id) → String(e.id)` 早已提交（`e110500`），
+   但跑的仍是 `win-unpacked/resources/dist` 里的旧 bundle。
+4. 把「展示唯一」当成「存储唯一」，见 G32。
+
+**结论**：字符串主键没有任何问题，与渲染能力无关；
+NaN 来自我们自己的 `Number(e.id)`，不是主键类型、也不是 G6。
+真正的修复是**前端必须重新 build + 重新 electron-builder**。
+
+**状态**：已实施（认知纠正 + 前端已重新构建）。

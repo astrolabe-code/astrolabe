@@ -54,8 +54,9 @@ export interface GraphNode {
 
 /** ★ 基图边（★ 与后端 `GET …/graph/edges/` 的单项对应）*/
 export interface GraphEdge {
-  /** ★★ 边的权威标识 —— ★ **补丁靠它指认"我改的是哪条边"** ⚠ */
-  id: number
+  /** ★★ 边的权威标识 —— ★ 补丁靠它指认"我改的是哪条边"
+   *  ⚠ 图库的关系表没有主键 ⇒ 这里是 `src-dst-kind` 字符串，⛔ 不是自增数字 */
+  id: string
   from: number
   to: number
   type: string
@@ -83,7 +84,8 @@ export interface GraphPatch {
   /** ★ 改 / 删的是哪个基图节点（★ `add_node` 时是**新节点的 vid**）*/
   target_vid?: number
   /** ★ 改 / 删的是哪条基图边 */
-  target_edge?: number
+  /** ⚠ 边的标识是 `src-dst-kind` 字符串（图库关系表无主键） */
+  target_edge?: string | number
   /** ★ 加 / 改边时的两端 */
   from?: number
   to?: number
@@ -100,7 +102,7 @@ export interface EffectiveGraph {
   /** ★★ `vid ⇒ 它身上的修改`（★ 「迅速对比」那个索引的副产物）*/
   patchesByVid: Map<number, GraphPatch[]>
   /** ★★ `边 id ⇒ 它身上的修改` */
-  patchesByEdge: Map<number, GraphPatch[]>
+  patchesByEdge: Map<string, GraphPatch[]>
   /** ★ 人工项计数（★ UI 上显示「N 项是维护者补的」）*/
   manualNodeCount: number
   manualEdgeCount: number
@@ -124,7 +126,7 @@ export function mergeGraph(
   // ⓵ ★★ 先摊索引 —— ★ 「迅速对比」的关键就在这一步 ⚠
   // ==========================================================================
   const byVid = new Map<number, GraphPatch[]>()
-  const byEdge = new Map<number, GraphPatch[]>()
+  const byEdge = new Map<string, GraphPatch[]>()
   const addedNodes: GraphNode[] = []
   const addedEdges: GraphEdge[] = []
 
@@ -141,9 +143,9 @@ export function mergeGraph(
     } else if (p.action === 'add_edge') {
       if (typeof p.from === 'number' && typeof p.to === 'number') {
         addedEdges.push({
-          // ⚠★ 新边**还没有服务端发的 id**（★ 它是前端先画出来的）——
-          //   ★ 用负数占位，★ ❌ 不与真实 id 冲突 ✅
-          id: -(addedEdges.length + 1),
+          // ⚠ 新边还没有服务端发的 id（前端先画出来占位）
+          //   ⇒ 用 pending: 前缀，⛔ 不与 "src-dst-kind" 形式的真实 id 冲突
+          id: `pending:${addedEdges.length + 1}`,
           from: p.from,
           to: p.to,
           type: String(p.payload?.type ?? 'calls'),
@@ -155,7 +157,7 @@ export function mergeGraph(
     } else {
       // ★ 剩下四种都是"改 / 删已存在的东西" ⇒ ★ 按目标摊进索引 ⚠
       if (typeof p.target_vid === 'number') push(byVid, p.target_vid, p)
-      if (typeof p.target_edge === 'number') push(byEdge, p.target_edge, p)
+      if (p.target_edge != null) push(byEdge, String(p.target_edge), p)
     }
   }
 

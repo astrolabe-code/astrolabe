@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { FileCode2, Lock, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
@@ -13,6 +13,7 @@ import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
 import WritingProgress from '../components/graph/WritingProgress'
+import OrphanNotes from '../components/graph/OrphanNotes'
 import { clearResume, markResume, readResume } from '../lib/resume'
 import { patchRibbon } from '../lib/ribbonBus'
 import { useSiteConfig } from '../query/siteConfig'
@@ -39,12 +40,34 @@ import NodePanel from '../components/node/NodePanel'
  * | ③ | 未定版（图还没解析） | 节点列表空态引导去工作区拉取 ✅ |
  */
 export default function ProjectPage() {
-  const { projectRef = '' } = useParams<{ projectRef: string }>()
+  const { projectRef = '', noteId } = useParams<{ projectRef: string; noteId?: string }>()
   const project = useProject(projectRef)
   // ★ `?think=1` ⇒ 自动选中首个节点并打开思考白板（* 首页「思考模式」卡片直达）⚠
   const navigate = useNavigate()
   const [sp] = useSearchParams()
   const autoThink = sp.get('think') === '1'
+  // ★★ 笔记是真实路由，但内容仍显示在项目页右栏这个框里：
+  //   URL 决定框里是「阅读 / 编辑 / 新建」哪一篇，标签栏照常按 URL 工作
+  const location = useLocation()
+  const noteView = (() => {
+    const p = location.pathname
+    if (!p.includes('/notes/')) return null
+    if (p.endsWith('/notes/new')) return { mode: 'edit' as const, ref: null as string | null }
+    if (/\/notes\/[^/]+\/edit$/.test(p)) return { mode: 'edit' as const, ref: noteId || null }
+    return { mode: 'read' as const, ref: noteId || null }
+  })()
+  const noteNodeId = Number(sp.get('node') || 0)
+  const noteParent = sp.get('parent') || ''
+  // ★★ 白板也是「挂在节点上的特殊笔记」：同样由 URL 决定框里显示哪一块
+  const boardView = (() => {
+    const mm = location.pathname.match(/\/board\/([^/]+)$/)
+    if (!mm) return null
+    return {
+      boardId: decodeURIComponent(mm[1]),
+      nodeId: Number(sp.get('node') || 0),
+      focus: sp.get('focus') || undefined,
+    }
+  })()
   /**
    * ★★ `?node=<vid>` 深链（`D120`）—— 「继续上次」跳回来时用 ⚠
    * ⚠ vid 是 stable_vid；解析失败就当没传 ✅
@@ -290,6 +313,12 @@ export default function ProjectPage() {
             projectRef={projectRef}
             node={selected}
             initialTab="notes"
+            noteView={
+              noteView
+                ? { ...noteView, nodeId: noteNodeId, parent: noteParent }
+                : undefined
+            }
+            boardView={boardView ?? undefined}
             notePanel={
               <NodePanel
                 projectRef={projectRef}

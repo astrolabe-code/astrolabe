@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { BookOpenText, List, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
+import { Anchor, BookOpenText, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
@@ -10,6 +10,7 @@ import SplitPane from '../components/SplitPane'
 import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
+import AnchorPicker from '../components/notes/AnchorPicker'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
@@ -95,8 +96,6 @@ export interface NoteEditEmbeddedProps {
   toolsSlotId?: string
   /** ★ 2026-11-11 合一：容器打开时指定初始视图（read=阅读视图 / edit=编辑） */
   initialMode?: 'edit' | 'read'
-  /** ★ 2026-11-11 容器提供「回到笔记列表」入口（关掉当前 pane）；独立路由不传则不显示 */
-  onBackToList?: () => void
 }
 
 export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
@@ -149,6 +148,12 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
 
   const noteQ = useNote(id)
   const note = noteQ.data?.note
+
+  // ★ 改锚点（D125）：每篇必须挂在某个节点上，挂错了能两步改掉
+  const [anchorOpen, setAnchorOpen] = useState(false)
+  const anchorSnap = noteQ.data?.note?.node_snapshot
+  const anchorVid = Number(anchorSnap?.vid || 0)
+  const anchorLabel = anchorSnap?.name || (anchorVid ? `节点 #${anchorVid}` : '未挂载')
 
   const [kind, setKind] = useState<NoteKind>('flash')
   const [title, setTitle] = useState('')
@@ -396,15 +401,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     <NoteShell embedded={isEmbedded ? embedded : undefined}>
       {/* ★★★ 顶栏工具条（公共组件 PageBar）⚠ */}
       <PageBar slotId={slotId}>
-        {/* ★ 合一页回列表入口：关掉当前 pane，容器回到笔记列表（独立路由不渲染）⚠ */}
-        {embedded?.onBackToList && (
-          <RailButton
-            icon={<List size={13} />}
-            label="列表"
-            title="回到笔记列表"
-            onClick={embedded.onBackToList}
-          />
-        )}
         {/* ★ 与阅读页同款：顶栏大纲开关（高亮 = 面板展开） */}
         <RailButton
           icon={<ListTree size={13} />}
@@ -434,6 +430,17 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           />
         )}
       </PageBar>
+
+      <AnchorPicker
+        open={anchorOpen}
+        projectRef={projectRef}
+        currentVid={anchorVid}
+        onClose={() => setAnchorOpen(false)}
+        onPick={(vid) => {
+          setAnchorOpen(false)
+          update.mutate({ node_id: vid })
+        }}
+      />
 
       {/* ★ 从父卡深入进来：标明来源，可点回去 */}
       {parentCard && (
@@ -655,7 +662,25 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
                 <KindIcon size={11} />
                 {KIND_META[kind].label}
               </span>
-              {!isPublic && (
+              <button
+              type="button"
+              className="tag"
+              style={{
+                fontSize: 10.5,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                whiteSpace: 'nowrap',
+                border: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+              title="挂错了？点这里改到别的节点"
+              onClick={() => setAnchorOpen(true)}
+            >
+              <Anchor size={10} /> {anchorLabel}
+            </button>
+            {!isPublic && (
                 <span
                   className="tag"
                   style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}

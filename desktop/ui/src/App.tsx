@@ -6,9 +6,6 @@ import PersonalBar from './components/PersonalBar'
 import CommandPalette from './components/CommandPalette'
 import PersonalHome from './pages/PersonalHome'
 import ProjectPage from './pages/ProjectPage'
-import NotePage from './pages/NotePage'
-import BoardPage from './pages/BoardPage'
-import NoteEditPage from './pages/NoteEditPage'
 import SettingsPage from './pages/SettingsPage'
 import Ribbon from './components/Ribbon'
 import RibbonPanel from './components/RibbonPanel'
@@ -103,13 +100,16 @@ export default function App() {
             </Suspense>
           }
         />
-        {/* ★ 白板：挂在节点上的一篇「特殊笔记」，和笔记一样有真实路由 */}
-        <Route path="/p/:projectRef/board/:boardId" element={<BoardPage />} />
+        {/* ★ 白板：挂在节点上的一篇「特殊笔记」，和笔记一样有真实路由，
+            也和笔记一样显示在项目页右栏的框里 */}
+        <Route path="/p/:projectRef/board/:boardId" element={<ProjectPage />} />
 
-        {/* ⚠ 这两条必须在 `/notes/:noteId` 之前 —— 否则 `new` 会被当成 noteId */}
-        <Route path="/p/:projectRef/notes/new" element={<NoteEditPage />} />
-        <Route path="/p/:projectRef/notes/:noteId/edit" element={<NoteEditPage />} />
-        <Route path="/p/:projectRef/notes/:noteId" element={<NotePage />} />
+        {/* ★ 笔记有自己的真实路由，但内容仍显示在项目页右栏的「框」里
+            （ProjectPage 按 URL 决定框里显示阅读 / 编辑 / 新建哪一篇）⚠
+            ⚠ 这两条必须在 `/notes/:noteId` 之前 —— 否则 `new` 会被当成 noteId */}
+        <Route path="/p/:projectRef/notes/new" element={<ProjectPage />} />
+        <Route path="/p/:projectRef/notes/:noteId/edit" element={<ProjectPage />} />
+        <Route path="/p/:projectRef/notes/:noteId" element={<ProjectPage />} />
 
         <Route path="/me/settings" element={<SettingsPage />} />
 

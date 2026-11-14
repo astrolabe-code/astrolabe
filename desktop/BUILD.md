@@ -33,9 +33,30 @@ python --version
 
 ### 把代码放到 Windows 上
 
-> **不想从 GitHub 拉？** 可以只要「打包所需源码」的那一小份（约 780KB）：
-> 里面只有 `desktop/` `frontend/` `app/codeparser/` `app/graph/` 和许可证文件。
-> ⚠ 解压后要保证是 `astrolabe\desktop\...` 这一层，`package-win.bat` 按相对路径找。
+> **不想从 GitHub 拉？** 可以只拷「打包所需源码」那一小份。⚠★ **必须保持这个目录层级**：
+
+```
+astrolabe\
+├── desktop\                      ← 个人版（Electron + sidecar + ui）
+│   ├── ui\                       ← 个人版前端（自有 package.json）
+│   ├── sidecar\  packaging\  main.js  preload.js
+├── app\
+│   ├── codeparser\               ← ⚠ 边车要 import 它（含 queries/*.scm）
+│   └── graph\                    ← ⚠ 边车要 import 它（vid 算法）
+└── THIRD-PARTY-NOTICES.txt        ← electron-builder 会把它打进包
+```
+
+为什么不能**只**拷 `desktop/`：`packaging/sidecar.spec` 里
+
+```python
+ROOT = <spec 的上两级>          # 也就是 astrolabe\
+APP_DIR = ROOT/app              # 解析器与 vid 算法在这
+```
+
+**⛔ 千万别拷 `node_modules`**（Linux 装的，Windows 用不了，而且 900MB+）。
+下面这些目录也建议排除：`desktop\node_modules`、`desktop\ui\node_modules`、
+`desktop\dist_electron`、`desktop\ui\dist`、`desktop\packaging\out|work`。
+Windows 上的脚本会自动 `npm install`（含 electron 二进制）。
 
 
 两种都行：
@@ -137,6 +158,9 @@ set PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 | `electron-builder` 下载超时 | 网络 | 脚本已设 `ELECTRON_MIRROR=npmmirror`；确认能访问 npmmirror.com |
 | 打包报 "author is missed" | 已修 | `package.json` 里有 `author` 字段了 |
 | 前端白屏 | `ui/dist` 没构建 | 检查 `desktop\ui\dist\index.html` 是否存在（`cd ui && npm run build`） |
+| `npm warn install-scripts ... esbuild` | **npm 11 的安装脚本闸门**：postinstall 被拦下 ⇒ 没有 `esbuild.exe` ⇒ `vite build` 失败 | 脚本已自动兜底；手动修：`cd ui` → `npm install-scripts approve esbuild` → `npm rebuild esbuild` → 确认 `node_modules\esbuild\esbuild.exe` 存在 |
+| `Cannot find module ...esbuild.exe` | 同上（脚本没跑成功） | 同上；或 `node node_modules\esbuild\install.js` |
+| `npm warn install-scripts ... electron` | 同一机制，electron 的 postinstall 被拦 | 脚本已有兜底（缺失时自动 `node node_modules\electron\install.js`） |
 | 朋友打开提示缺 DLL | 系统太旧（Win7/8） | 需要 Win10 1809+ |
 
 ---

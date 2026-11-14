@@ -44,6 +44,7 @@ import source
 import imitation
 import links
 import board
+import graphdb
 
 VERSION = "0.3.0"
 
@@ -62,9 +63,97 @@ def init() -> None:
     for entry in projectstore.list_all():
         try:
             _activate(entry)
-            indexer.rescan(entry["data"], CONN, entry.get("name") or "")
         except Exception:  # noqa: BLE001 —— 某个项目坏了不能挡住启动
             continue
+        # ⚠ 三件事各自兜底：索引重建失败不该把图库自愈也带走
+        try:
+            indexer.rescan(entry["data"], CONN, entry.get("name") or "")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class GraphSyncError(RuntimeError):
+    """图库写入失败：SQLite 已经落库，但图不一致，提示用户重建。"""
+
+
+def _parse_edge_id(eid) -> tuple[int, int]:
+    """图库的关系表没有主键 ⇒ 边的标识就是它的两个端点 `src-dst`。
+
+    ⚠ 兼容老的 `src-dst-kind` 三段写法（早期版本把 type 也拼进去了），
+       第三段起一律忽略：type 是可改属性，不该参与标识。
+    """
+    parts = str(eid or "").split("-")
+    if len(parts) < 2:
+        raise ValueError("边 id 不合法（应为 src-dst）")
+    src, dst = int(parts[0]), int(parts[1])
+    if not src or not dst:
+        raise ValueError("边 id 不合法")
+    return src, dst
+
+
+def _fill_note_nodes(notes) -> list[dict]:
+    """笔记行里的节点信息（name / file_path / line）从图库补。"""
+    for n in notes:
+        vid = int(n.get("node_vid") or 0)
+        code = graphdb.get_code(ROOT, vid) if vid else None
+        if code:
+            n["node_name"] = code.get("name") or ""
+            n["file_path"] = code.get("file_path") or ""
+            n["line"] = int(code.get("line") or 0)
+    return notes
+
+
+def _orphan_notes(project) -> list[dict]:
+    """扫描失锚笔记：`node_vid = 0`，或指向的节点已经不在图库里。
+
+    ★ 只负责「找出来」，怎么重挂由用户自己决定（⛔ 不自动猜）。
+    """
+    rows = store.notes_of(CONN, project["id"])
+    try:
+        alive = graphdb.code_vids(ROOT)
+    except Exception:  # noqa: BLE001 —— 图库打不开时全部视为失锚
+        alive = set()
+    out: list[dict] = []
+    for n in rows:
+        vid = int(n.get("node_vid") or 0)
+        if vid == 0:
+            out.append({**n, "orphan_reason": "未挂到任何节点"})
+        elif vid not in alive:
+            out.append({**n, "orphan_reason": "原来挂的节点已不存在"})
+    return out
+
+
+def _stats(project) -> dict:
+    """项目规模：节点数来自图库，笔记统计来自 SQLite。"""
+    pid = project["id"]
+    by_kind = {
+        r["kind"]: r["c"]
+        for r in CONN.execute(
+            "SELECT kind, COUNT(*) AS c FROM note WHERE project_id = ? GROUP BY kind", (pid,)
+        ).fetchall()
+    }
+    summary = CONN.execute(
+        "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ? AND kind = 'summary'",
+        (pid,),
+    ).fetchone()["c"]
+    c = graphdb.counts(ROOT)
+    return {
+        "nodes": c["code"] - c["dirs"],
+        "summaryNodes": int(summary),
+        "notesByKind": by_kind,
+    }
+
+
+def _graph_ready(project) -> None:
+    """读图库前确认它能打开。
+
+    ⚠ 代码图已不再有 SQLite 副本 ⇒ 图库丢了只能「重新解析源码」重建，
+       这里不再自动重建（那会把空图当成功，掩盖故障）。
+    """
+    try:
+        graphdb.available()
+    except Exception as exc:  # noqa: BLE001
+        raise GraphSyncError(f"图库不可用：{exc}") from None
 
 
 def _activate(entry: dict) -> None:
@@ -120,12 +209,16 @@ R_PSET = re.compile(r"^/api/projects/([^/]+)/settings/$")
 R_NODES = re.compile(r"^/api/projects/([^/]+)/nodes/$")
 R_FIELDS = re.compile(r"^/api/projects/([^/]+)/fields/$")
 R_PNOTES = re.compile(r"^/api/projects/([^/]+)/notes/$")
+R_PORPHANS = re.compile(r"^/api/projects/([^/]+)/notes/orphans/$")
 R_NOTE = re.compile(r"^/api/notes/([^/]+)/$")
 R_SCAN = re.compile(r"^/api/fs/scan$")
 R_PARSE = re.compile(r"^/api/projects/([^/]+)/parse$")
 R_WPROG = re.compile(r"^/api/projects/([^/]+)/writing-progress/$")
 R_RPATH = re.compile(r"^/api/projects/([^/]+)/reading-path/$")
 R_GRAPH = re.compile(r"^/api/projects/([^/]+)/graph/$")
+R_GNEI = re.compile(r"^/api/projects/([^/]+)/graph/neighbors/$")
+R_GNOTES = re.compile(r"^/api/projects/([^/]+)/graph/notes/$")
+R_GPATH = re.compile(r"^/api/projects/([^/]+)/graph/path/$")
 R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
@@ -226,7 +319,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 continue
             try:
                 for h in store.fts_search(CONN, q, 10):
-                    n = store.find_note(CONN, h["ref"])
+                    n = _fill_note_nodes([store.find_note(CONN, h["ref"])])[0]
                     if not n:
                         continue
                     notes.append(
@@ -242,13 +335,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                             "project_ref": entry.get("ref") or "",
                         }
                     )
-                for r in CONN.execute(
-                    """SELECT vid, kind, name, file_path, line FROM node
-                       WHERE name LIKE ? OR qname LIKE ? OR file_path LIKE ?
-                       ORDER BY (CASE WHEN name LIKE ? THEN 0 ELSE 1 END), length(name)
-                       LIMIT 8""",
-                    (like, like, like, like),
-                ).fetchall():
+                for r in graphdb.search_code(ROOT, like.strip("%"), 8):
                     nodes.append(
                         {
                             **dict(r),
@@ -306,9 +393,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
 
         # ★★★ 重新解析是**修复手段**，不是日常操作（所有者 2026-10-29）⚠
         #   「只有解析出错了、没出完整的图，才能重新解析」
-        existing = CONN.execute(
-            "SELECT COUNT(*) AS c FROM node WHERE project_id = ? AND origin = 'parsed'", (p["id"],)
-        ).fetchone()["c"]
+        existing = graphdb.counts(ROOT)["code"]
         if existing and not body.get("force"):
             return 409, {
                 "ok": False,
@@ -334,23 +419,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             store.set_parse_state(CONN, p["id"], "failed", msg, st)
             return bad(msg, 422)
         store.set_parse_state(CONN, p["id"], "ok", "", st)
-        mig = store.replace_graph(
-            CONN, p["id"], res["nodes"], res["edges"], res.get("fields")
-        )
+        # ★★ 图是真相：解析产物直接进图库（SQLite 不再存 node / edge）
+        try:
+            sync = graphdb.sync_code(ROOT, res["nodes"], res["edges"])
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库写入失败：{exc}", 500)
 
-        # ★ 迁移过的笔记，**文件里的 frontmatter 也要跟着改**（否则索引重建会退回去）
-        for m in mig.get("moved", []):
-            abs_md = os.path.join(ROOT, m["rel_path"])
-            if not os.path.exists(abs_md):
-                continue
-            node = store.node_by_vid(CONN, p["id"], m["new_vid"]) or {}
-            meta, text = notefile.read_file(abs_md)
-            meta["node_vid"] = m["new_vid"]
-            meta["node"] = node.get("name") or meta.get("node", "")
-            meta["anchor"] = f"{node.get('file_path', '')}:{node.get('line', 0)}"
-            notefile.write_file(abs_md, meta, text)
-            st = os.stat(abs_md)
-            store.update_note(CONN, m["ref"], mtime=st.st_mtime, size=st.st_size)
         # ★ 重建要留痕（它是修复动作，半年后要能看出"哪天重来过"）
         if existing:
             try:
@@ -383,9 +457,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     st = store.parse_state_of(CONN, row["id"])
                     d["parse_state"] = st[0]
                     d["parse_error"] = st[1]
-                    d["node_count"] = CONN.execute(
-                        "SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (row["id"],)
-                    ).fetchone()["c"]
+                    d["node_count"] = graphdb.counts(it.get("data") or "")["code"]
                     d["note_count"] = CONN.execute(
                         "SELECT COUNT(*) AS c FROM note WHERE project_id = ?", (row["id"],)
                     ).fetchone()["c"]
@@ -537,7 +609,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 _activate(entry)
             except Exception:  # noqa: BLE001
                 continue
-            n = store.find_note(CONN, nref)
+            n = _fill_note_nodes([store.find_note(CONN, nref)])[0]
             if n is None:
                 continue
             cards[card] = {
@@ -640,7 +712,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         pr = store.find_project(CONN, m.group(1))
         if pr is not None:
             for it in items:
-                node = store.node_by_vid(CONN, pr["id"], it["vid"])
+                node = graphdb.get_code(ROOT, int(it["vid"] or 0))
                 # ★ it["name"] 是白板自己的名字，别覆盖；节点名另给一个字段
                 it["node_name"] = node["name"] if node else f"节点 {it['vid']}"
                 it["qname"] = node["qname"] if node else ""
@@ -681,12 +753,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if not p:
             return bad("项目不存在", 404)
         entry = projectstore.get(m.group(1)) or {}
-        st = store.stats(CONN, p["id"])
+        st = _stats(p)
         pstate = store.parse_state_of(CONN, p["id"])
         notes = CONN.execute(
             "SELECT COUNT(*) AS c FROM note WHERE project_id = ?", (p["id"],)
         ).fetchone()["c"]
-        manual = store.manual_vids(CONN, p["id"])
+        manual = graphdb.manual_ids(ROOT)
         return ok(
             {
                 "name": p["name"],
@@ -720,7 +792,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             d = dict(p)
             d["parse_state"] = pstate
             d["parse_error"] = perr
-            return ok({"project": d, "stats": store.stats(CONN, p["id"])})
+            return ok({"project": d, "stats": _stats(p)})
 
     # ★ 写作进度：个人版没有"读者"，所以只有作者视角这一个数字
     m = R_WPROG.match(path)
@@ -728,11 +800,25 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
-        st = store.stats(CONN, p["id"])
-        noted = CONN.execute(
-            "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ?", (p["id"],)
-        ).fetchone()["c"]
-        return ok({"nodes": st["nodes"], "summary": st["summaryNodes"], "noted": int(noted)})
+        try:
+            _graph_ready(p)
+            c = graphdb.counts(ROOT)
+            noted = CONN.execute(
+                "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ?",
+                (p["id"],),
+            ).fetchone()["c"]
+            summary = CONN.execute(
+                "SELECT COUNT(DISTINCT node_vid) AS c FROM note "
+                "WHERE project_id = ? AND kind = 'summary'",
+                (p["id"],),
+            ).fetchone()["c"]
+            return ok(
+                {"nodes": c["code"] - c["dirs"], "noted": int(noted), "summary": int(summary)}
+            )
+        except GraphSyncError as exc:
+            return bad(str(exc), 500)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
 
     # ★ 导读路径：个人版暂时没有排序功能 ⇒ 空列表（组件会显示"还没排"，不报错）
     m = R_RPATH.match(path)
@@ -747,23 +833,13 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
-        nodes = CONN.execute(
-            "SELECT vid, kind, name, qname, file_path, line, line_end, origin FROM node WHERE project_id = ?",
-            (p["id"],),
-        ).fetchall()
-        edges = CONN.execute(
-            "SELECT id, src_vid, dst_vid, kind, origin FROM edge WHERE project_id = ?", (p["id"],)
-        ).fetchall()
-        return ok(
-            {
-                "rev": int(p["graph_rev"] or 0),
-                "nodes": [dict(r) for r in nodes],
-                "edges": [
-                    {"id": r["id"], "from": r["src_vid"], "to": r["dst_vid"], "type": r["kind"], "origin": r["origin"]}
-                    for r in edges
-                ],
-            }
-        )
+        try:
+            _graph_ready(p)
+            return ok({"rev": int(p["graph_rev"] or 0), **graphdb.graph_full(ROOT)})
+        except GraphSyncError as exc:
+            return bad(str(exc), 500)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
 
     # ------------------------------------------------ 手工改图（六种动作）
     m = R_CURATE.match(path)
@@ -777,17 +853,21 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return bad("必须填一句理由（改了什么、为什么）")
         try:
             if action == "add_node":
-                vid = store.add_manual_node(
-                    CONN,
-                    p["id"],
-                    kind=str(body.get("kind") or "function"),
-                    name=str(body.get("name") or "").strip(),
-                    file_path=str(body.get("file_path") or ""),
-                    line=int(body.get("line") or 0),
-                    line_end=int(body.get("line_end") if body.get("line_end") is not None else -1),
-                    # ★ 空白结构（无源码）⇒ 自增号身份，不问文件行号
-                    local=not (p["root"] or "").strip(),
+                name = str(body.get("name") or "").strip()
+                if not name:
+                    return bad("节点名不能为空")
+                vid = graphdb.add_code(
+                    ROOT,
+                    str(body.get("kind") or "function"),
+                    name,
+                    str(body.get("qname") or ""),
+                    str(body.get("file_path") or ""),
+                    int(body.get("line") or 0),
+                    int(body.get("line_end") if body.get("line_end") is not None else -1),
                 )
+                # ★★ vid 是哈希算的 ⇒ 补回一个「以前删过的同名同位置节点」时 vid 不变，
+                #   但删节点时 Anchored 边已被 DETACH 清掉 ⇒ 这里按 note.node_vid 重挂，
+                #   让孤儿笔记回到刚补的节点上。
                 store.log_curate(
                     CONN,
                     p["id"],
@@ -800,45 +880,52 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
 
             if action == "update_node":
                 vid = int(body.get("vid") or 0)
-                res = store.update_node_fields(
-                    CONN,
-                    p["id"],
+                res = graphdb.update_code(
+                    ROOT,
                     vid,
-                    name=body.get("name"),
-                    kind=body.get("kind"),
-                    file_path=body.get("file_path"),
-                    line=body.get("line"),
-                    line_end=body.get("line_end"),
-                    local=not (p["root"] or "").strip(),
+                    {
+                        "name": body.get("name"),
+                        "kind": body.get("kind"),
+                        "file_path": body.get("file_path"),
+                        "line": body.get("line"),
+                        "line_end": body.get("line_end"),
+                    },
                 )
-                # ★★ vid 变了 ⇒ **笔记的 frontmatter 也要改**（文件是真相，
-                #    只改库的话，下次索引重建会从文件里读回旧锚点）
-                if res.get("changed"):
-                    node = store.node_by_vid(CONN, p["id"], res["new_vid"]) or {}
-                    for n in res.get("notes", []):
+                new_vid = int(res["vid"])
+                # ★★ vid 变了 ⇒ 笔记 frontmatter 也要改（文件是恢复依据）
+                if new_vid != vid:
+                    node = graphdb.get_code(ROOT, new_vid) or {}
+                    for n in store.notes_of(CONN, p["id"], vid):
                         abs_md = os.path.join(ROOT, n["rel_path"])
                         if not os.path.exists(abs_md):
                             continue
                         meta, text = notefile.read_file(abs_md)
-                        meta["node_vid"] = res["new_vid"]
+                        meta["node_vid"] = new_vid
                         meta["node"] = node.get("name") or meta.get("node", "")
-                        meta["anchor"] = f"{node.get('file_path','')}:{node.get('line',0)}"
+                        meta["anchor"] = f"{node.get('file') or ''}:{node.get('line') or 0}"
                         notefile.write_file(abs_md, meta, text)
                         st = os.stat(abs_md)
-                        store.update_note(CONN, n["ref"], mtime=st.st_mtime, size=st.st_size)
+                        # ★ 锚点只在 SQLite（node_vid）里，改名换了 vid 必须跟着改
+                        store.update_note(
+                            CONN,
+                            n["ref"],
+                            node_vid=new_vid,
+                            mtime=st.st_mtime,
+                            size=st.st_size,
+                        )
                 store.log_curate(
                     CONN,
                     p["id"],
                     action,
                     str(vid),
                     reason,
-                    {"fields": list(body), "vidChanged": res.get("changed"), "newVid": res.get("new_vid")},
+                    {"fields": list(body), "vidChanged": new_vid != vid, "newVid": new_vid},
                 )
-                return ok({"vid": res.get("new_vid", vid), **res})
+                return ok({"vid": new_vid, "oldVid": vid})
 
             if action == "remove_node":
                 vid = int(body.get("vid") or 0)
-                n = store.remove_node(CONN, p["id"], vid)
+                n = graphdb.remove_code(ROOT, vid)
                 store.log_curate(CONN, p["id"], action, str(vid), reason, {"edgesRemoved": n})
                 return ok({"removed": vid, "edges": n})
 
@@ -846,26 +933,27 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 src, dst = int(body.get("from") or 0), int(body.get("to") or 0)
                 if not src or not dst or src == dst:
                     return bad("两端的节点不对")
-                eid = store.add_manual_edge(CONN, p["id"], src, dst, str(body.get("type") or "call"))
-                store.log_curate(CONN, p["id"], action, str(eid), reason, {"from": src, "to": dst})
+                kind = str(body.get("type") or "call")
+                graphdb.add_rel(ROOT, src, dst, kind)
+                # ★ 边的标识 = 两个端点（关系表没有主键），type 是可改属性
+                eid = f"{src}-{dst}"
+                store.log_curate(CONN, p["id"], action, eid, reason, {"from": src, "to": dst})
                 return ok({"id": eid})
 
             if action == "update_edge":
-                # ⚠ 个人版只允许改类型（改端点 = 删了重加，语义更清楚）
-                eid = int(body.get("id") or 0)
-                with CONN:
-                    CONN.execute(
-                        "UPDATE edge SET kind = ?, origin = 'manual' WHERE project_id = ? AND id = ?",
-                        (str(body.get("type") or "call"), p["id"], eid),
-                    )
-                store.log_curate(CONN, p["id"], action, str(eid), reason, {"type": body.get("type")})
+                # ⚠ 只允许改类型（改端点 = 删了重加，语义更清楚）
+                src, dst = _parse_edge_id(body.get("id"))
+                kind = str(body.get("type") or "call")
+                graphdb.update_rel(ROOT, src, dst, None, kind)
+                eid = f"{src}-{dst}"
+                store.log_curate(CONN, p["id"], action, eid, reason, {"type": kind})
                 return ok({"id": eid})
 
             if action == "remove_edge":
-                eid = int(body.get("id") or 0)
-                okk = store.remove_edge(CONN, p["id"], eid)
-                store.log_curate(CONN, p["id"], action, str(eid), reason)
-                return ok({"removed": eid, "ok": okk})
+                src, dst = _parse_edge_id(body.get("id"))
+                n = graphdb.remove_rel(ROOT, src, dst)
+                store.log_curate(CONN, p["id"], action, str(body.get("id")), reason)
+                return ok({"removed": body.get("id"), "ok": n > 0})
 
             return bad(f"不认识的动作：{action}")
         except ValueError as exc:
@@ -873,13 +961,82 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"{type(exc).__name__}: {exc}", 500)
 
+    # ★★ 图库：N 跳上下游（服务端图查询，前端不用再自己算）
+    m = R_GNEI.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            vid = int(body.get("vid") or 0)
+            depth = int(body.get("depth") or 1)
+        except (TypeError, ValueError):
+            return bad("vid / depth 不合法")
+        if not vid:
+            return bad("缺少 vid")
+        try:
+            return ok(graphdb.neighbors(ROOT, vid, depth))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
+
+    # ★★ 图库：某个代码节点上的笔记（含白板）
+    m = R_GNOTES.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            vid = int(body.get("vid") or 0)
+        except (TypeError, ValueError):
+            return bad("vid 不合法")
+        try:
+            items = store.notes_of(CONN, p["id"], vid)
+            return ok(
+                {
+                    "items": [
+                        {
+                            "ref": n["ref"],
+                            "title": n["title"],
+                            "kind": n["kind"],
+                            "rel_path": n["rel_path"],
+                        }
+                        for n in items
+                    ]
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
+
+    # ★★ 图库：从 SQLite 重建（图库损坏 / 想强制对齐时）
+    # ★★ 图库：两点之间的最短调用路径
+    m = R_GPATH.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            a = int(body.get("from") or 0)
+            b = int(body.get("to") or 0)
+            depth = int(body.get("depth") or 10)
+        except (TypeError, ValueError):
+            return bad("from / to / depth 不合法")
+        if not a or not b:
+            return bad("需要 from 和 to")
+        try:
+            _graph_ready(p)
+            return ok(graphdb.shortest_path(ROOT, a, b, depth))
+        except GraphSyncError as exc:
+            return bad(str(exc), 500)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
+
     # ★ 哪些是人手补的（图上打标）+ 修补历史
     m = R_MANUAL.match(path)
     if m:
         p = _project(m.group(1))
         if not p:
             return bad("项目不存在", 404)
-        return ok({**store.manual_vids(CONN, p["id"]), "log": store.curate_history(CONN, p["id"], 20)})
+        return ok({**graphdb.manual_ids(ROOT), "log": store.curate_history(CONN, p["id"], 20)})
 
     # ★ 某节点的出入边（改图面板用）
     m = R_EDGES.match(path)
@@ -890,7 +1047,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         vid = int(body.get("vid") or 0)
         if not vid:
             return bad("缺少 vid")
-        return ok(store.edges_of_node(CONN, p["id"], vid))
+        return ok(graphdb.edges_of(ROOT, vid))
 
     # ★ 某节点的字段（结构体/类成员）—— 只给详情面板用，⛔ 不进图
     m = R_FIELDS.match(path)
@@ -913,11 +1070,29 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return bad("项目不存在", 404)
         limit = min(int(body.get("limit") or 500), 20000)
         offset = int(body.get("offset") or 0)
-        items = store.nodes_of(CONN, p["id"], limit, offset)
-        total = CONN.execute("SELECT COUNT(*) AS c FROM node WHERE project_id = ?", (p["id"],)).fetchone()["c"]
-        return ok({"total": int(total), "limit": limit, "offset": offset, "items": items})
+        try:
+            _graph_ready(p)
+            return ok(graphdb.nodes(ROOT, limit, offset))
+        except GraphSyncError as exc:
+            return bad(str(exc), 500)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"图库查询失败：{exc}", 500)
 
     # ------------------------------------------------ 笔记
+    # ★★ 失锚笔记：让用户自己扫、自己重挂（不靠系统猜）
+    m = R_PORPHANS.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "GET":
+            return bad("不支持的方法", 405)
+        try:
+            items = _orphan_notes(p)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"扫描失败：{exc}", 500)
+        return ok({"items": items, "total": len(items)})
+
     m = R_PNOTES.match(path)
     if m:
         p = _project(m.group(1))
@@ -927,7 +1102,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         if method == "GET":
             nv = body.get("node_vid") or body.get("node_id")
             kind = (body.get("kind") or "").strip()
-            items = store.notes_of(CONN, p["id"], int(nv) if nv else None)
+            items = _fill_note_nodes(
+                store.notes_of(CONN, p["id"], int(nv) if nv else None)
+            )
             if kind:
                 items = [n for n in items if n["kind"] == kind]
             # ★ 卡片盒的链（全局 links.json）：parent / 引用 / 子代
@@ -954,7 +1131,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     ),
                 }
             node_vid = int(body.get("node_vid") or 0)
-            node = store.node_by_vid(CONN, p["id"], node_vid)
+            node = graphdb.get_code(ROOT, node_vid)
             if node is None:
                 return bad("必须指定 node_vid（笔记挂在哪个节点下）")
             text = str(body.get("body") or "")
@@ -1032,6 +1209,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 break
         if note is None:
             return bad("笔记不存在", 404)
+        _fill_note_nodes([note])
         abs_path = os.path.join(ROOT, note["rel_path"])
 
         if method == "GET":
@@ -1049,6 +1227,20 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             for k in ("kind",):
                 if k in body:
                     meta[k] = str(body.get(k) or "")
+            # ★ 改锚点：自动挂靠挂错了，用户手工改到另一个节点（传 0 = 解除锚定）
+            if "node_vid" in body:
+                new_vid = int(body.get("node_vid") or 0)
+                target = graphdb.get_code(ROOT, new_vid) if new_vid else None
+                if new_vid and target is None:
+                    return bad("目标节点不存在")
+                meta["node_vid"] = new_vid
+                meta["node"] = (target or {}).get("name") or ""
+                meta["anchor"] = (
+                    f"{(target or {}).get('file_path') or ''}:"
+                    f"{(target or {}).get('line') or 0}"
+                    if target
+                    else ""
+                )
             notefile.write_file(abs_path, meta, text)
             st = os.stat(abs_path)
             upd = {"mtime": st.st_mtime, "size": st.st_size}
@@ -1056,6 +1248,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 upd["title"] = meta.get("title") or ""
             if "kind" in body:
                 upd["kind"] = str(body.get("kind") or "")
+            if "node_vid" in body:
+                upd["node_vid"] = int(meta.get("node_vid") or 0)
             store.update_note(CONN, ref, **upd)
             if "body" in body:
                 try:
@@ -1063,7 +1257,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     store.fts_sync(CONN, ref, str(meta2.get("title") or ""), text2)
                 except OSError:
                     pass
-            return ok({"note": store.find_note(CONN, ref)})
+            return ok({"note": _fill_note_nodes([store.find_note(CONN, ref)])[0]})
 
         if method == "DELETE":
             # ★ 删除 = 移到 trash/（可恢复），不是抹掉

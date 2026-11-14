@@ -186,12 +186,6 @@ export default function Ribbon({ active, onToggle }: RibbonProps) {
               icon: <Maximize size={14} />,
               fn: actions.toggleCanvasFullscreen,
             },
-            {
-              // ★ 顶栏那个「搜索 Ctrl+K」按钮撤走后，全局搜索入口收进这里
-              label: '全局搜索 Ctrl+K',
-              icon: <Search size={14} />,
-              fn: () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })),
-            },
           ].map((m) => (
             <button
               key={m.label}

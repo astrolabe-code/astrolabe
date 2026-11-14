@@ -531,16 +531,7 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   transform: none;
 }
 
-/* ★ 顶栏里那个插槽：吃掉中间的空位，页面工具条就并排贴在「Astrolabe」右边 */
-.topbar-slot {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  /* ⚠★ 不能 overflow:hidden —— 会把「工具」下拉裁掉（踩过：点了没反应）*/
-  overflow: visible;
-}
+/* 页面工具插槽见 .page-tools-slot（顶栏右上角） */
 
 .rail-btn {
   display: inline-flex;
@@ -564,7 +555,10 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 }
 
 .rail-btn[aria-pressed='true'] {
+  /* ★ Obsidian 口径：开关打开时是「高亮态」的按钮，不只是变色 */
   color: var(--accent);
+  background: var(--accent-dim, rgba(37, 99, 235, .10));
+  font-weight: 600;
 }
 
 .rail-btn[aria-pressed='true']:hover {
@@ -652,11 +646,159 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .app-titlebar { -webkit-app-region: drag; user-select: none; }
 .app-titlebar button,
 .app-titlebar input,
-.app-titlebar a,
-.app-titlebar .topbar-slot,
-.app-titlebar .topbar-slot * { -webkit-app-region: no-drag; }
+.app-titlebar a { -webkit-app-region: no-drag; }
 
 /* ★★ 内容区滚动条：滑块隐藏但滚轮/触控板/键盘仍可滚（Obsidian 口径）
    ⚠ WebKit 用 ::-webkit-scrollbar，Firefox 用 scrollbar-width */
 .app-scroll { scrollbar-width: none; }
 .app-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* ★★★ 页面级工具条 = 右上角（2026-11-08 定稿）
+   portal 目标 = #page-tools-slot（顶栏右侧、窗口按钮左边），横排只显图标。
+   ⛔ 不挂左栏：左栏 ribbon 必须全局固定，每个界面图标数量一致（Obsidian 口径）。
+   ⚠ 顶栏整行是 drag ⇒ 插槽及其子元素必须 no-drag，否则按钮点不动。 */
+.page-tools-slot,
+.page-tools-slot * { -webkit-app-region: no-drag; }
+.page-tools-slot .graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  min-width: 0;
+  margin-left: 0;
+  /* ⚠★ 不能 overflow:hidden —— 会把「工具」下拉裁掉（踩过：点了没反应）*/
+  overflow: visible;
+}
+.page-tools-slot .rail-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.page-tools-slot .rail-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 0;          /* label 仍保留在 title 里供悬停提示 */
+}
+.page-tools-slot .rail-label { display: none; }
+.page-tools-slot .rail-btn svg { flex-shrink: 0; }
+/* 下拉：向下浮出，右对齐避免超出窗口右缘 */
+.page-tools-slot .rail-menu { right: 0; left: auto; }
+
+/* ★★★ 文件选项卡 / 标签栏（2026-11-08，模仿 Obsidian）
+   顶栏整行是 drag ⇒ 标签栏里的按钮必须 no-drag，否则点不动。
+   标签栏**空白区**保持 drag，仍可拖窗口。 */
+.app-tabs button,
+.app-tabs .app-tab-close,
+.app-tabs .app-tab-label { -webkit-app-region: no-drag; }
+.app-tabs-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.app-tabs-scroll::-webkit-scrollbar { height: 0; display: none; }
+
+.app-tab {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 28px;
+  flex-shrink: 0;
+  max-width: 168px;
+  padding: 0 3px 0 9px;
+  border-right: 1px solid rgba(15, 23, 42, .10);
+  border-radius: 5px 5px 0 0;
+  color: var(--text-sub);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.app-tab:hover { background: rgba(15, 23, 42, .045); }
+.app-tab.active {
+  background: #fff;
+  color: var(--text-main);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent, #2563eb);
+}
+.app-tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.app-tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  cursor: pointer;
+}
+.app-tab:hover .app-tab-close,
+.app-tab.active .app-tab-close { opacity: 1; }
+.app-tab-close:hover { background: rgba(15, 23, 42, .10); color: var(--text-main); }
+
+/* ---------------- 失锚笔记（扫描 + 手工重挂） ---------------- */
+.orphan-card {
+  flex: none;
+  border-top: 1px solid var(--card-border);
+}
+.orphan-body {
+  padding: 0 10px 10px;
+}
+.orphan-hint {
+  font-size: 10.5px;
+  line-height: 1.55;
+  margin-bottom: 6px;
+}
+.orphan-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+.orphan-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orphan-why {
+  flex: none;
+  font-size: 10px;
+}
+.orphan-fix {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.orphan-fix:hover {
+  background: var(--accent-dim);
+}

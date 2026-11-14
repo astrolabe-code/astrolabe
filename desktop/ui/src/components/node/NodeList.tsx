@@ -207,12 +207,16 @@ export default function NodeList({
                     <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
                       {/* ★★ 有作用域时显示**限定名**（`A.run` / `ns::Class::m`）⚠
                           否则同一个类里两个 `run` 在列表上完全一样，分不出谁是谁 */}
-                      {/* ★★★ 名字吃掉剩余宽度并省略：⛔ 不再溢出盖住行尾图标 */}
+                      {/* ★★★ 名字按内容宽度显示，但**最长封顶 150px**：
+                          · 短名字 ⇒ 徽标紧跟其后（⛔ 不把徽标推到行尾）
+                          · 长名字 ⇒ ... 省略，所有行的名字最大宽度一致
+                          · 左栏再窄 ⇒ flex 收缩 + 省略，图标始终不被盖住 */}
                       <span
                         className="mono"
                         style={{
-                          flex: 1,
+                          maxWidth: 150,
                           minWidth: 0,
+                          flexShrink: 1,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',

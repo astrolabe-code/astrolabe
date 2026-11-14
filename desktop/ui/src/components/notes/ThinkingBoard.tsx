@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import {
   X,
   Plus,
@@ -651,19 +650,19 @@ export default function ThinkingBoard({
     : null
 
 
-  return createPortal(
+  // ★★ 白板现在和笔记一样，显示在**项目页右栏那个框**里；
+  //   ⛔ 不再 createPortal 全屏覆盖，URL 仍是自己的真实路由
+  return (
     <div
       style={{
-        position: 'fixed',
-        // ★ 从全局顶栏下面开始，铺满其余视口（⛔ 不再只占右栏半边）
-        inset: 'var(--nav-h, 40px) 0 0 0',
-        zIndex: 90,
+        position: 'relative',
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        height: '100%',
         background: 'var(--card)',
         display: 'flex',
         flexDirection: 'column',
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
       }}
     >
       <div
@@ -1326,7 +1325,6 @@ export default function ThinkingBoard({
           </div>
         </div>
       </Modal>
-    </div>,
-    document.body,
+    </div>
   )
 }

@@ -237,6 +237,38 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  /**
+   * ★★★ 白屏诊断：把渲染进程的加载失败/崩溃/console 错误写进 exe 旁的 ui.log
+   *   · frame:false ⇒ 前端挂载失败时整窗全白，界面上看不到任何线索
+   *   · 只追加、失败静默，不参与业务
+   */
+  const UI_LOG = path.join(EXE_DIR, 'ui.log')
+  const logUi = (msg) => {
+    try {
+      fs.appendFileSync(UI_LOG, `${new Date().toISOString()} ${msg}\n`)
+    } catch {
+      /* 目录只读就算了 */
+    }
+  }
+  logUi(`--- start | dist=${DIST} | index.html=${fs.existsSync(path.join(DIST, 'index.html'))}`)
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    logUi(`did-fail-load code=${code} desc=${desc} url=${url}`)
+  })
+  win.webContents.on('render-process-gone', (_e, details) => {
+    logUi(`render-process-gone ${JSON.stringify(details)}`)
+  })
+  win.webContents.on('preload-error', (_e, preloadPath, err) => {
+    logUi(`preload-error ${preloadPath} ${err && err.message}`)
+  })
+  win.webContents.on('console-message', (...args) => {
+    const a = args[0]
+    if (a && typeof a === 'object' && 'message' in a) {
+      logUi(`console[${a.level}] ${a.message} (${a.sourceId}:${a.lineNumber})`)
+    } else {
+      logUi(`console[${args[1]}] ${args[2]} (${args[4]}:${args[3]})`)
+    }
+  })
+
   win.loadURL('app://local/app/')
 
   // ★ 最大化状态回传：自绘的 □ 按钮要在最大化后变成「还原」图标

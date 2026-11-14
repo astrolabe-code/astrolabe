@@ -14,3 +14,6 @@ out/
 # ★ 打包中间产物（PyInstaller 的 dist/work 也在这）
 packaging/out/
 packaging/work/
+
+# 打包专用虚拟环境（PyInstaller 跑在里面）
+.venv-build/

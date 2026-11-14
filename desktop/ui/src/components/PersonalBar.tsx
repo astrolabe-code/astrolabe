@@ -21,6 +21,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Box, Copy, Minus, Square, X } from 'lucide-react'
 
+import TabBar from './TabBar'
+
 interface DesktopApi {
   isDesktop?: boolean
   winMinimize?: () => Promise<boolean>
@@ -123,13 +125,21 @@ export default function PersonalBar() {
         <Box size={15} strokeWidth={1.6} />
       </button>
 
-      {/* ★ 页面级工具条仍挂这一行（TopbarSlot portal） */}
-      <div id="app-topbar-slot" className="topbar-slot" />
-
-      {/* ★ 中间大片留白 = 系统拖动区（-webkit-app-region: drag）。
-          ⚠ drag 区域不派发 JS 鼠标事件 ⇒ 这里不做「双击最大化」，
+      {/* ★★ 文件选项卡（Obsidian 口径）：标签 + 新建笔记 + 标签列表下拉。
+          标签栏空白处仍是系统拖动区（-webkit-app-region: drag），
+          只有按钮 no-drag（见 components.css）。
+          ⚠ drag 区域不派发 JS 鼠标事件 ⇒ 不做「双击最大化」，
             最大化统一用右侧 □ 按钮（真能点） */}
-      <div style={{ flex: 1, minWidth: 0, height: '100%' }} />
+      <TabBar />
+
+      {/* ★★ 页面级工具插槽（右上角、窗口按钮左边）：各页面 <PageBar> portal 到这里。
+          ⛔ 不挂左栏 ribbon，保证左栏图标数量在每个界面都一样（Obsidian 口径）。
+          横排只显图标，见 .page-tools-slot CSS。 */}
+      <div
+        id="page-tools-slot"
+        className="page-tools-slot"
+        style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}
+      />
 
       {hasWinApi && (
         <div style={{ display: 'flex', flexShrink: 0 }}>

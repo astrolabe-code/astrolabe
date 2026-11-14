@@ -458,7 +458,6 @@ export default function CodeWorkspace({
                 initialMode={noteView.mode}
                 onNavigate={(p) => nav(p)}
                 toolsSlotId={toolsSlotId}
-                onBackToList={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
               />
             ) : boardView ? (
               <ThinkingBoard

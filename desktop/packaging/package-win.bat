@@ -31,20 +31,31 @@ node -v
 python --version
 
 echo.
-echo [1/6] Installing frontend deps (first run 2-3 min)...
-pushd ..\frontend
-call npm install --no-audit --no-fund
+echo [1/6] Installing UI deps (first run 2-3 min)...
+pushd ui
+call npm install --no-audit --no-fund --foreground-scripts
 if errorlevel 1 goto :fail
 popd
 
 echo.
-echo [2/6] Building frontend (personal edition)...
-pushd ..\frontend
-call npm run build:personal
-if errorlevel 1 goto :fail
+echo [2/6] Building UI (personal edition)...
+pushd ui
+call npm run build
+if errorlevel 1 (
+  echo   .. build failed, trying esbuild recovery (npm 11 allowScripts gate)
+  call npm install-scripts approve esbuild >nul 2>&1
+  call npm rebuild esbuild
+  call npm run build
+)
+if errorlevel 1 (
+  echo   .. still failing, clean reinstall of ui deps (node_modules will be removed)
+  if exist "node_modules" rmdir /s /q "node_modules"
+  call npm ci --no-audit --no-fund --foreground-scripts
+  call npm run build
+)
 popd
-if not exist "..\frontend\dist-personal\index.html" goto :no_dist
-echo   OK  ..\frontend\dist-personal
+if not exist "ui\dist\index.html" goto :no_dist
+echo   OK  ui\dist
 
 echo.
 echo [3/6] Installing desktop deps (electron ~110MB on first run)...
@@ -65,13 +76,22 @@ if not exist "node_modules\electron\dist\electron.exe" (
 echo   OK  electron binary
 
 echo.
-echo [4/6] Installing sidecar deps (tree-sitter x4 + pyinstaller)...
-python -m pip install -r packaging\requirements.txt
+echo [4/6] Preparing isolated build venv (keeps Anaconda packages out)...
+REM ★ PyInstaller 会在「当前解释器」的环境里分析依赖：直接拿 Anaconda 全局
+REM   环境打包，pkg_resources 的 entry_points 会把 Jupyter / Sphinx / PyQt5
+REM   (含 QtWebEngine) / MKL / scipy 全拉进来，产物能到 500MB+。
+REM   用一个只装 requirements.txt 的干净 venv，体积能回到正常。
+if not exist ".venv-build\Scripts\python.exe" (
+  python -m venv .venv-build
+  if errorlevel 1 goto :no_venv
+)
+call .venv-build\Scripts\python.exe -m pip install --upgrade pip --quiet
+call .venv-build\Scripts\python.exe -m pip install -r packaging\requirements.txt
 if errorlevel 1 goto :fail
 
 echo.
 echo [5/6] Packaging Python sidecar...
-python -m PyInstaller --clean --noconfirm --distpath packaging\out --workpath packaging\work packaging\sidecar.spec
+call .venv-build\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath packaging\out --workpath packaging\work packaging\sidecar.spec
 if errorlevel 1 goto :fail
 if not exist "packaging\out\astrolabe-sidecar.exe" goto :no_sidecar
 for %%f in (packaging\out\astrolabe-sidecar.exe) do echo   OK  %%~ff  %%~zf bytes
@@ -106,8 +126,14 @@ goto :fail
 echo   [X] python not found - install Python 3.12 64-bit and tick 'Add to PATH'
 goto :fail
 
+:no_venv
+echo   [X] python -m venv failed - the interpreter has no venv module.
+echo       Reinstall Python 3.12 64-bit (it ships venv), or delete
+echo       .venv-build and rerun.
+goto :fail
+
 :no_dist
-echo   [X] frontend build missing: ..\frontend\dist-personal\index.html
+echo   [X] UI build missing: ui\dist\index.html
 goto :fail
 
 :no_eb

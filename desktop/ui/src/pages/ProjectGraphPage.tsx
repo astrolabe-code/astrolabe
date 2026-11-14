@@ -5,9 +5,6 @@ import {ChevronDown,
   List,
   Loader2,
   Route,
-  SlidersHorizontal,
-  Maximize,
-  Minimize,
   Search,
   Trash2,
   Workflow,
@@ -29,11 +26,11 @@ import {
   useReplacePath,
 } from '../query/readingPath'
 import AppLayout from '../components/AppLayout'
-import { PageBar, RailButton, RailMenu, RailMenuSep } from '../components/PageBar'
-import AppMenuItems from '../components/AppMenuItems'
+import { PageBar, RailButton } from '../components/PageBar'
 import SplitPane from '../components/SplitPane'
 import CodeWorkspace from '../components/code/CodeWorkspace'
 import { FileCode2 } from 'lucide-react'
+import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
@@ -121,6 +118,15 @@ export default function ProjectGraphPage() {
   const [fullscreen, setFullscreen] = useState(false)
   // ★★ 写作区全屏（* 与图全屏**互斥**）——* 右侧面板占满整个主区 ⚠
   const [panelFull] = useState(false)
+  // ★★ 画布全屏交给全局 ribbon 的 ⋮ 菜单
+  useEffect(() => {
+    patchRibbon({
+      projectRef,
+      toggleCanvasFullscreen: () => setFullscreen((v) => !v),
+    })
+    return () => clearRibbon(['toggleCanvasFullscreen'])
+  }, [projectRef])
+
   // ★★★ **移动端响应式**（* 窄屏 ⇒ 单列 + 写作区抽屉）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
   // ★★★ 移动端 = **上下式**（* 照原型：图在上、* 写作区在下）⚠
@@ -426,29 +432,32 @@ export default function ProjectGraphPage() {
           active={codeOpen}
           onClick={() => setCodeOpen((v) => !v)}
         />
-        <RailMenu label="工具" title="工具：依赖线 / 学习路径 / 显示全部">
-          <Button
-            variant={showImports ? 'primary' : 'ghost'}
-            onClick={() => setShowImports((v) => !v)}
-            title="文件之间的 import / include 连线（默认关，会糊住主干）"
-          >
-            依赖线
-          </Button>
-          <Button variant={pathOpen ? 'primary' : 'ghost'} onClick={() => setPathOpen((v) => !v)}>
-            学习路径（{pathItems.length}）
-          </Button>
-          {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
-            <Button
-              variant={showAllNodes ? 'primary' : 'ghost'}
-              onClick={toggleShowAll}
-              title={showAllNodes ? '收起，回到刚才那批节点' : '把剩下的节点也画出来'}
-            >
-              {showAllNodes ? '收起' : '显示全部'}
-            </Button>
-          )}
-          <RailMenuSep />
-          <AppMenuItems />
-        </RailMenu>
+        {/* ★★ 2026-11-08：原「工具」下拉拆成独立图标，全部直接排在左栏
+            所有者：「工具点了，不要出现一个弹窗，把里面的按钮都拆到左栏」
+            ⛔ 不再有 RailMenu 折叠项；开关态用 active（aria-pressed）显示 */}
+        <RailButton
+          icon={<Share2 size={13} />}
+          label="依赖线"
+          title="文件之间的 import / include 连线（默认关，会糊住主干）"
+          active={showImports}
+          onClick={() => setShowImports((v) => !v)}
+        />
+        <RailButton
+          icon={<Route size={13} />}
+          label="学习路径"
+          title={`学习路径（${pathItems.length}）`}
+          active={pathOpen}
+          onClick={() => setPathOpen((v) => !v)}
+        />
+        {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
+          <RailButton
+            icon={showAllNodes ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            label={showAllNodes ? '收起' : '显示全部'}
+            title={showAllNodes ? '收起，回到刚才那批节点' : '把剩下的节点也画出来'}
+            active={showAllNodes}
+            onClick={toggleShowAll}
+          />
+        )}
       </PageBar>
 
       <div
@@ -457,9 +466,10 @@ export default function ProjectGraphPage() {
           flexDirection: 'column',
           gap: 0,
           // ★ 与列表页完全一致：顶部 0、左右 18px ⇒ 顶栏下面直接是卡片，顶满
-          padding: fullscreen ? 12 : '0 18px',
+          // ★ 与列表页一致：贴边铺满，只有全屏模式保留 12px
+          padding: fullscreen ? 12 : 0,
           // ★★ 移动端用 `dvh`（* 动态视口高，* 避开地址栏伸缩）⚠
-          height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 54px))',
+          height: fullscreen ? '100dvh' : 'calc(100dvh - var(--nav-h, 40px))',
           minHeight: fullscreen ? undefined : 520,
           ...(fullscreen
             ? { position: 'fixed', inset: 0, zIndex: 60, background: 'var(--card)', padding: 12 }
@@ -490,43 +500,29 @@ export default function ProjectGraphPage() {
         >
           {/* ★★★ 左上角两颗胶囊（* 形似 code_network：悬浮、圆角、点开才展开，
               压在图谱上、不占高度）⚠ */}
-          {/* ★★★ 画布全屏按钮：细线图标，⛔ 无圆形底板/边框/阴影 */}
-          <button
-            type="button"
-            onClick={() => {
-              setFullscreen((v) => !v)
-            }}
-            title={fullscreen ? '退出全屏' : '全屏'}
-            style={{
-              position: 'absolute',
-              top: 2,
-              right: 10,
-              zIndex: 30,
-              padding: 5,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              // ★★★ 2026-11-06：跟代码工作区右上角**同一套细线图标** ⚠
-              //   所有者：「现在的全屏按钮，太怪了」⇒ ⛔ 圆形底板 / 边框 / 阴影
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-sub)',
-              boxShadow: 'none',
-            }}
-          >
-            {fullscreen ? <Minimize size={16} strokeWidth={1.5} /> : <Maximize size={16} strokeWidth={1.5} />}
-          </button>
 
           <div
             className="card"
-            style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+              padding: 0,
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              // ★ 这张卡在 SplitPane 顶层子元素**内部**，decorate 覆盖不到它；
+              //   圆角/边框/阴影在这里一并去掉（所有者截图圈出的右上角圆角）
+              border: 'none',
+              borderRadius: 0,
+              boxShadow: 'none',
+            }}
           >
             {/* ★★★ 2026-11-06：提示/路径面板移到**卡片内部** ⚠
                 原来它们在卡片之前占高度，把左栏卡片往下推 ⇒ 右栏没这行 ⇒ 两栏顶部错开，
                 且绝对定位的全屏按钮正好被左栏卡片的上边框横穿（所有者截图反馈）。
                 现在两栏卡片都从各自容器顶部开始，始终对齐、顶格。 */}
-            <div style={{ flexShrink: 0, padding: '8px 40px 0 12px' }}>
+            <div style={{ flexShrink: 0, padding: '8px 12px 0 12px' }}>
               {/* ★★ `D107`：失效 vid 提示 + 一键清理（* ⛔ 不自动删）⚠ */}
               {stale.length > 0 && (
                 <div

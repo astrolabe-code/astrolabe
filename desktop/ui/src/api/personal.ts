@@ -186,7 +186,9 @@ export const personalApi = {
     )
     const nodes = (d.nodes || []).map(toGraphNode)
     const edges = (d.edges || []).map((e) => ({
-      id: Number(e.id),
+      // ★★★ 边没有主键（图库的关系表不带 id）⇒ 后端给的是 "src-dst-kind" 字符串。
+      //    ⛔ 别 Number() 它：会变成 NaN，G6 直接抛 "Edge already exists: NaN"
+      id: String(e.id),
       from: Number(e.from),
       to: Number(e.to),
       type: String(e.type || ''),
@@ -247,8 +249,14 @@ export const personalApi = {
     return { note: toNote(d.note, body.body), body: body.body }
   },
 
-  updateNote: async (ref: string, patchBody: { body?: string; title?: string; kind?: string }) => {
-    const d = await patch<{ note: any }>(`/api/notes/${encodeURIComponent(ref)}/`, patchBody)
+  updateNote: async (
+    ref: string,
+    patchBody: { body?: string; title?: string; kind?: string; node_id?: number },
+  ) => {
+    // ★ 前端口径 `node_id` ⇒ 后端口径 `node_vid`（D125 改锚点）
+    const { node_id, ...rest } = patchBody
+    const payload = node_id === undefined ? rest : { ...rest, node_vid: node_id }
+    const d = await patch<{ note: any }>(`/api/notes/${encodeURIComponent(ref)}/`, payload)
     return { note: toNote(d.note, patchBody.body || ''), body: patchBody.body || '' }
   },
 

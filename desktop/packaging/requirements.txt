@@ -21,6 +21,11 @@ pyinstaller>=6.10,<7
 # back to a simplified matcher, so this is a quality upgrade, not a hard dep.
 pathspec>=0.12,<1
 
+# graph database (embedded, ships prebuilt wheels incl. cp312-win_amd64)
+# The graph is the source of truth for node/edge topology; binaries are
+# prebuilt, so pip never invokes a C++ compiler here.
+ladybug==0.22.3
+
 # parser (same versions as app/requirements.txt)
 tree-sitter==0.23.2
 tree-sitter-python==0.23.6

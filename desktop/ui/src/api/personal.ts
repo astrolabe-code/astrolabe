@@ -186,8 +186,10 @@ export const personalApi = {
     )
     const nodes = (d.nodes || []).map(toGraphNode)
     const edges = (d.edges || []).map((e) => ({
-      // ★★★ 边没有主键（图库的关系表不带 id）⇒ 后端给的是 "src-dst-kind" 字符串。
-      //    ⛔ 别 Number() 它：会变成 NaN，G6 直接抛 "Edge already exists: NaN"
+      // ★★★ G6 会把 id 当数字用：带连字符的串（"901-902"）会被转成 NaN，
+      //    多条边都成 NaN ⇒ "Edge already exists: NaN" ⇒ React 崩、整窗白屏。
+      //    后端 /graph/ 现在给**纯数字**渲染序号；这里 String(1)="1" 仍然安全。
+      //    ⚠ 删边/改边用的是 /edges/ 的 "src-dst" 标识，不走这里。
       id: String(e.id),
       from: Number(e.from),
       to: Number(e.to),

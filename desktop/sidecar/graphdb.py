@@ -147,17 +147,23 @@ def sync_code(data_dir: str, nodes: list[dict], edges: list[dict]) -> dict:
     # ★ vid 撞不撞车交给数据库判断（主键索引 O(log n)），
     #   ⛔ 不预读全表、不自己建索引；真撞了在插入时捕获再重算（见 _create_code）
 
-    # ★ 同一方向只留一条：解析器重复产出、人工边与解析边重叠时都按 (src,dst) 去重
+    # ★★ 任意两点之间（不分方向）只留一条：把端点排序成无向对再判重，
+    #    但**保留先到的那条边原本的方向**（⛔ 不把 B→A 改写成 A→B）
     erows: list[dict] = []
-    seen_pairs: set[tuple[str, str]] = set()
+    seen_pairs: set[tuple[int, int]] = set()
+
+    def pair(src, dst) -> tuple[int, int]:
+        a, b = int(src), int(dst)
+        return (a, b) if a <= b else (b, a)
+
     for e in _edge_rows(edges):
-        key = (e["a"], e["b"])
+        key = pair(e["a"], e["b"])
         if key in seen_pairs:
             continue
         seen_pairs.add(key)
         erows.append(e)
     for a, b, kind, line in manual_edges:
-        key = (int(a), int(b))
+        key = pair(a, b)
         if key in seen_pairs:
             continue
         seen_pairs.add(key)
@@ -277,16 +283,21 @@ def graph_full(data_dir: str) -> dict:
     nodes = conn.execute(
         "MATCH (c:Code) RETURN c.vid, c.kind, c.name, c.qname, c.file, c.line, c.lineEnd, c.origin"
     ).get_all()
+    # ★ 固定排序 ⇒ 序号稳定；边没有主键，序号只作渲染 key，不参与任何业务定位
     edges = conn.execute(
-        "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind, r.origin, r.line"
+        "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind, r.origin, r.line "
+        "ORDER BY a.vid, b.vid, r.kind"
     ).get_all()
     ncols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "origin"]
     return {
         "nodes": [dict(zip(ncols, r)) for r in nodes],
-        # 图库的边没有主键，用 (src,dst,kind) 合成一个稳定 id 给前端当 key
+        # ★★ id 必须是**纯数字**：G6 会把 id 转成数字，
+        #    "901-902" 这类带连字符的串会被转成 NaN ⇒ "Edge already exists: NaN" 白屏。
+        #    纯数字对新旧前端都安全（新前端 String(1)="1"，旧前端 Number(1)=1）。
+        #    ⚠ 这只是渲染 key；删边/改边仍走 /edges/ 的 "src-dst" 标识，不受影响。
         "edges": [
-            {"id": f"{r[0]}-{r[1]}", "from": r[0], "to": r[1], "type": r[2], "origin": r[3], "line": r[4]}
-            for r in edges
+            {"id": i, "from": r[0], "to": r[1], "type": r[2], "origin": r[3], "line": r[4]}
+            for i, r in enumerate(edges, 1)
         ],
     }
 
@@ -327,11 +338,17 @@ def _hash(text: str) -> int:
         from graph import identity  # noqa: PLC0415
 
         return int(identity.hash53(text))
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover —— ⚠ 口径必须与 identity.hash53 完全一致
         import hashlib
 
-        return int.from_bytes(
-            hashlib.blake2b(text.encode("utf-8"), digest_size=7).digest(), "big"
+        # ★ 53 位掩码是 JS Number.MAX_SAFE_INTEGER 的边界；
+        #   少这一步（旧版用 7 字节 = 56 位）会产出前端 Number() 装不下的 vid
+        mask = (1 << 53) - 1
+        return (
+            int.from_bytes(
+                hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest(), "big"
+            )
+            & mask
         )
 
 
@@ -529,7 +546,7 @@ def remove_code(data_dir: str, vid: int) -> int:
 
 
 def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
-    """加一条边。★ 同一方向只允许一条（(src, dst) 唯一）⇒ 边不需要主键。"""
+    """加一条边。★ 任意两点之间（**不分方向**）总共只允许一条 ⇒ 边不需要主键。"""
     conn = _open(data_dir)
     if not int(src) or not int(dst):
         raise ValueError("两端都要有 vid")
@@ -541,12 +558,14 @@ def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
         raise ValueError("终点节点不存在")
     dup = int(
         conn.execute(
-            "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) RETURN count(r)",
+            "MATCH (a:Code)-[r:Rel]->(b:Code) "
+            "WHERE (a.vid = $a AND b.vid = $b) OR (a.vid = $b AND b.vid = $a) "
+            "RETURN count(r)",
             {"a": int(src), "b": int(dst)},
         ).get_next()[0]
     )
     if dup:
-        raise ValueError("这两个节点之间已经有边了（同方向只允许一条）")
+        raise ValueError("这两个节点之间已经有边了（不分方向，只允许一条）")
     conn.execute(
         "MATCH (a:Code {vid:$a}), (b:Code {vid:$b}) "
         "CREATE (a)-[:Rel {kind:$k, origin:'manual', line:0}]->(b)",
@@ -554,20 +573,22 @@ def add_rel(data_dir: str, src: int, dst: int, kind: str = "call") -> None:
     )
 
 
+_REL_BY_PAIR = (
+    "MATCH (a:Code)-[r:Rel]->(b:Code) "
+    "WHERE (a.vid = $a AND b.vid = $b) OR (a.vid = $b AND b.vid = $a) "
+)
+
+
 def remove_rel(data_dir: str, src: int, dst: int, kind: str | None = None) -> int:
-    """删边。★ (src, dst) 唯一 ⇒ 只按端点定位，kind 仅作兼容参数。"""
+    """删边。★ 两点之间不分方向只有一条 ⇒ 按端点对定位（传反方向也能删）。"""
     conn = _open(data_dir)
     params = {"a": int(src), "b": int(dst)}
     found = int(
-        conn.execute(
-            "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) RETURN count(r)", params
-        ).get_next()[0]
+        conn.execute(_REL_BY_PAIR + "RETURN count(r)", params).get_next()[0]
     )
     if not found:
         raise ValueError("这条边不存在")
-    conn.execute(
-        "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) DELETE r", params
-    )
+    conn.execute(_REL_BY_PAIR + "DELETE r", params)
     return found
 
 
@@ -578,16 +599,13 @@ def update_rel(data_dir: str, src: int, dst: int, old_kind: str | None, new_kind
     if not kind:
         return
     params = {"a": int(src), "b": int(dst)}
-    got = conn.execute(
-        "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) RETURN r.kind", params
-    ).get_all()
+    got = conn.execute(_REL_BY_PAIR + "RETURN r.kind", params).get_all()
     if not got:
         raise ValueError("这条边不存在")
     if str(got[0][0]) == kind:
         return
     conn.execute(
-        "MATCH (a:Code {vid:$a})-[r:Rel]->(b:Code {vid:$b}) "
-        "SET r.kind = $k, r.origin = 'manual'",
+        _REL_BY_PAIR + "SET r.kind = $k, r.origin = 'manual'",
         {**params, "k": kind},
     )
 

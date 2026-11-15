@@ -53,6 +53,8 @@ export default function PersonalUserSettings() {
   const [aiCfg, setAiCfg] = useState<AiConfig | null>(null)
   const [aiActive, setAiActive] = useState('')
   const [aiBase, setAiBase] = useState('')
+  // ★ 拉到的模型列表（datalist 用）；拉不到不影响手输
+  const [aiModels, setAiModels] = useState<string[]>([])
   const [aiModel, setAiModel] = useState('')
   const [aiKey, setAiKey] = useState('')
   const [aiMsg, setAiMsg] = useState('')
@@ -76,11 +78,27 @@ export default function PersonalUserSettings() {
         const cur = c.items.find((x) => x.id === c.active)
         setAiModel(cur?.model || '')
         setAiBase(cur?.base_url || '')
+        void loadModels(c.active)
       })
       .catch(() => {})
   }, [])
 
   const aiCurrent: AiProvider | undefined = aiCfg?.items.find((x) => x.id === aiActive)
+
+  /** 拉模型列表；`quiet` = 失败不出声（切服务商时自动拉，别刷一屏红字） */
+  const loadModels = async (pid: string, quiet = true) => {
+    if (!pid) return
+    try {
+      const r = await personalApi.aiModels(pid)
+      setAiModels(r.ok ? r.models : [])
+      if (!quiet) {
+        setAiMsg(r.ok ? `已拉取 ${r.models.length} 个模型` : `拉取失败：${r.detail}`)
+      }
+    } catch (e) {
+      setAiModels([])
+      if (!quiet) setAiMsg(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   /** 切服务商：模型跟着换成该预设的默认值 */
   const pickProvider = (id: string) => {
@@ -90,6 +108,7 @@ export default function PersonalUserSettings() {
     setAiBase(p?.base_url || '')
     setAiKey('')
     setAiMsg('')
+    void loadModels(id)
   }
 
   /** 保存（`api_key` 留空 ⇒ 不覆盖已存的） */
@@ -113,6 +132,7 @@ export default function PersonalUserSettings() {
       setAiModel(saved?.model || '')
       setAiBase(saved?.base_url || '')
       setAiMsg('已保存')
+      void loadModels(aiActive)
       return true
     } catch (e) {
       setAiMsg(e instanceof Error ? e.message : String(e))
@@ -260,11 +280,29 @@ export default function PersonalUserSettings() {
           <span style={key}>模型</span>
           <input
             className="input"
+            list="ai-model-options"
             value={aiModel}
             onChange={(e) => setAiModel(e.target.value)}
-            placeholder="qwen2.5-coder:7b"
+            placeholder="点「刷新」拉取，也可直接手输"
+            spellCheck={false}
             style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}
           />
+          {/* ★ 原生 datalist：点输入框就有下拉候选，同时允许输入列表外的名字
+              （自定义 / 刚 `ollama pull` 的模型可能还没被拉到） */}
+          <datalist id="ai-model-options">
+            {aiModels.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+          <button
+            type="button"
+            style={btn}
+            disabled={aiBusy}
+            onClick={() => void loadModels(aiActive, false)}
+            title="重新拉取该服务商的模型列表"
+          >
+            刷新
+          </button>
         </div>
 
         {aiCurrent?.needs_key && (

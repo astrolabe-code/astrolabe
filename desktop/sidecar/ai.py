@@ -261,6 +261,48 @@ def _call(url: str, payload: dict | None, key: str, timeout: float) -> dict:
     return json.loads(body) if body.strip() else {}
 
 
+def list_models(provider_id: str = "") -> dict:
+    """拉取该服务商的模型列表（`GET {base}/models`）。
+
+    ★ 覆盖：Ollama 的 `/v1/models`、DeepSeek / Kimi / GLM / 通义 / OpenAI
+      都实现了这个端点。拉不到不算错误 —— 前端仍可手输模型名。
+    ⛔ 不缓存：模型列表会因为本地 `ollama pull` 而变，几秒的请求不值得缓存。
+    """
+    cfg = load()
+    pid = provider_id if provider_id in PRESETS else cfg["active"]
+    p = cfg["providers"].get(pid) or {}
+    preset = PRESETS.get(pid) or {}
+    base = (p.get("base_url") or preset.get("base_url") or "").rstrip("/")
+    if not base:
+        return {"ok": False, "models": [], "detail": "没有填地址"}
+
+    key = (p.get("api_key") or "").strip()
+    if preset.get("needs_key") and not key:
+        return {"ok": False, "models": [], "detail": "还没有填 API Key"}
+
+    try:
+        data = _call(f"{base}/models", None, key, 12)
+    except urllib.error.HTTPError as exc:
+        detail = f"HTTP {exc.code}"
+        try:
+            detail += f" {exc.read().decode('utf-8', 'replace')[:160]}"
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": False, "models": [], "detail": redact(detail)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "models": [], "detail": redact(str(exc))}
+
+    models: list[str] = []
+    items = data.get("data") if isinstance(data, dict) else None
+    for it in items or []:
+        if isinstance(it, dict):
+            mid = it.get("id") or it.get("name")
+            if mid:
+                models.append(str(mid))
+    models.sort()
+    return {"ok": True, "models": models, "detail": ""}
+
+
 def probe(provider_id: str = "") -> dict:
     """连通性测试。
 

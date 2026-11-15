@@ -232,6 +232,9 @@ export const personalApi = {
     providers?: Record<string, { model?: string; api_key?: string; base_url?: string }>
   }) => post<AiConfig>('/api/ai/config/', patch),
   /** 连通性测试（本地没装 Ollama 会给出 `ollama serve` 提示） */
+  /** 拉该服务商的模型列表（`GET {base}/models`）；失败时 models 为空，仍可手输 */
+  aiModels: (provider: string) =>
+    post<{ ok: boolean; models: string[]; detail: string }>('/api/ai/models/', { provider }),
   aiProbe: (provider: string) =>
     post<{ ok: boolean; provider: string; detail: string; latency_ms: number }>(
       '/api/ai/probe/',

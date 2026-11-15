@@ -229,6 +229,7 @@ R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_AICFG = re.compile(r"^/api/ai/config/$")
 R_AIPROBE = re.compile(r"^/api/ai/probe/$")
+R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AIDRAFT = re.compile(r"^/api/projects/([^/]+)/ai/draft/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
@@ -1056,6 +1057,16 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             except Exception as exc:  # noqa: BLE001
                 return bad(f"保存失败：{ai.redact(exc)}", 500)
         return bad("不支持的方法", 405)
+
+    # ★★ AI：拉模型列表（前端「模型」下拉用；失败不报错，允许手输）
+    m = R_AIMODELS.match(path)
+    if m:
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            return ok(ai.list_models(str(body.get("provider") or "")))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"拉取失败：{ai.redact(exc)}", 500)
 
     # ★★ AI：连通性测试（本地会提示 ollama serve）
     m = R_AIPROBE.match(path)

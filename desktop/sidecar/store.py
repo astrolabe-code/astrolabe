@@ -73,7 +73,10 @@ CREATE TABLE IF NOT EXISTS note (
   rel_path    TEXT NOT NULL,           -- 相对库根的 .md 路径
   mtime       REAL NOT NULL DEFAULT 0,
   size        INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  -- ★ 来源：human（手写）/ ai-draft（AI 草稿未确认）/ ai-edited（改过并确认）
+  --   写作进度只算 human + ai-edited，⛔ 不算 ai-draft
+  origin      TEXT NOT NULL DEFAULT 'human'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ix_note_no ON note (no);
 CREATE INDEX IF NOT EXISTS ix_note_node ON note (project_id, node_vid);
@@ -124,6 +127,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for table, col, ddl in (
         ("project", "parse_state", "TEXT NOT NULL DEFAULT 'none'"),
         ("project", "parse_error", "TEXT NOT NULL DEFAULT ''"),
+        ("note", "origin", "TEXT NOT NULL DEFAULT 'human'"),
     ):
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if col not in names:
@@ -286,7 +290,10 @@ def notes_of(conn: sqlite3.Connection, project_id: int, node_vid: int | None = N
 
 
 def insert_note(conn: sqlite3.Connection, row: dict) -> None:
-    cols = ("ref", "project_id", "node_vid", "kind", "no", "title", "rel_path", "mtime", "size", "created_at")
+    cols = (
+        "ref", "project_id", "node_vid", "kind", "no", "title",
+        "rel_path", "mtime", "size", "created_at", "origin",
+    )
     with conn:
         conn.execute(
             f"INSERT INTO note ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",

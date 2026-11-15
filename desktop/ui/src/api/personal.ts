@@ -71,6 +71,7 @@ function toNote(n: any, body = ''): Note {
   return {
     id: Number(n.id || 0),
     ref: String(n.ref || ''),
+    origin: String(n.origin || 'human'),
     created_by_display: '我',
     node_id: vid,
     kind: (n.kind || 'flash') as NoteKind,

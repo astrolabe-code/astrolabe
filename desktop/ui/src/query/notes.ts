@@ -50,6 +50,9 @@ export function useNote(noteId?: string | null) {
   })
 }
 
+/** 笔记来源：手写 / AI 草稿 / AI 改后确认 */
+export type NoteOrigin = 'human' | 'ai-draft' | 'ai-edited'
+
 export interface CreateNoteBody {
   kind: NoteKind
   body: string
@@ -58,6 +61,8 @@ export interface CreateNoteBody {
   is_public?: boolean
   /** ★ 深入自哪张卡（全局 id） */
   parent?: string
+  /** ★ AI 草稿必须标来源：写作进度要排除它 */
+  origin?: NoteOrigin
 }
 
 /** POST /api/projects/<ref>/notes/（② 型）⇒ {note, blocks} */
@@ -80,6 +85,8 @@ export interface UpdateNoteBody {
   is_public?: boolean
   /** ★★ 重挂锚点（`D125`）—— stable_vid；⛔ 不是主键、不是 uid ⚠ */
   node_id?: number
+  /** ★ 来源可改：AI 草稿改完确认后升成 ai-edited */
+  origin?: NoteOrigin
 }
 
 /**

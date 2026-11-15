@@ -120,6 +120,15 @@ def _orphan_notes(project) -> list[dict]:
     return out
 
 
+NOTE_ORIGINS = ("human", "ai-draft", "ai-edited")
+
+
+def _note_origin(v) -> str:
+    """笔记来源白名单：不认识的值一律当手写（⛔ 不塞垃圾进库）。"""
+    o = str(v or "").strip()
+    return o if o in NOTE_ORIGINS else "human"
+
+
 def _stats(project) -> dict:
     """项目规模：节点数来自图库，笔记统计来自 SQLite。"""
     pid = project["id"]
@@ -804,13 +813,16 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         try:
             _graph_ready(p)
             c = graphdb.counts(ROOT)
+            # ★★ AI 草稿不算「写过」——它需要作者确认（改成 human / ai-edited）
+            NOT_DRAFT = " AND COALESCE(origin, 'human') <> 'ai-draft'"
             noted = CONN.execute(
-                "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ?",
+                "SELECT COUNT(DISTINCT node_vid) AS c FROM note WHERE project_id = ?"
+                + NOT_DRAFT,
                 (p["id"],),
             ).fetchone()["c"]
             summary = CONN.execute(
                 "SELECT COUNT(DISTINCT node_vid) AS c FROM note "
-                "WHERE project_id = ? AND kind = 'summary'",
+                "WHERE project_id = ? AND kind = 'summary'" + NOT_DRAFT,
                 (p["id"],),
             ).fetchone()["c"]
             return ok(
@@ -1185,6 +1197,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "project": p["dir"],
                 "node_vid": node_vid,
+                # ★ 来源：AI 草稿必须能跟手写区分开（写作进度要排除它）
+                "origin": _note_origin(body.get("origin")),
             }
             # ★ 先写文件（真相），再写索引 —— 顺序不能反
             notefile.write_file(abs_path, meta, text)
@@ -1210,6 +1224,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     "mtime": st.st_mtime,
                     "size": st.st_size,
                     "created_at": meta["time"],
+                    "origin": meta["origin"],
                 },
             )
             return ok({"note": {**store.find_note(CONN, ref), "node_name": node["name"]}})
@@ -1250,6 +1265,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             for k in ("kind",):
                 if k in body:
                     meta[k] = str(body.get(k) or "")
+            # ★ 来源可改：AI 草稿改完确认后可以升成 ai-edited
+            if "origin" in body:
+                meta["origin"] = _note_origin(body.get("origin"))
             # ★ 改锚点：自动挂靠挂错了，用户手工改到另一个节点（传 0 = 解除锚定）
             if "node_vid" in body:
                 new_vid = int(body.get("node_vid") or 0)
@@ -1273,6 +1291,8 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 upd["kind"] = str(body.get("kind") or "")
             if "node_vid" in body:
                 upd["node_vid"] = int(meta.get("node_vid") or 0)
+            if "origin" in body:
+                upd["origin"] = meta["origin"]
             store.update_note(CONN, ref, **upd)
             if "body" in body:
                 try:

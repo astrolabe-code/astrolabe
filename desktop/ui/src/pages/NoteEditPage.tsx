@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Anchor, BookOpenText, ListTree, Lock, LockOpen, Pencil, Trash2, X } from 'lucide-react'
+import { Anchor, BookOpenText, ListTree, Lock, LockOpen, Pencil, Sparkles, Trash2, X } from 'lucide-react'
 import type { NoteKind } from '../api/types'
 import { errorMessage } from '../api/errors'
 import { cardId, type CardInfo } from '../api/code'
-import { personalApi } from '../api/personal'
+import { personalApi, streamCall } from '../api/personal'
 import AppLayout from '../components/AppLayout'
 import SplitPane from '../components/SplitPane'
 import { PageBar, RailButton } from '../components/PageBar'
@@ -166,6 +166,15 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   const [draftTitle, setDraftTitle] = useState('')
   const [suggested, setSuggested] = useState('')
   const [pendingText, setPendingText] = useState('')
+
+  // ★★ AI 草稿：流式生成 → 采用进编辑器 → 保存时标 origin=ai-draft
+  //   ⚠ 编辑器是非受控组件（`initial` 只读一次）⇒ 换内容靠换 key 重挂
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiText, setAiText] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiErr, setAiErr] = useState('')
+  const [aiUsed, setAiUsed] = useState(false)
+  const [editorKey, setEditorKey] = useState(0)
   // ★ 标签栏跟着标题走：新建时「新笔记」，输入后实时改。
   //   ⚠ draftTitle 是保存对话框里那个「名字（可改）」，才是最终存进后端的；
   //     顶部输入框 title 只是它的初值，两者都要跟着变。
@@ -273,6 +282,41 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
    * ⇒ 现在**写的时候一个字都不回写**，只在保存那一刻读一次正文，
    *   顺手算出默认名字，弹窗里让人看一眼、可改 ✅
    */
+  /** 调 AI 生成小结草稿（流式，逐块追加） */
+  const runAiDraft = async () => {
+    if (!projectRef || !nodeId) {
+      setAiOpen(true)
+      setAiErr('缺少节点信息，无法生成')
+      return
+    }
+    setAiOpen(true)
+    setAiText('')
+    setAiErr('')
+    setAiBusy(true)
+    try {
+      await streamCall(
+        `/api/projects/${encodeURIComponent(projectRef)}/ai/draft/`,
+        { vid: nodeId },
+        (evt) => {
+          if (evt.event === 'delta') setAiText((t) => t + String(evt.text ?? ''))
+        },
+      )
+    } catch (e) {
+      setAiErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  /** 采用草稿：替换正文并重挂编辑器；后续保存标 origin=ai-draft */
+  const adoptAiDraft = () => {
+    if (!aiText.trim()) return
+    setBody(aiText)
+    setEditorKey((k) => k + 1)
+    setAiUsed(true)
+    setAiOpen(false)
+  }
+
   const requestSave = () => {
     setErr('')
     // ★★ 正文从**编辑器**读（* Milkdown 序列化结果），* 原样保存、⛔ 不 trim ⚠
@@ -299,11 +343,25 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
 
   const save = async () => {
     const text = pendingText
+    // ★ 本次用过 AI 草稿 ⇒ 标 ai-draft（不计入写作进度）；
+    //   否则沿用笔记原有来源（⛔ 别把已有的 ai-draft 洗成 human）
+    const origin = (aiUsed
+      ? 'ai-draft'
+      : String(noteQ.data?.note?.origin || 'human')) as
+      | 'human'
+      | 'ai-draft'
+      | 'ai-edited'
     // ★ 名字和推导值一致 ⇒ 传空，让后端自己截（* 语义仍是「自动」）⚠
     const finalTitle = draftTitle.trim() === suggested ? '' : draftTitle.trim()
     try {
       const data = editing
-        ? await update.mutateAsync({ kind, title: finalTitle, body: text, is_public: isPublic })
+        ? await update.mutateAsync({
+            kind,
+            title: finalTitle,
+            body: text,
+            is_public: isPublic,
+            origin,
+          })
         : await create.mutateAsync({
             kind,
             title: finalTitle,
@@ -311,6 +369,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             node_id: nodeId,
             is_public: isPublic,
             parent: parentCard || undefined,
+            origin,
           })
 
       // ★★ 保存成功先关确认弹窗（合一页不跳路由，弹窗不会随组件卸载自动消失）⚠
@@ -555,12 +614,45 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         </div>
         {/* ③ 正文 —— ★ 无边框、无标签，直接铺在纸上（* 和阅读页的纸一致）⚠ */}
         {ready && (
+          <>
+          {/* ★★ AI 草稿面板：流式显示，采用后替换正文 */}
+          {aiOpen && (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: '8px 10px',
+                border: '1px solid var(--card-border)',
+                borderRadius: 8,
+                background: 'var(--card-bg)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 6 }}>
+                <Sparkles size={12} />
+                <span>AI 草稿{aiBusy ? '（生成中…）' : aiErr ? '（失败）' : ''}</span>
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                  {!aiBusy && !!aiText.trim() && (
+                    <button type="button" className="tag" onClick={adoptAiDraft}>采用</button>
+                  )}
+                  <button type="button" className="tag" onClick={() => setAiOpen(false)}>关闭</button>
+                </span>
+              </div>
+              {aiErr ? (
+                <div style={{ fontSize: 12, color: 'var(--err)' }}>{aiErr}</div>
+              ) : (
+                <div style={{ fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto', color: 'var(--text-sub)' }}>
+                  {aiText || '…'}
+                </div>
+              )}
+            </div>
+          )}
           <MilkdownEditor
+            key={editorKey}
             initial={body}
             apiRef={editorApi}
             onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
             onChange={scheduleCount}
           />
+          </>
         )}
         {hint && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{hint}</div>}
 
@@ -679,6 +771,15 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               onClick={() => setAnchorOpen(true)}
             >
               <Anchor size={10} /> {anchorLabel}
+            </button>
+            <button
+              type="button"
+              className="tag"
+              style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap', border: 0, background: 'transparent', cursor: 'pointer' }}
+              title="让 AI 写一段小结草稿，你可以改"
+              onClick={() => void runAiDraft()}
+            >
+              <Sparkles size={10} /> AI 草稿
             </button>
             {!isPublic && (
                 <span

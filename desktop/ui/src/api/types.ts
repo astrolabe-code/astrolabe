@@ -244,6 +244,8 @@ export interface Note {
   id: number
   /** ★ 对外标识（* URL / 接口都用它，⛔ 不暴露自增 pk）⚠ */
   ref: string
+  /** ★ 来源：human / ai-draft / ai-edited（AI 草稿不计入写作进度） */
+  origin?: string
   /** ★ 作者昵称（* 为空回落 created_by）⚠ */
   created_by_display?: string
   node_id: number

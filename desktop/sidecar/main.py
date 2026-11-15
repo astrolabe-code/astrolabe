@@ -45,6 +45,7 @@ import imitation
 import links
 import board
 import graphdb
+import ai
 
 VERSION = "0.3.0"
 
@@ -217,6 +218,8 @@ R_GNOTES = re.compile(r"^/api/projects/([^/]+)/graph/notes/$")
 R_GPATH = re.compile(r"^/api/projects/([^/]+)/graph/path/$")
 R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
+R_AICFG = re.compile(r"^/api/ai/config/$")
+R_AIPROBE = re.compile(r"^/api/ai/probe/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
@@ -1027,7 +1030,29 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return bad(f"图库查询失败：{exc}", 500)
 
     # ★ 哪些是人手补的（图上打标）+ 修补历史
-    m = R_MANUAL.match(path)
+    # ★★ AI：配置读写与连通性探测（⛔ key 明文永不出这个进程）
+    m = R_AICFG.match(path)
+    if m:
+        if method == "GET":
+            return ok(ai.public())
+        if method == "POST":
+            try:
+                return ok(ai.save(body))
+            except Exception as exc:  # noqa: BLE001
+                return bad(f"保存失败：{ai.redact(exc)}", 500)
+        return bad("不支持的方法", 405)
+
+    # ★★ AI：连通性测试（本地会提示 ollama serve）
+    m = R_AIPROBE.match(path)
+    if m:
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            return ok(ai.probe(str(body.get("provider") or "")))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"探测失败：{ai.redact(exc)}", 500)
+
+        m = R_MANUAL.match(path)
     if m:
         p = _project(m.group(1))
         if not p:

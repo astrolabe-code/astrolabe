@@ -329,32 +329,34 @@ def probe(provider_id: str = "") -> dict:
 # ============================================================================
 # 小结草稿：prompt 组装（顺序 = 缓存命中率）
 # ============================================================================
-DRAFT_SYSTEM = (
+# ★ 草稿和问答**共用同一个 system 开头**：
+#   前缀越一致，provider 的前缀缓存命中率越高（DeepSeek / OpenAI 都按前缀计价）
+BASE_SYSTEM = (
     "你是帮编程初学者读懂代码的助手。"
     "只根据用户给出的代码与上下文回答，不要编造上下文里没有的函数、文件或行为。"
     "用中文，平实具体，不用「本文」「综上所述」这类套话。"
 )
+
+DRAFT_SYSTEM = BASE_SYSTEM
+ASK_SYSTEM = BASE_SYSTEM
 
 MAX_NEIGHBORS = 8
 MAX_SAMPLES = 2
 MAX_SAMPLE_CHARS = 120
 
 
-def build_draft_messages(
+def _context_block(
     node: dict,
     snippet: str,
     lang: str,
     upstream: list[dict],
     downstream: list[dict],
     samples: list[dict],
-) -> list[dict]:
-    """★★ 组装草稿 prompt。
+) -> str:
+    """节点上下文（草稿与问答**完全共用**，这样两边的 prompt 前缀一致）。
 
-    ⚠ **顺序就是缓存命中率**（所有者原话：「缓存命中率想办法高一点，减少token消耗」）：
-      · system 固定 → 节点静态信息 → 源码 → 邻居 → 样例 → 任务
-      · 前四段对一个节点是**不变的** ⇒ 同一节点重复生成时前缀完全一致，
-        DeepSeek / OpenAI 的 prefix cache 能直接命中（便宜约 10 倍）
-      · ⛔ 绝不插入时间戳、随机 id、会话序号 —— 那会让前缀每次都不同，缓存全部失效
+    ⚠ 顺序即缓存命中率：节点静态信息 → 源码 → 邻居 → 样例。
+      ⛔ 不插时间戳 / 随机 id —— 那会让前缀每次都不同，缓存全部失效。
     """
     lines = [
         f"【节点】{node.get('kind') or ''}  {node.get('file') or ''}  "
@@ -380,21 +382,56 @@ def build_draft_messages(
 
     lines.append("【作者写过的小结（只参考语气，不要照抄）】")
     if samples:
-        for s in samples[:MAX_SAMPLES]:
-            title = str(s.get("title") or "").strip()
-            body = str(s.get("excerpt") or "").strip().replace("\n", " ")
+        for smp in samples[:MAX_SAMPLES]:
+            title = str(smp.get("title") or "").strip()
+            body = str(smp.get("excerpt") or "").strip().replace("\n", " ")
             lines.append(f"- {title}：{body[:MAX_SAMPLE_CHARS]}")
     else:
         lines.append("- （还没有）")
 
-    lines.append(
+    return "\n".join(lines)
+
+
+def build_draft_messages(
+    node: dict,
+    snippet: str,
+    lang: str,
+    upstream: list[dict],
+    downstream: list[dict],
+    samples: list[dict],
+) -> list[dict]:
+    """组装**小结草稿**的 prompt（上下文段与问答共用）。"""
+    ctx = _context_block(node, snippet, lang, upstream, downstream, samples)
+    task = (
         "【任务】写一段 150–300 字的小结，面向第一次读这段代码的人："
         "它做什么、为什么这么写、有什么容易踩的坑。"
         "不要逐行解释代码，也不要重复代码本身。"
     )
     return [
         {"role": "system", "content": DRAFT_SYSTEM},
-        {"role": "user", "content": "\n".join(lines)},
+        {"role": "user", "content": ctx + "\n" + task},
+    ]
+
+
+def build_ask_messages(
+    node: dict,
+    snippet: str,
+    lang: str,
+    upstream: list[dict],
+    downstream: list[dict],
+    samples: list[dict],
+    question: str,
+) -> list[dict]:
+    """组装**问答**的 prompt。
+
+    ★ 上下文段与草稿逐字相同 ⇒ 先让草稿跑过一次的项目，
+      再问问题能命中前缀缓存（便宜约 10 倍）。
+    """
+    ctx = _context_block(node, snippet, lang, upstream, downstream, samples)
+    q = str(question or "").strip()
+    return [
+        {"role": "system", "content": ASK_SYSTEM},
+        {"role": "user", "content": f"{ctx}\n【问题】{q}\n（只答这个问题，不要写小结。）"},
     ]
 
 

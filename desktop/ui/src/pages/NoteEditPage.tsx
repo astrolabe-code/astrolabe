@@ -11,6 +11,7 @@ import { PageBar, RailButton } from '../components/PageBar'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import AnchorPicker from '../components/notes/AnchorPicker'
+import AskPanel from '../components/notes/AskPanel'
 import MilkdownEditor, { type MilkdownEditorApi } from '../components/notes/MilkdownEditor'
 import MilkdownLazy from '../components/notes/MilkdownLazy'
 import { closeTab, replaceTab, setTabTitle } from '../lib/tabBus'
@@ -175,6 +176,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   const [aiErr, setAiErr] = useState('')
   const [aiUsed, setAiUsed] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
+  // ★ 问答面板（与草稿共用同一份上下文，前缀能命中缓存）
+  const [askOpen, setAskOpen] = useState(false)
+  // ★ 本次生成的 token 用量（或「缓存命中」）
+  const [aiUsage, setAiUsage] = useState('')
   // ★ 标签栏跟着标题走：新建时「新笔记」，输入后实时改。
   //   ⚠ draftTitle 是保存对话框里那个「名字（可改）」，才是最终存进后端的；
   //     顶部输入框 title 只是它的初值，两者都要跟着变。
@@ -291,6 +296,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     }
     setAiOpen(true)
     setAiText('')
+    setAiUsage('')
     setAiErr('')
     setAiBusy(true)
     try {
@@ -298,7 +304,15 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         `/api/projects/${encodeURIComponent(projectRef)}/ai/draft/`,
         { vid: nodeId },
         (evt) => {
-          if (evt.event === 'delta') setAiText((t) => t + String(evt.text ?? ''))
+          if (evt.event === 'delta') {
+            setAiText((t) => t + String(evt.text ?? ''))
+          } else if (evt.event === 'usage') {
+            setAiUsage(
+              evt.cached
+                ? '缓存命中，0 消耗'
+                : `${Number(evt.in || 0)} in / ${Number(evt.out || 0)} out`,
+            )
+          }
         },
       )
     } catch (e) {
@@ -490,6 +504,13 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         )}
       </PageBar>
 
+      <AskPanel
+        projectRef={projectRef}
+        vid={nodeId}
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+      />
+
       <AnchorPicker
         open={anchorOpen}
         projectRef={projectRef}
@@ -629,6 +650,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 6 }}>
                 <Sparkles size={12} />
                 <span>AI 草稿{aiBusy ? '（生成中…）' : aiErr ? '（失败）' : ''}</span>
+                {aiUsage && <span className="faint" style={{ fontSize: 10.5 }}>{aiUsage}</span>}
                 <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
                   {!aiBusy && !!aiText.trim() && (
                     <button type="button" className="tag" onClick={adoptAiDraft}>采用</button>
@@ -780,6 +802,15 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               onClick={() => void runAiDraft()}
             >
               <Sparkles size={10} /> AI 草稿
+            </button>
+            <button
+              type="button"
+              className="tag"
+              style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap', border: 0, background: 'transparent', cursor: 'pointer' }}
+              title="就这个节点问 AI（上下文只有它自己和相邻函数）"
+              onClick={() => setAskOpen(true)}
+            >
+              <Sparkles size={10} /> 问 AI
             </button>
             {!isPublic && (
                 <span

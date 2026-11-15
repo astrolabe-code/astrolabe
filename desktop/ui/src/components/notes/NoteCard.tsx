@@ -101,7 +101,18 @@ export default function NoteCard({
           · {note.created_at?.slice(0, 10)}
         </span>
       </div>
-      <div style={{ fontSize: 13.5, marginTop: 6, fontWeight: 500 }}>{note.title || '（无标题）'}</div>
+      <div style={{ fontSize: 13.5, marginTop: 6, fontWeight: 500 }}>
+        {note.title || '（无标题）'}
+        {note.origin === 'ai-draft' && (
+          <span
+            className="tag"
+            style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--accent)' }}
+            title="AI 生成的草稿，尚未确认（不计入写作进度）"
+          >
+            AI
+          </span>
+        )}
+      </div>
       {note.body && (
         <div className="faint" style={{ fontSize: 12, marginTop: 3, lineHeight: 1.6 }}>
           {preview(note.body)}

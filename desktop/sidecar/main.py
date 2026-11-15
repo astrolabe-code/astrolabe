@@ -231,6 +231,7 @@ R_AICFG = re.compile(r"^/api/ai/config/$")
 R_AIPROBE = re.compile(r"^/api/ai/probe/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AIDRAFT = re.compile(r"^/api/projects/([^/]+)/ai/draft/$")
+R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
@@ -1377,28 +1378,19 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
 
 
 def _is_stream(path: str) -> bool:
-    return path.startswith("/api/ai/stream") or bool(R_AIDRAFT.match(path))
+    return (
+        path.startswith("/api/ai/stream")
+        or bool(R_AIDRAFT.match(path))
+        or bool(R_AIASK.match(path))
+    )
 
 
-def _draft_events(project, vid: int):
-    """生成小结草稿：命中缓存就直接吐，否则组装 prompt 走流式。
+def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
+    """收集一个节点的 AI 上下文：(源码片段, 语言, 上游, 下游, 作者小结样例)。
 
-    ★ 缓存口径：`(vid, provider, model)` —— 同节点同模型再点一次是 0 次调用。
-    ★ 上下文只发：本节点源码（≤120 行）+ 邻居签名 + 至多 3 条作者小结的片段，
+    ★ 只取：本节点源码（≤120 行）+ 邻居签名 + 至多 3 条作者小结的片段；
       ⛔ 不发整个文件、不发笔记全文。
     """
-    node = graphdb.get_code(ROOT, vid)
-    if not node:
-        raise ValueError("节点不存在")
-
-    act = ai.active()
-    cached = store.get_ai_draft(CONN, vid, act["id"], act["model"])
-    if cached:
-        yield {"event": "delta", "text": cached}
-        yield {"event": "usage", "in": 0, "out": 0, "cached": True}
-        return
-
-    # ---- 源码片段（封顶 120 行，避免把大函数整个塞进上下文）
     lang = ""
     snippet = "（源码读不到）"
     try:
@@ -1414,17 +1406,15 @@ def _draft_events(project, vid: int):
     except Exception:  # noqa: BLE001 —— 读不到源码也要能生成（只是质量差些）
         pass
 
-    # ---- 邻居（各至多 8 个，由 ai 侧再截）
     try:
-        nei = graphdb.neighbors(ROOT, vid, 1)
+        nei = graphdb.neighbors(ROOT, int(node["vid"]), 1)
     except Exception:  # noqa: BLE001
         nei = {"upstream": [], "downstream": []}
 
-    # ---- 作者已有的小结（学语气，最多 3 条）
     samples: list[dict] = []
     try:
         for n in store.notes_of(CONN, project["id"]):
-            if str(n.get("kind") or "") != "summary" or int(n.get("node_vid") or 0) == vid:
+            if str(n.get("kind") or "") != "summary" or int(n.get("node_vid") or 0) == int(node["vid"]):
                 continue
             body = ""
             try:
@@ -1438,9 +1428,27 @@ def _draft_events(project, vid: int):
     except Exception:  # noqa: BLE001
         pass
 
-    messages = ai.build_draft_messages(
-        node, snippet, lang, nei.get("upstream") or [], nei.get("downstream") or [], samples
-    )
+    return snippet, lang, nei.get("upstream") or [], nei.get("downstream") or [], samples
+
+
+def _draft_events(project, vid: int):
+    """生成小结草稿：命中缓存就直接吐，否则组装 prompt 走流式。
+
+    ★ 缓存口径：`(vid, provider, model)` —— 同节点同模型再点一次是 0 次调用。
+    """
+    node = graphdb.get_code(ROOT, vid)
+    if not node:
+        raise ValueError("节点不存在")
+
+    act = ai.active()
+    cached = store.get_ai_draft(CONN, vid, act["id"], act["model"])
+    if cached:
+        yield {"event": "delta", "text": cached}
+        yield {"event": "usage", "in": 0, "out": 0, "cached": True}
+        return
+
+    snippet, lang, up, down, samples = _node_context(project, node)
+    messages = ai.build_draft_messages(node, snippet, lang, up, down, samples)
 
     chunks: list[str] = []
     for evt in ai.stream_chat(messages):
@@ -1456,9 +1464,38 @@ def _draft_events(project, vid: int):
             pass
 
 
+def _ask_events(project, vid: int, question: str):
+    """针对当前节点提问（流式）。
+
+    ★ 上下文与草稿**逐字相同** ⇒ 先跑过草稿的项目再问，能命中前缀缓存。
+    ⛔ 不缓存回答：问题的组合太多，缓存命中率极低，存了只是占地方。
+    """
+    node = graphdb.get_code(ROOT, vid)
+    if not node:
+        raise ValueError("节点不存在")
+    q = str(question or "").strip()
+    if not q:
+        raise ValueError("问题不能为空")
+
+    snippet, lang, up, down, samples = _node_context(project, node)
+    messages = ai.build_ask_messages(node, snippet, lang, up, down, samples, q)
+    yield from ai.stream_chat(messages, max_tokens=800)
+
+
 def _stream_events(method: str, path: str, body) -> "object":
     """流式端点的事件生成器（目前只有回显，用于验证三层链路）。"""
     body = body if isinstance(body, dict) else {}
+
+    m = R_AIASK.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            raise ValueError("项目不存在")
+        vid = int(body.get("vid") or 0)
+        if not vid:
+            raise ValueError("缺少 vid")
+        yield from _ask_events(p, vid, str(body.get("question") or ""))
+        return
 
     m = R_AIDRAFT.match(path)
     if m:

@@ -324,3 +324,142 @@ def probe(provider_id: str = "") -> dict:
             "detail": redact(msg),
             "latency_ms": int((time.time() - t0) * 1000),
         }
+
+
+# ============================================================================
+# 小结草稿：prompt 组装（顺序 = 缓存命中率）
+# ============================================================================
+DRAFT_SYSTEM = (
+    "你是帮编程初学者读懂代码的助手。"
+    "只根据用户给出的代码与上下文回答，不要编造上下文里没有的函数、文件或行为。"
+    "用中文，平实具体，不用「本文」「综上所述」这类套话。"
+)
+
+MAX_NEIGHBORS = 8
+MAX_SAMPLES = 2
+MAX_SAMPLE_CHARS = 120
+
+
+def build_draft_messages(
+    node: dict,
+    snippet: str,
+    lang: str,
+    upstream: list[dict],
+    downstream: list[dict],
+    samples: list[dict],
+) -> list[dict]:
+    """★★ 组装草稿 prompt。
+
+    ⚠ **顺序就是缓存命中率**（所有者原话：「缓存命中率想办法高一点，减少token消耗」）：
+      · system 固定 → 节点静态信息 → 源码 → 邻居 → 样例 → 任务
+      · 前四段对一个节点是**不变的** ⇒ 同一节点重复生成时前缀完全一致，
+        DeepSeek / OpenAI 的 prefix cache 能直接命中（便宜约 10 倍）
+      · ⛔ 绝不插入时间戳、随机 id、会话序号 —— 那会让前缀每次都不同，缓存全部失效
+    """
+    lines = [
+        f"【节点】{node.get('kind') or ''}  {node.get('file') or ''}  "
+        f"第 {node.get('line') or 0}-{node.get('line_end') or 0} 行",
+        f"【签名】{node.get('signature') or '（解析器未给出）'}",
+        "【源码】",
+        f"```{lang}",
+        snippet.rstrip(),
+        "```",
+    ]
+
+    def section(title: str, rows: list[dict]) -> None:
+        lines.append(f"【{title}】")
+        if not rows:
+            lines.append("- （无）")
+            return
+        for r in rows[:MAX_NEIGHBORS]:
+            name = r.get("qname") or r.get("name") or ""
+            lines.append(f"- {name}  @ {r.get('file_path') or ''}:{r.get('line') or 0}")
+
+    section("它调用的函数", downstream)
+    section("调用它的函数", upstream)
+
+    lines.append("【作者写过的小结（只参考语气，不要照抄）】")
+    if samples:
+        for s in samples[:MAX_SAMPLES]:
+            title = str(s.get("title") or "").strip()
+            body = str(s.get("excerpt") or "").strip().replace("\n", " ")
+            lines.append(f"- {title}：{body[:MAX_SAMPLE_CHARS]}")
+    else:
+        lines.append("- （还没有）")
+
+    lines.append(
+        "【任务】写一段 150–300 字的小结，面向第一次读这段代码的人："
+        "它做什么、为什么这么写、有什么容易踩的坑。"
+        "不要逐行解释代码，也不要重复代码本身。"
+    )
+    return [
+        {"role": "system", "content": DRAFT_SYSTEM},
+        {"role": "user", "content": "\n".join(lines)},
+    ]
+
+
+# ============================================================================
+# 流式对话（SSE）
+# ============================================================================
+def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float = 120):
+    """逐块 yield `{"event":"delta","text":...}`，最后可能有一条 `usage`。
+
+    ⚠ 不自动重试：超时/失败直接抛，由调用方转成 error 事件（
+      所有者原话：「不要...刷爆别人的token」—— 静默重试最容易烧钱）。
+    """
+    act = active()
+    if act["needs_key"] and not act["api_key"]:
+        raise RuntimeError("还没有填 API Key（设置 → AI）")
+    if not act["base_url"] or not act["model"]:
+        raise RuntimeError("AI 配置不完整（缺 base_url 或 model）")
+
+    url = f"{act['base_url']}/chat/completions"
+    payload = {
+        "model": act["model"],
+        "messages": messages,
+        "max_tokens": int(max_tokens),
+        "stream": True,
+        "temperature": 0.3,
+    }
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), method="POST"
+    )
+    req.add_header("Content-Type", "application/json")
+    if act["api_key"]:
+        req.add_header("Authorization", f"Bearer {act['api_key']}")
+
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            for raw in resp:
+                if time.time() - t0 > deadline_s:
+                    raise RuntimeError("生成超时")
+                line = raw.decode("utf-8", "replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except Exception:  # noqa: BLE001
+                    continue
+                choices = obj.get("choices") or []
+                if choices:
+                    piece = (choices[0].get("delta") or {}).get("content") or ""
+                    if piece:
+                        yield {"event": "delta", "text": piece}
+                usage = obj.get("usage")
+                if isinstance(usage, dict):
+                    yield {
+                        "event": "usage",
+                        "in": int(usage.get("prompt_tokens") or 0),
+                        "out": int(usage.get("completion_tokens") or 0),
+                    }
+    except urllib.error.HTTPError as exc:
+        detail = f"HTTP {exc.code}"
+        try:
+            detail += f" {exc.read().decode('utf-8', 'replace')[:300]}"
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError(redact(detail)) from None

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import datetime
 import sqlite3
 import time
 
@@ -93,6 +94,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
   title,
   body,
   tokenize='trigram'
+);
+
+-- ★★ AI 草稿缓存：同节点 + 同服务商 + 同模型再生成时直接命中，省掉一次调用
+--   ⚠ 节点内容变了 ⇒ 重新解析后 vid 变 ⇒ 缓存自然失效（不需要额外存哈希）
+CREATE TABLE IF NOT EXISTS ai_draft (
+  vid         INTEGER NOT NULL,
+  provider    TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (vid, provider, model)
 );
 
 CREATE TABLE IF NOT EXISTS curate_log (
@@ -422,3 +434,34 @@ def fts_search(conn: sqlite3.Connection, q: str, limit: int = 20) -> list[dict]:
             snippet = ("…" if a > 0 else "") + body[a:b].replace("\n", " ") + ("…" if b < len(body) else "")
         out.append({"ref": r["ref"], "title": r["title"], "snippet": snippet})
     return out
+
+
+# ---------------------------------------------------------------- AI 草稿缓存
+
+
+def get_ai_draft(conn: sqlite3.Connection, vid: int, provider: str, model: str) -> str:
+    """命中返回草稿正文，否则返回空串。"""
+    r = conn.execute(
+        "SELECT content FROM ai_draft WHERE vid = ? AND provider = ? AND model = ?",
+        (int(vid), str(provider), str(model)),
+    ).fetchone()
+    return str(r["content"]) if r else ""
+
+
+def put_ai_draft(
+    conn: sqlite3.Connection, vid: int, provider: str, model: str, content: str
+) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO ai_draft (vid, provider, model, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(vid, provider, model) DO UPDATE SET "
+            "content = excluded.content, created_at = excluded.created_at",
+            (
+                int(vid),
+                str(provider),
+                str(model),
+                str(content),
+                datetime.datetime.now().isoformat(timespec="seconds"),
+            ),
+        )

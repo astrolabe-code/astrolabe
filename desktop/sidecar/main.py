@@ -221,6 +221,7 @@ R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_AICFG = re.compile(r"^/api/ai/config/$")
 R_AIPROBE = re.compile(r"^/api/ai/probe/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
+R_AIDRAFT = re.compile(r"^/api/projects/([^/]+)/ai/draft/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
@@ -1356,12 +1357,99 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
 
 
 def _is_stream(path: str) -> bool:
-    return path.startswith("/api/ai/stream")
+    return path.startswith("/api/ai/stream") or bool(R_AIDRAFT.match(path))
+
+
+def _draft_events(project, vid: int):
+    """生成小结草稿：命中缓存就直接吐，否则组装 prompt 走流式。
+
+    ★ 缓存口径：`(vid, provider, model)` —— 同节点同模型再点一次是 0 次调用。
+    ★ 上下文只发：本节点源码（≤120 行）+ 邻居签名 + 至多 3 条作者小结的片段，
+      ⛔ 不发整个文件、不发笔记全文。
+    """
+    node = graphdb.get_code(ROOT, vid)
+    if not node:
+        raise ValueError("节点不存在")
+
+    act = ai.active()
+    cached = store.get_ai_draft(CONN, vid, act["id"], act["model"])
+    if cached:
+        yield {"event": "delta", "text": cached}
+        yield {"event": "usage", "in": 0, "out": 0, "cached": True}
+        return
+
+    # ---- 源码片段（封顶 120 行，避免把大函数整个塞进上下文）
+    lang = ""
+    snippet = "（源码读不到）"
+    try:
+        f = source.read(project["root"], node["file"])
+        lang = str(f.get("lang") or "")
+        all_lines = str(f.get("text") or "").splitlines()
+        start = max(0, int(node["line"] or 1) - 1)
+        end_line = int(node["line_end"] or 0)
+        end = end_line if end_line > start else start + 60
+        end = min(end, start + 120, len(all_lines))
+        if end > start:
+            snippet = "\n".join(all_lines[start:end])
+    except Exception:  # noqa: BLE001 —— 读不到源码也要能生成（只是质量差些）
+        pass
+
+    # ---- 邻居（各至多 8 个，由 ai 侧再截）
+    try:
+        nei = graphdb.neighbors(ROOT, vid, 1)
+    except Exception:  # noqa: BLE001
+        nei = {"upstream": [], "downstream": []}
+
+    # ---- 作者已有的小结（学语气，最多 3 条）
+    samples: list[dict] = []
+    try:
+        for n in store.notes_of(CONN, project["id"]):
+            if str(n.get("kind") or "") != "summary" or int(n.get("node_vid") or 0) == vid:
+                continue
+            body = ""
+            try:
+                _meta, text = notefile.read_file(os.path.join(ROOT, str(n["rel_path"])))
+                body = str(text or "")
+            except Exception:  # noqa: BLE001
+                body = ""
+            samples.append({"title": n.get("title") or "", "excerpt": body})
+            if len(samples) >= 3:
+                break
+    except Exception:  # noqa: BLE001
+        pass
+
+    messages = ai.build_draft_messages(
+        node, snippet, lang, nei.get("upstream") or [], nei.get("downstream") or [], samples
+    )
+
+    chunks: list[str] = []
+    for evt in ai.stream_chat(messages):
+        if evt.get("event") == "delta":
+            chunks.append(str(evt.get("text") or ""))
+        yield evt
+
+    text = "".join(chunks).strip()
+    if text:
+        try:
+            store.put_ai_draft(CONN, vid, act["id"], act["model"], text)
+        except Exception:  # noqa: BLE001 —— 缓存写失败不影响这次结果
+            pass
 
 
 def _stream_events(method: str, path: str, body) -> "object":
     """流式端点的事件生成器（目前只有回显，用于验证三层链路）。"""
     body = body if isinstance(body, dict) else {}
+
+    m = R_AIDRAFT.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            raise ValueError("项目不存在")
+        vid = int(body.get("vid") or 0)
+        if not vid:
+            raise ValueError("缺少 vid")
+        yield from _draft_events(p, vid)
+        return
 
     if R_AISTREAM.match(path):
         text = str(body.get("text") or "流式回显：边车 → 主进程 → 前端")

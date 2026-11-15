@@ -205,7 +205,38 @@ export async function streamCall(
   }
 }
 
+/** AI 服务商（配置页用；`api_key` 永远只返回打码串） */
+export interface AiProvider {
+  id: string
+  label: string
+  base_url: string
+  model: string
+  needs_key: boolean
+  has_key: boolean
+  key_masked: string
+}
+
+export interface AiConfig {
+  active: string
+  items: AiProvider[]
+  path: string
+}
+
 export const personalApi = {
+  // ---------------------------------------------------------------- AI 配置
+  /** 读 AI 配置（⛔ 不含 key 明文） */
+  aiConfig: () => get<AiConfig>('/api/ai/config/'),
+  /** 存 AI 配置；`api_key` 留空表示不改 */
+  aiSaveConfig: (patch: {
+    active?: string
+    providers?: Record<string, { model?: string; api_key?: string; base_url?: string }>
+  }) => post<AiConfig>('/api/ai/config/', patch),
+  /** 连通性测试（本地没装 Ollama 会给出 `ollama serve` 提示） */
+  aiProbe: (provider: string) =>
+    post<{ ok: boolean; provider: string; detail: string; latency_ms: number }>(
+      '/api/ai/probe/',
+      { provider },
+    ),
   // ---- 项目
   listProjects: () => get<{ items: any[] }>('/api/projects/'),
 

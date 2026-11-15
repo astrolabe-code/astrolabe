@@ -9,8 +9,9 @@
  * ```\n * 版本            你装的是哪一版\n * 数据在哪         程序和清单的位置（笔记不在这，在各自的项目目录里）\n * 笔记在哪         指向「项目设置」—— 每个项目的笔记位置都不一样\n * 许可证           第三方组件声明（合规要求）\n * ```\n */
 
 import { useEffect, useState } from 'react'
-import { ExternalLink, FolderOpen } from 'lucide-react'
+import { ExternalLink, FolderOpen, Sparkles } from 'lucide-react'
 
+import { personalApi, type AiConfig, type AiProvider } from '../../api/personal'
 import {
   getAppearance,
   saveAppearance,
@@ -47,6 +48,14 @@ export default function PersonalUserSettings() {
     setDraft(next)
   }
   const [info, setInfo] = useState<Info | null>(null)
+
+  // ★★ AI 配置：服务商 / 模型 / Key（Key 只存本机，读回来永远是打码串）
+  const [aiCfg, setAiCfg] = useState<AiConfig | null>(null)
+  const [aiActive, setAiActive] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiKey, setAiKey] = useState('')
+  const [aiMsg, setAiMsg] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
   const api = (
     window as unknown as {
       astrolabe?: { info?: () => Promise<Info>; openPath?: (p: string) => Promise<boolean> }
@@ -56,6 +65,67 @@ export default function PersonalUserSettings() {
   useEffect(() => {
     api?.info?.().then(setInfo).catch(() => {})
   }, [api])
+
+  useEffect(() => {
+    personalApi
+      .aiConfig()
+      .then((c) => {
+        setAiCfg(c)
+        setAiActive(c.active)
+        const cur = c.items.find((x) => x.id === c.active)
+        setAiModel(cur?.model || '')
+      })
+      .catch(() => {})
+  }, [])
+
+  const aiCurrent: AiProvider | undefined = aiCfg?.items.find((x) => x.id === aiActive)
+
+  /** 切服务商：模型跟着换成该预设的默认值 */
+  const pickProvider = (id: string) => {
+    setAiActive(id)
+    setAiModel(aiCfg?.items.find((x) => x.id === id)?.model || '')
+    setAiKey('')
+    setAiMsg('')
+  }
+
+  /** 保存（`api_key` 留空 ⇒ 不覆盖已存的） */
+  const saveAi = async () => {
+    setAiBusy(true)
+    setAiMsg('')
+    try {
+      const c = await personalApi.aiSaveConfig({
+        active: aiActive,
+        providers: { [aiActive]: { model: aiModel.trim(), api_key: aiKey.trim() } },
+      })
+      setAiCfg(c)
+      setAiKey('')
+      setAiModel(c.items.find((x) => x.id === aiActive)?.model || '')
+      setAiMsg('已保存')
+      return true
+    } catch (e) {
+      setAiMsg(e instanceof Error ? e.message : String(e))
+      return false
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  /** 测试连通：先保存（否则测的是旧配置），再探测 */
+  const probeAi = async () => {
+    setAiMsg('测试中…')
+    const ok = await saveAi()
+    if (!ok) return
+    setAiBusy(true)
+    setAiMsg('测试中…')
+    try {
+      const r = await personalApi.aiProbe(aiActive)
+      setAiMsg(r.ok ? `连通正常（${r.latency_ms} ms）` : `失败：${r.detail}`)
+    } catch (e) {
+      setAiMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAiBusy(false)
+    }
+  }
 
   const row: React.CSSProperties = {
     display: 'flex',
@@ -127,6 +197,69 @@ export default function PersonalUserSettings() {
           <div style={{ marginTop: 8 }}>
             具体某个项目存在哪，去那个项目的 <b>设置</b> 里看（那一页有个「打开」按钮）。
           </div>
+        </div>
+      </div>
+
+      {/* ★★★ AI：服务商 / 模型 / Key —— Key 只在本机，读回来永远是打码串 */}
+      <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>AI（写小结草稿）</div>
+
+        <div style={row}>
+          <span style={key}>服务商</span>
+          <select
+            className="input"
+            value={aiActive}
+            onChange={(e) => pickProvider(e.target.value)}
+            style={{ fontSize: 12.5, flex: 'none', minWidth: 180 }}
+          >
+            {(aiCfg?.items || []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <span className="faint" style={{ fontSize: 11.5 }}>{aiCurrent?.base_url}</span>
+        </div>
+
+        <div style={row}>
+          <span style={key}>模型</span>
+          <input
+            className="input"
+            value={aiModel}
+            onChange={(e) => setAiModel(e.target.value)}
+            placeholder="deepseek-chat"
+            style={{ fontSize: 12.5, flex: 1, minWidth: 160 }}
+          />
+        </div>
+
+        {aiCurrent?.needs_key && (
+          <div style={row}>
+            <span style={key}>API Key</span>
+            <input
+              className="input"
+              type="password"
+              value={aiKey}
+              onChange={(e) => setAiKey(e.target.value)}
+              placeholder={aiCurrent.has_key ? `${aiCurrent.key_masked}（留空不改）` : 'sk-...'}
+              style={{ fontSize: 12.5, flex: 1, minWidth: 160 }}
+            />
+          </div>
+        )}
+
+        <div style={{ ...row, borderBottom: 'none', alignItems: 'center' }}>
+          <span style={key}>操作</span>
+          <button type="button" style={link} disabled={aiBusy} onClick={() => void saveAi()}>
+            保存
+          </button>
+          <button type="button" style={link} disabled={aiBusy} onClick={() => void probeAi()}>
+            <Sparkles size={11} /> 测试连通
+          </button>
+          {aiMsg && <span className="faint" style={{ fontSize: 11.5 }}>{aiMsg}</span>}
+        </div>
+
+        <div className="faint" style={{ fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>
+          Key 只存在本机（{aiCfg?.path || '…'}），不会上传；生成时只发送当前节点的
+          源码片段（≤120 行）与相邻函数签名，⛔ 不发整个文件。
         </div>
       </div>
 

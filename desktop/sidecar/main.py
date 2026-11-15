@@ -220,6 +220,7 @@ R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_AICFG = re.compile(r"^/api/ai/config/$")
 R_AIPROBE = re.compile(r"^/api/ai/probe/$")
+R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
@@ -1343,6 +1344,53 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
 
 # ---------------------------------------------------------------- 主循环
 
+# ---------------------------------------------------------------- 流式
+# ★★ 流式协议（与一次性响应并存，靠路径区分）：
+#   同一 id 发多条消息，最后一条是 closed
+#     {"id":7,"event":"delta","text":"..."}
+#     {"id":7,"event":"usage","in":820,"out":156}
+#     {"id":7,"event":"error","message":"..."}
+#     {"id":7,"event":"closed"}
+#   ⚠ 为什么不用「一次返回后前端自己切」：模型要 3-10 秒才出完，
+#     不流式的话界面会像卡死。
+
+
+def _is_stream(path: str) -> bool:
+    return path.startswith("/api/ai/stream")
+
+
+def _stream_events(method: str, path: str, body) -> "object":
+    """流式端点的事件生成器（目前只有回显，用于验证三层链路）。"""
+    body = body if isinstance(body, dict) else {}
+
+    if R_AISTREAM.match(path):
+        text = str(body.get("text") or "流式回显：边车 → 主进程 → 前端")
+        # 按 4 字一块吐，模拟模型逐字输出
+        for i in range(0, len(text), 4):
+            yield {"event": "delta", "text": text[i : i + 4]}
+        yield {"event": "usage", "in": 0, "out": len(text)}
+        return
+
+    raise ValueError(f"不是流式路由：{path}")
+
+
+def _run_stream(rid, method: str, path: str, body) -> None:
+    """把生成器的事件逐条写到 stdout；⛔ 任何异常都转成 error 事件，不带 key。"""
+
+    def emit(obj: dict) -> None:
+        sys.stdout.write(json.dumps({"id": rid, **obj}, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+    try:
+        for evt in _stream_events(method, path, body):
+            emit(evt)
+    except Exception as exc:  # noqa: BLE001 —— 流式里不能把半截连接留着
+        emit({"event": "error", "message": ai.redact(f"{type(exc).__name__}: {exc}")})
+    emit({"event": "closed"})
+
+
+# ---------------------------------------------------------------- 主循环
+
 
 def main() -> None:
     # ★ 强制 utf-8：Windows 控制台默认 cp936，中文会乱码
@@ -1362,12 +1410,24 @@ def main() -> None:
             continue
 
         rid = req.get("id")
+        method = str(req.get("method") or "GET")
+        path = str(req.get("path") or "/")
+        if _is_stream(path):
+            try:
+                _run_stream(rid, method, path, req.get("body"))
+            except Exception as exc:  # noqa: BLE001 —— 兜底，别让循环死掉
+                sys.stdout.write(
+                    json.dumps(
+                        {"id": rid, "event": "error", "message": ai.redact(str(exc))},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                sys.stdout.flush()
+            continue
+
         try:
-            status, payload = handle(
-                str(req.get("method") or "GET"),
-                str(req.get("path") or "/"),
-                req.get("body"),
-            )
+            status, payload = handle(method, path, req.get("body"))
         except Exception as exc:  # noqa: BLE001 —— 边车不能因为一个请求死掉
             status, payload = 500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 

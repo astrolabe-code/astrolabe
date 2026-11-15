@@ -100,10 +100,26 @@ function startSidecar() {
         continue
       }
       const p = pending.get(msg.id)
-      if (p) {
-        pending.delete(msg.id)
-        p.resolve(msg)
+      if (!p) continue
+      // ★★ 流式：同一 id 多条消息，event 字段区分；closed/error 才收尾
+      if (msg.event) {
+        if (p.onEvent) {
+          try {
+            p.onEvent(msg)
+          } catch {
+            /* 前端已断开也不能让主进程崩 */
+          }
+        }
+        if (msg.event === 'closed' || msg.event === 'error') {
+          pending.delete(msg.id)
+          clearTimeout(p.timer)
+          p.resolve(msg)
+        }
+        continue
       }
+      pending.delete(msg.id)
+      clearTimeout(p.timer)
+      p.resolve(msg)
     }
   })
 
@@ -118,21 +134,24 @@ function startSidecar() {
 }
 
 /** 调一次边车；超时 30s（解析大仓库会慢，但也不能无限等） */
-function callSidecar(method, apiPath, body) {
+function callSidecar(method, apiPath, body, onEvent) {
   return new Promise((resolve, reject) => {
     if (!sidecar) {
       reject(new Error('边车未启动'))
       return
     }
     const id = ++seq
-    pending.set(id, { resolve, reject })
+    const entry = { resolve, reject, onEvent }
+    pending.set(id, entry)
     sidecar.stdin.write(JSON.stringify({ id, method, path: apiPath, body }) + '\n')
-    setTimeout(() => {
+    // ★ 流式（AI 生成）可能要几十秒，给更长的兜底；生成过程有消息就不断续期
+    const ms = onEvent ? 90000 : 30000
+    entry.timer = setTimeout(() => {
       if (pending.has(id)) {
         pending.delete(id)
-        reject(new Error('边车超时'))
+        reject(new Error(onEvent ? '边车流式超时' : '边车超时'))
       }
-    }, 30000)
+    }, ms)
   })
 }
 
@@ -177,6 +196,40 @@ function registerProtocol() {
           body = null
         }
       }
+      // ★★ 流式端点：逐块转发（NDJSON），前端 getReader() 读
+      if (p.startsWith('/api/ai/stream')) {
+        const enc = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            const push = (obj) => {
+              try {
+                controller.enqueue(enc.encode(JSON.stringify(obj) + '\n'))
+              } catch {
+                /* 已关闭 */
+              }
+            }
+            callSidecar(request.method, p, body, (evt) => push(evt))
+              .catch((e) => {
+                push({ event: 'error', message: String((e && e.message) || e) })
+                push({ event: 'closed' })
+              })
+              .finally(() => {
+                try {
+                  controller.close()
+                } catch {
+                  /* 已关闭 */
+                }
+              })
+          },
+        })
+        return new Response(stream, {
+          headers: {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'cache-control': 'no-cache',
+          },
+        })
+      }
+
       try {
         const r = await callSidecar(request.method, p, body)
         return new Response(JSON.stringify(r.body ?? {}), {

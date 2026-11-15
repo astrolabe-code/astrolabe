@@ -155,6 +155,55 @@ export interface BoardItem {
   mtime: number
 }
 
+/**
+ * ★★ 流式请求（NDJSON：每行一个事件）
+ *
+ * 用于 AI 生成 —— 模型要几秒到几十秒才出完，不流式界面就像卡死。
+ * 事件：`{event:'delta',text}` / `{event:'usage',in,out}` /
+ *       `{event:'error',message}` / `{event:'closed'}`
+ *
+ * ⚠ 不是 `call()` 那种「一次拿到完整 JSON」：这里逐行回调，
+ *   `closed` 才结束；`error` 直接抛给调用方。
+ */
+export async function streamCall(
+  path: string,
+  body: unknown,
+  onEvent: (evt: Record<string, unknown> & { event: string }) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  })
+  if (!r.ok || !r.body) throw new Error(`请求失败（${r.status}）`)
+
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    let idx = 0
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, idx).trim()
+      buf = buf.slice(idx + 1)
+      if (!line) continue
+      let evt: Record<string, unknown> & { event: string }
+      try {
+        evt = JSON.parse(line)
+      } catch {
+        continue
+      }
+      onEvent(evt)
+      if (evt.event === 'closed') return
+      if (evt.event === 'error') throw new Error(String(evt.message || '生成失败'))
+    }
+  }
+}
+
 export const personalApi = {
   // ---- 项目
   listProjects: () => get<{ items: any[] }>('/api/projects/'),

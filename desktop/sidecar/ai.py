@@ -316,8 +316,17 @@ def probe(provider_id: str = "") -> dict:
     except Exception as exc:  # noqa: BLE001
         # ⚠ 本地连不上时把「怎么启动」说清楚，⛔ 不要只说 connection refused
         msg = str(exc)
-        if pid == "local" and ("refused" in msg.lower() or "connect" in msg.lower()):
-            msg = "连不上 Ollama：先在终端运行 `ollama serve`（或确认 11434 端口）"
+        if pid == "local":
+            # ★ 地址不是本机 ⇒ 是局域网里另一台机器，提示要换（不是「先 ollama serve」）
+            remote = ("localhost" not in base) and ("127.0.0.1" not in base)
+            low = msg.lower()
+            if remote:
+                msg = (
+                    f"连不上 {base}：{msg}。"
+                    "对方机器需以 OLLAMA_HOST=0.0.0.0 启动，并放行 11434 端口"
+                )
+            elif "refused" in low or "connect" in low:
+                msg = "连不上 Ollama：先在终端运行 `ollama serve`（或确认 11434 端口）"
         return {
             "ok": False,
             "provider": pid,

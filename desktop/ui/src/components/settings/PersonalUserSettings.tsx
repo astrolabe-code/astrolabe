@@ -52,6 +52,7 @@ export default function PersonalUserSettings() {
   // ★★ AI 配置：服务商 / 模型 / Key（Key 只存本机，读回来永远是打码串）
   const [aiCfg, setAiCfg] = useState<AiConfig | null>(null)
   const [aiActive, setAiActive] = useState('')
+  const [aiBase, setAiBase] = useState('')
   const [aiModel, setAiModel] = useState('')
   const [aiKey, setAiKey] = useState('')
   const [aiMsg, setAiMsg] = useState('')
@@ -74,6 +75,7 @@ export default function PersonalUserSettings() {
         setAiActive(c.active)
         const cur = c.items.find((x) => x.id === c.active)
         setAiModel(cur?.model || '')
+        setAiBase(cur?.base_url || '')
       })
       .catch(() => {})
   }, [])
@@ -83,7 +85,9 @@ export default function PersonalUserSettings() {
   /** 切服务商：模型跟着换成该预设的默认值 */
   const pickProvider = (id: string) => {
     setAiActive(id)
-    setAiModel(aiCfg?.items.find((x) => x.id === id)?.model || '')
+    const p = aiCfg?.items.find((x) => x.id === id)
+    setAiModel(p?.model || '')
+    setAiBase(p?.base_url || '')
     setAiKey('')
     setAiMsg('')
   }
@@ -95,11 +99,19 @@ export default function PersonalUserSettings() {
     try {
       const c = await personalApi.aiSaveConfig({
         active: aiActive,
-        providers: { [aiActive]: { model: aiModel.trim(), api_key: aiKey.trim() } },
+        providers: {
+          [aiActive]: {
+            base_url: aiBase.trim(),
+            model: aiModel.trim(),
+            api_key: aiKey.trim(),
+          },
+        },
       })
       setAiCfg(c)
       setAiKey('')
-      setAiModel(c.items.find((x) => x.id === aiActive)?.model || '')
+      const saved = c.items.find((x) => x.id === aiActive)
+      setAiModel(saved?.model || '')
+      setAiBase(saved?.base_url || '')
       setAiMsg('已保存')
       return true
     } catch (e) {
@@ -140,6 +152,18 @@ export default function PersonalUserSettings() {
     fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
     fontSize: 11.5,
     wordBreak: 'break-all',
+  }
+  const btn: React.CSSProperties = {
+    border: '1px solid var(--card-border)',
+    background: 'transparent',
+    borderRadius: 6,
+    padding: '2px 10px',
+    fontSize: 11.5,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    flex: 'none',
   }
   const link: React.CSSProperties = {
     marginLeft: 'auto',
@@ -200,7 +224,7 @@ export default function PersonalUserSettings() {
         </div>
       </div>
 
-      {/* ★★★ AI：服务商 / 模型 / Key —— Key 只在本机，读回来永远是打码串 */}
+      {/* ★★★ AI：服务商 / 地址 / 模型 / Key —— Key 只在本机，读回来永远是打码串 */}
       <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>AI（写小结草稿）</div>
 
@@ -210,7 +234,7 @@ export default function PersonalUserSettings() {
             className="input"
             value={aiActive}
             onChange={(e) => pickProvider(e.target.value)}
-            style={{ fontSize: 12.5, flex: 'none', minWidth: 180 }}
+            style={{ fontSize: 12.5, flex: '0 1 240px', minWidth: 0 }}
           >
             {(aiCfg?.items || []).map((p) => (
               <option key={p.id} value={p.id}>
@@ -218,7 +242,18 @@ export default function PersonalUserSettings() {
               </option>
             ))}
           </select>
-          <span className="faint" style={{ fontSize: 11.5 }}>{aiCurrent?.base_url}</span>
+        </div>
+
+        {/* ★ 地址可改：Ollama 跑在局域网另一台电脑上时填那台的 IP */}
+        <div style={row}>
+          <span style={key}>地址</span>
+          <input
+            className="input"
+            value={aiBase}
+            onChange={(e) => setAiBase(e.target.value)}
+            placeholder="http://192.168.1.20:11434/v1"
+            style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}
+          />
         </div>
 
         <div style={row}>
@@ -227,8 +262,8 @@ export default function PersonalUserSettings() {
             className="input"
             value={aiModel}
             onChange={(e) => setAiModel(e.target.value)}
-            placeholder="deepseek-chat"
-            style={{ fontSize: 12.5, flex: 1, minWidth: 160 }}
+            placeholder="qwen2.5-coder:7b"
+            style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}
           />
         </div>
 
@@ -241,25 +276,37 @@ export default function PersonalUserSettings() {
               value={aiKey}
               onChange={(e) => setAiKey(e.target.value)}
               placeholder={aiCurrent.has_key ? `${aiCurrent.key_masked}（留空不改）` : 'sk-...'}
-              style={{ fontSize: 12.5, flex: 1, minWidth: 160 }}
+              style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}
             />
           </div>
         )}
 
-        <div style={{ ...row, borderBottom: 'none', alignItems: 'center' }}>
+        <div style={{ ...row, borderBottom: 'none', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={key}>操作</span>
-          <button type="button" style={link} disabled={aiBusy} onClick={() => void saveAi()}>
-            保存
-          </button>
-          <button type="button" style={link} disabled={aiBusy} onClick={() => void probeAi()}>
-            <Sparkles size={11} /> 测试连通
-          </button>
-          {aiMsg && <span className="faint" style={{ fontSize: 11.5 }}>{aiMsg}</span>}
+          <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" style={btn} disabled={aiBusy} onClick={() => void saveAi()}>
+              保存
+            </button>
+            <button type="button" style={btn} disabled={aiBusy} onClick={() => void probeAi()}>
+              <Sparkles size={11} /> 测试连通
+            </button>
+          </div>
+          {aiMsg && (
+            <span className="faint" style={{ fontSize: 11.5, marginLeft: 8 }}>
+              {aiMsg}
+            </span>
+          )}
         </div>
 
-        <div className="faint" style={{ fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>
-          Key 只存在本机（{aiCfg?.path || '…'}），不会上传；生成时只发送当前节点的
-          源码片段（≤120 行）与相邻函数签名，⛔ 不发整个文件。
+        <div
+          className="faint"
+          style={{ fontSize: 11, lineHeight: 1.7, marginTop: 4, wordBreak: 'break-all' }}
+        >
+          Key 只存在本机（{aiCfg?.path || '…'}），不会上传；生成时只发送当前节点的源码片段
+          （≤120 行）与相邻函数签名，不发整个文件。
+          <br />
+          Ollama 在<b>另一台电脑</b>上？把「地址」改成 <code>http://那台IP:11434/v1</code>，
+          并在那台机器启动时设 <code>OLLAMA_HOST=0.0.0.0</code>（否则它只监听本机）。
         </div>
       </div>
 

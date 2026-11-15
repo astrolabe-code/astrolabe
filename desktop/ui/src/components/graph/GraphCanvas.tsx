@@ -7,6 +7,32 @@ import { kindColor } from '../../lib/kindLabel'
 import NodeHoverCard from '../node/NodeHoverCard'
 import EdgeHoverCard from './EdgeHoverCard'
 
+/**
+ * ★★ 节点标签的最大字符数（超出用 `…` 截断）
+ *
+ * 所有者原话（2026-11-14）：
+ * 「图上标全长的函数名，节点一多，就继承密密麻麻的字符了，可以设置一个
+ *   最大字符长度，超出了的部分用...表示」
+ *
+ * 为什么按类型给不同上限：
+ *   · 文件名/目录名是「定位信息」，长一点也值得看清（`test_call_graph.py`）
+ *   · 函数名只需辨认，截短后靠 hover 浮窗看全名，不丢信息
+ */
+const LABEL_MAX_NAME = 16
+const LABEL_MAX_FILE = 22
+
+function truncateLabel(text: string, max: number): string {
+  const t = (text || '').trim()
+  return t.length > max ? `${t.slice(0, max)}…` : t
+}
+
+/** 缩放低于它就进入「只显示关键标签」模式（借鉴 sigma 的 labelRenderedSizeThreshold） */
+const LABEL_ZOOM_THRESHOLD = 0.7
+/** 节点少于这么多时不启用（小图上标签本来就不挤） */
+const LABEL_MIN_NODES = 30
+/** 密集模式下最多保留多少个「度数最高」的标签 */
+const LABEL_TOP_DEGREE = 12
+
 /** 点到线段的距离（画布单位），用来判定鼠标是否落在某条聚合边上 */
 function distToSegment(p: ArrayLike<number>, a: ArrayLike<number>, b: ArrayLike<number>): number {
   const dx = b[0] - a[0]
@@ -313,7 +339,10 @@ export default function GraphCanvas({
               stroke: n.patched ? '#fbbf24' : '#ffffff',
               lineWidth: n.patched ? 2.5 : 2,
               lineDash: n.patched ? [4, 3] : undefined,
-              labelText: n.name,
+              labelText: truncateLabel(
+                n.name,
+                n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME,
+              ),
               labelPlacement: 'bottom',
               labelFill: labelColor,
               labelFontSize: 11,
@@ -470,6 +499,81 @@ export default function GraphCanvas({
     // ★★ `labelColor` 也进依赖：* 主题切换 ⇒ 重建图 ⇒ 标签用新色 ⚠
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, labelColor])
+
+  // ============================================================ 标签疏密（按缩放）
+  /**
+   * ★★ 节点一多、缩小看图时标签会糊成一片。
+   *
+   * 所有者原话（2026-11-14）：
+   * 「图上标全长的函数名，节点一多，就继承密密麻麻的字符了」
+   *
+   * 借鉴 sigma 的三个设置（GitNexus 的 web 图谱用它）：
+   *   `labelRenderedSizeThreshold`（太小就不画）、`labelDensity` + `labelGridCellSize`
+   *   （网格内只放一个标签）⇒ 本质是**按空间竞争决定谁显示**。
+   * G6 没有这套，所以自己实现：缩放 < 0.7 且节点 ≥ 30 时，只留
+   *   「选中节点 + 它的直接邻居 + 度数最高的 12 个」的标签，其余置空。
+   *
+   * ⚠ 只改 `labelText`，不动节点/边结构；用 rAF 合并连续的缩放事件。
+   */
+  useEffect(() => {
+    const g = gRef.current
+    if (!g || !graph || graph.nodes.length < LABEL_MIN_NODES) return
+
+    const labelOf = new Map<string, string>()
+    for (const n of graph.nodes) {
+      const max = n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME
+      labelOf.set(String(n.vid), truncateLabel(n.name, max))
+    }
+
+    const deg = new Map<string, number>()
+    for (const e of graph.edges) {
+      const a = String(e.from)
+      const b = String(e.to)
+      deg.set(a, (deg.get(a) ?? 0) + 1)
+      deg.set(b, (deg.get(b) ?? 0) + 1)
+    }
+
+    let raf = 0
+    // ★ 只在「密集/非密集」切换时重绘，缩放过程中不重复 update（否则掉帧）
+    let lastDense: boolean | null = null
+    const apply = () => {
+      raf = 0
+      const dense = g.getZoom() < LABEL_ZOOM_THRESHOLD
+      if (dense === lastDense) return
+      lastDense = dense
+      let keep: Set<string> | null = null
+      if (dense) {
+        keep = new Set<string>()
+        for (const [id] of [...deg.entries()].sort((x, y) => y[1] - x[1]).slice(0, LABEL_TOP_DEGREE)) {
+          keep.add(id)
+        }
+        if (selectedVid != null) {
+          const sid = String(selectedVid)
+          keep.add(sid)
+          for (const e of graph.edges) {
+            if (String(e.from) === sid) keep.add(String(e.to))
+            if (String(e.to) === sid) keep.add(String(e.from))
+          }
+        }
+      }
+      const updates = [...labelOf].map(([id, text]) => ({
+        id,
+        style: { labelText: keep && !keep.has(id) ? '' : text },
+      }))
+      g.updateNodeData(updates)
+      void g.draw()
+    }
+    const onTransform = () => {
+      if (!raf) raf = requestAnimationFrame(apply)
+    }
+
+    g.on('aftertransform', onTransform)
+    apply()
+    return () => {
+      g.off('aftertransform', onTransform)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [graph, selectedVid])
 
   // ============================================================ 环形按钮跟住节点
   useEffect(() => {
@@ -664,7 +768,10 @@ export default function GraphCanvas({
           fill: colorOf(n),
           stroke: n.patched ? '#fbbf24' : '#ffffff',
           lineWidth: n.patched ? 2.5 : 2,
-          labelText: n.name,
+          labelText: truncateLabel(
+            n.name,
+            n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME,
+          ),
           labelPlacement: 'bottom' as const,
           labelFill: labelColor,
           labelFontSize: 11,

@@ -78,6 +78,7 @@ export default function PersonalUserSettings() {
         const cur = c.items.find((x) => x.id === c.active)
         setAiModel(cur?.model || '')
         setAiBase(cur?.base_url || '')
+        setAiModels(cur?.models || [])
         void loadModels(c.active)
       })
       .catch(() => {})
@@ -88,14 +89,20 @@ export default function PersonalUserSettings() {
   /** 拉模型列表；`quiet` = 失败不出声（切服务商时自动拉，别刷一屏红字） */
   const loadModels = async (pid: string, quiet = true) => {
     if (!pid) return
+    // ★ 拉不到（没 Key / 服务商不支持）就退回内置候选 —— 否则下拉是空的，
+      //   用户点了会以为「没做下拉」
+    const fallback = aiCfg?.items.find((x) => x.id === pid)?.models || []
     try {
       const r = await personalApi.aiModels(pid)
-      setAiModels(r.ok ? r.models : [])
+      // ★ 真实列表优先，内置候选补充（万一服务商只返回一部分）
+      setAiModels(
+        r.ok && r.models.length ? Array.from(new Set([...r.models, ...fallback])) : fallback,
+      )
       if (!quiet) {
         setAiMsg(r.ok ? `已拉取 ${r.models.length} 个模型` : `拉取失败：${r.detail}`)
       }
     } catch (e) {
-      setAiModels([])
+      setAiModels(fallback)
       if (!quiet) setAiMsg(e instanceof Error ? e.message : String(e))
     }
   }
@@ -108,6 +115,7 @@ export default function PersonalUserSettings() {
     setAiBase(p?.base_url || '')
     setAiKey('')
     setAiMsg('')
+    setAiModels(p?.models || [])
     void loadModels(id)
   }
 
@@ -278,22 +286,23 @@ export default function PersonalUserSettings() {
 
         <div style={row}>
           <span style={key}>模型</span>
-          <input
+          {/* ★★ 纯下拉，⛔ 不许手输：手输一个错的名字，报错要到下一次生成才看见。
+              候选 = 内置 + 从 /models 拉到的真实列表（合并去重） */}
+          <select
             className="input"
-            list="ai-model-options"
             value={aiModel}
             onChange={(e) => setAiModel(e.target.value)}
-            placeholder="点「刷新」拉取，也可直接手输"
-            spellCheck={false}
             style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}
-          />
-          {/* ★ 原生 datalist：点输入框就有下拉候选，同时允许输入列表外的名字
-              （自定义 / 刚 `ollama pull` 的模型可能还没被拉到） */}
-          <datalist id="ai-model-options">
+          >
+            {aiModel && !aiModels.includes(aiModel) && (
+              <option value={aiModel}>{aiModel}（当前）</option>
+            )}
             {aiModels.map((m) => (
-              <option key={m} value={m} />
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
-          </datalist>
+          </select>
           <button
             type="button"
             style={btn}
@@ -303,6 +312,16 @@ export default function PersonalUserSettings() {
           >
             刷新
           </button>
+        </div>
+        {/* ⚠ Chromium 的 datalist 不会因为聚焦就自动展开：要点输入框右端的
+            小三角，或者按 ↓ 键。/ 提示必须写出来，否则用户以为「没做下拉」 */}
+        <div
+          className="faint"
+          style={{ fontSize: 10.5, lineHeight: 1.6, padding: '0 0 6px 98px' }}
+        >
+          {aiModels.length
+            ? `${aiModels.length} 个可选 · 填好 Key 后点「刷新」拉取该服务商的完整列表`
+            : '暂无候选：先填好 Key，再点「刷新」拉取'}
         </div>
 
         {aiCurrent?.needs_key && (

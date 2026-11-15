@@ -211,6 +211,8 @@ export interface AiProvider {
   label: string
   base_url: string
   model: string
+  /** 内置候选模型（没填 Key 拉不到列表时也有得选） */
+  models: string[]
   needs_key: boolean
   has_key: boolean
   key_masked: string

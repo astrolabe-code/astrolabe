@@ -35,6 +35,7 @@ import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
 import NodePanel from '../components/node/NodePanel'
 import FlowPanel from '../components/graph/FlowPanel'
+import CommunityPanel from '../components/graph/CommunityPanel'
 
 /**
  * ★ 图谱页（`D98` · AntV G6 · `D105` 学习路径 · `D107` 健壮性）
@@ -299,6 +300,12 @@ export default function ProjectGraphPage() {
 
   // ★★ 执行流：点某条链 → 高亮链上节点（传空数组清除）
   const [flowVids, setFlowVids] = useState<number[]>([])
+  // ★ 当前高亮的是「哪一条」—— 社区与执行流共用一个，避免两边都显示选中但只亮一种
+  const [highlightKey, setHighlightKey] = useState<string | null>(null)
+  const pickHighlight = (vids: number[], key: string | null) => {
+    setFlowVids(vids)
+    setHighlightKey(key)
+  }
   const nameMap = useMemo(() => {
     const m = new Map<number, string>()
     for (const n of g?.nodes || []) m.set(n.vid, n.name)
@@ -751,12 +758,15 @@ export default function ProjectGraphPage() {
             initialTab="notes"
             notePanel={
               <>
+                {/* ★★ 社区：哪几块关系紧密（点一块 → 高亮整块） */}
+                <CommunityPanel projectRef={projectRef} onPick={pickHighlight} activeKey={highlightKey} />
                 {/* ★★ 执行流：当前节点落在哪几条调用链里 */}
                 <FlowPanel
                   projectRef={projectRef}
                   vid={selected ? selected.vid : null}
                   nameOf={(v) => nameMap.get(v) || String(v)}
-                  onPick={setFlowVids}
+                  onPick={pickHighlight}
+                  activeKey={highlightKey}
                 />
               <NodePanel
                 projectRef={projectRef}

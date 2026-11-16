@@ -27,13 +27,14 @@ interface Props {
   vid?: number | null
   /** 把 vid 翻成名字（由父组件用图数据提供） */
   nameOf?: (vid: number) => string
-  /** 选中一条链 → 交给画布高亮；传空数组表示取消 */
-  onPick: (vids: number[]) => void
+  /** 选中一条链 → 交给画布高亮；`key` 为 null 表示取消 */
+  onPick: (vids: number[], key: string | null) => void
+  /** 当前被高亮的是谁（与社区面板共用） */
+  activeKey?: string | null
 }
 
-export default function FlowPanel({ projectRef, vid, nameOf, onPick }: Props) {
+export default function FlowPanel({ projectRef, vid, nameOf, onPick, activeKey }: Props) {
   const [items, setItems] = useState<Flow[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -42,8 +43,7 @@ export default function FlowPanel({ projectRef, vid, nameOf, onPick }: Props) {
   pickRef.current = onPick
 
   useEffect(() => {
-    setActiveId(null)
-    pickRef.current([])
+    pickRef.current([], null)
     if (!projectRef || !vid) {
       setItems([])
       setErr('')
@@ -74,12 +74,10 @@ export default function FlowPanel({ projectRef, vid, nameOf, onPick }: Props) {
   if (!vid) return null
 
   const toggle = (f: Flow) => {
-    if (activeId === f.id) {
-      setActiveId(null)
-      pickRef.current([])
+    if (activeKey === f.id) {
+      pickRef.current([], null)
     } else {
-      setActiveId(f.id)
-      pickRef.current(f.steps)
+      pickRef.current(f.steps, f.id)
     }
   }
 
@@ -107,7 +105,7 @@ export default function FlowPanel({ projectRef, vid, nameOf, onPick }: Props) {
       )}
 
       {items.map((f) => {
-        const on = activeId === f.id
+        const on = activeKey === f.id
         const first = nameOf ? nameOf(f.steps[0]) : String(f.steps[0])
         const last = nameOf ? nameOf(f.steps[f.steps.length - 1]) : String(f.steps[f.steps.length - 1])
         return (

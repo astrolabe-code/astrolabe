@@ -304,6 +304,20 @@ export const personalApi = {
     get<{ items: { id: string; steps: number[]; length: number }[]; total: number }>(
       `/api/projects/${encodeURIComponent(ref)}/graph/flows/?vid=${vid}`,
     ),
+    /** ★★ 社区聚类：按关系把节点聚成「一伙的」，后端现算、不存库 */
+    graphCommunities: (ref: string) =>
+      get<{
+        items: {
+          id: string
+          label: string
+          keywords: string[]
+          size: number
+          cohesion: number
+          nodes: number[]
+        }[]
+        total: number
+      }>(`/api/projects/${encodeURIComponent(ref)}/graph/communities/`),
+
 
   /** ★ 结构体/类的字段（只在详情面板显示，⛔ 不进图） */
   nodeFields: async (ref: string, vid: number) => {

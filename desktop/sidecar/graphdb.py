@@ -715,6 +715,129 @@ def flows_of(
     return {"items": items, "total": len(items)}
 
 
+def _louvain(adj: dict[int, set[int]], max_iter: int = 20) -> dict[int, int]:
+    """Louvain 的**移动阶段**：返回 `{节点: 社区 id}`。
+
+    ⚠ 单独抽出来是为了能脱离图库单测（推理只依赖邻接表）。
+    ★ 节点按 vid 排序遍历 ⇒ 同一份图每次结果一致，分组不会乱跳。
+
+    ⚠⚠ 计算增益前必须**先把节点从原社区摘出去**（`total[ci] -= deg`），
+       否则「自己」的度数会算进目标社区的 Σtot，导致三角形被拆散
+       （实测：两个三角形 + 一条弱连接，错误版本分成 4 组）。
+    """
+    nodes = sorted(adj)
+    deg = {n: len(adj[n]) for n in nodes}
+    m2 = sum(deg.values()) or 1  # 2m
+    comm = {n: n for n in nodes}
+    total = {n: deg[n] for n in nodes}
+
+    for _ in range(max_iter):
+        moved = False
+        for n in nodes:
+            ci = comm[n]
+            degn = deg[n]
+            if not adj[n]:
+                continue
+            total[ci] = total.get(ci, 0) - degn  # ★ 先摘出来
+
+            cnt: dict[int, int] = {}
+            for m in adj[n]:
+                cnt[comm[m]] = cnt.get(comm[m], 0) + 1
+
+            best, best_gain = ci, 0.0
+            for c, k in cnt.items():
+                gain = k - total.get(c, 0) * degn / m2
+                if gain > best_gain:
+                    best, best_gain = c, gain
+
+            if best != ci:
+                comm[n] = best
+                total[best] = total.get(best, 0) + degn
+                moved = True
+            else:
+                total[ci] = total.get(ci, 0) + degn  # 放回去
+        if not moved:
+            break
+    return comm
+
+
+def communities_of(
+    data_dir: str,
+    min_size: int = 2,
+    max_items: int = 8,
+    max_nodes: int = 300,
+    max_iter: int = 20,
+) -> dict:
+    """把节点聚成「一伙的」（Louvain 的移动阶段，纯 Python、无第三方依赖）。
+
+    ★ 借鉴 GitNexus 的 `Community`（它用 Leiden 算 label / keywords / cohesion），
+      但**不落库**：每次现算，结果只用于「建议先读哪几块」。
+    ★ 不引入 igraph / leidenalg —— 绿色版不该为一个聚类多背几十 MB。
+    ★ 只用 `vid` 排序遍历，保证同一份图每次算出同样的分组（不抖）。
+
+    返回 `{"items": [{id, label, keywords, size, cohesion, nodes}], "total"}`；
+    `cohesion` = 社区内部的**无向密度**（内部边数 / 可能边数），0~1。
+    """
+    from collections import Counter
+
+    conn = _open(data_dir)
+    rows = conn.execute("MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid").get_all()
+
+    adj: dict[int, set[int]] = {}
+    for a, b in rows:
+        a, b = int(a), int(b)
+        if a == b:
+            continue
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+    if not adj:
+        return {"items": [], "total": 0}
+
+    meta = {
+        int(v): (str(f or ""), str(nm or ""))
+        for v, f, nm in conn.execute(
+            "MATCH (c:Code) RETURN c.vid, c.file, c.name"
+        ).get_all()
+    }
+
+    nodes = sorted(adj)
+    deg = {n: len(adj[n]) for n in nodes}
+    comm = _louvain(adj, max_iter)
+
+    groups: dict[int, list[int]] = {}
+    for n in nodes:
+        groups.setdefault(comm[n], []).append(n)
+
+    def key_of(f: str) -> str:
+        parts = str(f).replace("\\", "/").split("/")
+        return parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+
+    items: list[dict] = []
+    for members in groups.values():
+        n = len(members)
+        if n < min_size:
+            continue
+        ms = set(members)
+        inner = sum(len(adj[v] & ms) for v in members) // 2
+        possible = n * (n - 1) / 2 or 1
+        words = Counter(key_of(meta.get(v, ("", ""))[0]) for v in members)
+        top = [w for w, _ in words.most_common(3) if w]
+        label = top[0] if top else meta.get(max(members, key=lambda v: deg[v]), ("", ""))[1]
+        items.append(
+            {
+                "id": f"comm:{min(members)}",
+                "label": label or "未命名",
+                "keywords": top,
+                "size": n,
+                "cohesion": round(inner / possible, 4),
+                "nodes": members[:max_nodes],
+            }
+        )
+
+    items.sort(key=lambda x: -x["size"])
+    return {"items": items[:max_items], "total": len(items)}
+
+
 def edges_of(data_dir: str, vid: int) -> dict:
     """单跳出入边。图库的边没有主键 ⇒ id 用 src-dst-kind 合成。"""
     conn = _open(data_dir)

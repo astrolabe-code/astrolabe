@@ -420,6 +420,8 @@ BASE_SYSTEM = (
     "你是帮编程初学者读懂代码的助手。"
     "只根据用户给出的代码与上下文回答，不要编造上下文里没有的函数、文件或行为。"
     "用中文，平实具体，不用「本文」「综上所述」这类套话。"
+    "上下文里标了「人工补的节点」或「人工补的关系」的，说明那不是解析器从源码里得到的，"
+    "而是作者手工添加的 —— 引用到它时要说清这一点，不要当成源码事实。"
 )
 
 DRAFT_SYSTEM = BASE_SYSTEM
@@ -445,7 +447,8 @@ def _context_block(
     """
     lines = [
         f"【节点】{node.get('kind') or ''}  {node.get('file') or ''}  "
-        f"第 {node.get('line') or 0}-{node.get('line_end') or 0} 行",
+        f"第 {node.get('line') or 0}-{node.get('line_end') or 0} 行"
+        + ("（人工补的节点）" if str(node.get("origin") or "") == "manual" else ""),
         f"【签名】{node.get('signature') or '（解析器未给出）'}",
         "【源码】",
         f"```{lang}",
@@ -460,7 +463,8 @@ def _context_block(
             return
         for r in rows[:MAX_NEIGHBORS]:
             name = r.get("qname") or r.get("name") or ""
-            lines.append(f"- {name}  @ {r.get('file_path') or ''}:{r.get('line') or 0}")
+            tag = "（人工补的节点）" if str(r.get("origin") or "") == "manual" else ""
+            lines.append(f"- {name}  @ {r.get('file_path') or ''}:{r.get('line') or 0}{tag}")
 
     section("它调用的函数", downstream)
     section("调用它的函数", upstream)
@@ -551,33 +555,65 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
         req.add_header("Authorization", f"Bearer {act['api_key']}")
 
     t0 = time.time()
+    # ★ 统计「到底吐了多少字」：一个字都没出时必须报错，
+    #   ⛔ 不能静默返回空回答（用户只会看到「问了但没回答」，无从排查）
+    got = 0
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        # ⚠ 首字超时给足：本地 7B/14B 在 CPU 上第一块可能要几十秒，
+        #   30 秒会误判成超时（此处是单次读超时，不是总时长）
+        with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310
             for raw in resp:
                 if time.time() - t0 > deadline_s:
                     raise RuntimeError("生成超时")
                 line = raw.decode("utf-8", "replace").strip()
-                if not line or not line.startswith("data:"):
+                if not line:
                     continue
-                data = line[5:].strip()
-                if data == "[DONE]":
+                # ★★ 三种返回形态都认：
+                #   ① OpenAI / DeepSeek 的 SSE：`data: {"choices":[{"delta":{...}}]}`
+                #   ② 有的兼容层忽略 stream：一整块 JSON，内容在 `message.content`
+                #   ③ Ollama 原生 NDJSON：`{"message":{"content":"..."}}`（无 data: 前缀）
+                payload = line[5:].strip() if line.startswith("data:") else line
+                if payload == "[DONE]":
                     break
                 try:
-                    obj = json.loads(data)
+                    obj = json.loads(payload)
                 except Exception:  # noqa: BLE001
                     continue
-                choices = obj.get("choices") or []
-                if choices:
-                    piece = (choices[0].get("delta") or {}).get("content") or ""
-                    if piece:
-                        yield {"event": "delta", "text": piece}
-                usage = obj.get("usage")
+
+                piece = ""
+                if isinstance(obj, dict):
+                    choices = obj.get("choices") or []
+                    if choices:
+                        ch = choices[0] if isinstance(choices[0], dict) else {}
+                        piece = (ch.get("delta") or {}).get("content") or ""
+                        if not piece:
+                            piece = (ch.get("message") or {}).get("content") or ""
+                    if not piece and isinstance(obj.get("message"), dict):
+                        piece = obj["message"].get("content") or ""
+
+                if piece:
+                    got += 1
+                    yield {"event": "delta", "text": piece}
+
+                usage = obj.get("usage") if isinstance(obj, dict) else None
+                if not isinstance(usage, dict):
+                    # Ollama 原生用量字段
+                    if isinstance(obj, dict) and obj.get("eval_count"):
+                        usage = {
+                            "prompt_tokens": obj.get("prompt_eval_count") or 0,
+                            "completion_tokens": obj.get("eval_count") or 0,
+                        }
                 if isinstance(usage, dict):
                     yield {
                         "event": "usage",
                         "in": int(usage.get("prompt_tokens") or 0),
                         "out": int(usage.get("completion_tokens") or 0),
                     }
+        if got == 0:
+            raise RuntimeError(
+                "模型没有返回任何内容。常见原因：模型名不对、该模型不支持 chat 补全，"
+                "或服务端未按流式返回（可先在设置里点「测试连通」确认）"
+            )
     except urllib.error.HTTPError as exc:
         detail = f"HTTP {exc.code}"
         try:

@@ -1483,6 +1483,19 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     except Exception:  # noqa: BLE001
         nei = {"upstream": [], "downstream": []}
 
+    # ★★ 邻居按**度数**降序：核心函数比叶子函数更值得占用上下文名额。
+    #    以前是图查询顺序（等于随机），前 8 个经常是没人调用的边缘函数。
+    try:
+        deg = graphdb.degrees(ROOT)
+    except Exception:  # noqa: BLE001 —— 度数算不出来就保持原顺序
+        deg = {}
+
+    def _ranked(rows: list[dict]) -> list[dict]:
+        return sorted(rows, key=lambda r: -deg.get(int(r.get("vid") or 0), 0))
+
+    up_ranked = _ranked(nei.get("upstream") or [])
+    down_ranked = _ranked(nei.get("downstream") or [])
+
     samples: list[dict] = []
     try:
         for n in store.notes_of(CONN, project["id"]):
@@ -1500,7 +1513,7 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     except Exception:  # noqa: BLE001
         pass
 
-    return snippet, lang, nei.get("upstream") or [], nei.get("downstream") or [], samples
+    return snippet, lang, up_ranked, down_ranked, samples
 
 
 def _draft_events(project, vid: int):

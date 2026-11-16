@@ -323,20 +323,37 @@ def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
     d = max(1, min(MAX_HOPS, int(depth)))
     out = conn.execute(
         f"MATCH (a:Code {{vid:$v}})-[:Rel*1..{d}]->(b:Code) "
-        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line",
+        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line, b.origin",
         {"v": int(vid)},
     ).get_all()
     back = conn.execute(
         f"MATCH (b:Code)-[:Rel*1..{d}]->(a:Code {{vid:$v}}) "
-        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line",
+        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line, b.origin",
         {"v": int(vid)},
     ).get_all()
-    cols = ["vid", "kind", "name", "qname", "file_path", "line"]
+    # ★ `origin` 用来区分「解析器产出的」和「作者手工补的」
+    cols = ["vid", "kind", "name", "qname", "file_path", "line", "origin"]
     return {
         "depth": d,
         "downstream": [dict(zip(cols, r)) for r in out],
         "upstream": [dict(zip(cols, r)) for r in back],
     }
+
+
+def degrees(data_dir: str) -> dict[int, int]:
+    """每个节点的度数（入度 + 出度），一次全图查询。
+
+    ★ 给 AI 上下文的邻居排序用：核心函数比叶子函数更值得放进 prompt。
+    ⚠ 不逐节点查询 —— 几千条边一次读进内存，比 N 次点查快一个数量级。
+    """
+    conn = _open(data_dir)
+    rows = conn.execute("MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid").get_all()
+    deg: dict[int, int] = {}
+    for a, b in rows:
+        a, b = int(a), int(b)
+        deg[a] = deg.get(a, 0) + 1
+        deg[b] = deg.get(b, 0) + 1
+    return deg
 
 
 def _canon(kind: str, file: str, name: str, line: int, line_end: int) -> str:

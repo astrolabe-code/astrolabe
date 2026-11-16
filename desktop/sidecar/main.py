@@ -234,7 +234,7 @@ R_AICFG = re.compile(r"^/api/ai/config/$")
 R_AIPROBE = re.compile(r"^/api/ai/probe/$")
 R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
-R_AIDRAFT = re.compile(r"^/api/projects/([^/]+)/ai/draft/$")
+R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
@@ -1452,7 +1452,6 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
 def _is_stream(path: str) -> bool:
     return (
         path.startswith("/api/ai/stream")
-        or bool(R_AIDRAFT.match(path))
         or bool(R_AIASK.match(path))
     )
 
@@ -1516,39 +1515,6 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     return snippet, lang, up_ranked, down_ranked, samples
 
 
-def _draft_events(project, vid: int):
-    """生成小结草稿：命中缓存就直接吐，否则组装 prompt 走流式。
-
-    ★ 缓存口径：`(vid, provider, model)` —— 同节点同模型再点一次是 0 次调用。
-    """
-    node = graphdb.get_code(ROOT, vid)
-    if not node:
-        raise ValueError("节点不存在")
-
-    act = ai.active()
-    cached = store.get_ai_draft(CONN, vid, act["id"], act["model"])
-    if cached:
-        yield {"event": "delta", "text": cached}
-        yield {"event": "usage", "in": 0, "out": 0, "cached": True}
-        return
-
-    snippet, lang, up, down, samples = _node_context(project, node)
-    messages = ai.build_draft_messages(node, snippet, lang, up, down, samples)
-
-    chunks: list[str] = []
-    for evt in ai.stream_chat(messages):
-        if evt.get("event") == "delta":
-            chunks.append(str(evt.get("text") or ""))
-        yield evt
-
-    text = "".join(chunks).strip()
-    if text:
-        try:
-            store.put_ai_draft(CONN, vid, act["id"], act["model"], text)
-        except Exception:  # noqa: BLE001 —— 缓存写失败不影响这次结果
-            pass
-
-
 def _ask_events(project, vid: int, question: str):
     """针对当前节点提问（流式）。
 
@@ -1567,9 +1533,44 @@ def _ask_events(project, vid: int, question: str):
     yield from ai.stream_chat(messages, max_tokens=800)
 
 
+def _complete(project, vid: int, before: str, doc: str) -> dict:
+    """行内补全：给「作者正在写的半句」续写十几到三十个字。
+
+    ★ 上下文 = 节点源码/邻居 + **这篇笔记已写的内容**（学语气）+ 光标前半句。
+    ★ 非流式：这么短的文本流式反而闪，一次性返回更干净。
+    ⛔ 不写库、不改任何状态，纯粹是给作者的一个提示。
+    """
+    node = graphdb.get_code(ROOT, vid)
+    if not node:
+        raise ValueError("节点不存在")
+    snippet, lang, up, down, _samples = _node_context(project, node)
+    messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before)
+    return {"text": ai.chat_once(messages, max_tokens=60)}
+
+
 def _stream_events(method: str, path: str, body) -> "object":
     """流式端点的事件生成器（目前只有回显，用于验证三层链路）。"""
     body = body if isinstance(body, dict) else {}
+
+    # ★★ 行内补全（非流式）：短文本，一次返回
+    m = R_AICOMPLETE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            vid = int(body.get("vid") or 0)
+            if not vid:
+                return bad("缺少 vid")
+            before = str(body.get("before") or "")
+            if not before.strip():
+                return bad("还没有可续写的内容")
+            return ok(_complete(p, vid, before, str(body.get("doc") or "")))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"补全失败：{ai.redact(exc)}", 500)
 
     m = R_AIASK.match(path)
     if m:
@@ -1580,17 +1581,6 @@ def _stream_events(method: str, path: str, body) -> "object":
         if not vid:
             raise ValueError("缺少 vid")
         yield from _ask_events(p, vid, str(body.get("question") or ""))
-        return
-
-    m = R_AIDRAFT.match(path)
-    if m:
-        p = _project(m.group(1))
-        if not p:
-            raise ValueError("项目不存在")
-        vid = int(body.get("vid") or 0)
-        if not vid:
-            raise ValueError("缺少 vid")
-        yield from _draft_events(p, vid)
         return
 
     if R_AISTREAM.match(path):

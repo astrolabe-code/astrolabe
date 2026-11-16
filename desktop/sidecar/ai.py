@@ -424,7 +424,6 @@ BASE_SYSTEM = (
     "而是作者手工添加的 —— 引用到它时要说清这一点，不要当成源码事实。"
 )
 
-DRAFT_SYSTEM = BASE_SYSTEM
 ASK_SYSTEM = BASE_SYSTEM
 
 MAX_NEIGHBORS = 8
@@ -481,27 +480,6 @@ def _context_block(
     return "\n".join(lines)
 
 
-def build_draft_messages(
-    node: dict,
-    snippet: str,
-    lang: str,
-    upstream: list[dict],
-    downstream: list[dict],
-    samples: list[dict],
-) -> list[dict]:
-    """组装**小结草稿**的 prompt（上下文段与问答共用）。"""
-    ctx = _context_block(node, snippet, lang, upstream, downstream, samples)
-    task = (
-        "【任务】写一段 150–300 字的小结，面向第一次读这段代码的人："
-        "它做什么、为什么这么写、有什么容易踩的坑。"
-        "不要逐行解释代码，也不要重复代码本身。"
-    )
-    return [
-        {"role": "system", "content": DRAFT_SYSTEM},
-        {"role": "user", "content": ctx + "\n" + task},
-    ]
-
-
 def build_ask_messages(
     node: dict,
     snippet: str,
@@ -524,9 +502,64 @@ def build_ask_messages(
     ]
 
 
+COMPLETE_SYSTEM = (
+    "你是帮作者把「想说的意思」写成「文字」的助手。"
+    "作者知道自己想表达什么，只是不容易写出来；你的任务是补完他正在写的这半句，"
+    "而不是替他思考。\n"
+    "要求：\n"
+    "1. 顺着作者的用词和语气写，不要换文风；\n"
+    "2. 只输出接下来的一小段（十几到三十字），不要总结、不要另起话题、"
+    "不要加引号、不要解释；\n"
+    "3. 如果作者的表述可以更清楚，用更清楚的写法，但不能改变他的原意；\n"
+    "4. 不要重复作者已经写过的内容。"
+)
+
+
+def build_complete_messages(
+    node: dict,
+    snippet: str,
+    lang: str,
+    upstream: list[dict],
+    downstream: list[dict],
+    doc: str,
+    before: str,
+) -> list[dict]:
+    """行内补全的 prompt：由「作者正在写的半句」续写十几个字。
+
+    ★ 带上**整篇已写内容**（学语气），但⛔ 不要求模仿思维方式 ——
+      提示词里只说「顺着用词和语气」，并允许更清楚的表述。
+    ★ 上下文段与问答/（原）草稿共用，前缀保持稳定，能吃 provider 缓存。
+    """
+    ctx = _context_block(node, snippet, lang, upstream, downstream, [])
+    parts = [ctx]
+    body = (doc or "").strip()
+    if body:
+        parts.append(f"【这篇笔记已写的内容（学它的语气，不要照抄）】\n{body[-800:]}")
+    tail = (before or "").strip()[-300:]
+    if tail:
+        parts.append(f"【作者刚写到】\n{tail}")
+    parts.append("【任务】接着上面这句话往下写十几到三十字，直接给出文字，不要加任何说明。")
+    return [
+        {"role": "system", "content": COMPLETE_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
 # ============================================================================
 # 流式对话（SSE）
 # ============================================================================
+def chat_once(messages: list[dict], max_tokens: int = 60) -> str:
+    """一次性拿完整文本（补全用）：内部仍走 stream_chat，但把片段拼起来。
+
+    ★ 补全只要十几个字，流式反而闪；调用方拿到整段直接显示成浅色提示。
+    """
+    parts: list[str] = []
+    for evt in stream_chat(messages, max_tokens=max_tokens):
+        if evt.get("event") == "delta":
+            parts.append(str(evt.get("text") or ""))
+    return "".join(parts).strip()
+
+
 def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float = 120):
     """逐块 yield `{"event":"delta","text":...}`，最后可能有一条 `usage`。
 

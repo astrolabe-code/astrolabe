@@ -1565,7 +1565,8 @@ def _complete(project, vid: int, before: str, doc: str) -> dict:
         raise ValueError("节点不存在")
     snippet, lang, up, down, _samples = _node_context(project, node)
     messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before)
-    return {"text": ai.chat_once(messages, max_tokens=120)}
+    # ★ 生成允许它写够，但只回「一眼能看完」的开头（十几个字）
+    return {"text": ai.brief(ai.chat_once(messages, max_tokens=60))}
 
 
 def _stream_events(method: str, path: str, body) -> "object":

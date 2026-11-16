@@ -226,6 +226,7 @@ R_GRAPH = re.compile(r"^/api/projects/([^/]+)/graph/$")
 R_GNEI = re.compile(r"^/api/projects/([^/]+)/graph/neighbors/$")
 R_GNOTES = re.compile(r"^/api/projects/([^/]+)/graph/notes/$")
 R_GPATH = re.compile(r"^/api/projects/([^/]+)/graph/path/$")
+R_GFLOW = re.compile(r"^/api/projects/([^/]+)/graph/flows/$")
 R_CURATE = re.compile(r"^/api/projects/([^/]+)/curate/$")
 R_MANUAL = re.compile(r"^/api/projects/([^/]+)/manual/$")
 R_AICFG = re.compile(r"^/api/ai/config/$")
@@ -1052,6 +1053,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
 
     # ★★ 图库：从 SQLite 重建（图库损坏 / 想强制对齐时）
     # ★★ 图库：两点之间的最短调用路径
+    # ★★ 执行流：某节点所在的调用链（入口 → … → 终点），现算不存库
+    m = R_GFLOW.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "GET":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            vid = int(body.get("vid") or 0)
+            if not vid:
+                return bad("缺少 vid")
+            return ok(graphdb.flows_of(ROOT, vid))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"查询失败：{exc}", 500)
+
     m = R_GPATH.match(path)
     if m:
         p = _project(m.group(1))

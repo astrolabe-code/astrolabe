@@ -34,6 +34,7 @@ import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
 import NodePanel from '../components/node/NodePanel'
+import FlowPanel from '../components/graph/FlowPanel'
 
 /**
  * ★ 图谱页（`D98` · AntV G6 · `D105` 学习路径 · `D107` 健壮性）
@@ -295,6 +296,14 @@ export default function ProjectGraphPage() {
     if (!g || selectedVid == null) return null
     return g.nodes.find((n) => n.vid === selectedVid) || null
   }, [g, selectedVid])
+
+  // ★★ 执行流：点某条链 → 高亮链上节点（传空数组清除）
+  const [flowVids, setFlowVids] = useState<number[]>([])
+  const nameMap = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const n of g?.nodes || []) m.set(n.vid, n.name)
+    return m
+  }, [g])
 
   /** ★ kind 统计（* 图例按**全图**数据来，* ⛔ 不用子集误导）⚠ */
   const kinds = useMemo(() => {
@@ -644,6 +653,7 @@ export default function ProjectGraphPage() {
                   onPhase={setPhase}
                   fullGraph={g}
                   selectedVid={selectedVid}
+                  highlightVids={flowVids}
                   onSelect={setSelectedVid}
                   onDeselect={() => setSelectedVid(null)}
                   focusVid={focusVid}
@@ -740,6 +750,14 @@ export default function ProjectGraphPage() {
             node={selected}
             initialTab="notes"
             notePanel={
+              <>
+                {/* ★★ 执行流：当前节点落在哪几条调用链里 */}
+                <FlowPanel
+                  projectRef={projectRef}
+                  vid={selected ? selected.vid : null}
+                  nameOf={(v) => nameMap.get(v) || String(v)}
+                  onPick={setFlowVids}
+                />
               <NodePanel
                 projectRef={projectRef}
                 node={selected}
@@ -751,6 +769,7 @@ export default function ProjectGraphPage() {
                 onAddToPath={selected ? () => addToPath(selected) : undefined}
                 onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
               />
+                </>
             }
           />
         </div>

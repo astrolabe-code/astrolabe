@@ -624,6 +624,97 @@ def update_rel(data_dir: str, src: int, dst: int, old_kind: str, new_kind: str, 
     )
 
 
+def flows_of(
+    data_dir: str,
+    vid: int,
+    min_steps: int = 3,
+    max_flows: int = 5,
+    max_up: int = 8,
+    max_down: int = 12,
+    flow_kinds: tuple[str, ...] = ("call", "calls", "invoke", "invokes"),
+) -> dict:
+    """某个节点所在的**执行流**（入口 → … → 终点），现算、不存库。
+
+    ★ 借鉴 GitNexus 的 `Process`：它的 `minSteps = 3` ——
+      两步只是「A 调 B」，三步以上才是真正的多跳流程，短的直接丢掉。
+    ★ 只走调用类边：`contains` / `imports` 表达的是结构，不是执行顺序。
+    ★ 不新增表、不改 schema：几千条边一次读进内存，路径搜索是毫秒级。
+
+    返回 `{"items": [{"id", "steps": [vid...], "length"}], "total": N}`；
+    `steps` 里 vid 只出现一次，顺序即执行顺序（前端按 index + 1 显示 step）。
+    """
+    target = int(vid)
+    conn = _open(data_dir)
+    rows = conn.execute(
+        "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind"
+    ).get_all()
+
+    out_map: dict[int, list[int]] = {}
+    in_map: dict[int, list[int]] = {}
+    for a, b, kind in rows:
+        if str(kind) not in flow_kinds:
+            continue
+        out_map.setdefault(int(a), []).append(int(b))
+        in_map.setdefault(int(b), []).append(int(a))
+
+    if target not in out_map and target not in in_map:
+        return {"items": [], "total": 0}
+
+    def up_paths(start: int) -> list[list[int]]:
+        """向上到入口；最多 3 条（第一跳不同），每次选「入度最小」的更像入口。"""
+        firsts = (in_map.get(start) or [])[:3]
+        if not firsts:
+            return [[start]]
+        paths: list[list[int]] = []
+        for first in firsts:
+            path = [start, first]
+            cur = first
+            for _ in range(max_up - 1):
+                ups = in_map.get(cur) or []
+                if not ups:
+                    break
+                cur = min(ups, key=lambda x: len(in_map.get(x) or []))
+                if cur in path:
+                    break
+                path.append(cur)
+            paths.append(list(reversed(path)))
+        return paths
+
+    def down_path(start: int) -> list[int]:
+        """向下找最长链（深度受限、每层最多 3 个分支，避免组合爆炸）。"""
+        best = [start]
+
+        def dfs(cur: int, path: list[int], depth: int) -> None:
+            nonlocal best
+            if len(path) > len(best):
+                best = list(path)
+            if depth >= max_down:
+                return
+            for nxt in (out_map.get(cur) or [])[:3]:
+                if nxt in path:
+                    continue
+                dfs(nxt, path + [nxt], depth + 1)
+
+        dfs(start, [start], 0)
+        return best
+
+    seen: set[tuple[int, ...]] = set()
+    items: list[dict] = []
+    for up in up_paths(target):
+        full = up[:-1] + down_path(target)  # up 末尾就是 target，避免重复
+        if len(full) < min_steps:
+            continue
+        key = tuple(full)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({"id": f"flow:{full[0]}", "steps": full, "length": len(full)})
+        if len(items) >= max_flows:
+            break
+
+    return {"items": items, "total": len(items)}
+
+
 def edges_of(data_dir: str, vid: int) -> dict:
     """单跳出入边。图库的边没有主键 ⇒ id 用 src-dst-kind 合成。"""
     conn = _open(data_dir)

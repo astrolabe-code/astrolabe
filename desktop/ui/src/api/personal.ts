@@ -299,6 +299,12 @@ export const personalApi = {
     return { rev: Number(d.rev || 0), nodes, edges }
   },
 
+  /** ★★ 执行流：某节点所在的调用链（入口 → … → 终点），后端现算、不存库 */
+  graphFlows: (ref: string, vid: number) =>
+    get<{ items: { id: string; steps: number[]; length: number }[]; total: number }>(
+      `/api/projects/${encodeURIComponent(ref)}/graph/flows/?vid=${vid}`,
+    ),
+
   /** ★ 结构体/类的字段（只在详情面板显示，⛔ 不进图） */
   nodeFields: async (ref: string, vid: number) => {
     const d = await get<{ items: { name: string; type_text: string; line: number }[] }>(

@@ -104,6 +104,8 @@ const RING = 70
 const SETTLE_MS = 2500
 
 interface GraphCanvasProps {
+  /** ★★ 高亮一组节点（执行流用）：传空数组表示清除 */
+  highlightVids?: number[]
   graph?: EffectiveGraph
   /** 选中节点 vid（受控） */
   selectedVid?: number | null
@@ -131,6 +133,7 @@ interface GraphCanvasProps {
 export default function GraphCanvas({
   graph,
   selectedVid,
+  highlightVids,
   onSelect,
   onDeselect,
   focusVid,
@@ -174,6 +177,8 @@ export default function GraphCanvas({
 
   const boxRef = useRef<HTMLDivElement>(null)
   const gRef = useRef<Graph | null>(null)
+  /** 上一轮高亮过的节点 id（换链时要先清掉，否则残留） */
+  const flowIdsRef = useRef<string[]>([])
   const selectedRef = useRef<number | null>(null)
   /** 布局是否已稳定（* 0 = 还没有；存时刻） */
   const readyRef = useRef(0)
@@ -374,6 +379,8 @@ export default function GraphCanvas({
         state: {
           // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗 + 放大，* 无色无阴影 ⚠
           selected: { lineWidth: 3, size: 35 },
+          // ★ 执行流高亮：略微放大 + 加粗，⛔ 不改颜色（和「选中」区分开）
+          flow: { lineWidth: 3, size: 33 },
           // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
           //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
           // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
@@ -499,6 +506,42 @@ export default function GraphCanvas({
     // ★★ `labelColor` 也进依赖：* 主题切换 ⇒ 重建图 ⇒ 标签用新色 ⚠
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, labelColor])
+
+  // ============================================================ 执行流高亮
+  /**
+   * ★ 点「执行流」里的一条链 → 把链上节点点亮。
+   *   ⚠ 先清上一轮的，再设新的：否则换链会留下残留的高亮。
+   *   ⚠ 节点可能被「显示前 N 个」过滤掉，`setElementState` 会抛错 —— 逐个 try。
+   */
+  useEffect(() => {
+    const g = gRef.current
+    if (!g) return
+    for (const id of flowIdsRef.current) {
+      try {
+        g.setElementState(id, [])
+      } catch {
+        /* 已不在画布上 */
+      }
+    }
+    flowIdsRef.current = []
+    for (const v of highlightVids || []) {
+      const id = String(v)
+      try {
+        g.setElementState(id, ['flow'])
+        flowIdsRef.current.push(id)
+      } catch {
+        /* 被过滤掉了 */
+      }
+    }
+    // 选中的那个仍然要显示选中态（两个 state 可以同时生效）
+    if (selectedVid != null) {
+      try {
+        g.setElementState(String(selectedVid), ['flow', 'selected'])
+      } catch {
+        /* 不在画布上 */
+      }
+    }
+  }, [highlightVids, selectedVid, graph])
 
   // ============================================================ 标签疏密（按缩放）
   /**

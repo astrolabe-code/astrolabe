@@ -210,6 +210,7 @@ def bad(msg: str, code: int = 400) -> tuple[int, dict]:
 
 # ---------------------------------------------------------------- 路由
 
+R_SRCACK = re.compile(r"^/api/projects/([^/]+)/source-ack/$")
 R_PROJECT = re.compile(r"^/api/projects/([^/]+)/$")
 R_PSET = re.compile(r"^/api/projects/([^/]+)/settings/$")
 R_NODES = re.compile(r"^/api/projects/([^/]+)/nodes/$")
@@ -431,6 +432,14 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             store.set_parse_state(CONN, p["id"], "failed", msg, st)
             return bad(msg, 422)
         store.set_parse_state(CONN, p["id"], "ok", "", st)
+        # ★ 记下此刻源码的指纹：以后只用来判断「源码被动过没有」，
+        #   ⛔ 不触发重新解析、⛔ 不改图 —— 图由用户手工维护
+        try:
+            store.set_source_fingerprint(
+                CONN, p["id"], store.source_fingerprint(p["root"])
+            )
+        except Exception:  # noqa: BLE001 —— 指纹失败不该让解析失败
+            pass
         # ★★ 图是真相：解析产物直接进图库（SQLite 不再存 node / edge）
         try:
             sync = graphdb.sync_code(ROOT, res["nodes"], res["edges"])
@@ -788,6 +797,20 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             }
         )
 
+    # ★★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰
+    m = R_SRCACK.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            store.ack_source(CONN, p["id"], store.source_fingerprint(p["root"]))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"记录失败：{exc}", 500)
+        return ok({"acked": True})
+
     m = R_PROJECT.match(path)
     if m:
         p = _project(m.group(1))
@@ -804,6 +827,11 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             d = dict(p)
             d["parse_state"] = pstate
             d["parse_error"] = perr
+            # ★★ 源码改动检测：只给前端一个布尔值让它提示，⛔ 不做任何修复
+            try:
+                d["source_stale"] = store.source_changed(CONN, p)
+            except Exception:  # noqa: BLE001
+                d["source_stale"] = False
             return ok({"project": d, "stats": _stats(p)})
 
     # ★ 写作进度：个人版没有"读者"，所以只有作者视角这一个数字

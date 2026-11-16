@@ -18,6 +18,8 @@ import { clearResume, markResume, readResume } from '../lib/resume'
 import { patchRibbon } from '../lib/ribbonBus'
 import { useSiteConfig } from '../query/siteConfig'
 import NodePanel from '../components/node/NodePanel'
+import Modal from '../components/ui/Modal'
+import { personalApi } from '../api/personal'
 
 /**
  * ★ 项目页（`F2` · D92）——* 双栏：左节点列表 + 右笔记面板
@@ -42,6 +44,19 @@ import NodePanel from '../components/node/NodePanel'
 export default function ProjectPage() {
   const { projectRef = '', noteId } = useParams<{ projectRef: string; noteId?: string }>()
   const project = useProject(projectRef)
+
+  // ★★ 源码改动提示：**只提示一次**，⛔ 不重新解析、⛔ 不动图
+  //   「图是真相，由用户手工维护」⇒ 源码变了不代表图错，只代表行号可能对不上
+  const [srcNotice, setSrcNotice] = useState(false)
+  useEffect(() => {
+    if (project.data?.source_stale) setSrcNotice(true)
+  }, [project.data?.source_stale])
+
+  /** 关掉并记住：同一个指纹不再打扰 */
+  const dismissSrcNotice = () => {
+    setSrcNotice(false)
+    if (projectRef) void personalApi.ackSource(projectRef).catch(() => {})
+  }
   // ★ `?think=1` ⇒ 自动选中首个节点并打开思考白板（* 首页「思考模式」卡片直达）⚠
   const navigate = useNavigate()
   const [sp] = useSearchParams()
@@ -350,6 +365,24 @@ export default function ProjectPage() {
           />
         </div>
       )}
+      {/* ★★ 源码改动提示：只告知，⛔ 不重解析、⛔ 不改图 */}
+      <Modal open={srcNotice} title="源码有改动" onClose={dismissSrcNotice} width={460}>
+        <div style={{ fontSize: 12.5, lineHeight: 1.8 }}>
+          这个项目的源码在解析之后被改过。
+          <br />
+          图里的节点是按<b>解析那一刻</b>的源码建立的，所以<b>行号可能对不上</b>，
+          也可能有的函数已经不在原来的位置。
+          <br />
+          <br />
+          <span className="faint">
+            图不会自动跟着源码变 —— 需要的话，你可以自己修补节点和边。
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+          <Button onClick={dismissSrcNotice}>知道了</Button>
+        </div>
+      </Modal>
+
     </AppLayout>
   )
 }

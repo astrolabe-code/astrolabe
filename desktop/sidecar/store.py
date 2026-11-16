@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import datetime
+import hashlib
 import sqlite3
 import time
 
@@ -44,7 +45,12 @@ CREATE TABLE IF NOT EXISTS project (
   graph_rev   INTEGER NOT NULL DEFAULT 0,
   -- ★★ 解析状态：none（还没解析）/ ok（图完整，可以写）/ failed（解析出错，禁止写）⚠
   parse_state TEXT NOT NULL DEFAULT 'none',
-  parse_error TEXT NOT NULL DEFAULT ''
+  parse_error TEXT NOT NULL DEFAULT '',
+  -- ★★ 源码指纹：解析那一刻全部代码文件的 (相对路径,大小,mtime) 摘要
+  --    只用来判断「源码被动过没有」，⛔ 不做任何修复
+  src_fingerprint TEXT NOT NULL DEFAULT '',
+  -- ★ 用户已经确认过的指纹：确认后不再重复弹提示
+  src_ack         TEXT NOT NULL DEFAULT ''
 );
 
 
@@ -128,6 +134,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         ("project", "parse_state", "TEXT NOT NULL DEFAULT 'none'"),
         ("project", "parse_error", "TEXT NOT NULL DEFAULT ''"),
         ("note", "origin", "TEXT NOT NULL DEFAULT 'human'"),
+        ("project", "src_fingerprint", "TEXT NOT NULL DEFAULT ''"),
+        ("project", "src_ack", "TEXT NOT NULL DEFAULT ''"),
     ):
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if col not in names:
@@ -472,3 +480,60 @@ def put_ai_draft(
                 datetime.datetime.now().isoformat(timespec="seconds"),
             ),
         )
+
+
+# ---------------------------------------------------------------- 源码指纹
+# ★★ 只回答一个问题：「解析之后，源码被动过吗？」
+#   ⛔ 不重新解析、⛔ 不改图、⛔ 不修正任何节点 —— 图是真相，由用户手工维护。
+#   ⚠ 用 stat（路径+大小+mtime）而不是读内容：几万文件也是毫秒级。
+#     代价是 `touch` 也会算作改动，但提示只是告知，不会造成任何副作用。
+
+
+def source_fingerprint(root: str) -> str:
+    """全部代码文件的稳定摘要。遍历完整（不设时间上限），保证两次结果可比。"""
+    import filefilter
+
+    h = hashlib.sha256()
+    n = 0
+    for rel, size in filefilter.iter_code_files(
+        root, max_seconds=None, max_files=1_000_000, max_depth=64
+    ):
+        mt = 0
+        try:
+            mt = int(os.stat(os.path.join(root, rel)).st_mtime)
+        except OSError:
+            pass
+        h.update(f"{rel}\0{size}\0{mt}\n".encode("utf-8"))
+        n += 1
+    h.update(f"#count={n}".encode("utf-8"))
+    return h.hexdigest()
+
+
+def set_source_fingerprint(conn: sqlite3.Connection, project_id: int, fp: str) -> None:
+    with conn:
+        conn.execute("UPDATE project SET src_fingerprint = ? WHERE id = ?", (fp, int(project_id)))
+
+
+def ack_source(conn: sqlite3.Connection, project_id: int, fp: str) -> None:
+    """用户点「知道了」：记住这个指纹，之后不再为此弹提示。"""
+    with conn:
+        conn.execute("UPDATE project SET src_ack = ? WHERE id = ?", (fp, int(project_id)))
+
+
+def source_changed(conn: sqlite3.Connection, project: dict) -> bool:
+    """源码改动检测：与解析时的指纹、或用户确认过的指纹都不同 ⇒ True。
+
+    ⚠ 还没解析过（指纹为空）时返回 False —— 没有基线就无从比较。
+    """
+    row = conn.execute(
+        "SELECT src_fingerprint, src_ack FROM project WHERE id = ?", (int(project["id"]),)
+    ).fetchone()
+    saved = str(row["src_fingerprint"] or "") if row else ""
+    ack = str(row["src_ack"] or "") if row else ""
+    if not saved:
+        return False
+    try:
+        cur = source_fingerprint(project["root"])
+    except Exception:  # noqa: BLE001 —— 目录不可读时不要因为「检测」把项目页搞挂
+        return False
+    return cur != saved and cur != ack

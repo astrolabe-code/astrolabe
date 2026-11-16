@@ -37,6 +37,8 @@ export interface ProjectSummary {
   repo_url?: string
   commit?: string
   owner?: string
+  /** ★★ 源码在解析后被改过（只用于提示，⛔ 不代表图不可用） */
+  source_stale?: boolean
   /** ★ 前端靠它决定是否渲染「设置 / 解析」入口 */
   mine?: boolean
   /** none / queued / running / done / error */

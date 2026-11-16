@@ -118,6 +118,8 @@ export function toProjectSummary(raw: any, stats?: any): any {
     /** ★ 空白结构：没有源码目录，节点与连线全靠手补（`B184`）*/
     is_blank: !String(raw.root || '').trim(),
     parse_error: String(raw.parse_error || ''),
+    /** ★★ 源码改动过：只用于弹一次提示，⛔ 不触发任何修复动作 */
+    source_stale: Boolean(raw.source_stale),
     // ⚠ 个人版没有"排队/拉取"这些状态：有图就是 done
     status: String(raw.parsed_at ? 'done' : 'none'),
     progress: raw.parsed_at ? 100 : 0,
@@ -252,6 +254,10 @@ export const personalApi = {
     const d = await get<{ project: any; stats: any }>(`/api/projects/${encodeURIComponent(ref)}/`)
     return toProjectSummary(d.project, d.stats)
   },
+
+  /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
+  ackSource: (ref: string) =>
+    post<{ acked: boolean }>(`/api/projects/${encodeURIComponent(ref)}/source-ack/`),
 
   /** ★ 解析代码目录 → 图（个人版唯一的重活） */
   parseProject: (ref: string) =>

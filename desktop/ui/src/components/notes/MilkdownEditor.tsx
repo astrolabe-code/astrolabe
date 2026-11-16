@@ -5,6 +5,10 @@ import { EditorView } from '@codemirror/view'
 import { useRef } from 'react'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
+import { $prose } from '@milkdown/utils'
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
+import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
+import type { EditorView as PmEditorView } from '@milkdown/kit/prose/view'
 // ★ 排版（标题字号 / 段落 / 列表 / 表格…）都在这份里，⚠ 少引它标题就全是同字号
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/nord.css'
@@ -13,7 +17,86 @@ import '@milkdown/crepe/theme/frame.css'
 /** ★ 暴露给外层的句柄（* 保存时读最新正文）⚠ */
 export interface MilkdownEditorApi {
   getMarkdown: () => string
+  /** 在光标处显示浅色补全（空串 = 清除） */
+  setGhost: (text: string) => void
+  clearGhost: () => void
+  /** 光标前的内容 + 整篇 + 是否在段落末尾（决定要不要请求补全） */
+  getContext: () => { before: string; doc: string; atEnd: boolean }
 }
+
+/**
+ * ★★ **行内补全（ghost text）**
+ *
+ * 所有者原话（2026-11-16）：
+ * 「我希望是用户自己书写理解，而不是ai帮用户书写。书写的障碍之一是语言表达…
+ *   能不能像补全代码一样，在用户书写 markdown 文档时，用浅色字给出接下来的十几个字？」
+ *
+ * 做法：ProseMirror 的 `Decoration.widget` 在光标处插一段**不可编辑**的浅色文字。
+ *   · `Tab` 接受（插入正文）
+ *   · `Esc` 忽略
+ *   · 继续打字 —— 文档一改就自动消失（`tr.docChanged ⇒ ''`）
+ */
+const ghostKey = new PluginKey<string>('astrolabe-ghost')
+/** 当前编辑器的 PM 视图（插件 view() 里拿，⛔ 不依赖 editorViewCtx） */
+let ghostView: PmEditorView | null = null
+
+const ghostPlugin = $prose(
+  () =>
+    new Plugin<string>({
+      key: ghostKey,
+      view: (view) => {
+        ghostView = view
+        return {
+          destroy: () => {
+            if (ghostView === view) ghostView = null
+          },
+        }
+      },
+      state: {
+        init: () => '',
+        apply(tr, value) {
+          const meta = tr.getMeta(ghostKey)
+          if (meta !== undefined) return String(meta)
+          // ★ 用户一动键盘/一粘贴，提示立刻消失（⛔ 不和他抢字）
+          if (tr.docChanged) return ''
+          return value
+        },
+      },
+      props: {
+        handleKeyDown(view, event) {
+          const text = ghostKey.getState(view.state) || ''
+          if (!text) return false
+          if (event.key === 'Tab') {
+            view.dispatch(view.state.tr.insertText(text))
+            return true
+          }
+          if (event.key === 'Escape') {
+            view.dispatch(view.state.tr.setMeta(ghostKey, ''))
+            return true
+          }
+          return false
+        },
+        decorations(state) {
+          const text = ghostKey.getState(state) || ''
+          if (!text) return null
+          const { $from } = state.selection
+          if (!$from.parent.isTextblock) return null
+          return DecorationSet.create(state.doc, [
+            Decoration.widget(
+              $from.pos,
+              () => {
+                const span = document.createElement('span')
+                span.className = 'ghost-text'
+                span.textContent = text
+                return span
+              },
+              { side: 1 },
+            ),
+          ])
+        },
+      },
+    }),
+)
 
 /**
  * ★★ **Markdown 编辑器**（`D108` 第 ③ 步）⚠
@@ -240,8 +323,30 @@ function Inner({
       //   · · 编辑器代码块由 CodeMirror 渲染，* PM 装饰器进不去其 DOM，
       //     挂了也只是每次改动白算一遍 Prism ⇒ 已移除 ✅
       //   · · 编辑器的高亮/行号分别来自 CM 语言包与 `basicSetup` ⚠
+      // ★ 注册行内补全插件
+      crepe.editor.use(ghostPlugin)
+
       // ★ 句柄直接塞进父组件的 ref（* 不靠回调，* 避免时序问题）⚠
-      apiRef.current = { getMarkdown: () => crepe.getMarkdown() }
+      const setGhost = (text: string) => {
+        if (!ghostView) return
+        ghostView.dispatch(ghostView.state.tr.setMeta(ghostKey, text || ''))
+      }
+      apiRef.current = {
+        getMarkdown: () => crepe.getMarkdown(),
+        setGhost,
+        clearGhost: () => setGhost(''),
+        getContext: () => {
+          if (!ghostView) return { before: '', doc: '', atEnd: false }
+          const { $from } = ghostView.state.selection
+          // ⚠ 只取当前段落：跨段的上下文对「续写半句」没用，还会稀释提示
+          const before = $from.parent.textBetween(0, $from.parentOffset, '\n', ' ')
+          return {
+            before,
+            doc: crepe.getMarkdown(),
+            atEnd: $from.parentOffset >= $from.parent.content.size,
+          }
+        },
+      }
 
       // ★★ 正文变化 ⇒ 防抖 300ms 后回调（2026-10-27）⚠
       //   · · ⛔ 不做防抖的话，每敲一个字都要 `getMarkdown()` 序列化整篇 ⚠

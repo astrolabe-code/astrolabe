@@ -237,6 +237,41 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
    *     ⇒ `useEditor` 的依赖不变 ⇒ 编辑器不会被重建 ✅
    *   · · 再加上 1 秒防抖：长文连打时也不会频繁重渲染 ⚠
    */
+  // ★★ 行内补全：停顿 800ms + 光标在段末 + 距上次 ≥3 秒 才请求
+  //   ⚠ 失败一律静默 —— 补全出错不能打断用户写字
+  const ghostTimer = useRef(0)
+  const lastGhostAt = useRef(0)
+
+  const runGhost = async () => {
+    const api = editorApi.current
+    if (!api || !projectRef || !nodeId) return
+    const ctx = api.getContext()
+    if (!ctx.atEnd) return
+    const before = ctx.before.trim()
+    if (before.length < 4) return
+    if (Date.now() - lastGhostAt.current < 3000) return
+    lastGhostAt.current = Date.now()
+    api.clearGhost()
+    try {
+      const r = await personalApi.aiComplete(projectRef, {
+        vid: nodeId,
+        before,
+        doc: ctx.doc,
+      })
+      if (r.text) api.setGhost(r.text)
+    } catch {
+      /* 静默：补全失败不打扰写作 */
+    }
+  }
+
+  const scheduleGhost = () => {
+    window.clearTimeout(ghostTimer.current)
+    ghostTimer.current = window.setTimeout(() => void runGhost(), 800)
+  }
+
+  // 卸载时清掉未触发的定时器（换笔记/关页不留尾巴）
+  useEffect(() => () => window.clearTimeout(ghostTimer.current), [])
+
   const scheduleCount = (md: string) => {
     if (countTimer.current) window.clearTimeout(countTimer.current)
     countTimer.current = window.setTimeout(() => {
@@ -609,7 +644,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
             initial={body}
             apiRef={editorApi}
             onRejectUpload={() => setHint('暂不支持上传图片（站内不存放图片文件）。')}
-            onChange={scheduleCount}
+            onChange={(md: string) => {
+              scheduleCount(md)
+              scheduleGhost()
+            }}
           />
           </>
         )}

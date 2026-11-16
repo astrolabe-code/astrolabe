@@ -802,3 +802,13 @@ body.page-hidden *::after { animation-play-state: paused !important; }
 .orphan-fix:hover {
   background: var(--accent-dim);
 }
+
+/* ---------------- 行内补全（浅色提示） ---------------- */
+/* ⚠ 不可编辑、不挡点击：它只是「接下来大概这样写」的提示，Tab 才落成正文 */
+.ghost-text {
+  color: var(--text-faint);
+  opacity: 0.72;
+  pointer-events: none;
+  user-select: none;
+  white-space: pre-wrap;
+}

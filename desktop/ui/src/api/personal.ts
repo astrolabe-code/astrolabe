@@ -255,6 +255,13 @@ export const personalApi = {
     return toProjectSummary(d.project, d.stats)
   },
 
+  /** ★★ 行内补全：给「正在写的半句」续写十几到三十字（非流式） */
+  aiComplete: (ref: string, body: { vid: number; before: string; doc?: string }) =>
+    post<{ text: string }>(
+      `/api/projects/${encodeURIComponent(ref)}/ai/complete/`,
+      body,
+    ),
+
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>
     post<{ acked: boolean }>(`/api/projects/${encodeURIComponent(ref)}/source-ack/`),

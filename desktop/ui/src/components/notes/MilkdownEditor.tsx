@@ -237,6 +237,7 @@ export default function MilkdownEditor({
   apiRef,
   onRejectUpload,
   onChange,
+  onCaretMove,
 }: {
   initial: string
   /** ★ 父组件的 ref —— 编辑器就绪后把句柄塞进去（* 保存时读它）⚠ */
@@ -256,6 +257,13 @@ export default function MilkdownEditor({
    * ⚠ 只在**防抖 300ms** 后触发一次，⛔ 不是每次击键都回调（序列化整篇很贵）⚠
    */
   onChange?: (markdown: string) => void
+  /**
+   * ★★ 光标/选区变化（含鼠标点击、方向键）⚠
+   *
+   * 行内补全必须跟着光标走：只在「内容变化」时触发的话，
+   * 把光标移到别处不会重新请求，旧补全还会留在新位置。
+   */
+  onCaretMove?: () => void
 }) {
   return (
     <MilkdownProvider>
@@ -264,6 +272,7 @@ export default function MilkdownEditor({
         apiRef={apiRef}
         onRejectUpload={onRejectUpload}
         onChange={onChange}
+        onCaretMove={onCaretMove}
       />
     </MilkdownProvider>
   )
@@ -274,16 +283,20 @@ function Inner({
   apiRef,
   onRejectUpload,
   onChange,
+  onCaretMove,
 }: {
   initial: string
   apiRef: React.MutableRefObject<MilkdownEditorApi | null>
   onRejectUpload?: () => void
   onChange?: (markdown: string) => void
+  onCaretMove?: () => void
 }) {
   // ⚠ 用 ref 存回调：`useEditor` 的 deps 里只有 `initial`
   //   ⇒ 把 `onChange` 放进依赖会**重建编辑器**（光标丢失）⚠
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  const onCaretMoveRef = useRef(onCaretMove)
+  onCaretMoveRef.current = onCaretMove
 
   useEditor(
     (root) => {
@@ -370,6 +383,18 @@ function Inner({
             if (timer) clearTimeout(timer)
             timer = setTimeout(() => onChangeRef.current?.(markdown), 300)
           })
+            // ★★ 光标一动，旧补全立刻作废（它对应上一个位置），
+            //    再通知外层重新计时：稳定 800ms 后才请求新的。
+            listener.selectionUpdated(() => {
+              if (ghostView) {
+                try {
+                  ghostView.dispatch(ghostView.state.tr.setMeta(ghostKey, ''))
+                } catch {
+                  /* 编辑器正在销毁 */
+                }
+              }
+              onCaretMoveRef.current?.()
+            })
         })
       }
       return crepe.editor

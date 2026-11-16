@@ -240,7 +240,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   // ★★ 行内补全：停顿 800ms + 光标在段末 + 距上次 ≥3 秒 才请求
   //   ⚠ 失败一律静默 —— 补全出错不能打断用户写字
   const ghostTimer = useRef(0)
-  const lastGhostAt = useRef(0)
+  /** 上次请求用的「光标向上文字」—— 同一段不重复问（光标来回动不烧 token） */
+  const lastAskedRef = useRef('')
+  /** 当前有请求在跑：不叠加 */
+  const ghostBusyRef = useRef(false)
 
   const runGhost = async () => {
     const api = editorApi.current
@@ -255,8 +258,10 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     //   上一段说过什么，决定了下一句该往哪写；只看当前段会重复已写过的内容。
     const before = ctx.context.trim()
     if (before.length < 2) return setHint('补全·上文太短')
-    if (Date.now() - lastGhostAt.current < 3000) return
-    lastGhostAt.current = Date.now()
+    // ★ 同一段文字不重复问；正在请求时不叠加
+    if (before === lastAskedRef.current || ghostBusyRef.current) return
+    lastAskedRef.current = before
+    ghostBusyRef.current = true
     api.clearGhost()
     try {
       const r = await personalApi.aiComplete(projectRef, {
@@ -271,6 +276,8 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
       }
     } catch (e) {
       setHint('补全失败：' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      ghostBusyRef.current = false
     }
   }
 
@@ -658,6 +665,7 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
               scheduleCount(md)
               scheduleGhost()
             }}
+            onCaretMove={scheduleGhost}
           />
           </>
         )}

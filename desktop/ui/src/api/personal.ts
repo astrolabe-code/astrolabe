@@ -262,6 +262,13 @@ export const personalApi = {
       body,
     ),
 
+  /** ★★ 根据正文起标题（AI 不可用时前端沿用「正文前几字」） */
+  aiTitle: (ref: string, body: { body: string; kind?: string }) =>
+    post<{ title: string }>(
+      `/api/projects/${encodeURIComponent(ref)}/ai/title/`,
+      body,
+    ),
+
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>
     post<{ acked: boolean }>(`/api/projects/${encodeURIComponent(ref)}/source-ack/`),

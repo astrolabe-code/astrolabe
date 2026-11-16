@@ -235,6 +235,7 @@ R_AIPROBE = re.compile(r"^/api/ai/probe/$")
 R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
+R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
@@ -1128,6 +1129,24 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok(ai.list_models(str(body.get("provider") or "")))
         except Exception as exc:  # noqa: BLE001
             return bad(f"拉取失败：{ai.redact(exc)}", 500)
+
+    # ★★ 起标题：正文够，不读图（省一截 token）
+    m = R_AITITLE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            text = str(body.get("body") or "").strip()
+            if not text:
+                return bad("正文为空")
+            messages = ai.build_title_messages(text, str(body.get("kind") or ""))
+            title = ai.clean_title(ai.chat_once(messages, max_tokens=40))
+            return ok({"title": title})
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"起标题失败：{ai.redact(exc)}", 500)
 
     # ★★ 行内补全（非流式）：短文本，一次返回
     m = R_AICOMPLETE.match(path)

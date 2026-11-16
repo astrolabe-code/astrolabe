@@ -365,10 +365,28 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     }
     // ★ 默认名字：手写优先，否则按正文首行推导（`D112`）⚠
     const auto = autoTitle(text)
+    const fallback = title.trim() || auto
     setPendingText(text)
     setSuggested(auto)
-    setDraftTitle(title.trim() || auto)
+    setDraftTitle(fallback)
     setConfirmOpen(true)
+
+    // ★★ 对话框开着的这段时间让 AI 起个更贴切的标题：
+    //   失败/没配模型就沿用「正文前几字」（⛔ 静默，不为起标题打断保存）
+    if (projectRef) {
+      void (async () => {
+        try {
+          const r = await personalApi.aiTitle(projectRef, { body: text, kind })
+          const t = r.title.trim()
+          if (!t) return
+          // ⚠ 用户已经自己改过就不覆盖
+          setDraftTitle((cur) => (cur === fallback ? t : cur))
+          setSuggested((cur) => (cur === auto ? t : cur))
+        } catch {
+          /* 静默：保持正文截取 */
+        }
+      })()
+    }
   }
 
   const save = async () => {

@@ -593,6 +593,53 @@ def build_complete_messages(
 # ============================================================================
 # 流式对话（SSE）
 # ============================================================================
+# ============================================================================
+# 起标题（正文够，⛔ 不需要节点上下文 —— 省一截 token）
+# ============================================================================
+KIND_LABELS = {
+    "flash": "灵光一闪",
+    "question": "质疑",
+    "confuse": "困惑",
+    "pitfall": "踩坑",
+    "summary": "小结",
+}
+
+TITLE_SYSTEM = (
+    "你是帮作者给笔记起标题的助手。"
+    "根据正文起一个**中文标题**：10-20 字，概括这段笔记真正说了什么。\n"
+    "要求：不要书名号、不要「小结」「灵光一闪」这类类型前缀、不要结尾句号；"
+    "只输出标题本身，不要解释、不要引号。"
+)
+
+
+def build_title_messages(body_text: str, kind: str = "") -> list[dict]:
+    """起标题的 prompt。★ 只用正文，⛔ 不塞源码/邻居（标题不该由代码决定）。"""
+    parts: list[str] = []
+    label = KIND_LABELS.get(str(kind or "").strip())
+    if label:
+        parts.append(f"【这条笔记的类型】{label}")
+    parts.append(f"【正文】\n{str(body_text or '').strip()[:600]}")
+    parts.append("【任务】起一个标题，直接输出标题本身。")
+    return [
+        {"role": "system", "content": TITLE_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def clean_title(text: str) -> str:
+    """清掉模型可能带的引号/书名号/句号，⛔ 不按句读截断（标题本来就短）。"""
+    t = str(text or "").strip().replace("\n", " ")
+    for ch in "《》\"'“”「」『』":
+        t = t.replace(ch, "")
+    t = t.strip().rstrip("。.，,；;：:")
+    # ★ 模型有时仍带「小结：」「灵光一闪：」前缀 —— prompt 说了但它不一定听
+    for label in KIND_LABELS.values():
+        for sep in ("：", ":"):
+            if t.startswith(label + sep):
+                t = t[len(label) + 1 :].strip()
+    return t[:40].strip()
+
+
 def brief(text: str, limit: int = 24, after: str = "") -> str:
     """把完整补全截成「一眼能看完」的开头（最多 24 字，且回退到最近的句读）。
 

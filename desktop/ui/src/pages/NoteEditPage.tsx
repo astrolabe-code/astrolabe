@@ -251,8 +251,9 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     const ctx = api.getContext()
     if (!ctx.ready) return setHint('补全·插件未挂载（ghostView 为空）')
     if (!ctx.atEnd) return setHint('补全·光标不在段末')
-    // ★ 当前段落为空（刚换行）⇒ 用光标前的全部文字兜底
-    const before = (ctx.before.trim() || ctx.context.trim().slice(-300)).trim()
+    // ★★ 以「光标向上的文字」为基础（不只是当前段落）——
+    //   上一段说过什么，决定了下一句该往哪写；只看当前段会重复已写过的内容。
+    const before = ctx.context.trim()
     if (before.length < 2) return setHint('补全·上文太短')
     if (Date.now() - lastGhostAt.current < 3000) return
     lastGhostAt.current = Date.now()
@@ -261,7 +262,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
       const r = await personalApi.aiComplete(projectRef, {
         vid: nodeId,
         before,
-        doc: ctx.doc,
       })
       if (r.text) {
         api.setGhost(r.text)

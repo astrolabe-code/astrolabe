@@ -512,7 +512,8 @@ COMPLETE_SYSTEM = (
     "⛔ 不要试图把整层逻辑一次讲完，细节留给作者自己写；\n"
     "3. 如果作者的表述可以更清楚，用更清楚的写法，但不能改变他的原意；\n"
     "4. 不要总结、不要另起话题、不要加引号、不要解释；\n"
-    "5. 不要重复作者已经写过的内容。"
+    "5. ⛔ 不要把【作者刚写到】里的字再抄一遍 —— 你输出的是它**后面**的内容；"
+    "如果作者写到「这个方」，你从「向下…」开始，而不是「这个方向下…」。"
 )
 
 
@@ -532,11 +533,16 @@ def build_complete_messages(
     ★ 上下文段与问答/（原）草稿共用，前缀保持稳定，能吃 provider 缓存。
     """
     ctx = _context_block(node, snippet, lang, upstream, downstream, [])
+    # ★★ 以「光标向上的文字」为基础 —— 所有者原话：
+    #   「应该光标在哪里，就以光标向上的文字为基础补全」
+    #   ⛔ 不能只看当前段落：上一段说过什么，决定了下一句该往哪写。
+    #   tail = 紧前的半句（接续用）；head = 更早的内容（学用词和语气）
+    text = (before or doc or "").strip()
+    tail = text[-300:]
+    head = text[:-300].strip()[-600:]
     parts = [ctx]
-    body = (doc or "").strip()
-    if body:
-        parts.append(f"【这篇笔记已写的内容（学它的语气，不要照抄）】\n{body[-800:]}")
-    tail = (before or "").strip()[-300:]
+    if head:
+        parts.append(f"【作者已经写的内容（学它的用词和语气，不要照抄）】\n{head}")
     if tail:
         parts.append(f"【作者刚写到】\n{tail}")
     parts.append(
@@ -552,13 +558,22 @@ def build_complete_messages(
 # ============================================================================
 # 流式对话（SSE）
 # ============================================================================
-def brief(text: str, limit: int = 24) -> str:
+def brief(text: str, limit: int = 24, after: str = "") -> str:
     """把完整补全截成「一眼能看完」的开头（最多 24 字，且回退到最近的句读）。
 
     ★ 显示给用户的必须是**十几个字**的提示 —— 一次显示好几句就变成代写了，
       和作者「自己写」的初衷冲突。模型话痨时由这里兜底。
+    ★ `after` = 作者已经写出的尾部：模型经常把它再抄一遍
+      （写「这个方」，它输出「这个方向下…」），这里从最长匹配开始剥掉，
+      否则界面上会出现「这个方这个方向下」。
     """
     t = str(text or "").strip().replace("\n", " ").strip()
+    a = str(after or "").strip()
+    # ★ 先试完整 after，再逐级缩短 —— 漏掉「等长」会切不掉整句重复
+    for n in [len(a), 40, 30, 20, 12, 8, 6, 5, 4, 3, 2]:
+        if 0 < n <= len(a) and t.startswith(a[-n:]):
+            t = t[len(a[-n:]) :].lstrip("，,。.、；;：: ")
+            break
     if len(t) <= limit:
         return t
     head = t[:limit]

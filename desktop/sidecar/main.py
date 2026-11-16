@@ -1566,7 +1566,10 @@ def _complete(project, vid: int, before: str, doc: str) -> dict:
     snippet, lang, up, down, _samples = _node_context(project, node)
     messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before)
     # ★ 生成允许它写够，但只回「一眼能看完」的开头（十几个字）
-    return {"text": ai.brief(ai.chat_once(messages, max_tokens=60))}
+    # ★ after=作者已写的尾部：模型常把它抄一遍，由 brief 剥掉
+    return {
+        "text": ai.brief(ai.chat_once(messages, max_tokens=60), after=before[-30:])
+    }
 
 
 def _stream_events(method: str, path: str, body) -> "object":

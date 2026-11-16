@@ -1145,7 +1145,11 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             before = str(body.get("before") or "")
             if not before.strip():
                 return bad("还没有可续写的内容")
-            return ok(_complete(p, vid, before, str(body.get("doc") or "")))
+            return ok(
+                _complete(
+                    p, vid, before, str(body.get("doc") or ""), str(body.get("kind") or "")
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             return bad(f"补全失败：{ai.redact(exc)}", 500)
 
@@ -1553,7 +1557,7 @@ def _ask_events(project, vid: int, question: str):
     yield from ai.stream_chat(messages, max_tokens=800)
 
 
-def _complete(project, vid: int, before: str, doc: str) -> dict:
+def _complete(project, vid: int, before: str, doc: str, kind: str = "") -> dict:
     """行内补全：给「作者正在写的半句」续写十几到三十个字。
 
     ★ 上下文 = 节点源码/邻居 + **这篇笔记已写的内容**（学语气）+ 光标前半句。
@@ -1564,7 +1568,7 @@ def _complete(project, vid: int, before: str, doc: str) -> dict:
     if not node:
         raise ValueError("节点不存在")
     snippet, lang, up, down, _samples = _node_context(project, node)
-    messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before)
+    messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before, kind)
     # ★ 生成允许它写够，但只回「一眼能看完」的开头（十几个字）
     # ★ after=作者已写的尾部：模型常把它抄一遍，由 brief 剥掉
     return {

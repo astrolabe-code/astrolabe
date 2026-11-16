@@ -244,6 +244,9 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
   const lastAskedRef = useRef('')
   /** 当前有请求在跑：不叠加 */
   const ghostBusyRef = useRef(false)
+  /** 当前笔记类型 —— 补全的「心理状态」要跟着标签走 */
+  const kindRef = useRef(kind)
+  kindRef.current = kind
 
   const runGhost = async () => {
     const api = editorApi.current
@@ -258,15 +261,18 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
     //   上一段说过什么，决定了下一句该往哪写；只看当前段会重复已写过的内容。
     const before = ctx.context.trim()
     if (before.length < 2) return setHint('补全·上文太短')
-    // ★ 同一段文字不重复问；正在请求时不叠加
-    if (before === lastAskedRef.current || ghostBusyRef.current) return
-    lastAskedRef.current = before
+    // ★「同一段文字 + 同一类型」才不重复问：
+    //   切换标签后心理状态变了，应该重新要一次（⛔ 不能只比文字）
+    const askKey = `${kindRef.current}|${before}`
+    if (askKey === lastAskedRef.current || ghostBusyRef.current) return
+    lastAskedRef.current = askKey
     ghostBusyRef.current = true
     api.clearGhost()
     try {
       const r = await personalApi.aiComplete(projectRef, {
         vid: nodeId,
         before,
+        kind: kindRef.current,
       })
       if (r.text) {
         api.setGhost(r.text)
@@ -684,7 +690,11 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
                 key={k}
                 type="button"
                 title={kindMeta(k).hint}
-                onClick={() => setKind(k)}
+                onClick={() => {
+                  setKind(k)
+                  // ★ 心理状态变了 ⇒ 让补全重新问一次
+                  scheduleGhost()
+                }}
                 style={{
                   padding: '1px 8px',
                   borderRadius: 999,

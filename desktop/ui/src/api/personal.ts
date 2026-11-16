@@ -256,7 +256,7 @@ export const personalApi = {
   },
 
   /** ★★ 行内补全：给「正在写的半句」续写十几到三十字（非流式） */
-  aiComplete: (ref: string, body: { vid: number; before: string; doc?: string }) =>
+  aiComplete: (ref: string, body: { vid: number; before: string; doc?: string; kind?: string }) =>
     post<{ text: string }>(
       `/api/projects/${encodeURIComponent(ref)}/ai/complete/`,
       body,

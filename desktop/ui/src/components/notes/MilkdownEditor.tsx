@@ -21,7 +21,14 @@ export interface MilkdownEditorApi {
   setGhost: (text: string) => void
   clearGhost: () => void
   /** 光标前的内容 + 整篇 + 是否在段落末尾（决定要不要请求补全） */
-  getContext: () => { before: string; doc: string; atEnd: boolean }
+  getContext: () => {
+    before: string
+    /** 光标前的**全部**文字（换行后当前段落为空时用它兜底） */
+    context: string
+    doc: string
+    atEnd: boolean
+    ready: boolean
+  }
 }
 
 /**
@@ -336,14 +343,20 @@ function Inner({
         setGhost,
         clearGhost: () => setGhost(''),
         getContext: () => {
-          if (!ghostView) return { before: '', doc: '', atEnd: false }
-          const { $from } = ghostView.state.selection
-          // ⚠ 只取当前段落：跨段的上下文对「续写半句」没用，还会稀释提示
+          if (!ghostView) {
+            return { before: '', context: '', doc: '', atEnd: false, ready: false }
+          }
+          const { $from, from } = ghostView.state.selection
           const before = $from.parent.textBetween(0, $from.parentOffset, '\n', ' ')
+          // ★ 刚敲完回车时当前段落是空的 —— 用光标前的全部文字兜底，
+          //   否则会误报「上文太短」，而他明明刚写完一整段。
+          const context = ghostView.state.doc.textBetween(0, from, '\n', ' ')
           return {
             before,
+            context,
             doc: crepe.getMarkdown(),
             atEnd: $from.parentOffset >= $from.parent.content.size,
+            ready: true,
           }
         },
       }

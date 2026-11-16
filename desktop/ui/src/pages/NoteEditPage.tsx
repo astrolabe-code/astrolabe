@@ -244,11 +244,16 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
 
   const runGhost = async () => {
     const api = editorApi.current
-    if (!api || !projectRef || !nodeId) return
+    // ⚠ 临时诊断：把「为什么没补全」显示在提示行，排查完会删
+    if (!api) return setHint('补全·编辑器未就绪')
+    if (!projectRef) return setHint('补全·缺少项目')
+    if (!nodeId) return setHint('补全·缺少节点（nodeId=0）')
     const ctx = api.getContext()
-    if (!ctx.atEnd) return
-    const before = ctx.before.trim()
-    if (before.length < 4) return
+    if (!ctx.ready) return setHint('补全·插件未挂载（ghostView 为空）')
+    if (!ctx.atEnd) return setHint('补全·光标不在段末')
+    // ★ 当前段落为空（刚换行）⇒ 用光标前的全部文字兜底
+    const before = (ctx.before.trim() || ctx.context.trim().slice(-300)).trim()
+    if (before.length < 2) return setHint('补全·上文太短')
     if (Date.now() - lastGhostAt.current < 3000) return
     lastGhostAt.current = Date.now()
     api.clearGhost()
@@ -258,9 +263,14 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         before,
         doc: ctx.doc,
       })
-      if (r.text) api.setGhost(r.text)
-    } catch {
-      /* 静默：补全失败不打扰写作 */
+      if (r.text) {
+        api.setGhost(r.text)
+        setHint('')
+      } else {
+        setHint('补全·模型返回空')
+      }
+    } catch (e) {
+      setHint('补全失败：' + (e instanceof Error ? e.message : String(e)))
     }
   }
 

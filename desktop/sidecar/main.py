@@ -1129,6 +1129,26 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"拉取失败：{ai.redact(exc)}", 500)
 
+    # ★★ 行内补全（非流式）：短文本，一次返回
+    m = R_AICOMPLETE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            vid = int(body.get("vid") or 0)
+            if not vid:
+                return bad("缺少 vid")
+            before = str(body.get("before") or "")
+            if not before.strip():
+                return bad("还没有可续写的内容")
+            return ok(_complete(p, vid, before, str(body.get("doc") or "")))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"补全失败：{ai.redact(exc)}", 500)
+
     # ★★ AI：连通性测试（本地会提示 ollama serve）
     m = R_AIPROBE.match(path)
     if m:
@@ -1545,32 +1565,12 @@ def _complete(project, vid: int, before: str, doc: str) -> dict:
         raise ValueError("节点不存在")
     snippet, lang, up, down, _samples = _node_context(project, node)
     messages = ai.build_complete_messages(node, snippet, lang, up, down, doc, before)
-    return {"text": ai.chat_once(messages, max_tokens=60)}
+    return {"text": ai.chat_once(messages, max_tokens=120)}
 
 
 def _stream_events(method: str, path: str, body) -> "object":
     """流式端点的事件生成器（目前只有回显，用于验证三层链路）。"""
     body = body if isinstance(body, dict) else {}
-
-    # ★★ 行内补全（非流式）：短文本，一次返回
-    m = R_AICOMPLETE.match(path)
-    if m:
-        p = _project(m.group(1))
-        if not p:
-            return bad("项目不存在", 404)
-        if method != "POST":
-            return bad("不支持的方法", 405)
-        try:
-            _graph_ready(p)
-            vid = int(body.get("vid") or 0)
-            if not vid:
-                return bad("缺少 vid")
-            before = str(body.get("before") or "")
-            if not before.strip():
-                return bad("还没有可续写的内容")
-            return ok(_complete(p, vid, before, str(body.get("doc") or "")))
-        except Exception as exc:  # noqa: BLE001
-            return bad(f"补全失败：{ai.redact(exc)}", 500)
 
     m = R_AIASK.match(path)
     if m:

@@ -56,6 +56,12 @@ MAX_NODE_LINES = 200
 MAX_NEIGHBORS = 12
 #: 每次最多带几条执行流
 MAX_FLOWS = 2
+#: 同文件其它函数：**少而全**
+#   ⚠ 所有者 2026-11-17：「你给那么多函数签名，还不如给ai少点签名，多点源码」
+#     原来 15 个「名字+行号」价值很低，改成 5 个带源码。
+MAX_SIBLINGS = 5
+#: 同文件函数源码最多给多少行
+MAX_SIBLING_LINES = 60
 
 #: 可疑点：魔数 / 位运算 / 错误处理 / 并发
 _SUSPICIOUS = (
@@ -71,8 +77,48 @@ _SUSPICIOUS = (
 )
 
 
-def _slice(text: str, line: int, line_end: int, limit: int = MAX_NODE_LINES) -> tuple[str, bool]:
-    """按节点行号截源码，返回 `(片段, 是否被截断)`。"""
+# ★★ 常见「空文件」的语义提示
+#
+# 所有者原话（2026-11-17）：
+# 「这是Python包的格式，是什么问题导致模型会问没有代码？ai不知道这是包格式吗？」
+#
+# 根因是两件事叠在一起：`__init__.py` 常为 0 字节，被当成「读取失败」，
+# 而 prompt 又没告诉模型这是什么文件 ⇒ 它只能问「源码在哪」。
+# 这里把「文件名 → 它本来就没有代码」这层常识补上。
+_FILE_HINTS = {
+    "__init__.py": "Python 包的标记文件：通常为空，或只做 re-export（把子模块暴露出去）——没有代码是正常的",
+    "__main__.py": "Python 包的可执行入口（`python -m 包名` 时运行）",
+    "mod.rs": "Rust 的模块声明文件：通常只有 `pub mod` / `pub use`，不写实现",
+    "lib.rs": "Rust crate 的根：声明所有模块，可能只有 `mod` 与 `pub use`",
+    "main.rs": "Rust 二进制入口：通常只有 `fn main()` 与模块声明",
+    "index.js": "目录入口：打包器默认从这里找导出，常只有 re-export",
+    "index.ts": "目录入口：打包器默认从这里找导出，常只有 re-export",
+    "index.tsx": "目录入口：常只有 re-export",
+    "setup.py": "Python 的打包脚本",
+    "conftest.py": "pytest 的共享夹具声明文件",
+}
+
+
+def file_hint(rel: str) -> str:
+    """按文件名给出「这个文件本来长什么样」的提示；认不出就返回空串。"""
+    name = str(rel or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return _FILE_HINTS.get(name, "")
+
+
+def _slice(
+    text: str | None, line: int, line_end: int, limit: int = MAX_NODE_LINES
+) -> tuple[str, bool]:
+    """按节点行号截源码，返回 `(片段, 是否被截断)`。
+
+    ⚠ 三种情况必须区分开（之前混成一个「读不到源码」，把模型带偏）：
+      · `None`   ⇒ 文件读不出来（权限 / 编码 / 被删）
+      · `""`     ⇒ 文件是空的 —— 对 `__init__.py` 这类是**正常**的
+      · 有内容   ⇒ 正常截取
+    """
+    if text is None:
+        return "（源码读取失败：文件打不开或编码不支持）", False
+    if not text.strip():
+        return "（空文件 —— 这个文件本身没有代码，不是读取失败）", False
     lines = str(text or "").splitlines()
     start = max(0, int(line or 1) - 1)
     end = int(line_end or 0)
@@ -167,14 +213,14 @@ def build(
     up_ids = up_ids[:max_neighbors]
 
     # ---- 3) 文件缓存：同一文件的多个节点只读一次
-    cache: dict[str, str] = {}
+    cache: dict[str, str | None] = {}
 
-    def text_of(rel: str) -> str:
+    def text_of(rel: str) -> str | None:
         if rel not in cache:
             try:
                 cache[rel] = str(source.read(root, rel).get("text") or "")
-            except Exception:  # noqa: BLE001 —— 源码读不到不该让整个包失败
-                cache[rel] = ""
+            except Exception:  # noqa: BLE001 —— 读失败用 None 区分「空文件」
+                cache[rel] = None
         return cache[rel]
 
     def pack_node(v: int) -> dict | None:
@@ -193,24 +239,67 @@ def build(
             "truncated": cut,
         }
 
-    node_code, node_cut = _slice(
-        text_of(str(node.get("file") or "")), node.get("line") or 1, node.get("line_end") or 0
-    )
+    if str(node.get("kind") or "") == "dir":
+        # ⚠ 目录没有源码：⛔ 不要让 `_slice` 报「读取失败」，那会把模型带偏
+        # ⚠ 这里读不到 children（它在后面才查），数量由 prompt 侧渲染时补
+        node_code = "（这是一个目录节点，没有源码；它包含的文件与子目录见下方列表）"
+        node_cut = False
+    else:
+        node_code, node_cut = _slice(
+            text_of(str(node.get("file") or "")),
+            node.get("line") or 1,
+            node.get("line_end") or 0,
+        )
 
-    # ---- 4) 同文件其它函数（只给名字 + 行号，帮助判断文件职责）
+    # ---- 4) 同文件其它函数：少而全（5 个带源码，其余只报数量）
     siblings: list[dict] = []
+    siblings_more = 0
     rel_self = str(node.get("file") or "")
     if rel_self:
         try:
             conn2 = graphdb._open(data_dir)
             sib_rows = conn2.execute(
                 "MATCH (c:Code) WHERE c.file = $f AND c.vid <> $v "
-                "RETURN c.name, c.line ORDER BY c.line LIMIT 15",
+                "RETURN c.vid, c.name, c.line, c.line_end ORDER BY c.line",
                 {"f": rel_self, "v": int(vid)},
             ).get_all()
-            siblings = [{"name": str(r[0] or ""), "line": int(r[1] or 0)} for r in sib_rows]
+            siblings_more = max(0, len(sib_rows) - MAX_SIBLINGS)
+            for r in sib_rows[:MAX_SIBLINGS]:
+                code, _cut = _slice(
+                    text_of(rel_self),
+                    int(r[2] or 1),
+                    int(r[3] or 0),
+                    limit=MAX_SIBLING_LINES,
+                )
+                siblings.append(
+                    {"name": str(r[1] or ""), "line": int(r[2] or 0), "snippet": code}
+                )
         except Exception:  # noqa: BLE001
             siblings = []
+
+    # ---- 4.5) 目录节点：`kind='dir'` 的 file 是目录路径，读不到源码
+    #   ★ 所有者原话（2026-11-17）：「有些节点是dir的目录类型，可以提问这个目录本身，
+    #     也可以是其下的文件呀」⇒ 给它列出直接子项（contains 出边）。
+    children: list[dict] = []
+    if str(node.get("kind") or "") == "dir":
+        try:
+            conn3 = graphdb._open(data_dir)
+            rows = conn3.execute(
+                "MATCH (d:Code)-[r:Rel]->(c:Code) WHERE d.vid = $v AND r.kind = 'contains' "
+                "RETURN c.vid, c.kind, c.name, c.line ORDER BY c.kind, c.name LIMIT 40",
+                {"v": int(vid)},
+            ).get_all()
+            children = [
+                {
+                    "vid": int(r[0]),
+                    "kind": str(r[1] or ""),
+                    "name": str(r[2] or ""),
+                    "line": int(r[3] or 0),
+                }
+                for r in rows
+            ]
+        except Exception:  # noqa: BLE001
+            children = []
 
     # ---- 5) 执行流（复用已有实现）
     flows: list[dict] = []
@@ -240,9 +329,14 @@ def build(
         "lang": "",
         "truncated_node": node_cut,
         "siblings": siblings,
+        "siblings_more": siblings_more,
+        # ★ 目录节点才有：它的直接子项（文件 / 子目录）
+        "children": children,
         "downstream": [x for x in (pack_node(v) for v in down_ids) if x],
         "upstream": [x for x in (pack_node(v) for v in up_ids) if x],
         "flows": flows,
+        # ★ 文件语义：`__init__.py` 这类「本来就没代码」的文件，提前告诉模型
+        "file_hint": file_hint(rel_self),
         "suspicious": _suspicious(node_code),
         "dropped": dropped,
     }

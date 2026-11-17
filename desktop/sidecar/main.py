@@ -1617,6 +1617,129 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     return snippet, lang, up_ranked, down_ranked, samples
 
 
+# ---------------------------------------------------------------- 只读工具
+# ★ 所有者原话（2026-11-17）：
+#   「阅读工具调用是要的，这样ai才能准确，不过，调用轮数要有限制」
+#   「我只是不给ai执行的能力，如果有需要，ai可以顺着图谱去阅读项目里其他节点的信息」
+# ⛔ 三个工具全部只读：不写文件、不改图、不执行代码。
+
+READ_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_node",
+            "description": "读一个节点的源码，并列出它调用/被调用的函数。"
+            "想知道某个函数具体怎么实现时用它。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "节点名或限定名，如 do_read / tcp::do_read"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_neighbors",
+            "description": "只列出某个节点的上下游函数名（不读源码，很便宜）。"
+            "想知道「还有谁参与」时用它。",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_nodes",
+            "description": "按名字或路径搜索节点，返回候选（名字 + 文件 + 行号）。"
+            "不确定某个函数叫什么时用它。",
+            "parameters": {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+                "required": ["q"],
+            },
+        },
+    },
+]
+
+
+def _make_tool_executor(project):
+    """构造工具执行器（闭包里带 project，才能读源码根）。
+
+    ⚠ 单个工具结果在 chat_with_tools 里还会再截到 4000 字 —— 双保险。
+    """
+
+    def find(name: str) -> dict | None:
+        key = str(name or "").strip()
+        if not key:
+            return None
+        try:
+            rows = graphdb.search_code(ROOT, key, 5)
+        except Exception:  # noqa: BLE001
+            return None
+        return rows[0] if rows else None
+
+    def snippet_of(node: dict, limit: int = 120) -> str:
+        try:
+            text = str(source.read(project["root"], node.get("file") or "").get("text") or "")
+        except Exception:  # noqa: BLE001
+            return "（源码读取失败）"
+        lines = text.splitlines()
+        start = max(0, int(node.get("line") or 1) - 1)
+        end = int(node.get("line_end") or 0)
+        if end <= start:
+            end = start + 40
+        end = min(end, start + limit, len(lines))
+        if end <= start:
+            return "（空文件）"
+        return "\n".join(lines[start:end])
+
+    def run(tool: str, args: dict) -> str:
+        if tool == "search_nodes":
+            q = str(args.get("q") or "").strip()
+            if not q:
+                return "缺少参数 q"
+            try:
+                rows = graphdb.search_code(ROOT, q, 8)
+            except Exception as exc:  # noqa: BLE001
+                return f"搜索失败：{exc}"
+            if not rows:
+                return f"没有找到与「{q}」相关的节点"
+            return "\n".join(
+                f"- {r.get('name')}  @ {r.get('file_path')}:{r.get('line')}" for r in rows
+            )
+
+        if tool in ("read_node", "list_neighbors"):
+            node = find(str(args.get("name") or ""))
+            if not node:
+                return f"没有找到节点「{args.get('name')}」"
+            vid = int(node.get("vid") or 0)
+            try:
+                nei = graphdb.neighbors(ROOT, vid, 1)
+            except Exception:  # noqa: BLE001
+                nei = {"upstream": [], "downstream": []}
+            down = [str(x.get("name") or "") for x in (nei.get("downstream") or [])]
+            up = [str(x.get("name") or "") for x in (nei.get("upstream") or [])]
+
+            head = (
+                f"【节点】{node.get('name')}  @ {node.get('file_path')}:{node.get('line')}"
+                f"\n【它调用】{('、'.join(down[:12]) or '（无）')}"
+                f"\n【调用它】{('、'.join(up[:12]) or '（无）')}"
+            )
+            if tool == "list_neighbors":
+                return head
+            return head + "\n【源码】\n```\n" + snippet_of(node) + "\n```"
+
+        return f"未知工具：{tool}"
+
+    return run
+
+
 def _ask_events(project, vid: int, question: str):
     """针对当前节点提问（流式）。
 
@@ -1632,7 +1755,14 @@ def _ask_events(project, vid: int, question: str):
 
     snippet, lang, up, down, samples = _node_context(project, node)
     messages = ai.build_ask_messages(node, snippet, lang, up, down, samples, q)
-    yield from ai.stream_chat(messages, max_tokens=800)
+    # ★ 允许模型顺着图谱再读几个节点（最多 3 轮，⛔ 只读）
+    yield from ai.chat_with_tools(
+        messages,
+        READ_TOOLS,
+        _make_tool_executor(project),
+        max_rounds=3,
+        max_tokens=800,
+    )
 
 
 def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
@@ -1715,7 +1845,22 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
     pack = contextpack.build(ROOT, project["root"], vid)
     learned = _learned_notes(project, pack, vid)
     messages = ai.build_questions_messages(pack, learned)
-    text = ai.chat_once(messages, max_tokens=600)
+    # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
+    #   「调用工具给这个加上也是必要的」（轮数更紧，2 轮就够）
+    chunks: list[str] = []
+    try:
+        for evt in ai.chat_with_tools(
+            messages,
+            READ_TOOLS,
+            _make_tool_executor(project),
+            max_rounds=2,
+            max_tokens=600,
+        ):
+            if evt.get("event") == "delta":
+                chunks.append(str(evt.get("text") or ""))
+        text = "".join(chunks)
+    except Exception:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
+        text = ai.chat_once(messages, max_tokens=600)
     parsed = ai.parse_questions(text)
     parsed["learned"] = learned
 

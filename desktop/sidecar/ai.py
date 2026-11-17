@@ -657,10 +657,20 @@ QUESTIONS_SYSTEM = (
     "你必须通读源码自己找问题 —— 异常路径没处理、某个前提可能不成立、"
     "边界与类型转换、锁的范围、缓冲区大小、返回值约定……"
     "这些往往比魔数更值得问。\n"
+    "★★ 每一个问题的**主语必须是【当前节点】本身**。"
+    "上下游函数只在需要时说一句作为对照，"
+    "⛔ 不要把问题变成对旁边那个函数的点评。\n"
+    "    ✅ 好：「get_call_graph 只是把 file_path 转成 Path 再原样转发五个参数，"
+    "为什么不在这一层判断 symbol 是否存在？」\n"
+    "    ⛔ 坏：「build_call_graph 把异常都吞了，它对吗？」"
+    "——这是在评邻居，读者看完仍然不知道当前节点怎么样。\n"
     "★ 三个问题中**至少一个**要联系【你之前学过】里的内容，"
     "问「他那时学到的结论，在这里怎么起作用 / 还成不成立」；"
     "引用时用读者的原话，⛔ 不要改写成要点。\n"
-    "★ 如果没有【你之前学过】，就当作第一次看这里，⛔ 不许编造「你可能记得」之类。"
+    "★ 如果没有【你之前学过】，就当作第一次看这里，⛔ 不许编造「你可能记得」之类。\n"
+    "★ 如果源码标注为「空文件」——那通常**是正常的**（如 Python 包的 __init__.py、"
+    "Rust 的 mod.rs、JS 的 index 文件），⛔ 不要把它当成疑点去问「源码在哪 / 为什么读不到」；"
+    "这时可以问它在目录结构里的作用、为什么这样组织、与相邻文件是什么关系。"
 )
 
 
@@ -676,20 +686,33 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
         f"【当前节点】{node.get('kind') or ''} {node.get('name') or ''}"
         f"  @ {node.get('file') or ''}:{node.get('line') or 0}-{node.get('line_end') or 0}",
         f"【签名】{node.get('signature') or '（解析器未给出）'}",
-        "【源码】",
-        "```",
-        str(pack.get("snippet") or "（读不到源码）"),
-        "```",
     ]
+    # ★ 文件语义：告诉模型「这个文件本来长什么样」，避免把「空」当异常
+    hint = str(pack.get("file_hint") or "").strip()
+    if hint:
+        parts.append(f"【这个文件是】{hint}")
+    parts.extend(
+        [
+            "【源码】",
+            "```",
+            str(pack.get("snippet") or "（读不到源码）"),
+            "```",
+        ]
+    )
     if pack.get("truncated_node"):
         parts.append("（注意：当前节点源码超过 200 行，上面是前 200 行）")
 
     sibs = pack.get("siblings") or []
     if sibs:
-        parts.append(
-            "【同文件的其它函数（只看名字，判断这个文件的职责）】\n"
-            + "\n".join(f"- {x.get('name')}  @{x.get('line')}" for x in sibs)
-        )
+        # ★ 少而全：每个带源码（原来只给名字+行号，信息量太低）
+        lines = ["【同文件的其它函数（带源码，看这个文件在做什么）】"]
+        for x in sibs:
+            lines.append(f"- {x.get('name')}  @{x.get('line')}")
+            lines.append(f"```\n{x.get('snippet') or ''}\n```")
+        more = int(pack.get("siblings_more") or 0)
+        if more:
+            lines.append(f"（同文件还有 {more} 个函数未给出）")
+        parts.append("\n".join(lines))
 
     def block(title: str, rows: list[dict]) -> None:
         if not rows:
@@ -725,6 +748,17 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
             "【正则扫出的线索（不完整，只用于定位；⛔ 不要只依赖这些）】\n"
             + "\n".join(f"- {x}" for x in sus)
         )
+
+    # ★ 目录节点：给它的直接子项（文件名/子目录），让模型能问「这个目录为什么这样切分」
+    kids = pack.get("children") or []
+    if kids:
+        lines = ["【这个目录里的东西（子目录 / 文件）】"]
+        for c in kids[:30]:
+            mark = "目录" if c.get("kind") == "dir" else "文件"
+            lines.append(f"- [{mark}] {c.get('name')}")
+        if len(kids) > 30:
+            lines.append(f"（还有 {len(kids) - 30} 项未列出）")
+        parts.append("\n".join(lines))
 
     # ---- 用户之前学过的（引用原话，⛔ 不概括）
     if learned:
@@ -788,6 +822,126 @@ def parse_questions(text: str) -> dict:
     return {"items": items[:3], "next": nxt[:2]}
 
 
+def chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    executor,
+    max_rounds: int = 3,
+    max_tokens: int = 800,
+):
+    """带**只读工具**的多轮流式问答。
+
+    所有者原话（2026-11-17）：
+    「阅读工具调用是要的，这样ai才能准确，不过，调用轮数要有限制」
+
+    ## 流程
+
+    ```
+    第 1 轮：模型看到上下文 → 可能说「我要读 X」→ 执行 → 结果喂回
+    第 2 轮：… 最多 max_rounds 轮
+    轮数用尽：补一句「工具次数已达上限」，让它只用已看到的内容作答
+    ```
+
+    ## 三条硬约束
+
+    ```
+    ① ⛔ 轮数上限（默认 3）：每多一轮，整段历史重发一次，token 线性增长
+    ② ⛔ 工具只读：executor 由调用方提供，这里不碰任何写操作
+    ③ 模型不返回 tool_calls ⇒ 行为与普通流式**完全一致**（退化安全，
+       本地小模型不支持 tools 时就是这个路径）
+    ```
+
+    产出事件：`delta` / `usage` / `step`（第几轮工具调用）。
+    """
+    convo = list(messages)
+
+    # ⚠ 是 `range(max_rounds)` 不是 +1：3 轮就是 3 次工具调用，
+    #   之后单独走一次「收尾」（不带宽 tools），否则会多跑一轮。
+    for rnd in range(max_rounds):
+        pending: dict[int, dict] = {}
+        text_acc: list[str] = []
+
+        for evt in stream_chat(convo, max_tokens=max_tokens, tools=tools):
+            kind = evt.get("event")
+            if kind == "delta":
+                text_acc.append(str(evt.get("text") or ""))
+                yield evt
+            elif kind == "tool":
+                idx = int(evt.get("index") or 0)
+                slot = pending.setdefault(idx, {"id": "", "name": "", "args": ""})
+                if evt.get("id"):
+                    slot["id"] = str(evt["id"])
+                fn = evt.get("function") or {}
+                if isinstance(fn, dict):
+                    if fn.get("name"):
+                        slot["name"] = str(fn["name"])
+                    if fn.get("arguments"):
+                        slot["args"] += str(fn["arguments"])
+            else:
+                yield evt
+
+        if not pending:
+            return
+
+        calls = []
+        for idx in sorted(pending):
+            slot = pending[idx]
+            calls.append(
+                {
+                    "id": slot["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {
+                        "name": slot["name"],
+                        "arguments": slot["args"] or "{}",
+                    },
+                }
+            )
+
+        convo.append(
+            {
+                "role": "assistant",
+                "content": "".join(text_acc) or None,
+                "tool_calls": calls,
+            }
+        )
+
+        for c in calls:
+            fname = str(c["function"]["name"] or "")
+            try:
+                args = json.loads(c["function"]["arguments"] or "{}")
+                if not isinstance(args, dict):
+                    args = {}
+            except Exception:  # noqa: BLE001 —— 模型把 JSON 写坏了，别让整轮崩
+                args = {}
+            try:
+                res = executor(fname, args)
+            except Exception as exc:  # noqa: BLE001
+                res = f"工具 {fname} 执行失败：{redact(str(exc))}"
+            # ⚠ 单条工具结果也要截断：否则一次读到 2 万行会把上下文撑爆
+            convo.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": c["id"],
+                    "content": str(res)[:4000],
+                }
+            )
+
+        yield {"event": "step", "round": rnd + 1}
+
+    # 轮数用尽：再问一次，明确禁止继续调工具
+    convo.append(
+        {
+            "role": "user",
+            "content": "（工具调用次数已达上限。请只根据上面已经看到的内容回答，不要再请求工具。）",
+        }
+    )
+    for evt in stream_chat(convo, max_tokens=max_tokens):
+        if evt.get("event") == "delta":
+            yield evt
+        elif evt.get("event") == "usage":
+            yield evt
+
+
 def brief(text: str, limit: int = 24, after: str = "") -> str:
     """把完整补全截成「一眼能看完」的开头（最多 24 字，且回退到最近的句读）。
 
@@ -825,7 +979,12 @@ def chat_once(messages: list[dict], max_tokens: int = 120) -> str:
     return "".join(parts).strip()
 
 
-def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float = 120):
+def stream_chat(
+    messages: list[dict],
+    max_tokens: int = 600,
+    deadline_s: float = 120,
+    tools: list[dict] | None = None,
+):
     """逐块 yield `{"event":"delta","text":...}`，最后可能有一条 `usage`。
 
     ⚠ 不自动重试：超时/失败直接抛，由调用方转成 error 事件（
@@ -845,6 +1004,10 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
         "stream": True,
         "temperature": 0.3,
     }
+    # ★ 只读工具（读节点 / 列邻居 / 搜索）：模型可主动要求读更多
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST"
     )
@@ -856,6 +1019,7 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
     # ★ 统计「到底吐了多少字」：一个字都没出时必须报错，
     #   ⛔ 不能静默返回空回答（用户只会看到「问了但没回答」，无从排查）
     got = 0
+    got_tool = False
     try:
         # ⚠ 首字超时给足：本地 7B/14B 在 CPU 上第一块可能要几十秒，
         #   30 秒会误判成超时（此处是单次读超时，不是总时长）
@@ -892,6 +1056,18 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
                 if piece:
                     got += 1
                     yield {"event": "delta", "text": piece}
+
+                # ★★ 工具调用：流式下是**增量分片**（同一 index 的 arguments 一段段来），
+                #   这里只透出原始片段，累积交给 chat_with_tools。
+                if isinstance(obj, dict):
+                    chs = obj.get("choices") or []
+                    dl = (chs[0].get("delta") or {}) if chs and isinstance(chs[0], dict) else {}
+                    tcs = dl.get("tool_calls") if isinstance(dl, dict) else None
+                    if isinstance(tcs, list):
+                        for tc in tcs:
+                            if isinstance(tc, dict):
+                                got_tool = True
+                                yield {"event": "tool", **tc}
 
                 usage = obj.get("usage") if isinstance(obj, dict) else None
                 if not isinstance(usage, dict):
@@ -939,7 +1115,7 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
                         "think": think,
                         "response": max(0, pout - think),
                     }
-        if got == 0:
+        if got == 0 and not got_tool:
             raise RuntimeError(
                 "模型没有返回任何内容。常见原因：模型名不对、该模型不支持 chat 补全，"
                 "或服务端未按流式返回（可先在设置里点「测试连通」确认）"

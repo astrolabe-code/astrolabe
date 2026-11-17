@@ -1,85 +1,109 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { RefreshCw } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 
 import { personalApi } from '../../api/personal'
-
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 
 /**
- * ★★ 鼠标悬停时的**节点浮窗**（图谱 / 节点列表共用）⚠
+ * ★★ 鼠标悬停时的**节点浮窗**（图谱 / 节点列表共用）
  *
  * 所有者原话（2026-11-01）：
  * 「不用这么复杂，图谱上，在鼠标移到相应节点时就一个浮窗，显示相应详细信息，
  *   列表哪里也是一样。还有，边如果连不准确，还不如不连，给初学者错误信息，
  *   是很不好的。gitnexus 那置信度那套只对专家或 ai 有用。」
  *
- * ## 为什么要有它
+ * ## 思考题（2026-11-17 追加）
  *
- * ```
- * 重载      三个 `A.run` 在列表里长得一模一样 ⇒ 浮窗里看签名就能分清
- *            （`void run(int x)` / `void run(String s)` / `void run()`）
- * 图谱      圆点上只有个名字，细节只能点开右栏 ⇒ 悬停先看一眼，不打断阅读
- * ```
+ * 「点开一个节点，就要根据这个节点涉及到的知识提问」——
+ * 问题由后端 `/ai/questions/` 生成（带上下文、引用用户写过的话）。
  *
- * ⚠ 只读展示：⛔ 不做任何推断、不显示"置信度"
- *   （所有者：置信度那套只对专家 / AI 有用，对初学者是噪声）
+ * 三条交互约束（都来自所有者原话）：
+ * ```
+ * ① 位置：朝右下（弹窗方向）走 ⇒ 定住，方便移过去点按钮；其余方向跟随
+ * ② 记忆：同一个节点出过题 ⇒ 再次悬停直接显示，⛔ 不用再点一次
+ * ③ 换一批：已显示时底部给一个刷新按钮，重新请模型出题
+ * ```
  */
+
 interface NodeHoverCardProps {
   node: GraphNode
   /** 鼠标位置（视口坐标） */
   x: number
   y: number
-  /** ★ 鼠标进入浮窗（让画布别急着关掉它，否则按钮点不到） */
+  /** 鼠标进入浮窗（让画布别急着关掉它，否则按钮点不到） */
   onEnter?: () => void
-  /** ★ 鼠标离开浮窗（这时才真的可以关了） */
+  /** 鼠标离开浮窗（这时才真的可以关了） */
   onLeave?: () => void
 }
 
-const CARD_W = 440
+interface QaQuestion {
+  type: string
+  text: string
+}
 
 /**
- * ★★ 行内 markdown：只处理反引号 `` `code` ``。
- *
- * 模型写问题会用 `_get_ts_language` 这种包法，原样显示很怪
- *（所有者 2026-11-17：「也没有用 markdown 渲染显示，看着很怪」）。
- * ⚠ 不引 markdown 库：只需要反引号一种语法，split 一遍就够。
+ * ★ 已出过题的节点：再次悬停**直接显示**，不再请求、也不用再点按钮。
+ *   ⚠ 模块级 Map（不持久化）：后端也有缓存，但那是「0 次调用、仍要走一次 IPC」，
+ *     这里存一份纯前端副本，悬停瞬间就能显示。
  */
+const questionCache = new Map<number, QaQuestion[]>()
+
+const CARD_W = 440
+
+/** 行内 markdown：只处理反引号 `` `code` `` */
 function inlineMd(text: string): ReactNode[] {
-  return String(text || '').split('`').map((part, i) =>
-    i % 2 === 1 ? (
-      <code
-        key={i}
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.94em',
-          padding: '0 3px',
-          borderRadius: 3,
-          background: 'rgba(127,127,127,.16)',
-          wordBreak: 'break-word',
-        }}
-      >
-        {part}
-      </code>
-    ) : (
-      part
-    ),
-  )
+  return String(text || '')
+    .split('`')
+    .map((part, i) =>
+      i % 2 === 1 ? (
+        <code
+          key={i}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.94em',
+            padding: '0 3px',
+            borderRadius: 3,
+            background: 'rgba(127,127,127,.16)',
+            wordBreak: 'break-word',
+          }}
+        >
+          {part}
+        </code>
+      ) : (
+        part
+      ),
+    )
+}
+
+/** 三类问题的视觉区分：颜色 + 一句话说明 */
+const TYPE_STYLE: Record<string, { color: string; icon: string }> = {
+  陷阱: { color: '#ef4444', icon: '⚠' },
+  优化: { color: '#3b82f6', icon: '⚡' },
+  背景: { color: '#a855f7', icon: '📖' },
 }
 
 export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHoverCardProps) {
   const vw = typeof window === 'undefined' ? 1200 : window.innerWidth
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight
-  // ★★ 从路由取项目（浮窗在图谱页和列表页都用，⛔ 不想再给两处加 prop）
   const { projectRef } = useParams<{ projectRef: string }>()
 
-  // ★★ 思考题：**用户点按钮才生成** ⛔ 不自动请求
-  //   所有者原话（2026-11-17）：「不要停1.2S，在这个弹窗里做个挑战问题的按钮，
-  //   用户按了，才ai生成问题」——hover 只是浏览，调用要由用户明确发起。
-  const [questions, setQuestions] = useState<{ type: string; text: string }[] | null>(null)
+  // 就跟着鼠标：⛔ 不做位置裁剪（超出屏幕就超出，往左上移自然回来）
+  const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
+  const top = y + 14
+
+  // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
+  const [questions, setQuestions] = useState<QaQuestion[] | null>(null)
   const [asking, setAsking] = useState(false)
-  const ask = async () => {
+
+  useEffect(() => {
+    setQuestions(questionCache.get(node.vid) ?? null)
+    setAsking(false)
+  }, [node.vid])
+
+  const ask = async (refresh = false) => {
     if (asking) return
     if (!projectRef || !node.vid) {
       setQuestions([])
@@ -87,8 +111,13 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
     }
     setAsking(true)
     try {
-      const r = await personalApi.aiQuestions(projectRef, { vid: Number(node.vid) })
-      setQuestions(r.items || [])
+      const r = await personalApi.aiQuestions(projectRef, {
+        vid: Number(node.vid),
+        refresh,
+      })
+      const items = r.items || []
+      questionCache.set(node.vid, items)
+      setQuestions(items)
     } catch {
       setQuestions([]) // ⛔ 没配模型 / 出错都不打扰
     } finally {
@@ -96,22 +125,10 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
     }
   }
 
-  // ★ 贴边时翻到另一侧（否则会被视口切掉）
-  const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
-  //   ⚠ 之前是 Math.min(y + 14, vh * 0.22)，鼠标在中下部会被钉在 22%
-  // ★★ 只跟着鼠标：⛔ 不做任何位置裁剪（超出屏幕就超出，
-  //   鼠标往上移浮窗自然回来）。所有者 2026-11-17：「去掉限制！」
-  const top = y + 14
-  // 内容再长就在浮窗内滚动（所有者要的滑块）
-
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
-  // ★★★ 2026-11-05：**必须 portal 到 body** ⚠
-  //   所有者：「提示信息被笔记卡片盖住了，不应该是提示信息盖住笔记卡片吗？」
-  //   ⚠ 根因不是 z-index 不够（已经是 9999），而是它被**祖先的层叠上下文**关住了：
-  //     flex 栏 + 滚动容器 + `.page.rise` 的 transform ⇒ 再高的 z-index 也出不去
-  //   ⇒ 挂到 body，层级才与右栏处在同一层（与 Modal 踩过的是同一个坑）
+  // ★★★ 必须 portal 到 body：否则会被祖先的层叠上下文关住（flex + transform）
   return createPortal(
     <div
       onMouseEnter={onEnter}
@@ -123,15 +140,10 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         zIndex: 9999,
         width: CARD_W,
         maxWidth: '92vw',
-        // ★★ 问题区可能很长：给高度上限，内部滚动条让用户自己翻
-        //   （所有者 2026-11-17：「最主要的还是要加滑块，可以移动」）
-        // ★ 高度按当前位置算：顶到屏幕底为止，再长就在浮窗内滚动
+        // 内容长了给个上限 + 滚动条（滑块）
         maxHeight: '72vh',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
-        // ★ 现在要能点「挑战问题」⇒ 吃鼠标事件；画布那边用延迟 150ms 的方式
-        //   判断鼠标是不是进了浮窗，进了就不关掉它（见 GraphCanvas 的 onLeave）
-        pointerEvents: 'auto',
         padding: '10px 12px',
         borderRadius: 10,
         border: '1px solid var(--card-border)',
@@ -139,8 +151,10 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         boxShadow: '0 8px 24px rgba(15,23,42,.18)',
         fontSize: 12,
         lineHeight: 1.6,
+        pointerEvents: 'auto',
       }}
     >
+      {/* 标题行 */}
       <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
         <span
           className="mono"
@@ -163,7 +177,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         </span>
       </div>
 
-      {/* ★ 签名：重载靠它区分（这就是"不用复杂方案"的那条路）⚠ */}
+      {/* 签名 */}
       {node.signature && node.signature !== node.name && (
         <div
           className="mono faint"
@@ -185,14 +199,15 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         </div>
       )}
 
-      {/* ★★ 挑战问题：用户点了才调用（⛔ 不自动烧 token） */}
+      {/* ────────────────────────── 思考题 */}
       <div
         style={{
-          marginTop: 8,
-          paddingTop: 7,
+          marginTop: 9,
+          paddingTop: 8,
           borderTop: '1px dashed var(--card-border)',
         }}
       >
+        {/* 还没出过题：只给按钮 */}
         {questions === null && (
           <button
             type="button"
@@ -212,40 +227,98 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
             {asking ? '出题中…' : '💭 挑战问题'}
           </button>
         )}
+
         {questions !== null && questions.length === 0 && (
           <div className="faint" style={{ fontSize: 10.5 }}>
             这次没出题（检查 AI 设置）
           </div>
         )}
-      </div>
 
-      {!!questions?.length && (
-        <div
-          style={{
-            marginTop: 8,
-            paddingTop: 7,
-            borderTop: '1px dashed var(--card-border)',
-          }}
-        >
-          <div className="faint" style={{ fontSize: 10.5, marginBottom: 3 }}>
-            💭 想一想
-          </div>
-          {questions.map((q, i) => (
+        {!!questions?.length && (
+          <>
+            {/* 区块标题 + 换一批 */}
             <div
-              key={`${i}-${q.type}`}
               style={{
-                fontSize: 11.5,
-                lineHeight: 1.75,
-                // ⛔ 不再截断：截了反而要猜，长内容交给浮窗滚动条
+                display: 'flex',
+                alignItems: 'center',
+                marginBottom: 6,
               }}
             >
-              <span style={{ color: 'var(--accent)' }}>{q.type}</span>
-              <span className="faint"> · </span>
-              {inlineMd(q.text)}
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  color: 'var(--text-sub)',
+                  letterSpacing: '.02em',
+                }}
+              >
+                💭 想一想
+              </span>
+              <button
+                type="button"
+                title="换一批问题"
+                disabled={asking}
+                onClick={() => void ask(true)}
+                style={{
+                  marginLeft: 'auto',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  fontSize: 10,
+                  padding: '1px 7px',
+                  borderRadius: 999,
+                  border: '1px solid var(--card-border)',
+                  background: 'transparent',
+                  color: 'var(--text-faint)',
+                  cursor: asking ? 'default' : 'pointer',
+                }}
+              >
+                <RefreshCw size={9} />
+                {asking ? '出题中…' : '换一批'}
+              </button>
             </div>
-          ))}
-        </div>
-      )}
+
+            {/* 每条问题一张小卡片：类型徽章 + 正文 */}
+            {questions.map((q, i) => {
+              const st = TYPE_STYLE[q.type] || { color: 'var(--accent)', icon: '·' }
+              return (
+                <div
+                  key={`${i}-${q.type}`}
+                  style={{
+                    marginTop: i === 0 ? 0 : 6,
+                    padding: '7px 9px',
+                    borderRadius: 7,
+                    background: 'rgba(127,127,127,.055)',
+                    borderLeft: `2px solid ${st.color}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      fontWeight: 600,
+                      color: st.color,
+                      marginBottom: 3,
+                      letterSpacing: '.02em',
+                    }}
+                  >
+                    {st.icon} {q.type}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11.5,
+                      lineHeight: 1.75,
+                      color: 'var(--text-main)',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {inlineMd(q.text)}
+                  </div>
+                </div>
+              )
+            })}
+          </>
+        )}
+      </div>
     </div>,
     document.body,
   )

@@ -33,6 +33,14 @@ const LABEL_MIN_NODES = 30
 /** 密集模式下最多保留多少个「度数最高」的标签 */
 const LABEL_TOP_DEGREE = 12
 
+/**
+ * ★★ 鼠标离开节点后，浮窗保留多久（ms）
+ *
+ * 所有者原话（2026-11-17）：「不要设置一闪而过呀，除非迅速把鼠标移到弹窗上，
+ * 否则弹窗就会消失，这不行」——要留出足够时间让人把鼠标移过去点「挑战问题」。
+ */
+const HOVER_LINGER_MS = 1200
+
 /** 点到线段的距离（画布单位），用来判定鼠标是否落在某条聚合边上 */
 function distToSegment(p: ArrayLike<number>, a: ArrayLike<number>, b: ArrayLike<number>): number {
   const dx = b[0] - a[0]
@@ -193,6 +201,8 @@ export default function GraphCanvas({
    */
   const cardHoverRef = useRef(false)
   const leaveTimerRef = useRef(0)
+  /** 与 `hover` 同步：`update` 是闭包，读不到最新 state，用它判断「是否刚离开节点」 */
+  const hoverRef = useRef<{ node: GraphNode; x: number; y: number } | null>(null)
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
@@ -287,8 +297,15 @@ export default function GraphCanvas({
         setEdgeHover(null)
         return
       }
-      setHover(null)
       
+      // ★★ 离开节点：**延迟**清空而不是立即清 —— 否则鼠标刚要移向浮窗就没了
+      if (hoverRef.current && !cardHoverRef.current) {
+        window.clearTimeout(leaveTimerRef.current)
+        leaveTimerRef.current = window.setTimeout(() => {
+          if (!cardHoverRef.current) setHover(null)
+        }, HOVER_LINGER_MS)
+      }
+
       // ★ 没命中节点就判边：点到「聚合边」线段的距离
       // ⚠⚠ 只判**画布上真的画出来的边** —— `graph` 是已展示子集；
       //    ⛔ 不能用 `fullGraph`：它含被 showImports 过滤掉的 imports/includes
@@ -323,7 +340,7 @@ export default function GraphCanvas({
         if (cardHoverRef.current) return // 鼠标正停在浮窗上
         setHover(null)
         setEdgeHover(null)
-      }, 200)
+      }, HOVER_LINGER_MS)
     }
 
     box.addEventListener('pointermove', onMove)
@@ -335,6 +352,11 @@ export default function GraphCanvas({
       window.clearTimeout(leaveTimerRef.current)
     }
   }, [graph, nodeSizePx])
+
+  // 把 state 同步给 ref（供上面的 pointermove 闭包判断）
+  useEffect(() => {
+    hoverRef.current = hover
+  }, [hover])
 
   // ============================================================ 建图（只在 graph 变时）
   useEffect(() => {

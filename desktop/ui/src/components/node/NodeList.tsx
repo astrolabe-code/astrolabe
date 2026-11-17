@@ -199,7 +199,7 @@ export default function NodeList({
                       window.clearTimeout(leaveTimerRef.current)
                       leaveTimerRef.current = window.setTimeout(() => {
                         if (!cardHoverRef.current) setHover(null)
-                      }, 150)
+                      }, 200)
                     }}
                     className="w-full text-left"
                     style={{
@@ -231,14 +231,14 @@ export default function NodeList({
                           fontSize: 12.5,
                           color: 'var(--text-main)',
                         }}
-                        title={n.qname || n.name}
+                        // ⛔ 不再设原生 title：和自定义浮窗重复，会出现"一闪而过 + 一个黑框"
                       >
                         {n.qname && n.qname !== n.name ? n.qname : n.name}
                       </span>
                       {/* ★★ 入口徽标：只标 main / __main__ / main.*（⛔ 不猜"重要程度"）⚠ */}
                       {isEntryNode(n) && (
                         <span
-                          title="入口：建议从这里开始读"
+                          // ⛔ 不设原生 title：会弹黑框盖住自定义浮窗（徽标本身就是"入口"二字）
                           style={{
                             fontSize: 10,
                             flexShrink: 0,
@@ -254,7 +254,7 @@ export default function NodeList({
                       )}
                       {/* ★ 徽标颜色 = 该类型的颜色（与图谱节点、右侧面板同源）⚠ */}
                       <span
-                        title={n.kind}
+                        // ⛔ 类型也不设原生 title：浮窗里已经显示，重复会盖住浮窗
                         style={{
                           fontSize: 10,
                           flexShrink: 0,
@@ -281,7 +281,7 @@ export default function NodeList({
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                         }}
-                        title={`${n.file_path}:${n.line}`}
+                        // ⛔ 同上，路径也有自定义浮窗展示
                       >
                         {n.file_path}:{n.line}
                       </div>

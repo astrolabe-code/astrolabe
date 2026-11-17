@@ -276,7 +276,14 @@ export default function GraphCanvas({
       // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
       const hit = !!n && bestD <= nodeSizePx / 2 + 4
       if (hit && n) {
-        setHover({ node: n, x: last.clientX, y: last.clientY })
+        // ★★ 只在**换了节点**时定位一次：同一节点内移动鼠标不重建浮窗。
+        //   否则浮窗一直跟着鼠标跑（永远差 14px），鼠标移不上去点「挑战问题」。
+        // ⚠ 先取成局部常量：setState 回调可能延迟执行，TS 不认 `last` 非空
+        const px = last.clientX
+        const py = last.clientY
+        setHover((cur) =>
+          cur && cur.node.vid === n.vid ? cur : { node: n, x: px, y: py },
+        )
         setEdgeHover(null)
         return
       }
@@ -311,11 +318,12 @@ export default function GraphCanvas({
     }
     const onLeave = () => {
       window.clearTimeout(leaveTimerRef.current)
+      // ★ 200ms：观感上"移开就消失"，又留出足够时间把鼠标移到浮窗上点按钮
       leaveTimerRef.current = window.setTimeout(() => {
         if (cardHoverRef.current) return // 鼠标正停在浮窗上
         setHover(null)
         setEdgeHover(null)
-      }, 150)
+      }, 200)
     }
 
     box.addEventListener('pointermove', onMove)

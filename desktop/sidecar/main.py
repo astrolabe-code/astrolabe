@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -46,6 +47,7 @@ import links
 import board
 import graphdb
 import ai
+import contextpack
 
 VERSION = "0.3.0"
 
@@ -236,6 +238,7 @@ R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
 R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
+R_AQUESTIONS = re.compile(r"^/api/projects/([^/]+)/ai/questions/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
@@ -1148,6 +1151,23 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"起标题失败：{ai.redact(exc)}", 500)
 
+    # ★★ 节点思考题：带上下文出题 + 联系已学笔记
+    m = R_AQUESTIONS.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            vid = int(body.get("vid") or 0)
+            if not vid:
+                return bad("缺少 vid")
+            return ok(_questions(p, vid, bool(body.get("refresh"))))
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"出题失败：{ai.redact(exc)}", 500)
+
     # ★★ 行内补全（非流式）：短文本，一次返回
     m = R_AICOMPLETE.match(path)
     if m:
@@ -1574,6 +1594,100 @@ def _ask_events(project, vid: int, question: str):
     snippet, lang, up, down, samples = _node_context(project, node)
     messages = ai.build_ask_messages(node, snippet, lang, up, down, samples, q)
     yield from ai.stream_chat(messages, max_tokens=800)
+
+
+def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
+    """找出「用户之前在附近写过的笔记」，供复习式提问使用。
+
+    ★ 引用**原话**（正文前 200 字），⛔ 不含 ai-draft（那不是用户自己的理解）。
+    ★ 关系只描述图上能指出的三种：它调用了 / 被它调用 / 同一片代码。
+    """
+    down = {int(x["vid"]): str(x.get("name") or "") for x in (pack.get("downstream") or [])}
+    up = {int(x["vid"]): str(x.get("name") or "") for x in (pack.get("upstream") or [])}
+    vids = [int(vid), *down.keys(), *up.keys()]
+    try:
+        rows = store.notes_at_vids(CONN, project["id"], vids)
+    except Exception:  # noqa: BLE001
+        return []
+
+    now = datetime.datetime.now()
+    out: list[dict] = []
+    for r in rows:
+        if str(r.get("origin") or "human") == "ai-draft":
+            continue
+        nv = int(r.get("node_vid") or 0)
+        if nv in down:
+            rel = f"它调用了 {down[nv]}"
+        elif nv in up:
+            rel = f"{up[nv]} 调用了它"
+        elif nv == int(vid):
+            rel = "就是这个节点"
+        else:
+            rel = "同一片代码"
+
+        body = ""
+        try:
+            _meta, txt = notefile.read_file(os.path.join(ROOT, str(r.get("rel_path") or "")))
+            body = " ".join(str(txt or "").split())[:200]
+        except Exception:  # noqa: BLE001
+            body = ""
+        if not body:
+            continue
+
+        age = -1
+        try:
+            dt = datetime.datetime.fromisoformat(str(r.get("created_at")))
+            age = max(0, (now - dt).days)
+        except Exception:  # noqa: BLE001
+            age = -1
+
+        out.append(
+            {
+                "name": str(r.get("title") or "") or "（无标题）",
+                "kind_label": ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记"),
+                "age_days": age,
+                "text": body,
+                "relation": rel,
+                "_k": (0 if rel != "同一片代码" else 1, age if age >= 0 else 999),
+            }
+        )
+
+    out.sort(key=lambda x: x["_k"])
+    for x in out:
+        x.pop("_k", None)
+    return out[:3]
+
+
+def _questions(project, vid: int, refresh: bool = False) -> dict:
+    """节点思考题：上下文包 → 合并已学笔记 → 出题 → 解析 → 缓存。
+
+    ⚠ 缓存口径 (vid, provider, model)：同一个节点再打开是 **0 次调用**；
+      「换一批」才重跑（复用上下文包，只重问模型）。
+    """
+    act = ai.active()
+    if not refresh:
+        cached = store.get_ai_questions(CONN, vid, act["id"], act["model"])
+        if cached:
+            try:
+                return json.loads(cached)
+            except Exception:  # noqa: BLE001
+                pass
+
+    pack = contextpack.build(ROOT, project["root"], vid)
+    learned = _learned_notes(project, pack, vid)
+    messages = ai.build_questions_messages(pack, learned)
+    text = ai.chat_once(messages, max_tokens=600)
+    parsed = ai.parse_questions(text)
+    parsed["learned"] = learned
+
+    if parsed.get("items"):
+        try:
+            store.put_ai_questions(
+                CONN, vid, act["id"], act["model"], json.dumps(parsed, ensure_ascii=False)
+            )
+        except Exception:  # noqa: BLE001 —— 缓存写失败不影响这次结果
+            pass
+    return parsed
 
 
 def _complete(project, vid: int, before: str, doc: str, kind: str = "") -> dict:

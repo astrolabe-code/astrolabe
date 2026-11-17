@@ -116,6 +116,16 @@ CREATE TABLE IF NOT EXISTS ai_draft (
   PRIMARY KEY (vid, provider, model)
 );
 
+-- ★★ AI 思考题缓存：同节点 + 同模型再打开是 0 次调用；「换一批」才重跑
+CREATE TABLE IF NOT EXISTS ai_questions (
+  vid         INTEGER NOT NULL,
+  provider    TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  payload     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (vid, provider, model)
+);
+
 CREATE TABLE IF NOT EXISTS curate_log (
   id          INTEGER PRIMARY KEY,
   project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -537,3 +547,50 @@ def source_changed(conn: sqlite3.Connection, project: dict) -> bool:
     except Exception:  # noqa: BLE001 —— 目录不可读时不要因为「检测」把项目页搞挂
         return False
     return cur != saved and cur != ack
+
+
+# ---------------------------------------------------------------- AI 思考题缓存
+
+
+def get_ai_questions(conn: sqlite3.Connection, vid: int, provider: str, model: str) -> str:
+    """命中返回 JSON 字符串，否则空串。"""
+    r = conn.execute(
+        "SELECT payload FROM ai_questions WHERE vid = ? AND provider = ? AND model = ?",
+        (int(vid), str(provider), str(model)),
+    ).fetchone()
+    return str(r["payload"]) if r else ""
+
+
+def put_ai_questions(
+    conn: sqlite3.Connection, vid: int, provider: str, model: str, payload: str
+) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO ai_questions (vid, provider, model, payload, created_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(vid, provider, model) DO UPDATE SET "
+            "payload = excluded.payload, created_at = excluded.created_at",
+            (
+                int(vid),
+                str(provider),
+                str(model),
+                str(payload),
+                datetime.datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+
+
+def notes_at_vids(
+    conn: sqlite3.Connection, project_id: int, vids: list[int]
+) -> list[dict]:
+    """一次查出这批节点上的笔记（⚠ 不逐节点查 —— 那是 N 次往返）。"""
+    ids = [int(v) for v in vids if int(v)]
+    if not ids:
+        return []
+    ph = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT ref, node_vid, kind, title, rel_path, created_at, origin FROM note "
+        f"WHERE project_id = ? AND node_vid IN ({ph})",
+        (int(project_id), *ids),
+    ).fetchall()
+    return [dict(r) for r in rows]

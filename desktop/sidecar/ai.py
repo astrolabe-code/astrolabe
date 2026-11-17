@@ -640,6 +640,154 @@ def clean_title(text: str) -> str:
     return t[:40].strip()
 
 
+# ============================================================================
+# 节点思考题：带上下文出题 + 联系已学笔记
+# ============================================================================
+QUESTIONS_SYSTEM = (
+    "你是带新手读代码的老师。你的任务不是解释代码，而是**提出问题**，"
+    "让读者注意到他本来不会注意的东西。\n"
+    "⛔ 绝不给答案，也不要暗示答案；⛔ 不要问「这个函数做什么」（读者会自己写）。\n"
+    "输出格式（严格三行 + 最多两行下一步，⛔ 不要别的文字）：\n"
+    "陷阱：<一个关于前提/边界/错误处理的问题>\n"
+    "优化：<一个关于「为什么不按最自然的写法」的问题>\n"
+    "背景：<一个关于操作系统/CPU/语言标准/历史约束的问题，结尾加（背景知识）>\n"
+    "下一步：<节点名> —— <理由>\n"
+    "下一步：<节点名> —— <理由>\n"
+    "★ 下面给的「可疑点」只是**用正则机械扫出来的线索**，很不完整；"
+    "你必须通读源码自己找问题 —— 异常路径没处理、某个前提可能不成立、"
+    "边界与类型转换、锁的范围、缓冲区大小、返回值约定……"
+    "这些往往比魔数更值得问。\n"
+    "★ 三个问题中**至少一个**要联系【你之前学过】里的内容，"
+    "问「他那时学到的结论，在这里怎么起作用 / 还成不成立」；"
+    "引用时用读者的原话，⛔ 不要改写成要点。\n"
+    "★ 如果没有【你之前学过】，就当作第一次看这里，⛔ 不许编造「你可能记得」之类。"
+)
+
+
+def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> list[dict]:
+    """把一个「上下文包」渲染成 prompt。
+
+    ★ 借鉴 GitNexus 的 `MODULE_USER_PROMPT`（源码 + 三层调用 + 执行流一并给），
+      但目标是**出题**而不是写文档。
+    ★ `learned` 里是用户在这个节点附近写过的笔记（原文），用于复习式提问。
+    """
+    node = pack.get("node") or {}
+    parts: list[str] = [
+        f"【当前节点】{node.get('kind') or ''} {node.get('name') or ''}"
+        f"  @ {node.get('file') or ''}:{node.get('line') or 0}-{node.get('line_end') or 0}",
+        f"【签名】{node.get('signature') or '（解析器未给出）'}",
+        "【源码】",
+        "```",
+        str(pack.get("snippet") or "（读不到源码）"),
+        "```",
+    ]
+    if pack.get("truncated_node"):
+        parts.append("（注意：当前节点源码超过 200 行，上面是前 200 行）")
+
+    sibs = pack.get("siblings") or []
+    if sibs:
+        parts.append(
+            "【同文件的其它函数（只看名字，判断这个文件的职责）】\n"
+            + "\n".join(f"- {x.get('name')}  @{x.get('line')}" for x in sibs)
+        )
+
+    def block(title: str, rows: list[dict]) -> None:
+        if not rows:
+            return
+        parts.append(f"【{title}】")
+        for r in rows:
+            parts.append(
+                f"- {r.get('name')}  @ {r.get('file')}:{r.get('line')}\n"
+                f"```\n{r.get('snippet') or ''}\n```"
+            )
+
+    block("它调用的函数（完整源码）", pack.get("downstream") or [])
+    block("调用它的函数（完整源码）", pack.get("upstream") or [])
+
+    dropped = pack.get("dropped") or {}
+    lost = int(dropped.get("downstream") or 0) + int(dropped.get("upstream") or 0)
+    if lost:
+        parts.append(f"（还有 {lost} 个相邻函数因长度限制未给出）")
+
+    flows = pack.get("flows") or []
+    if flows:
+        parts.append(
+            "【它在这些执行流里】\n"
+            + "\n".join(
+                f"- 第 {i + 1} 条（{f.get('length')} 步）：" + " → ".join(f.get("labels") or [])
+                for i, f in enumerate(flows)
+            )
+        )
+
+    sus = pack.get("suspicious") or []
+    if sus:
+        parts.append(
+            "【正则扫出的线索（不完整，只用于定位；⛔ 不要只依赖这些）】\n"
+            + "\n".join(f"- {x}" for x in sus)
+        )
+
+    # ---- 用户之前学过的（引用原话，⛔ 不概括）
+    if learned:
+        lines = ["【你之前学过（读者自己写的原话，⛔ 不要改写）】"]
+        for it in learned[:3]:
+            age = it.get("age_days")
+            when = f"{age} 天前" if isinstance(age, int) and age >= 0 else "之前"
+            lines.append(
+                f"- {it.get('name')}（{when}写的{it.get('kind_label') or '笔记'}，"
+                f"关系：{it.get('relation') or '同一片代码'}）"
+            )
+            lines.append(f"  「{str(it.get('text') or '').strip()[:200]}」")
+        parts.append("\n".join(lines))
+    else:
+        parts.append("【你之前学过】\n（这是第一次看这附近，⛔ 不要假装读者记得什么）")
+
+    parts.append(
+        "【任务】按 system 里规定的格式出 3 个问题（陷阱 / 优化 / 背景），"
+        "并给出最多 2 条「下一步可以读」。"
+        "★ 线索只是帮你快速定位，真正的可疑之处要你自己读源码发现；"
+        "★ 问题里若引用代码事实，必须能指到上面给出的源码；"
+        "背景类问题只问「有什么关系」，⛔ 不要下结论。"
+    )
+    return [
+        {"role": "system", "content": QUESTIONS_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def parse_questions(text: str) -> dict:
+    """把模型输出解析成 `{items: [{type, text}], next: [{name, why}]}`。
+
+    ⚠ 用固定前缀行解析而不是 JSON：小模型经常把 JSON 写坏，
+      而这种格式坏一行只丢一条，不会整段报废。
+    """
+    items: list[dict] = []
+    nxt: list[dict] = []
+    for raw in str(text or "").splitlines():
+        s = raw.strip().lstrip("-·•* ").strip()
+        if not s:
+            continue
+        for label in ("陷阱", "优化", "背景"):
+            for sep in ("：", ":"):
+                if s.startswith(label + sep):
+                    body = s[len(label) + 1 :].strip()
+                    if body:
+                        items.append({"type": label, "text": body})
+                    break
+            else:
+                continue
+            break
+        else:
+            for sep in ("：", ":"):
+                if s.startswith("下一步" + sep):
+                    rest = s[4:].strip()
+                    name, _, why = rest.partition("——")
+                    if not why:
+                        name, _, why = rest.partition("-")
+                    nxt.append({"name": name.strip(), "why": why.strip()})
+                    break
+    return {"items": items[:3], "next": nxt[:2]}
+
+
 def brief(text: str, limit: int = 24, after: str = "") -> str:
     """把完整补全截成「一眼能看完」的开头（最多 24 字，且回退到最近的句读）。
 

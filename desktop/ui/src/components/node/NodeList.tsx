@@ -55,6 +55,9 @@ export default function NodeList({
 }: NodeListProps) {
   // ★ 悬停浮窗（所有者：列表里也要有详情浮窗，重载就靠它分辨）
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
+  // ★ 浮窗里有「挑战问题」按钮 ⇒ 鼠标移向浮窗时不能立刻清掉 hover
+  const cardHoverRef = useRef(false)
+  const leaveTimerRef = useRef(0)
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [limit, setLimit] = useState(PAGE)
@@ -192,7 +195,12 @@ export default function NodeList({
                     //   ⛔ 不再顺手跳图谱 —— 那样太容易误触（所有者 2026-10-31）
                     onClick={() => onSelect(n)}
                     onMouseEnter={(e) => setHover({ node: n, x: e.clientX, y: e.clientY })}
-                    onMouseLeave={() => setHover(null)}
+                    onMouseLeave={() => {
+                      window.clearTimeout(leaveTimerRef.current)
+                      leaveTimerRef.current = window.setTimeout(() => {
+                        if (!cardHoverRef.current) setHover(null)
+                      }, 150)
+                    }}
                     className="w-full text-left"
                     style={{
                       padding: '7px 10px',
@@ -349,7 +357,21 @@ export default function NodeList({
         )}
       </div>
 
-      {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
+      {hover && (
+        <NodeHoverCard
+          node={hover.node}
+          x={hover.x}
+          y={hover.y}
+          onEnter={() => {
+            cardHoverRef.current = true
+            window.clearTimeout(leaveTimerRef.current)
+          }}
+          onLeave={() => {
+            cardHoverRef.current = false
+            setHover(null)
+          }}
+        />
+      )}
 
       {items.length < total && (
         <div className="pt-3">

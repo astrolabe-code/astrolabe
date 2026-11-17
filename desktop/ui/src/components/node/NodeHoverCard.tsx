@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 
@@ -31,35 +31,41 @@ interface NodeHoverCardProps {
   /** 鼠标位置（视口坐标） */
   x: number
   y: number
+  /** ★ 鼠标进入浮窗（让画布别急着关掉它，否则按钮点不到） */
+  onEnter?: () => void
+  /** ★ 鼠标离开浮窗（这时才真的可以关了） */
+  onLeave?: () => void
 }
 
 const CARD_W = 320
 
-export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
+export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHoverCardProps) {
   const vw = typeof window === 'undefined' ? 1200 : window.innerWidth
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight
   // ★★ 从路由取项目（浮窗在图谱页和列表页都用，⛔ 不想再给两处加 prop）
   const { projectRef } = useParams<{ projectRef: string }>()
 
-  // ★★ 思考题：**停留 1.2 秒**才请求 —— 鼠标滑过十几个节点不该烧掉十几次调用
-  //   ⚠ 后端有 (节点, 模型) 缓存，同一个节点再看是 0 调用
+  // ★★ 思考题：**用户点按钮才生成** ⛔ 不自动请求
+  //   所有者原话（2026-11-17）：「不要停1.2S，在这个弹窗里做个挑战问题的按钮，
+  //   用户按了，才ai生成问题」——hover 只是浏览，调用要由用户明确发起。
   const [questions, setQuestions] = useState<{ type: string; text: string }[] | null>(null)
   const [asking, setAsking] = useState(false)
-  const vid = node.vid
-  useEffect(() => {
-    setQuestions(null)
-    setAsking(false)
-    if (!projectRef || !vid) return
-    const t = setTimeout(() => {
-      setAsking(true)
-      personalApi
-        .aiQuestions(projectRef, { vid: Number(vid) })
-        .then((r) => setQuestions(r.items || []))
-        .catch(() => setQuestions([])) // ⛔ 没配模型 / 出错都不打扰，只是不显示
-        .finally(() => setAsking(false))
-    }, 1200)
-    return () => clearTimeout(t)
-  }, [projectRef, vid])
+  const ask = async () => {
+    if (asking) return
+    if (!projectRef || !node.vid) {
+      setQuestions([])
+      return
+    }
+    setAsking(true)
+    try {
+      const r = await personalApi.aiQuestions(projectRef, { vid: Number(node.vid) })
+      setQuestions(r.items || [])
+    } catch {
+      setQuestions([]) // ⛔ 没配模型 / 出错都不打扰
+    } finally {
+      setAsking(false)
+    }
+  }
 
   // ★ 贴边时翻到另一侧（否则会被视口切掉）
   const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
@@ -75,6 +81,8 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
   //   ⇒ 挂到 body，层级才与右栏处在同一层（与 Modal 踩过的是同一个坑）
   return createPortal(
     <div
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
       style={{
         position: 'fixed',
         left,
@@ -82,7 +90,9 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
         zIndex: 9999,
         width: CARD_W,
         maxWidth: '80vw',
-        pointerEvents: 'none', // ⛔ 不吃鼠标事件（否则浮窗会挡住 hover）
+        // ★ 现在要能点「挑战问题」⇒ 吃鼠标事件；画布那边用延迟 150ms 的方式
+        //   判断鼠标是不是进了浮窗，进了就不关掉它（见 GraphCanvas 的 onLeave）
+        pointerEvents: 'auto',
         padding: '10px 12px',
         borderRadius: 10,
         border: '1px solid var(--card-border)',
@@ -136,12 +146,40 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
         </div>
       )}
 
-      {/* ★★ 思考题：只有拿到了才显示，⛔ 不显示空块（没配模型时整块不出现） */}
-      {asking && (
-        <div className="faint" style={{ fontSize: 10.5, marginTop: 8 }}>
-          💭 想一想…
-        </div>
-      )}
+      {/* ★★ 挑战问题：用户点了才调用（⛔ 不自动烧 token） */}
+      <div
+        style={{
+          marginTop: 8,
+          paddingTop: 7,
+          borderTop: '1px dashed var(--card-border)',
+        }}
+      >
+        {questions === null && (
+          <button
+            type="button"
+            onClick={() => void ask()}
+            disabled={asking}
+            style={{
+              fontSize: 11,
+              lineHeight: '18px',
+              padding: '2px 10px',
+              borderRadius: 999,
+              border: '1px solid var(--card-border)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              cursor: asking ? 'default' : 'pointer',
+            }}
+          >
+            {asking ? '出题中…' : '💭 挑战问题'}
+          </button>
+        )}
+        {questions !== null && questions.length === 0 && (
+          <div className="faint" style={{ fontSize: 10.5 }}>
+            这次没出题（检查 AI 设置）
+          </div>
+        )}
+      </div>
+
       {!!questions?.length && (
         <div
           style={{
@@ -151,7 +189,7 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
           }}
         >
           <div className="faint" style={{ fontSize: 10.5, marginBottom: 3 }}>
-            💭 读这个节点时想一想
+            💭 想一想
           </div>
           {questions.map((q, i) => (
             <div

@@ -186,6 +186,13 @@ export default function GraphCanvas({
   // ★★ 悬停浮窗（所有者：图谱上鼠标移上去就显示详情，⛔ 不打断阅读、不用点开右栏）
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
+  /**
+   * ★★ 浮窗保持：鼠标从节点移向浮窗时会先离开画布，若立刻清掉 hover，
+   *   浮窗就消失、里面的「挑战问题」按钮永远点不到。
+   *   ⇒ 离开延迟 150ms；这期间浮窗的 mouseenter 会把 cardHoverRef 置真。
+   */
+  const cardHoverRef = useRef(false)
+  const leaveTimerRef = useRef(0)
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
@@ -302,7 +309,14 @@ export default function GraphCanvas({
       last = ev
       if (!raf) raf = requestAnimationFrame(update)
     }
-    const onLeave = () => { setHover(null); setEdgeHover(null) }
+    const onLeave = () => {
+      window.clearTimeout(leaveTimerRef.current)
+      leaveTimerRef.current = window.setTimeout(() => {
+        if (cardHoverRef.current) return // 鼠标正停在浮窗上
+        setHover(null)
+        setEdgeHover(null)
+      }, 150)
+    }
 
     box.addEventListener('pointermove', onMove)
     box.addEventListener('pointerleave', onLeave)
@@ -310,6 +324,7 @@ export default function GraphCanvas({
       box.removeEventListener('pointermove', onMove)
       box.removeEventListener('pointerleave', onLeave)
       if (raf) cancelAnimationFrame(raf)
+      window.clearTimeout(leaveTimerRef.current)
     }
   }, [graph, nodeSizePx])
 
@@ -1016,7 +1031,22 @@ export default function GraphCanvas({
       )}
 
       {/* ★★ 悬停浮窗（名字 / 类型 / 签名 / 文件行号）—— 重载靠签名分辨 ⚠ */}
-      {hover && <NodeHoverCard node={hover.node} x={hover.x} y={hover.y} />}
+      {hover && (
+        <NodeHoverCard
+          node={hover.node}
+          x={hover.x}
+          y={hover.y}
+          onEnter={() => {
+            cardHoverRef.current = true
+            window.clearTimeout(leaveTimerRef.current)
+          }}
+          onLeave={() => {
+            cardHoverRef.current = false
+            setHover(null)
+            setEdgeHover(null)
+          }}
+        />
+      )}
       {edgeHover && <EdgeHoverCard edge={edgeHover.edge} x={edgeHover.x} y={edgeHover.y} />}
     </div>
   )

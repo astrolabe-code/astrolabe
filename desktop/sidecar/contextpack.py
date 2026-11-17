@@ -187,12 +187,18 @@ def build(
 
     # ---- 1) 一次读全图边：度数 + 邻接（⛔ 不逐节点查）
     conn = graphdb._open(data_dir)
-    rows = conn.execute("MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind").get_all()
+    rows = conn.execute(
+        "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind, r.origin"
+    ).get_all()
     deg: dict[int, int] = {}
     out_map: dict[int, set[int]] = {}
     in_map: dict[int, set[int]] = {}
-    for a, b, _kind in rows:
+    # ★ 手工补的边：用户给的，**确切**，⛔ 不能和「解析可能漏」混为一谈
+    manual_pairs: set[tuple[int, int]] = set()
+    for a, b, _kind, origin in rows:
         a, b = int(a), int(b)
+        if str(origin or "") == "manual":
+            manual_pairs.add((a, b))
         deg[a] = deg.get(a, 0) + 1
         deg[b] = deg.get(b, 0) + 1
         out_map.setdefault(a, set()).add(b)
@@ -237,6 +243,12 @@ def build(
             "signature": str(n.get("signature") or ""),
             "snippet": code,
             "truncated": cut,
+            # ★ manual = 用户手工连的边（确切）；parsed = 解析器推断（可能不全）
+            "origin": (
+                "manual"
+                if (int(vid), int(v)) in manual_pairs or (int(v), int(vid)) in manual_pairs
+                else "parsed"
+            ),
         }
 
     if str(node.get("kind") or "") == "dir":
@@ -314,6 +326,13 @@ def build(
     except Exception:  # noqa: BLE001
         flows = []
 
+    # 统计给出的邻居里有多少条边是手工补的
+    _manual_count = sum(
+        1
+        for v in down_ids + up_ids
+        if (int(vid), int(v)) in manual_pairs or (int(v), int(vid)) in manual_pairs
+    )
+
     return {
         "node": {
             "vid": int(vid),
@@ -337,6 +356,12 @@ def build(
         "flows": flows,
         # ★ 文件语义：`__init__.py` 这类「本来就没代码」的文件，提前告诉模型
         "file_hint": file_hint(rel_self),
+        # ★★ 可靠性说明：不让模型把「没看到调用者」当成「没人调用」
+        #   ⚠ 手工补的边是用户给的，属于**确切**信息，不能和解析边一起说「可能不准」
+        "epistemic": {
+            "manual": _manual_count,
+            "parsed": max(0, len(down_ids) + len(up_ids) - _manual_count),
+        },
         "suspicious": _suspicious(node_code),
         "dropped": dropped,
     }

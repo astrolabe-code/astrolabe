@@ -203,7 +203,7 @@ export default function NodeList({
                       window.clearTimeout(leaveTimerRef.current)
                       leaveTimerRef.current = window.setTimeout(() => {
                         if (!cardHoverRef.current) setHover(null)
-                      }, 1200) // ★ 留足时间把鼠标移到浮窗上（否则按钮点不到）
+                      }, 200) // ★ 只为「移到浮窗上点按钮」留一点时间，其余情况立即消失
                     }}
                     className="w-full text-left"
                     style={{

@@ -34,12 +34,15 @@ const LABEL_MIN_NODES = 30
 const LABEL_TOP_DEGREE = 12
 
 /**
- * ★★ 鼠标离开节点后，浮窗保留多久（ms）
+ * ★★ 鼠标离开节点后，浮窗再多留一小会儿（ms）
  *
- * 所有者原话（2026-11-17）：「不要设置一闪而过呀，除非迅速把鼠标移到弹窗上，
- * 否则弹窗就会消失，这不行」——要留出足够时间让人把鼠标移过去点「挑战问题」。
+ * 所有者原话（2026-11-17）：
+ * 「只需要在节点里可以移动到弹窗的定时器就行，离开节点，弹窗立刻消失」
+ *
+ * ⇒ 这是**唯一**一个定时器，只为了一件事：让鼠标能跨过节点与浮窗之间
+ *   那十几像素的空白去点「挑战问题」。除此之外任何离开都立即消失。
  */
-const HOVER_LINGER_MS = 1200
+const HOVER_LINGER_MS = 200
 
 /** 点到线段的距离（画布单位），用来判定鼠标是否落在某条聚合边上 */
 function distToSegment(p: ArrayLike<number>, a: ArrayLike<number>, b: ArrayLike<number>): number {
@@ -338,13 +341,11 @@ export default function GraphCanvas({
       if (!raf) raf = requestAnimationFrame(update)
     }
     const onLeave = () => {
+      // ★ 离开画布 = 立即消失（⛔ 不设定时器：这里没有「移到浮窗」的可能，
+      //   因为浮窗在画布外时鼠标已经离开画布了）
       window.clearTimeout(leaveTimerRef.current)
-      // ★ 200ms：观感上"移开就消失"，又留出足够时间把鼠标移到浮窗上点按钮
-      leaveTimerRef.current = window.setTimeout(() => {
-        if (cardHoverRef.current) return // 鼠标正停在浮窗上
-        setHover(null)
-        setEdgeHover(null)
-      }, HOVER_LINGER_MS)
+      setHover(null)
+      setEdgeHover(null)
     }
 
     box.addEventListener('pointermove', onMove)

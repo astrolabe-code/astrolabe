@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Loader2, Send, Trash2 } from 'lucide-react'
 
 import { personalApi, streamCall } from '../../api/personal'
+import MarkdownText from '../ui/MarkdownText'
 
 /**
  * ★★ **问答**（顶部第五个 tab）
@@ -203,11 +204,14 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
                   border: '1px solid var(--card-border)',
                   fontSize: 12.5,
                   lineHeight: 1.75,
-                  whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                 }}
               >
-                {it.a || <span className="faint">（没有回答）</span>}
+                {it.a ? (
+                  <MarkdownText text={it.a} compact />
+                ) : (
+                  <span className="faint">（没有回答）</span>
+                )}
               </div>
             </div>
             <div
@@ -230,11 +234,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
                 border: '1px solid var(--card-border)',
                 fontSize: 12.5,
                 lineHeight: 1.75,
-                whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
               }}
             >
-              {streaming}
+              <MarkdownText text={streaming} compact />
             </div>
           </div>
         )}

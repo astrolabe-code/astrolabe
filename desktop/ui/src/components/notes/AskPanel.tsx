@@ -12,6 +12,8 @@
  */
 import { useState } from 'react'
 
+import MarkdownText from '../ui/MarkdownText'
+
 import { streamCall } from '../../api/personal'
 import Modal from '../ui/Modal'
 
@@ -47,12 +49,14 @@ export default function AskPanel({ projectRef, vid, open, onClose }: Props) {
     setInput('')
     setTurns((ts) => [...ts, { q, a: '' }])
     setBusy(true)
+    let got = false
     try {
       await streamCall(
         `/api/projects/${encodeURIComponent(projectRef)}/ai/ask/`,
         { vid, question: q },
         (evt) => {
           if (evt.event === 'delta') {
+            got = true
             const piece = String(evt.text ?? '')
             setTurns((ts) => {
               if (!ts.length) return ts
@@ -70,6 +74,8 @@ export default function AskPanel({ projectRef, vid, open, onClose }: Props) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+      // ★ 一个 delta 都没收到 ⇒ 明确说出来。⛔ 不能留个空回答让人以为「模型没反应」
+      if (!got) setErr((prev) => prev || '没有收到任何内容（连接中断或模型未返回），请检查 AI 设置')
     }
   }
 
@@ -95,15 +101,12 @@ export default function AskPanel({ projectRef, vid, open, onClose }: Props) {
         {turns.map((t, i) => (
           <div key={`${i}-${t.q.slice(0, 8)}`}>
             <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>你：{t.q}</div>
-            <div
-              style={{
-                fontSize: 12.5,
-                lineHeight: 1.75,
-                whiteSpace: 'pre-wrap',
-                marginTop: 4,
-              }}
-            >
-              {t.a || (busy && i === turns.length - 1 ? '…' : '')}
+            <div style={{ marginTop: 4 }}>
+              {t.a ? (
+                <MarkdownText text={t.a} compact />
+              ) : busy && i === turns.length - 1 ? (
+                <span className="faint" style={{ fontSize: 12.5 }}>…</span>
+              ) : null}
             </div>
           </div>
         ))}

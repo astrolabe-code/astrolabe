@@ -269,6 +269,14 @@ export const personalApi = {
       body,
     ),
 
+  /** ★★ 节点思考题：带上下文出题，并引用用户之前写过的原话 */
+  aiQuestions: (ref: string, body: { vid: number; refresh?: boolean }) =>
+    post<{
+      items: { type: string; text: string }[]
+      next: { name: string; why: string }[]
+      learned: { name: string; kind_label: string; age_days: number; text: string; relation: string }[]
+    }>(`/api/projects/${encodeURIComponent(ref)}/ai/questions/`, body),
+
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>
     post<{ acked: boolean }>(`/api/projects/${encodeURIComponent(ref)}/source-ack/`),

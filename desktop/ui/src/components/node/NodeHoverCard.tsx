@@ -1,4 +1,8 @@
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useParams } from 'react-router-dom'
+
+import { personalApi } from '../../api/personal'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -34,10 +38,32 @@ const CARD_W = 320
 export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
   const vw = typeof window === 'undefined' ? 1200 : window.innerWidth
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight
+  // ★★ 从路由取项目（浮窗在图谱页和列表页都用，⛔ 不想再给两处加 prop）
+  const { projectRef } = useParams<{ projectRef: string }>()
+
+  // ★★ 思考题：**停留 1.2 秒**才请求 —— 鼠标滑过十几个节点不该烧掉十几次调用
+  //   ⚠ 后端有 (节点, 模型) 缓存，同一个节点再看是 0 调用
+  const [questions, setQuestions] = useState<{ type: string; text: string }[] | null>(null)
+  const [asking, setAsking] = useState(false)
+  const vid = node.vid
+  useEffect(() => {
+    setQuestions(null)
+    setAsking(false)
+    if (!projectRef || !vid) return
+    const t = setTimeout(() => {
+      setAsking(true)
+      personalApi
+        .aiQuestions(projectRef, { vid: Number(vid) })
+        .then((r) => setQuestions(r.items || []))
+        .catch(() => setQuestions([])) // ⛔ 没配模型 / 出错都不打扰，只是不显示
+        .finally(() => setAsking(false))
+    }, 1200)
+    return () => clearTimeout(t)
+  }, [projectRef, vid])
 
   // ★ 贴边时翻到另一侧（否则会被视口切掉）
   const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
-  const top = Math.min(y + 14, Math.max(8, vh - 140))
+  const top = Math.min(y + 14, Math.max(8, vh - 260))
 
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
@@ -107,6 +133,45 @@ export default function NodeHoverCard({ node, x, y }: NodeHoverCardProps) {
       {node.file_path && (
         <div className="mono faint" style={{ fontSize: 11 }}>
           {node.file_path}:{node.line}
+        </div>
+      )}
+
+      {/* ★★ 思考题：只有拿到了才显示，⛔ 不显示空块（没配模型时整块不出现） */}
+      {asking && (
+        <div className="faint" style={{ fontSize: 10.5, marginTop: 8 }}>
+          💭 想一想…
+        </div>
+      )}
+      {!!questions?.length && (
+        <div
+          style={{
+            marginTop: 8,
+            paddingTop: 7,
+            borderTop: '1px dashed var(--card-border)',
+          }}
+        >
+          <div className="faint" style={{ fontSize: 10.5, marginBottom: 3 }}>
+            💭 读这个节点时想一想
+          </div>
+          {questions.map((q, i) => (
+            <div
+              key={`${i}-${q.type}`}
+              // ⚠ 浮窗是 pointerEvents:none（鼠标一移开就消失）⇒ 每条限两行，
+              //   让用户扫一眼就能抓住关键词；完整内容点节点看右栏
+              style={{
+                fontSize: 11,
+                lineHeight: 1.65,
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+              }}
+            >
+              <span style={{ color: 'var(--accent)' }}>{q.type}</span>
+              <span className="faint"> · </span>
+              {q.text}
+            </div>
+          ))}
         </div>
       )}
     </div>,

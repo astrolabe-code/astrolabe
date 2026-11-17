@@ -58,6 +58,8 @@ export default function NodeList({
   // ★ 浮窗里有「挑战问题」按钮 ⇒ 鼠标移向浮窗时不能立刻清掉 hover
   const cardHoverRef = useRef(false)
   const leaveTimerRef = useRef(0)
+  /** 上一帧指针位置：判断「是否朝右下（弹窗方向）走」 */
+  const prevPtRef = useRef({ x: 0, y: 0 })
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [limit, setLimit] = useState(PAGE)
@@ -198,6 +200,17 @@ export default function NodeList({
                       // ★ 先取消上一次离开挂起的清空（否则鼠标一停它就到点，浮窗自己没了）
                       window.clearTimeout(leaveTimerRef.current)
                       setHover({ node: n, x: e.clientX, y: e.clientY })
+                    }}
+                    onMouseMove={(e) => {
+                      // ★ 朝右下（弹窗方向）⇒ 定住，方便移过去点按钮；其余方向跟随
+                      const cx = e.clientX
+                      const cy = e.clientY
+                      const p0 = prevPtRef.current
+                      const moving = cx !== p0.x || cy !== p0.y
+                      const towardCard = moving && cx >= p0.x && cy >= p0.y
+                      prevPtRef.current = { x: cx, y: cy }
+                      if (towardCard && hover?.node.vid === n.vid) return
+                      setHover({ node: n, x: cx, y: cy })
                     }}
                     onMouseLeave={() => {
                       window.clearTimeout(leaveTimerRef.current)

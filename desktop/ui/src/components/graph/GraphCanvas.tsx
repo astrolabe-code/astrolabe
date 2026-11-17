@@ -206,6 +206,8 @@ export default function GraphCanvas({
   const leaveTimerRef = useRef(0)
   /** 与 `hover` 同步：`update` 是闭包，读不到最新 state，用它判断「是否刚离开节点」 */
   const hoverRef = useRef<{ node: GraphNode; x: number; y: number } | null>(null)
+  /** 上一帧指针位置：用来判断「是不是朝右下（弹窗方向）走」 */
+  const prevPtRef = useRef({ x: 0, y: 0 })
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
   const ringRef = useRef<SVGSVGElement>(null)
@@ -293,14 +295,23 @@ export default function GraphCanvas({
         //   ⛔ 否则：从上个节点/空白移进来时，那次离开的 timer 还在跑，
         //   鼠标一停下它就到期，把刚出现的浮窗清掉（表现为「过几秒自己消失」）。
         window.clearTimeout(leaveTimerRef.current)
-        // ★★ 只在**换了节点**时定位一次：同一节点内移动鼠标不重建浮窗。
-        //   否则浮窗一直跟着鼠标跑（永远差 14px），鼠标移不上去点「挑战问题」。
-        // ⚠ 先取成局部常量：setState 回调可能延迟执行，TS 不认 `last` 非空
-        const px = last.clientX
-        const py = last.clientY
-        setHover((cur) =>
-          cur && cur.node.vid === n.vid ? cur : { node: n, x: px, y: py },
-        )
+        // ★★★ 位置策略（所有者 2026-11-17）：
+        //   「鼠标向左向上，弹窗就跟着走，向右下就定住，不就完了。
+        //    触发定住的就是鼠标向右下角移动」
+        //   弹窗在鼠标的右下 ⇒ 朝右下走 = 用户想过去点按钮 ⇒ 定住不动；
+        //   其余方向 = 还在浏览 ⇒ 跟着走。
+        const cx = last.clientX
+        const cy = last.clientY
+        const p0 = prevPtRef.current
+        const moving = cx !== p0.x || cy !== p0.y
+        const towardCard = moving && cx >= p0.x && cy >= p0.y
+        prevPtRef.current = { x: cx, y: cy }
+
+        const sameNode = hoverRef.current?.node.vid === n.vid
+        if (!(towardCard && sameNode)) {
+          // 朝其它方向 / 刚换节点 ⇒ 跟随（换节点必须定位，否则会停在上个节点处）
+          setHover({ node: n, x: cx, y: cy })
+        }
         setEdgeHover(null)
         return
       }

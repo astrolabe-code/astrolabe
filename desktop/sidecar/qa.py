@@ -17,7 +17,15 @@
       "q":    "这个函数为什么先检查 fd？",
       "a":    "因为……",
       "at":   "2026-11-17T10:20:30",
-      "model": "deepseek-chat"
+      "model": "deepseek-chat",
+      "tokens_in": 862,
+      "tokens_out": 164,
+      "ms": 2400,
+      "usage": {
+        "total": 1026,
+        "hit": 820, "miss": 42, "write": 0,
+        "think": 0, "response": 164
+      }
     }
   ]
 }
@@ -86,8 +94,22 @@ def list_items(data_dir: str, vid: int) -> dict:
     return _read(data_dir, vid)
 
 
-def append(data_dir: str, vid: int, q: str, a: str, model: str = "") -> dict:
-    """追加一条问答；返回追加后的完整列表。"""
+def append(
+    data_dir: str,
+    vid: int,
+    q: str,
+    a: str,
+    model: str = "",
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    ms: int = 0,
+    usage: dict | None = None,
+) -> dict:
+    """追加一条问答；返回追加后的完整列表。
+
+    ★ `tokens_in/out/ms` 用于界面上的「速率统计」（OpenWebUI 那排按钮里的信息）。
+      ⚠ 显式保存而不是每次重算：历史是**当时**的消耗，不该随后来的计价变。
+    """
     question = str(q or "").strip()[:MAX_TEXT]
     answer = str(a or "").strip()[:MAX_TEXT]
     if not question:
@@ -101,6 +123,18 @@ def append(data_dir: str, vid: int, q: str, a: str, model: str = "") -> dict:
         "a": answer,
         "at": now.isoformat(timespec="seconds"),
         "model": str(model or "")[:80],
+        "tokens_in": max(0, int(tokens_in or 0)),
+        "tokens_out": max(0, int(tokens_out or 0)),
+        "ms": max(0, int(ms or 0)),
+        # ★ 完整用量明细（输入/输出/缓存命中/思考），用于「详情」面板
+        "usage": {
+            "total": max(0, int((usage or {}).get("total") or 0)),
+            "hit": max(0, int((usage or {}).get("hit") or 0)),
+            "miss": max(0, int((usage or {}).get("miss") or 0)),
+            "write": max(0, int((usage or {}).get("write") or 0)),
+            "think": max(0, int((usage or {}).get("think") or 0)),
+            "response": max(0, int((usage or {}).get("response") or 0)),
+        },
     }
     data["items"].append(item)
     if len(data["items"]) > MAX_ITEMS:

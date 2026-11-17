@@ -274,10 +274,36 @@ export const personalApi = {
     get<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
       `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
     ),
-  qaAppend: (ref: string, body: { vid: number; q: string; a: string; model?: string }) =>
+  qaAppend: (
+    ref: string,
+    body: {
+      vid: number
+      q: string
+      a: string
+      model?: string
+      tokens_in?: number
+      tokens_out?: number
+      /** 本次耗时（毫秒），用于算 tok/s */
+      ms?: number
+      /** ★ 完整用量明细：输入/输出拆分、缓存命中、思考 token */
+      usage?: {
+        total?: number
+        hit?: number
+        miss?: number
+        write?: number
+        think?: number
+        response?: number
+      }
+    },
+  ) =>
     post<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
       `/api/projects/${encodeURIComponent(ref)}/qa/`,
       body,
+    ),
+  /** ★ 删一条（「重新回答」前先删旧的） */
+  qaRemove: (ref: string, vid: number, id: string) =>
+    del<{ vid: number; items: unknown[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&id=${encodeURIComponent(id)}`,
     ),
   qaClear: (ref: string, vid: number) =>
     del<{ vid: number; items: unknown[] }>(

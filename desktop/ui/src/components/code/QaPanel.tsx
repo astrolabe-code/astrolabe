@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { Loader2, Send, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Check, Copy, Info, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react'
 
 import { personalApi, streamCall } from '../../api/personal'
 import MarkdownText from '../ui/MarkdownText'
@@ -10,15 +11,31 @@ import MarkdownText from '../ui/MarkdownText'
  * 所有者原话（2026-11-17）：
  * 「顶部这一排加第五个选项，问答，就像现在的大模型厂商的网页版一样，
  *   可以让人提问，回答，记录问答历史。加一个问答历史数据的json，挂在节点上」
+ * 「我说token 速率，你就只弄token速率吗？我是叫你给出全部统计信息呀」
  *
- * ## 与 AskPanel 的区别
+ * ## 统计口径（对齐 OpenWebUI 的 Token Usage Details）
  *
- * AskPanel 是**临时弹窗**：关掉就没了，回答不落库。
- * 这里是**长期会话**：每条问答写进 `<data>/qa/<vid>.json`，下次打开还在。
- *
- * ⚠ 只保存「问题 + 完整回答」，⛔ 不存流式中间态；
- *   失败时把问题填回输入框，避免白打一遍。
+ * ```
+ * Input            提示词总 token
+ *   Cache hit      命中前缀缓存的部分（便宜约 10 倍）
+ *   Cache miss     没命中、要重新计费的部分
+ * Output           生成的总 token
+ *   Thinking       推理模型的思考部分
+ *   Response       实际答出来的部分
+ * Cache hit rate   命中率（进度条）
+ * ```
+ * ⚠ 不同服务商给的字段不一样：DeepSeek 给 hit/miss，OpenAI 给 cached_tokens，
+ *   Ollama 根本没有缓存概念 —— 拿不到的项就显示 0，⛔ 不猜。
  */
+
+interface QaUsage {
+  total: number
+  hit: number
+  miss: number
+  write: number
+  think: number
+  response: number
+}
 
 interface QaItem {
   id: string
@@ -26,12 +43,228 @@ interface QaItem {
   a: string
   at: string
   model: string
+  tokens_in?: number
+  tokens_out?: number
+  ms?: number
+  usage?: QaUsage
 }
+
+const EMPTY_USAGE: QaUsage = { total: 0, hit: 0, miss: 0, write: 0, think: 0, response: 0 }
+
+/** 数字缩写：1234 → 1.2k */
+function fmt(n: number): string {
+  const v = Math.max(0, Math.round(n || 0))
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`
+  return String(v)
+}
+
+/** 耗时：83s → 1m 23s */
+function fmtMs(ms: number): string {
+  const s = Math.max(0, Math.round((ms || 0) / 1000))
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+/** 缓存命中率（分母是输入总 token） */
+function hitRate(u: QaUsage): number {
+  const denom = u.hit + u.miss
+  return denom > 0 ? u.hit / denom : 0
+}
+
+const dot: React.CSSProperties = {
+  display: 'inline-block',
+  width: 8,
+  height: 8,
+  borderRadius: 2,
+  flexShrink: 0,
+}
+
+/**
+ * ★★ 一条回答的紧凑统计行；点开在**上方浮出**明细。
+ *
+ * 所有者原话（2026-11-17）：
+ * 「你这个点击了，向上翻呀，现在向下翻，把框都挤变形了，不好看」
+ *
+ * ⇒ position: fixed + createPortal：
+ *   · 不占文档流 ⇒ 展开不会把下面内容顶下去
+ *   · 挂在 body 上 ⇒ 不受历史区 overflow:auto 裁剪
+ *   · 位置按按钮 rect 算，向上弹
+ */
+function UsageLine({ item }: { item: QaItem }) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+
+  const u = item.usage || EMPTY_USAGE
+  const tps = item.ms && item.tokens_out ? item.tokens_out / (item.ms / 1000) : 0
+  const rate = hitRate(u)
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) {
+      const W = 300
+      setPos({
+        left: Math.max(8, Math.min(r.left, window.innerWidth - W - 8)),
+        bottom: Math.max(8, window.innerHeight - r.top + 6),
+      })
+    }
+    setOpen(true)
+  }
+
+  const row = (color: string, label: string, value: number, muted = false) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      {color ? <span style={{ ...dot, background: color }} /> : null}
+      <span className={muted ? 'faint' : undefined}>{label}</span>
+      <span className="mono" style={{ marginLeft: 'auto' }}>{fmt(value)}</span>
+    </div>
+  )
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className="faint"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          fontSize: 10.5,
+          background: 'transparent',
+          border: 0,
+          padding: 0,
+          cursor: 'pointer',
+          color: 'var(--text-faint)',
+        }}
+      >
+        <Info size={11} />
+        {fmt(u.total || (item.tokens_in || 0) + (item.tokens_out || 0))} tok
+        {u.hit + u.miss > 0 && ` · 命中 ${(rate * 100).toFixed(1)}%`}
+        {tps > 0 && ` · ${tps.toFixed(1)} tok/s`}
+        {!!item.ms && ` · ${fmtMs(item.ms)}`}
+      </button>
+
+      {open &&
+        pos &&
+        createPortal(
+          <>
+            {/* 点空白处关闭；⛔ 不加背景色，免得挡住阅读 */}
+            <div
+              onClick={() => setOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            />
+            <div
+              style={{
+                position: 'fixed',
+                left: pos.left,
+                bottom: pos.bottom,
+                zIndex: 9999,
+                width: 300,
+                padding: '10px 12px',
+                border: '1px solid var(--card-border)',
+                borderRadius: 8,
+                background: 'var(--card-bg)',
+                boxShadow: '0 8px 24px rgba(15,23,42,.18)',
+                fontSize: 11.5,
+                lineHeight: 1.9,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                <span>Token 用量</span>
+                <span className="mono">{fmt(u.total)}</span>
+              </div>
+
+              <div style={{ marginTop: 6 }}>
+                {row('#3b82f6', '输入', item.tokens_in || 0)}
+              </div>
+              <div style={{ paddingLeft: 16 }}>
+                {row('#10b981', '缓存命中', u.hit, true)}
+                {row('#ef4444', '缓存未命中', u.miss, true)}
+                {row('#f59e0b', '缓存写入', u.write, true)}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 6,
+                  paddingTop: 6,
+                  borderTop: '1px solid var(--card-border)',
+                }}
+              >
+                {row('#a855f7', '输出', item.tokens_out || 0)}
+              </div>
+              <div style={{ paddingLeft: 16 }}>
+                {row('', '思考', u.think, true)}
+                {row('', '回答', u.response, true)}
+              </div>
+
+              {u.hit + u.miss > 0 && (
+                <>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontWeight: 600,
+                      paddingTop: 6,
+                      borderTop: '1px solid var(--card-border)',
+                    }}
+                  >
+                    <span>⚡ 缓存命中率</span>
+                    <span style={{ color: '#10b981' }}>{(rate * 100).toFixed(1)}%</span>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 4,
+                      height: 6,
+                      borderRadius: 3,
+                      overflow: 'hidden',
+                      display: 'flex',
+                      background: 'var(--card-border)',
+                    }}
+                  >
+                    <span style={{ width: `${rate * 100}%`, background: '#10b981' }} />
+                    <span
+                      style={{
+                        width: `${(u.write / (u.hit + u.miss + u.write || 1)) * 100}%`,
+                        background: '#f59e0b',
+                      }}
+                    />
+                    <span style={{ flex: 1, background: '#ef4444' }} />
+                  </div>
+                  <div
+                    className="faint"
+                    style={{ display: 'flex', gap: 10, marginTop: 4, fontSize: 10 }}
+                  >
+                    <span><span style={{ ...dot, background: '#10b981' }} /> 命中</span>
+                    <span><span style={{ ...dot, background: '#f59e0b' }} /> 写入</span>
+                    <span><span style={{ ...dot, background: '#ef4444' }} /> 未命中</span>
+                  </div>
+                </>
+              )}
+
+              {item.model && (
+                <div className="faint" style={{ marginTop: 6, fontSize: 10 }}>
+                  模型 {item.model}
+                </div>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
+  )
+}
+
 
 interface QaPanelProps {
   projectRef: string
   vid: number | null
-  /** 节点名，仅用于标题 */
   name?: string
 }
 
@@ -42,9 +275,9 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const [streaming, setStreaming] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  const [copiedId, setCopiedId] = useState('')
   const boxRef = useRef<HTMLDivElement | null>(null)
 
-  // 换节点 ⇒ 重新拉历史（⛔ 不保留上一个节点的问答，那会张冠李戴）
   useEffect(() => {
     setItems([])
     setQ('')
@@ -56,10 +289,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     personalApi
       .qaList(projectRef, vid)
       .then((r) => {
-        if (live) setItems(r.items || [])
+        if (live) setItems((r.items || []) as QaItem[])
       })
       .catch(() => {
-        /* 读失败当空，不打扰 */
+        /* 读失败当空 */
       })
       .finally(() => {
         if (live) setLoading(false)
@@ -69,44 +302,106 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     }
   }, [projectRef, vid])
 
-  // 新内容 → 滚到底
   useEffect(() => {
     const el = boxRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [items, streaming])
 
-  const send = async () => {
-    const text = q.trim()
-    if (!text || busy || !vid || !projectRef) return
-    setQ('')
+  // ★ 整个会话累计（OpenWebUI 顶部那三个胶囊）
+  const total = useMemo(() => {
+    let tok = 0
+    let ms = 0
+    let hit = 0
+    let miss = 0
+    for (const it of items) {
+      tok += (it.tokens_in || 0) + (it.tokens_out || 0)
+      ms += it.ms || 0
+      hit += it.usage?.hit || 0
+      miss += it.usage?.miss || 0
+    }
+    return { tok, ms, hit, miss, rate: hit + miss > 0 ? hit / (hit + miss) : 0 }
+  }, [items])
+
+  const copy = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedId(id)
+      window.setTimeout(() => setCopiedId((c) => (c === id ? '' : c)), 1400)
+    } catch {
+      setErr('复制失败（系统未授权剪贴板）')
+    }
+  }
+
+  /** 问一次；`replaceId` 有值时先删那条（「重新回答」用） */
+  const ask = async (text: string, replaceId?: string): Promise<boolean> => {
+    const question = text.trim()
+    if (!question || busy || !vid || !projectRef) return false
     setErr('')
     setBusy(true)
     setStreaming('')
     let acc = ''
     let got = false
+    let tin = 0
+    let tout = 0
+    let usage: QaUsage = { ...EMPTY_USAGE }
+    const t0 = performance.now()
     try {
       await streamCall(
         `/api/projects/${encodeURIComponent(projectRef)}/ai/ask/`,
-        { vid, question: text },
+        { vid, question },
         (evt) => {
           if (evt.event === 'delta') {
             got = true
             acc += String(evt.text ?? '')
             setStreaming(acc)
+          } else if (evt.event === 'usage') {
+            tin = Number(evt.in || 0)
+            tout = Number(evt.out || 0)
+            usage = {
+              total: Number(evt.total || tin + tout),
+              hit: Number(evt.hit || 0),
+              miss: Number(evt.miss || 0),
+              write: Number(evt.write || 0),
+              think: Number(evt.think || 0),
+              response: Number(evt.response || tout),
+            }
           }
         },
       )
       if (!got) throw new Error('没有收到任何内容（检查 AI 设置）')
-      const r = await personalApi.qaAppend(projectRef, { vid, q: text, a: acc.trim() })
-      setItems(r.items || [])
+      const ms = Math.round(performance.now() - t0)
+      if (replaceId) {
+        try {
+          await personalApi.qaRemove(projectRef, vid, replaceId)
+        } catch {
+          /* 删不掉也继续，避免整轮白问 */
+        }
+      }
+      const r = await personalApi.qaAppend(projectRef, {
+        vid,
+        q: question,
+        a: acc.trim(),
+        tokens_in: tin,
+        tokens_out: tout,
+        ms,
+        usage,
+      })
+      setItems((r.items || []) as QaItem[])
+      return true
     } catch (e) {
-      // ★ 失败把问题填回去：不然用户白打一遍
-      setQ(text)
       setErr(e instanceof Error ? e.message : String(e))
+      return false
     } finally {
       setBusy(false)
       setStreaming('')
     }
+  }
+
+  const send = async () => {
+    const text = q.trim()
+    if (!text) return
+    const ok = await ask(text)
+    if (ok) setQ('')
   }
 
   const clearAll = async () => {
@@ -125,7 +420,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {/* 头：标题 + 清空 */}
+      {/* 头：标题 + 累计统计 + 清空 */}
       <div
         style={{
           display: 'flex',
@@ -134,6 +429,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
           padding: '8px 12px',
           borderBottom: '1px solid var(--card-border)',
           flexShrink: 0,
+          flexWrap: 'wrap',
         }}
       >
         <span style={{ fontSize: 12.5, fontWeight: 600 }}>问答</span>
@@ -142,9 +438,55 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             {name}
           </span>
         )}
-        <span className="faint" style={{ fontSize: 11, marginLeft: 4 }}>
-          {items.length ? `${items.length} 条历史` : '还没有问答'}
+
+        {/* ★ 累计统计：总 token / 耗时 / 命中率（对齐 OpenWebUI 的顶部胶囊） */}
+        <span
+          className="faint"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 10.5,
+            padding: '2px 8px',
+            borderRadius: 999,
+            border: '1px solid var(--card-border)',
+          }}
+          title="本次会话累计"
+        >
+          Tokens {fmt(total.tok)}
         </span>
+        <span
+          className="faint"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 10.5,
+            padding: '2px 8px',
+            borderRadius: 999,
+            border: '1px solid var(--card-border)',
+          }}
+        >
+          Elapsed {fmtMs(total.ms)}
+        </span>
+        {total.hit + total.miss > 0 && (
+          <span
+            className="faint"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 10.5,
+              padding: '2px 8px',
+              borderRadius: 999,
+              border: '1px solid var(--card-border)',
+            }}
+            title="前缀缓存命中率"
+          >
+            Hit {(total.rate * 100).toFixed(1)}%
+          </span>
+        )}
+
         {!!items.length && (
           <button
             type="button"
@@ -174,8 +516,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         )}
 
         {items.map((it) => (
-          <div key={it.id} style={{ marginBottom: 14 }}>
-            {/* 问：右对齐气泡 */}
+          <div key={it.id} style={{ marginBottom: 16 }}>
+            {/* 问 */}
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <div
                 style={{
@@ -193,7 +535,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
                 {it.q}
               </div>
             </div>
-            {/* 答：左对齐气泡 */}
+
+            {/* 答 */}
             <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 6 }}>
               <div
                 style={{
@@ -214,18 +557,36 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
                 )}
               </div>
             </div>
-            <div
-              className="faint"
-              style={{ fontSize: 10, marginTop: 3, textAlign: 'right' }}
-            >
-              {it.at.replace('T', ' ')} {it.model && `· ${it.model}`}
+
+            {/* ★ 操作 + 统计 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
+              <button
+                type="button"
+                className="tag"
+                style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                onClick={() => void copy(it.a, it.id)}
+              >
+                {copiedId === it.id ? <Check size={10} /> : <Copy size={10} />}
+                {copiedId === it.id ? '已复制' : '复制'}
+              </button>
+              <button
+                type="button"
+                className="tag"
+                style={{ fontSize: 10.5, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                disabled={busy}
+                title="用同样的问题重新问一次"
+                onClick={() => void ask(it.q, it.id)}
+              >
+                <RefreshCw size={10} /> 重新回答
+              </button>
+              <UsageLine item={it} />
             </div>
           </div>
         ))}
 
-        {/* 正在流式输出 */}
+        {/* 流式 */}
         {!!streaming && (
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: 16 }}>
             <div
               style={{
                 padding: '6px 10px',
@@ -249,18 +610,15 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         )}
       </div>
 
-      {/* 输入区 */}
+      {/* 输入 */}
       <div style={{ flexShrink: 0, padding: '8px 12px 12px', borderTop: '1px solid var(--card-border)' }}>
-        {err && (
-          <div style={{ fontSize: 11.5, color: 'var(--err)', marginBottom: 6 }}>{err}</div>
-        )}
+        {err && <div style={{ fontSize: 11.5, color: 'var(--err)', marginBottom: 6 }}>{err}</div>}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
             className="input"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
-              // Enter 发送；Shift+Enter 换行（和主流网页版一致）
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void send()

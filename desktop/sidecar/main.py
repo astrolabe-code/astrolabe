@@ -1155,6 +1155,10 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                         str(body.get("q") or ""),
                         str(body.get("a") or ""),
                         str(body.get("model") or ""),
+                        int(body.get("tokens_in") or 0),
+                        int(body.get("tokens_out") or 0),
+                        int(body.get("ms") or 0),
+                        body.get("usage") if isinstance(body.get("usage"), dict) else None,
                     )
                 )
             if method == "DELETE":

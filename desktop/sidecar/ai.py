@@ -902,10 +902,42 @@ def stream_chat(messages: list[dict], max_tokens: int = 600, deadline_s: float =
                             "completion_tokens": obj.get("eval_count") or 0,
                         }
                 if isinstance(usage, dict):
+                    # ★★ 尽量把各家 usage 的细节都摊平：
+                    #   DeepSeek：prompt_cache_hit_tokens / prompt_cache_miss_tokens
+                    #   OpenAI  ：prompt_tokens_details.cached_tokens
+                    #   推理模型：completion_tokens_details.reasoning_tokens
+                    #   Ollama  ：只有 prompt_eval_count / eval_count（无缓存概念）
+                    pin = int(usage.get("prompt_tokens") or 0)
+                    pout = int(usage.get("completion_tokens") or 0)
+                    total = int(usage.get("total_tokens") or (pin + pout))
+
+                    hit = int(usage.get("prompt_cache_hit_tokens") or 0)
+                    miss = int(usage.get("prompt_cache_miss_tokens") or 0)
+                    pdet = usage.get("prompt_tokens_details")
+                    if not hit and isinstance(pdet, dict):
+                        hit = int(pdet.get("cached_tokens") or 0)
+                    if not miss and pin:
+                        miss = max(0, pin - hit)
+
+                    think = 0
+                    cdet = usage.get("completion_tokens_details")
+                    if isinstance(cdet, dict):
+                        think = int(cdet.get("reasoning_tokens") or 0)
+                    if not think:
+                        think = int(usage.get("reasoning_tokens") or 0)
+
                     yield {
                         "event": "usage",
-                        "in": int(usage.get("prompt_tokens") or 0),
-                        "out": int(usage.get("completion_tokens") or 0),
+                        "in": pin,
+                        "out": pout,
+                        "total": total,
+                        # 缓存三项：命中 / 未命中 / 写入（写入目前没有服务商给出）
+                        "hit": hit,
+                        "miss": miss,
+                        "write": int(usage.get("cache_write_tokens") or 0),
+                        # 推理模型：思考 vs 回答
+                        "think": think,
+                        "response": max(0, pout - think),
                     }
         if got == 0:
             raise RuntimeError(

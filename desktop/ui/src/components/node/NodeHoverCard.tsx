@@ -135,7 +135,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         padding: '10px 12px',
         borderRadius: 10,
         border: '1px solid var(--card-border)',
-        background: 'var(--card-bg, #fff)',
+        background: 'var(--card, #fff)',
         boxShadow: '0 8px 24px rgba(15,23,42,.18)',
         fontSize: 12,
         lineHeight: 1.6,

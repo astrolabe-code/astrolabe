@@ -315,7 +315,7 @@ export default function NodeList({
                         padding: 0,
                         borderRadius: 6,
                         border: '1px solid var(--card-border)',
-                        background: 'var(--card-bg, transparent)',
+                        background: 'var(--card, transparent)',
                         color: 'var(--text-sub)',
                         cursor: 'pointer',
                       }}
@@ -346,7 +346,7 @@ export default function NodeList({
                         padding: 0,
                         borderRadius: 6,
                         border: '1px solid var(--card-border)',
-                        background: 'var(--card-bg, transparent)',
+                        background: 'var(--card, transparent)',
                         color: 'var(--text-sub)',
                         cursor: 'pointer',
                       }}

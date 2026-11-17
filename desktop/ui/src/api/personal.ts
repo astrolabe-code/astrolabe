@@ -269,6 +269,21 @@ export const personalApi = {
       body,
     ),
 
+  /** ★★ 问答历史（JSON，挂在节点上；见 sidecar/qa.py） */
+  qaList: (ref: string, vid: number) =>
+    get<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
+    ),
+  qaAppend: (ref: string, body: { vid: number; q: string; a: string; model?: string }) =>
+    post<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/qa/`,
+      body,
+    ),
+  qaClear: (ref: string, vid: number) =>
+    del<{ vid: number; items: unknown[] }>(
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
+    ),
+
   /** ★★ 节点思考题：带上下文出题，并引用用户之前写过的原话 */
   aiQuestions: (ref: string, body: { vid: number; refresh?: boolean }) =>
     post<{

@@ -48,6 +48,7 @@ import board
 import graphdb
 import ai
 import contextpack
+import qa
 
 VERSION = "0.3.0"
 
@@ -239,6 +240,7 @@ R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
 R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
 R_AQUESTIONS = re.compile(r"^/api/projects/([^/]+)/ai/questions/$")
+R_PQA = re.compile(r"^/api/projects/([^/]+)/qa/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
@@ -1132,6 +1134,39 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok(ai.list_models(str(body.get("provider") or "")))
         except Exception as exc:  # noqa: BLE001
             return bad(f"拉取失败：{ai.redact(exc)}", 500)
+
+    # ★★ 问答历史：一个节点下的一串问答，存成 <data>/qa/<vid>.json
+    m = R_PQA.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        try:
+            vid = int(body.get("vid") or 0)
+            if not vid:
+                return bad("缺少 vid")
+            if method == "GET":
+                return ok(qa.list_items(ROOT, vid))
+            if method == "POST":
+                return ok(
+                    qa.append(
+                        ROOT,
+                        vid,
+                        str(body.get("q") or ""),
+                        str(body.get("a") or ""),
+                        str(body.get("model") or ""),
+                    )
+                )
+            if method == "DELETE":
+                item_id = str(body.get("id") or "")
+                return ok(
+                    qa.remove_item(ROOT, vid, item_id) if item_id else qa.clear(ROOT, vid)
+                )
+            return bad("不支持的方法", 405)
+        except qa.QaError as exc:
+            return bad(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"问答历史读写失败：{exc}", 500)
 
     # ★★ 起标题：正文够，不读图（省一截 token）
     m = R_AITITLE.match(path)

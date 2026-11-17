@@ -12,6 +12,7 @@ import ThinkingBoard from '../notes/ThinkingBoard'
 import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
+import QaPanel from './QaPanel'
 import FileTree, { firstLevelDirs } from './FileTree'
 import SplitPane from '../SplitPane'
 import CodeViewer from './CodeViewer'
@@ -41,14 +42,15 @@ interface CodeWorkspaceProps {
   }
 }
 
-/** ★ 4 个视图：代码 / 笔记（文件树） / 内容（Obsidian 的内容区） / 仿写 */
-type Tab = 'code' | 'notes' | 'content' | 'imitation'
+/** ★ 5 个视图：代码 / 笔记 / 内容 / 仿写 / 问答 */
+type Tab = 'code' | 'notes' | 'content' | 'imitation' | 'qa'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'code', label: '代码' },
   { key: 'notes', label: '笔记' },
   { key: 'content', label: '内容' },
   { key: 'imitation', label: '仿写' },
+  { key: 'qa', label: '问答' },
 ]
 
 const TREE_OPEN_KEY = 'astrolabe.code.treeOpen'
@@ -445,6 +447,8 @@ export default function CodeWorkspace({
                 </div>
               )}
             </>
+          ) : tab === 'qa' ? (
+            <QaPanel projectRef={projectRef} vid={node?.vid ?? null} name={node?.name} />
           ) : tab === 'imitation' ? (
             <ImitationPanel projectRef={projectRef} node={node} />
           ) : tab === 'content' ? (

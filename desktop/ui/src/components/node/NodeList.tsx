@@ -194,7 +194,11 @@ export default function NodeList({
                     // ★★ 点行 = **只选中**（右栏预览 / 写笔记）
                     //   ⛔ 不再顺手跳图谱 —— 那样太容易误触（所有者 2026-10-31）
                     onClick={() => onSelect(n)}
-                    onMouseEnter={(e) => setHover({ node: n, x: e.clientX, y: e.clientY })}
+                    onMouseEnter={(e) => {
+                      // ★ 先取消上一次离开挂起的清空（否则鼠标一停它就到点，浮窗自己没了）
+                      window.clearTimeout(leaveTimerRef.current)
+                      setHover({ node: n, x: e.clientX, y: e.clientY })
+                    }}
                     onMouseLeave={() => {
                       window.clearTimeout(leaveTimerRef.current)
                       leaveTimerRef.current = window.setTimeout(() => {

@@ -286,6 +286,10 @@ export default function GraphCanvas({
       // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
       const hit = !!n && bestD <= nodeSizePx / 2 + 4
       if (hit && n) {
+        // ★★★ 进入节点必须**先取消**上一次离开挂起的清空定时器！
+        //   ⛔ 否则：从上个节点/空白移进来时，那次离开的 timer 还在跑，
+        //   鼠标一停下它就到期，把刚出现的浮窗清掉（表现为「过几秒自己消失」）。
+        window.clearTimeout(leaveTimerRef.current)
         // ★★ 只在**换了节点**时定位一次：同一节点内移动鼠标不重建浮窗。
         //   否则浮窗一直跟着鼠标跑（永远差 14px），鼠标移不上去点「挑战问题」。
         // ⚠ 先取成局部常量：setState 回调可能延迟执行，TS 不认 `last` 非空

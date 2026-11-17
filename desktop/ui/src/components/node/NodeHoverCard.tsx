@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 
@@ -37,7 +37,36 @@ interface NodeHoverCardProps {
   onLeave?: () => void
 }
 
-const CARD_W = 320
+const CARD_W = 440
+
+/**
+ * ★★ 行内 markdown：只处理反引号 `` `code` ``。
+ *
+ * 模型写问题会用 `_get_ts_language` 这种包法，原样显示很怪
+ *（所有者 2026-11-17：「也没有用 markdown 渲染显示，看着很怪」）。
+ * ⚠ 不引 markdown 库：只需要反引号一种语法，split 一遍就够。
+ */
+function inlineMd(text: string): ReactNode[] {
+  return String(text || '').split('`').map((part, i) =>
+    i % 2 === 1 ? (
+      <code
+        key={i}
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.94em',
+          padding: '0 3px',
+          borderRadius: 3,
+          background: 'rgba(127,127,127,.16)',
+          wordBreak: 'break-word',
+        }}
+      >
+        {part}
+      </code>
+    ) : (
+      part
+    ),
+  )
+}
 
 export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHoverCardProps) {
   const vw = typeof window === 'undefined' ? 1200 : window.innerWidth
@@ -69,7 +98,11 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
   // ★ 贴边时翻到另一侧（否则会被视口切掉）
   const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
-  const top = Math.min(y + 14, Math.max(8, vh - 260))
+  //   ⚠ 之前是 Math.min(y + 14, vh * 0.22)，鼠标在中下部会被钉在 22%
+  // ★★ 只跟着鼠标：⛔ 不做任何位置裁剪（超出屏幕就超出，
+  //   鼠标往上移浮窗自然回来）。所有者 2026-11-17：「去掉限制！」
+  const top = y + 14
+  // 内容再长就在浮窗内滚动（所有者要的滑块）
 
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
@@ -89,7 +122,13 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         top,
         zIndex: 9999,
         width: CARD_W,
-        maxWidth: '80vw',
+        maxWidth: '92vw',
+        // ★★ 问题区可能很长：给高度上限，内部滚动条让用户自己翻
+        //   （所有者 2026-11-17：「最主要的还是要加滑块，可以移动」）
+        // ★ 高度按当前位置算：顶到屏幕底为止，再长就在浮窗内滚动
+        maxHeight: '72vh',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
         // ★ 现在要能点「挑战问题」⇒ 吃鼠标事件；画布那边用延迟 150ms 的方式
         //   判断鼠标是不是进了浮窗，进了就不关掉它（见 GraphCanvas 的 onLeave）
         pointerEvents: 'auto',
@@ -194,20 +233,15 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
           {questions.map((q, i) => (
             <div
               key={`${i}-${q.type}`}
-              // ⚠ 浮窗是 pointerEvents:none（鼠标一移开就消失）⇒ 每条限两行，
-              //   让用户扫一眼就能抓住关键词；完整内容点节点看右栏
               style={{
-                fontSize: 11,
-                lineHeight: 1.65,
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
+                fontSize: 11.5,
+                lineHeight: 1.75,
+                // ⛔ 不再截断：截了反而要猜，长内容交给浮窗滚动条
               }}
             >
               <span style={{ color: 'var(--accent)' }}>{q.type}</span>
               <span className="faint"> · </span>
-              {q.text}
+              {inlineMd(q.text)}
             </div>
           ))}
         </div>

@@ -1917,9 +1917,10 @@ def _make_tool_executor(project):
             kind = str(node.get("kind") or "")
             vid = int(node.get("vid") or 0)
 
-            # ⚠ dir 节点的 file/file_path 是空串，路径在 qname
-            loc = str(node.get("file_path") or "").strip() or str(node.get("qname") or "").strip()
-            pos = f"{loc}:{node.get('line')}" if node.get("line") else loc
+            # ★ rel_path 对所有节点都是相对路径（dir 也有）；
+            #   没有行号（dir 是 0）时只给路径，⛔ 不拼「:0」
+            loc = str(node.get("rel_path") or "").strip()
+            pos = f"{loc}:{node.get('line')}" if (loc and node.get("line")) else loc
             out = [f"【节点】{kind} {node.get('name')}  @ {pos}"]
             sig = str(node.get("signature") or "").strip()
             if sig:

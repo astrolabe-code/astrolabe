@@ -148,7 +148,7 @@ from graph.models import (
 #: ⚠ `node_id` / `project_ref` / 归属 / 时间戳**不在其中**（★ 它们不是"内容"）
 #: ⚠★ `B179`：此表曾含 `"origin"` —— ★ **列已删**，★ 归属决定它，❌ 不许改 ⚠
 _NODE_FIELDS: tuple[str, ...] = (
-    "kind", "name", "qname", "file_path", "line", "line_end",
+    "kind", "name", "qname", "rel_path", "line", "line_end",
     # ⚠★ `B176`：此表曾含 `"doc"` —— ★ 随节点字段一并移除（★ 修补不允许写入注释内容）✅
     "lang", "signature", "extra",
 )
@@ -357,7 +357,7 @@ def _node_snapshot(node: Node) -> dict:
         "uid": node.uid,
         "kind": kinds.kind_name(node.kind),
         "name": node.name,
-        "file_path": node.file_path,
+        "rel_path": node.rel_path,
         "line": node.line,
         "line_end": node.line_end,
         # ★★ `B220`：* 归属按 `repo` 算（* 叠加层节点没有 repo）⚠
@@ -494,11 +494,11 @@ def _do_add_node(project, c: dict, by=None) -> CurateResult:
         )
 
     name = str(c.get("name") or "")
-    file_path = str(c.get("file_path") or "")
+    rel_path = str(c.get("rel_path") or "")
     line_raw = c.get("line")
-    if not name or not file_path or line_raw is None:
+    if not name or not rel_path or line_raw is None:
         return CurateResult(ok=False, action=ACTION_ADD_NODE,
-                            message="add_node 需要 name/file_path/line")
+                            message="add_node 需要 name/rel_path/line")
     try:
         line = int(line_raw)
     except (TypeError, ValueError):
@@ -507,7 +507,7 @@ def _do_add_node(project, c: dict, by=None) -> CurateResult:
         return CurateResult(ok=False, action=ACTION_ADD_NODE, message="line 必须 >= 1")
 
     line_end = c.get("line_end")
-    canon = identity.canonical(kind_name, file_path, name, line, line_end)
+    canon = identity.canonical(kind_name, rel_path, name, line, line_end)
     vid = identity.hash53(canon)
 
     # ★★★ `B225`：**已有同 vid 的节点 ⇒ 拒绝新增**（⛔ 不造第二份）⚠
@@ -529,7 +529,7 @@ def _do_add_node(project, c: dict, by=None) -> CurateResult:
                 "vid": vid,
                 "existing_kind": kinds.kind_name(duplicate.kind),
                 "existing_name": duplicate.name,
-                "existing_file_path": duplicate.file_path,
+                "existing_rel_path": duplicate.rel_path,
                 "existing_line": duplicate.line,
             },
         )
@@ -538,11 +538,11 @@ def _do_add_node(project, c: dict, by=None) -> CurateResult:
         project=project,
         stable_vid=vid,
         versions=[],
-        uid=(str(c.get("uid") or f"{kind_name}#{file_path}#{name}"))[:512],
+        uid=(str(c.get("uid") or f"{kind_name}#{rel_path}#{name}"))[:512],
         kind=kinds.kind_id(kind_name),
         name=name[:512],
         qname=str(c.get("qname") or "")[:512],
-        file_path=file_path[:1024],
+        rel_path=rel_path[:1024],
         line=line,
         line_end=(int(line_end) if line_end is not None else -1),
         lang=str(c.get("lang") or "")[:32],

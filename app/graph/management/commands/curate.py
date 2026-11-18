@@ -133,7 +133,7 @@ class Command(BaseCommand):
         parser.add_argument("--uid", default="")
         parser.add_argument("--kind", default="")
         parser.add_argument("--name", default="")
-        parser.add_argument("--file", default="", dest="file_path")
+        parser.add_argument("--file", default="", dest="rel_path")
         parser.add_argument("--line", type=int, default=0)
         parser.add_argument("--line-end", type=int, default=0, dest="line_end")
         parser.add_argument("--lang", default="")
@@ -216,7 +216,7 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
 
     def _add_node(self, project_ref, by, reason, opts):
-        if not opts["name"] or not opts["file_path"] or opts["line"] < 1:
+        if not opts["name"] or not opts["rel_path"] or opts["line"] < 1:
             raise CommandError("add-node 需要 --name / --file / --line（line >= 1）")
         kind = opts["kind"] or "function"
         return curate.add_node(
@@ -225,11 +225,11 @@ class Command(BaseCommand):
             #   （见 `codeparser/base.py::ParsedNode.uid`）
             #   ⚠★ **格式必须与解析器一致** —— 否则同一个逻辑节点会有**两种 uid 形态**，
             #      ★ 而 uid 正是"把两处记录认成同一个节点"的依据（`B117`）⇒ **会对不上**。
-            uid=opts["uid"] or f"{kind}#{opts['file_path']}#{opts['name']}",
+            uid=opts["uid"] or f"{kind}#{opts['rel_path']}#{opts['name']}",
             kind=kind,
             name=opts["name"],
             qname=opts["qname"],
-            file_path=opts["file_path"],
+            rel_path=opts["rel_path"],
             line=opts["line"],
             line_end=opts["line_end"] or None,
             lang=opts["lang"],
@@ -253,4 +253,4 @@ class Command(BaseCommand):
             self.stdout.write("")
             self.stdout.write("★ 人补的节点：")
             for n in s["nodes"]:
-                self.stdout.write(f"   vid={n['vid']:<8} {n['name']:<28} {n['file_path']}:{n['line']}")
+                self.stdout.write(f"   vid={n['vid']:<8} {n['name']:<28} {n['rel_path']}:{n['line']}")

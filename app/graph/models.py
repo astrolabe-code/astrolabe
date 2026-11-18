@@ -371,7 +371,7 @@ class Node(UidMixin, TimeStampedModel):
 
     node_id = models.BigAutoField(primary_key=True)
 
-    #: ★★ **内容确定的身份**（`B219`）：* kind|file_path|name|line|line_end 的 53 位哈希 ⚠
+    #: ★★ **内容确定的身份**（`B219`）：* kind|rel_path|name|line|line_end 的 53 位哈希 ⚠
     stable_vid = models.BigIntegerField(default=0)
     #: ★★ **被哪些基图（版本）包含**（`B220`）——* 升序、去重；* ⛔ 不用成员表 ⚠
     versions = ArrayField(models.BigIntegerField(), default=list)
@@ -416,7 +416,7 @@ class Node(UidMixin, TimeStampedModel):
     name = models.CharField(max_length=512)
     qname = models.CharField(max_length=512, blank=True, default="")
 
-    file_path = models.CharField(max_length=1024)
+    rel_path = models.CharField(max_length=1024)
     line = models.IntegerField()
     line_end = models.IntegerField(null=True, blank=True)
 
@@ -460,7 +460,7 @@ class Node(UidMixin, TimeStampedModel):
         # ★★ `B222`：* `kind` 是 smallint（* 映射在 `graph/kinds.py`）✅
         indexes = [
             GinIndex(fields=["versions"], name="ix_node_versions"),
-            models.Index(fields=["repo", "file_path"], name="ix_node_repo_path"),
+            models.Index(fields=["repo", "rel_path"], name="ix_node_repo_path"),
             models.Index(fields=["repo", "kind"], name="ix_node_repo_kind"),
             models.Index(fields=["project", "kind"], name="ix_node_project_kind"),
         ]

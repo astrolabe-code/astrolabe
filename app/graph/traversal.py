@@ -65,7 +65,7 @@ class GraphNode:
     uid: str          # 人类可读标签（⚠ 允许重复，只用于展示）
     kind: str
     name: str
-    file_path: str
+    rel_path: str
     line: int
     line_end: int | None
     lang: str
@@ -316,7 +316,7 @@ class PostgresAdjacencyReader:
         node_rows = list(
             scope.nodes_of(project_ref).filter(node_id__in=list(allowed)).values(
                 "node_id", "stable_vid", "uid", "kind", "name",
-                "file_path", "line", "line_end", "lang",
+                "rel_path", "line", "line_end", "lang",
             )
         )
 
@@ -337,7 +337,7 @@ class PostgresAdjacencyReader:
                 uid=r["uid"],
                 kind=r["kind"],
                 name=r["name"],
-                file_path=r["file_path"],
+                rel_path=r["rel_path"],
                 line=r["line"],
                 line_end=r["line_end"],
                 lang=r["lang"],

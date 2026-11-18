@@ -179,7 +179,7 @@ def _encode(sg: SubGraph) -> bytes:
         sg.truncated_reason,
         sg.stats,
         [
-            [n.vid, n.uid, n.kind, n.name, n.file_path, n.line, n.line_end, n.lang, n.depth]
+            [n.vid, n.uid, n.kind, n.name, n.rel_path, n.line, n.line_end, n.lang, n.depth]
             for n in sg.nodes
         ],
         [[e.src, e.dst, e.type, e.line] for e in sg.edges],
@@ -203,7 +203,7 @@ def _decode(project_ref: str, raw: bytes) -> SubGraph | None:
         root=root,
         nodes=[
             GraphNode(
-                vid=n[0], uid=n[1], kind=n[2], name=n[3], file_path=n[4],
+                vid=n[0], uid=n[1], kind=n[2], name=n[3], rel_path=n[4],
                 line=n[5], line_end=n[6], lang=n[7], depth=n[8],
             )
             for n in nodes

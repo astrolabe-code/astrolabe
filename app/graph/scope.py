@@ -200,4 +200,4 @@ def blob_url_of(node: Node, base_graph) -> str:
     base = base_graph.blob_url
     if not base:
         return ""
-    return f"{base}/{node.file_path}#L{node.line}"
+    return f"{base}/{node.rel_path}#L{node.line}"

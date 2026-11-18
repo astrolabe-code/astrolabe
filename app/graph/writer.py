@@ -89,8 +89,8 @@ class _Index:
             if node.kind in _CALLABLE_KINDS:
                 by_name.setdefault(node.name, []).append(node)
             elif node.kind == kinds.KIND_IDS["file"]:
-                by_rel_path[node.file_path] = node
-                base = node.file_path.rsplit("/", 1)[-1]
+                by_rel_path[node.rel_path] = node
+                base = node.rel_path.rsplit("/", 1)[-1]
                 by_file_basename.setdefault(base, []).append(node)
                 # ★ 文件主干名 —— 用于把「模块名」对上「文件」
                 #   （Python 的 `from .base import X` → 模块 base → 文件 base.py）
@@ -246,7 +246,7 @@ def write_graph(
                     kind=kinds.kind_id(pn.kind),
                     name=pn.name[:512],
                     qname=(pn.qname or "")[:512],
-                    file_path=pn.rel_path[:1024],
+                    rel_path=pn.rel_path[:1024],
                     line=pn.line,
                     line_end=(pn.line_end if pn.line_end is not None else -1),
                     lang=pn.lang,
@@ -436,7 +436,7 @@ def _resolve(ref: str, index: _Index, stats: WriteStats) -> Node | None:
             _note(stats, ref)
             return None
         # ★ 同名多个（重载 / 跨文件同名）⇒ 取路径最短的，保证同一输入结果稳定
-        return min(candidates, key=lambda n: (len(n.file_path), n.file_path, n.line))
+        return min(candidates, key=lambda n: (len(n.rel_path), n.rel_path, n.line))
 
     if what in ("qcall", "type"):
         # ★★ 限定调用（`a.run` / `ns::f`）与基类（`extends` / `implements`）⚠

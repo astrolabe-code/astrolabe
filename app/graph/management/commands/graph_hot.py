@@ -88,7 +88,7 @@ class Command(BaseCommand):
                 continue
             self.stdout.write(
                 f"{i:>3}  {tot:>7}  {db_val:>7}  {pend:>6}  {tot / total:>5.1%}  "
-                f"{n.kind:<9} {n.name:<26} {n.file_path}:{n.line}  (vid {n.node_id})"
+                f"{n.kind:<9} {n.name:<26} {n.rel_path}:{n.line}  (vid {n.node_id})"
             )
 
         self.stdout.write("")

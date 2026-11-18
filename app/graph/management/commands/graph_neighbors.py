@@ -113,7 +113,7 @@ class Command(BaseCommand):
                 deg = out_deg.get(n.vid, 0)
                 self.stdout.write(
                     f"   [vid {n.vid:>5}] {n.kind:<9} {n.name:<26} "
-                    f"{n.file_path}:{n.line}   出边 {deg}"
+                    f"{n.rel_path}:{n.line}   出边 {deg}"
                 )
             if len(by_depth[d]) > opts["show"]:
                 self.stdout.write(f"   … 还有 {len(by_depth[d]) - opts['show']} 个")

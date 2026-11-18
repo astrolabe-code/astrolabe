@@ -120,8 +120,15 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
       const items = r.items || []
       questionCache.set(node.vid, items)
       setQuestions(items)
-    } catch {
-      setQuestions([]) // ⛔ 没配模型 / 出错都不打扰
+    } catch (e) {
+      // ★ 把真实原因显示出来：之前静默成空数组，界面只说「没有返回任何内容」，
+      //   看的人根本不知道是没配模型、超时，还是 HTTP 500。
+      setQuestions([
+        {
+          type: '简评',
+          text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
+        },
+      ])
     } finally {
       setAsking(false)
     }
@@ -232,7 +239,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
         {questions !== null && questions.length === 0 && (
           <div className="faint" style={{ fontSize: 10.5 }}>
-            这次没出题（检查 AI 设置）
+            模型没有返回任何内容
           </div>
         )}
 

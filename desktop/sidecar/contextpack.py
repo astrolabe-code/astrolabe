@@ -161,6 +161,7 @@ def build(
     vid: int,
     max_neighbors: int = MAX_NEIGHBORS,
     max_flows: int = MAX_FLOWS,
+    with_neighbors: bool = True,
 ) -> dict:
     """组装一个节点的上下文包。
 
@@ -209,8 +210,9 @@ def build(
     def order(vids: set[int]) -> list[int]:
         return sorted(vids, key=lambda v: (-deg.get(v, 0), v))
 
-    down_ids = order(out_map.get(int(vid), set()))
-    up_ids = order(in_map.get(int(vid), set()))
+    # ★ with_neighbors=False 时只给当前节点（出题用，让模型自己调工具读别的）
+    down_ids = order(out_map.get(int(vid), set())) if with_neighbors else []
+    up_ids = order(in_map.get(int(vid), set())) if with_neighbors else []
     dropped = {
         "downstream": max(0, len(down_ids) - max_neighbors),
         "upstream": max(0, len(up_ids) - max_neighbors),
@@ -267,7 +269,7 @@ def build(
     siblings: list[dict] = []
     siblings_more = 0
     rel_self = str(node.get("file") or "")
-    if rel_self:
+    if rel_self and with_neighbors:
         try:
             conn2 = graphdb._open(data_dir)
             sib_rows = conn2.execute(
@@ -315,16 +317,19 @@ def build(
 
     # ---- 5) 执行流（复用已有实现）
     flows: list[dict] = []
-    try:
-        for f in (graphdb.flows_of(data_dir, int(vid)).get("items") or [])[:max_flows]:
-            steps = [int(x) for x in (f.get("steps") or [])]
-            labels = []
-            for s in steps[:12]:
-                n = graphdb.get_code(data_dir, s)
-                labels.append(str((n or {}).get("name") or s))
-            flows.append({"length": int(f.get("length") or len(steps)), "labels": labels})
-    except Exception:  # noqa: BLE001
-        flows = []
+    if with_neighbors:
+        try:
+            for f in (graphdb.flows_of(data_dir, int(vid)).get("items") or [])[:max_flows]:
+                steps = [int(x) for x in (f.get("steps") or [])]
+                labels = []
+                for st in steps[:12]:
+                    n = graphdb.get_code(data_dir, st)
+                    labels.append(str((n or {}).get("name") or st))
+                flows.append(
+                    {"length": int(f.get("length") or len(steps)), "labels": labels}
+                )
+        except Exception:  # noqa: BLE001
+            flows = []
 
     # 统计给出的邻居里有多少条边是手工补的
     _manual_count = sum(

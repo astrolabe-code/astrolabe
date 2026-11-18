@@ -841,49 +841,69 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
 def parse_questions(text: str) -> dict:
     """把模型输出解析成 `{items: [{type, text}], next: [{name, why}]}`。
 
-    ⚠ 用固定前缀行解析而不是 JSON：小模型经常把 JSON 写坏，
-      而这种格式坏一行只丢一条，不会整段报废。
+    ★ 三条策略：
+      ① 优先认固定前缀（陷阱 / 优化 / 背景 / 下一步 / 简评）
+      ② 认不出的行**不丢**，留着当兜底
+      ③ 一条都没认出来、但模型确实说了话 ⇒ 整段当「简评」返回
+
+    ⚠ 第 ③ 条是为了对面现实：模型经常直接写一段判断（「这个类没什么可问」），
+      不按格式来。丢掉它会让界面显示「检查 AI 设置」——那是误导。
     """
     items: list[dict] = []
     nxt: list[dict] = []
     note = ""
+    plain: list[str] = []
+
     for raw in str(text or "").splitlines():
-        s = raw.strip().lstrip("-·•* ").strip()
-        if not s:
+        line = raw.strip().lstrip("-·•* 　").strip()
+        if not line:
             continue
-        # ★「没什么可问」时模型只输出这一行（见 QUESTIONS_SYSTEM）。
-        #   ⚠ 用 continue 而不是 break：简评万一写在前面，别丢掉后面的问题
-        note_hit = False
+        hit = False
+
+        # 1) 简评
         for sep in ("：", ":"):
-            if s.startswith("简评" + sep):
-                note = s[3:].strip()
-                note_hit = True
+            if line.startswith("简评" + sep):
+                note = line[3:].strip()
+                hit = True
                 break
-        if note_hit:
+        if hit:
             continue
+
+        # 2) 三类问题
         for label in ("陷阱", "优化", "背景"):
             for sep in ("：", ":"):
-                if s.startswith(label + sep):
-                    body = s[len(label) + 1 :].strip()
+                if line.startswith(label + sep):
+                    body = line[len(label) + 1 :].strip()
                     if body:
                         items.append({"type": label, "text": body})
+                    hit = True
                     break
-            else:
-                continue
-            break
-        else:
-            for sep in ("：", ":"):
-                if s.startswith("下一步" + sep):
-                    rest = s[4:].strip()
-                    name, _, why = rest.partition("——")
-                    if not why:
-                        name, _, why = rest.partition("-")
-                    nxt.append({"name": name.strip(), "why": why.strip()})
-                    break
-    # ★ 只有简评、没有问题：把它作为一条特殊条目返回，
-    #   前端就不会再说「这次没出题（检查 AI 设置）」——那是误导
-    if note and not items:
-        items.append({"type": "简评", "text": note})
+            if hit:
+                break
+        if hit:
+            continue
+
+        # 3) 下一步
+        for sep in ("：", ":"):
+            if line.startswith("下一步" + sep):
+                rest = line[4:].strip()
+                name, _, why = rest.partition("——")
+                if not why:
+                    name, _, why = rest.partition("-")
+                nxt.append({"name": name.strip(), "why": why.strip()})
+                hit = True
+                break
+        if hit:
+            continue
+
+        # 4) 认不出：先留着（⛔ 不要丢）
+        plain.append(line)
+
+    # ★ 兜底：一个好的问题都没解析出来，但模型说了话
+    if not items:
+        fallback = note or " ".join(plain)
+        if fallback.strip():
+            items.append({"type": "简评", "text": fallback.strip()[:300]})
 
     return {"items": items[:3], "next": nxt[:2]}
 

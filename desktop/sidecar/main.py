@@ -1648,7 +1648,6 @@ READ_TOOLS = [
                         "default": 120,
                     },
                 },
-                "required": [],
             },
         },
     },
@@ -1667,7 +1666,6 @@ READ_TOOLS = [
                     "name": {"type": "string", "description": "节点名"},
                     "uid": {"type": "string", "description": "精确 uid（可选）"},
                 },
-                "required": [],
             },
         },
     },
@@ -1968,8 +1966,20 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             if evt.get("event") == "delta":
                 chunks.append(str(evt.get("text") or ""))
         text = "".join(chunks)
-    except Exception:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
-        text = ai.chat_once(messages, max_tokens=600)
+        if not text.strip():
+            # ★★ 工具链**正常结束但一个字都没吐**（模型只会调工具，或服务商
+            #    不认 tools 直接返回空）⇒ 必须退回普通一次调用。
+            #    ⛔ 之前只处理异常、不处理"空"，界面就显示"没有返回任何内容"。
+            text = ai.chat_once(messages, max_tokens=600)
+    except Exception as exc:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
+        try:
+            text = ai.chat_once(messages, max_tokens=600)
+        except Exception as exc2:  # noqa: BLE001
+            # ⛔ 两层都失败就别再静默：把两条原因都带给前端
+            raise RuntimeError(
+                f"出题失败：{ai.redact(str(exc2))}"
+                f"（工具链先报：{ai.redact(str(exc))}）"
+            ) from None
     parsed = ai.parse_questions(text)
     parsed["learned"] = learned
 

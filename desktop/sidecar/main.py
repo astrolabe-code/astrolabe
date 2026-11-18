@@ -1963,8 +1963,9 @@ def _ask_events(project, vid: int, question: str):
     if not q:
         raise ValueError("问题不能为空")
 
-    snippet, lang, up, down, samples = _node_context(project, node)
-    messages = ai.build_ask_messages(node, snippet, lang, up, down, samples, q)
+    # ★ 不再预读源码：只把节点本身交给模型，需要时它自己 read_node
+    #   （所有者 2026-11-18：「让ai自己根据传入的类型，自行判断要读哪些节点信息」）
+    messages = ai.build_ask_messages(node, "", "", [], [], [], q)
     # ★ 允许模型顺着图谱再读几个节点（最多 3 轮，⛔ 只读）
     yield from ai.chat_with_tools(
         messages,

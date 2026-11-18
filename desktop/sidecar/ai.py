@@ -445,45 +445,27 @@ def _context_block(
     downstream: list[dict],
     samples: list[dict],
 ) -> str:
-    """节点上下文（草稿与问答**完全共用**，这样两边的 prompt 前缀一致）。
+    """节点上下文：**只给类型、名字、路径**。
 
-    ⚠ 顺序即缓存命中率：节点静态信息 → 源码 → 邻居 → 样例。
-      ⛔ 不插时间戳 / 随机 id —— 那会让前缀每次都不同，缓存全部失效。
+    所有者原话（2026-11-18）：
+    「你这还是加了签名，甚至还在明说目录暗示ai，不让ai自己根据传入的类型
+      自行判断要读哪些节点信息。」
+
+    ## 所以这里什么都不判断
+
+    不给签名、不给源码、不说「这是目录」「这是空文件」——
+    类型已经在第一行写着了（dir / file / function / method…），
+    模型自己知道该不该读源码、该用 cypher 查什么。
+
+    ⚠ 后面那些参数保留只为兼容调用方，内容一律不用。
     """
-    lines = [
-        f"【节点】{node.get('kind') or ''}  {node.get('file') or ''}  "
-        f"第 {node.get('line') or 0}-{node.get('line_end') or 0} 行"
-        + ("（人工补的节点）" if str(node.get("origin") or "") == "manual" else ""),
-        f"【签名】{node.get('signature') or '（解析器未给出）'}",
-        "【源码】",
-        f"```{lang}",
-        snippet.rstrip(),
-        "```",
-    ]
-
-    def section(title: str, rows: list[dict]) -> None:
-        # ★ 没给就是没给，⛔ 不要写「（无）」—— 那会让模型以为真的没有上游/下游
-        if not rows:
-            return
-        lines.append(f"【{title}】")
-        for r in rows[:MAX_NEIGHBORS]:
-            name = r.get("qname") or r.get("name") or ""
-            tag = "（人工补的节点）" if str(r.get("origin") or "") == "manual" else ""
-            lines.append(f"- {name}  @ {r.get('file_path') or ''}:{r.get('line') or 0}{tag}")
-
-    section("它调用的函数", downstream)
-    section("调用它的函数", upstream)
-
-    lines.append("【作者写过的小结（只参考语气，不要照抄）】")
-    if samples:
-        for smp in samples[:MAX_SAMPLES]:
-            title = str(smp.get("title") or "").strip()
-            body = str(smp.get("excerpt") or "").strip().replace("\n", " ")
-            lines.append(f"- {title}：{body[:MAX_SAMPLE_CHARS]}")
-    else:
-        lines.append("- （还没有）")
-
-    return "\n".join(lines)
+    kind = str(node.get("kind") or "").lower()
+    return "\n".join(
+        [
+            f"[节点] {kind} {node.get('name') or ''}",
+            f"[文件] {node.get('file') or ''}",
+        ]
+    )
 
 
 def build_ask_messages(

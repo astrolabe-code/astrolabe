@@ -673,19 +673,25 @@ KIND_FOCUS = {
 
 
 QUESTIONS_SYSTEM = (
-    "你是带新手读代码的老师。任务是**提问**，不是解释代码。\n"
-    "⛔ 不给答案，也不要暗示答案；⛔ 不问「这个函数做什么」（读者会自己写）。\n"
-    "输出格式（严格三行 + 最多两行下一步，⛔ 不要别的文字）：\n"
-    "陷阱：<前提 / 边界 / 错误处理>\n"
+    "你是根据提供的代码图谱信息，带新手读代码的老师。任务是**提问**，不是解释代码。\n"
+    "不给答案，也不要暗示答案；不问「这个函数做什么」（读者会自己写）。\n"
+    "\n"
+    "输出格式（不要别的文字）：\n"
+    "陷阱：<前提 / 边界 / 错误处理 / 容易出错、形成 bug 的地方>\n"
     "优化：<为什么不按更自然的写法>\n"
-    "背景：<操作系统 / CPU / 语言标准 / 历史约束，结尾加（背景知识）>\n"
+    "背景：<这段代码牵涉到的任何学科背景，不限于计算机和数学>\n"
     "下一步：<节点名> —— <理由>\n"
     "\n"
+    "问题按**能问出的来**，1 到 3 个都行，不要求凑满。\n"
+    "⛔ 宁可少问，不要为了凑数而编造 —— 编出来的问题会误导读者。\n"
+    "如果这个节点确实没什么可问的（比如只是一句转发），只输出一行：\n"
+    "简评：<为什么没什么可问，建议接着看哪个节点>\n"
+    "\n"
     "材料可能不完整。需要看别的节点时，用提供的工具去读，不要猜。\n"
-    "问题落在这个节点上；提到相邻函数时，说清它和这个节点的关系。\n"
-    "三个问题里至少一个要联系【你之前学过】，引用读者的原话，⛔ 不要改写。\n"
-    "没有【你之前学过】就当第一次看，⛔ 不许编造「你可能记得」。\n"
-    "源码标注为「空文件」时那是正常的（包标记文件之类），⛔ 不要问「源码在哪」。"
+    "问题落在这个节点上，不要去问相邻的其它节点；提到相邻节点时，说清它和这个节点的关系。\n"
+    "能联系【你之前学过】时尽量联系，引用读者的原话，不要改写。\n"
+    "没有【你之前学过】就当第一次看，不许编造「你可能记得」。\n"
+    "源码标注为「空文件」时那是正常的（包标记文件之类），不要问「源码在哪」。"
 )
 
 
@@ -699,21 +705,22 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
     node = pack.get("node") or {}
     kind = str(node.get("kind") or "").lower()
     parts: list[str] = [
-        f"【当前节点】{kind} {node.get('name') or ''}"
-        f"  @ {node.get('file') or ''}:{node.get('line') or 0}-{node.get('line_end') or 0}",
-        f"【签名】{node.get('signature') or '（解析器未给出）'}",
+        f"[当前节点类型]:{kind} ",
+        f"[当前节点名字]:{node.get('name') or ''}",
+        f"[当前节点路径]:{node.get('file') or ''}:{node.get('line') or 0}-{node.get('line_end') or 0}",
+        f"[当前节点签名]:{node.get('signature') or '（解析器未给出）'}",
     ]
     # ★ 按类型给关注方向（dir 和 method 不该被问同一套东西）
     focus = KIND_FOCUS.get(kind)
     if focus:
-        parts.append(f"【这类节点值得追问的】{focus}")
+        parts.append(f"[这类节点值得追问的]:{focus}")
     # ★ 文件语义：告诉模型「这个文件本来长什么样」，避免把「空」当异常
     hint = str(pack.get("file_hint") or "").strip()
     if hint:
-        parts.append(f"【这个文件是】{hint}")
+        parts.append(f"[这个文件是]:{hint}")
     parts.extend(
         [
-            "【源码】",
+            "[源码]",
             "```",
             str(pack.get("snippet") or "（读不到源码）"),
             "```",
@@ -737,7 +744,7 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
     def block(title: str, rows: list[dict]) -> None:
         if not rows:
             return
-        parts.append(f"【{title}】")
+        parts.append(f"[{title}]")
         for r in rows:
             parts.append(
                 f"- {r.get('name')}  @ {r.get('file')}:{r.get('line')}\n"
@@ -774,7 +781,7 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
     flows = pack.get("flows") or []
     if flows:
         parts.append(
-            "【它在这些执行流里】\n"
+            "[它在这些执行流里]\n"
             + "\n".join(
                 f"- 第 {i + 1} 条（{f.get('length')} 步）：" + " → ".join(f.get("labels") or [])
                 for i, f in enumerate(flows)
@@ -784,14 +791,14 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
     sus = pack.get("suspicious") or []
     if sus:
         parts.append(
-            "【正则扫出的线索（不完整，只用于定位；⛔ 不要只依赖这些）】\n"
+            "[正则扫出的线索（不完整，只用于定位；不要只依赖这些）]\n"
             + "\n".join(f"- {x}" for x in sus)
         )
 
     # ★ 目录节点：给它的直接子项（文件名/子目录），让模型能问「这个目录为什么这样切分」
     kids = pack.get("children") or []
     if kids:
-        lines = ["【这个目录里的东西（子目录 / 文件）】"]
+        lines = ["[这个目录里的东西（子目录 / 文件）]"]
         for c in kids[:30]:
             mark = "目录" if c.get("kind") == "dir" else "文件"
             lines.append(f"- [{mark}] {c.get('name')}")
@@ -801,7 +808,7 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
 
     # ---- 用户之前学过的（引用原话，⛔ 不概括）
     if learned:
-        lines = ["【你之前学过（读者自己写的原话，⛔ 不要改写）】"]
+        lines = ["[你之前学过（读者自己写的原话，不要改写）]"]
         for it in learned[:3]:
             age = it.get("age_days")
             when = f"{age} 天前" if isinstance(age, int) and age >= 0 else "之前"
@@ -812,10 +819,10 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
             lines.append(f"  「{str(it.get('text') or '').strip()[:200]}」")
         parts.append("\n".join(lines))
     else:
-        parts.append("【你之前学过】\n（这是第一次看这附近，⛔ 不要假装读者记得什么）")
+        parts.append("[你之前学过]\n（这是第一次看这附近，不要假装读者记得什么）")
 
     parts.append(
-        "【任务】按上面的格式出 3 个问题，并给最多 2 条「下一步可以读」。"
+        "[任务]按上面的格式出 3 个问题，并给最多 2 条「下一步可以读」。"
         "引用代码事实时以上面给出的材料为准；背景类问题只问「有什么关系」，不下结论。"
         "线索只是定位参考，真正的疑点要你自己从源码里看出来。"
     )
@@ -833,9 +840,20 @@ def parse_questions(text: str) -> dict:
     """
     items: list[dict] = []
     nxt: list[dict] = []
+    note = ""
     for raw in str(text or "").splitlines():
         s = raw.strip().lstrip("-·•* ").strip()
         if not s:
+            continue
+        # ★「没什么可问」时模型只输出这一行（见 QUESTIONS_SYSTEM）。
+        #   ⚠ 用 continue 而不是 break：简评万一写在前面，别丢掉后面的问题
+        note_hit = False
+        for sep in ("：", ":"):
+            if s.startswith("简评" + sep):
+                note = s[3:].strip()
+                note_hit = True
+                break
+        if note_hit:
             continue
         for label in ("陷阱", "优化", "背景"):
             for sep in ("：", ":"):
@@ -856,6 +874,11 @@ def parse_questions(text: str) -> dict:
                         name, _, why = rest.partition("-")
                     nxt.append({"name": name.strip(), "why": why.strip()})
                     break
+    # ★ 只有简评、没有问题：把它作为一条特殊条目返回，
+    #   前端就不会再说「这次没出题（检查 AI 设置）」——那是误导
+    if note and not items:
+        items.append({"type": "简评", "text": note})
+
     return {"items": items[:3], "next": nxt[:2]}
 
 

@@ -83,6 +83,8 @@ const TYPE_STYLE: Record<string, { color: string; icon: string }> = {
   陷阱: { color: '#ef4444', icon: '⚠' },
   优化: { color: '#3b82f6', icon: '⚡' },
   背景: { color: '#a855f7', icon: '📖' },
+  // 「没什么可问」时的一条说明（不是问题，用灰一点的颜色）
+  简评: { color: 'var(--text-faint)', icon: '💡' },
 }
 
 export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHoverCardProps) {

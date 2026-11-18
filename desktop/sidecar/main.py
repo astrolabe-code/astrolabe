@@ -1656,7 +1656,8 @@ READ_TOOLS = [
                 "  ① 只能 MATCH / OPTIONAL MATCH / WHERE / RETURN / WITH / ORDER BY / LIMIT\n"
                 "     CREATE / MERGE / DELETE / SET / REMOVE / DROP / CALL 一律拒绝\n"
                 "  ② 必须带 LIMIT（≤200），否则不执行\n"
-                "  ③ 图里只有行号，没有源码正文 —— 要读源码用 read_node\n"
+                "  ③ 图里只有行号与 rel_path，没有源码正文 —— 读内容用 read_node\n"
+                "     想知道某个目录里有什么，查 Rel 的 contains 边（或直接 read_node 那个 dir）\n"
                 "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
                 "\n"
                 "例：\n"
@@ -1679,10 +1680,14 @@ READ_TOOLS = [
         "function": {
             "name": "read_node",
             "description": (
-                "读某个节点的**源码正文**，以及它的直接上游/下游。\n"
-                "cypher 只能给到行号，源码要读文件，所以用这个。\n\n"
-                "WHEN TO USE: 已经知道是哪个函数，要看它具体怎么写的。\n"
-                "AFTER THIS: 想看它调用了谁，可以再用 cypher 查。"
+                "读一个节点的内容，**按 kind 返回不同的东西**：\n"
+                "  · function / method / class / struct 等 → 源码正文 + 直接上游/下游\n"
+                "  · file → 这个文件的源码（默认前 120 行，可用 max_lines 调）\n"
+                "  · dir → 它包含的文件与子目录（⚠ 目录本来就没有源码，这是正常的）\n"
+                "\n"
+                "WHEN TO USE: 想看某段代码具体怎么写，或某目录里有什么。\n"
+                "AFTER THIS: 想看它和谁相连，用 cypher 查 Rel；想知道作者写过什么，用 read_notes。\n"
+                "⚠ 源码是按 rel_path 读文件的：rel_path 对不上磁盘文件时才会失败。"
             ),
             "parameters": {
                 "type": "object",

@@ -235,7 +235,7 @@ def build(
         n = graphdb.get_code(data_dir, v)
         if not n:
             return None
-        rel = str(n.get("file") or "")
+        rel = str(n.get("rel_path") or "")
         code, cut = _slice(text_of(rel), n.get("line") or 1, n.get("line_end") or 0)
         return {
             "vid": int(v),
@@ -260,7 +260,7 @@ def build(
         node_cut = False
     else:
         node_code, node_cut = _slice(
-            text_of(str(node.get("file") or "")),
+            text_of(str(node.get("rel_path") or "")),
             node.get("line") or 1,
             node.get("line_end") or 0,
         )
@@ -268,7 +268,7 @@ def build(
     # ---- 4) 同文件其它函数：少而全（5 个带源码，其余只报数量）
     siblings: list[dict] = []
     siblings_more = 0
-    rel_self = str(node.get("file") or "")
+    rel_self = str(node.get("rel_path") or "")
     if rel_self and with_neighbors:
         try:
             conn2 = graphdb._open(data_dir)

@@ -60,8 +60,8 @@ def _index(nodes_with_vid):
                     break
             else:
                 by_qtail.setdefault(qn, []).append((qn, vid))
-        by_name.setdefault(rec["name"], []).append((vid, rec["file_path"], rec["line"]))
-        base = os.path.basename(rec["file_path"] or "")
+        by_name.setdefault(rec["name"], []).append((vid, rec["rel_path"], rec["line"]))
+        base = os.path.basename(rec["rel_path"] or "")
         if base:
             by_basename.setdefault(base, []).append(vid)
             by_stem.setdefault(os.path.splitext(base)[0], []).append(vid)
@@ -216,7 +216,7 @@ def parse_project(
                     "kind": str(pn.kind) if not isinstance(pn.kind, int) else str(pn.kind),
                     "name": pn.name or "",
                     "qname": getattr(pn, "qname", "") or "",
-                    "file_path": pn.file_path or "",
+                    "rel_path": pn.file_path or "",
                     "line": int(pn.line or 0),
                     "line_end": int(pn.line_end if pn.line_end is not None else -1),
                     # ★ 签名（`static int f(int a)`）—— 读源码用，⛔ 不进 canonical
@@ -300,8 +300,11 @@ def parse_project(
         dir_nodes[rel_dir] = {
             "kind": "dir",
             "name": os.path.basename(rel_dir),
-            "qname": rel_dir,
-            "file_path": "",
+            # ★ dir 没有「限定名」：名字就是目录名，完整路径在 rel_path
+            #   （所有者 2026-11-18：「没有限定名，比如dir节点等，就为空」）
+            "qname": "",
+            # ★ 相对路径：所有节点都有，不再叫 file（那个名字有迷惑性）
+            "rel_path": rel_dir,
             "line": 0,
             "line_end": -1,
             "vid": vid,
@@ -314,8 +317,8 @@ def parse_project(
 
     file_vid: dict[str, int] = {}
     for rec, _uid in records:
-        if rec["kind"] == "file" and rec["file_path"]:
-            file_vid.setdefault(rec["file_path"], rec["vid"])
+        if rec["kind"] == "file" and rec["rel_path"]:
+            file_vid.setdefault(rec["rel_path"], rec["vid"])
 
     for path in sorted(file_vid):
         parent = path.rsplit("/", 1)[0] if "/" in path else ""

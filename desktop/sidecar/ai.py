@@ -460,10 +460,13 @@ def _context_block(
     ⚠ 后面那些参数保留只为兼容调用方，内容一律不用。
     """
     kind = str(node.get("kind") or "").lower()
+    # ★ dir 节点的 file 是空串，完整相对路径在 qname 里
+    #   （parser_bridge 建目录节点时就是 file_path="" / qname=rel_dir）
+    path = str(node.get("rel_path") or "").strip() or str(node.get("qname") or "").strip()
     return "\n".join(
         [
             f"[节点] {kind} {node.get('name') or ''}",
-            f"[文件] {node.get('file') or ''}",
+            f"[路径] {path}",
         ]
     )
 
@@ -712,8 +715,9 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
 
     parts = [
         f"[节点] {kind} {name}",
-        # 路径只是定位标识（同名节点多），不是内容
-        f"[文件] {node.get('file') or ''}",
+        # 路径只是定位标识（同名节点多），不是内容。
+        # ⚠ dir 的 file 是空串，真实路径在 qname
+        f"[路径] {str(node.get('rel_path') or '').strip() or str(node.get('qname') or '').strip()}",
         "",
         "[任务] 先用工具看清这个节点：read_node 看它的内容；需要上下游时用 cypher 查；"
         "想知道作者怎么理解它，用 read_notes 或 search_notes。"

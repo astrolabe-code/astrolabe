@@ -28,7 +28,7 @@ MAX_HOPS = 30
 _SCHEMA = [
     "CREATE NODE TABLE IF NOT EXISTS Code("
     "vid INT64, kind STRING, name STRING, qname STRING,"
-    "file STRING, line INT64, lineEnd INT64, signature STRING, origin STRING,"
+    "rel_path STRING, line INT64, lineEnd INT64, signature STRING, origin STRING,"
     "PRIMARY KEY(vid))",
     "CREATE REL TABLE IF NOT EXISTS Rel("
     "FROM Code TO Code, kind STRING, origin STRING, line INT64, MANY_MANY)",
@@ -86,7 +86,7 @@ def _code_rows(nodes: list[dict]) -> list[dict]:
             "kind": str(n.get("kind") or ""),
             "name": str(n.get("name") or ""),
             "qname": str(n.get("qname") or ""),
-            "file": str(n.get("file_path") or n.get("file") or ""),
+            "rel_path": str(n.get("file_path") or n.get("file") or ""),
             "line": int(n.get("line") or 0),
             "lineEnd": int(n.get("line_end") or -1),
             "signature": str(n.get("signature") or ""),
@@ -117,7 +117,7 @@ def sync_code(data_dir: str, nodes: list[dict], edges: list[dict]) -> dict:
     conn = _open(data_dir)
     manual_nodes = conn.execute(
         "MATCH (c:Code) WHERE c.origin = 'manual' "
-        "RETURN c.vid, c.kind, c.name, c.qname, c.file, c.line, c.lineEnd, c.signature"
+        "RETURN c.vid, c.kind, c.name, c.qname, c.rel_path, c.line, c.lineEnd, c.signature"
     ).get_all()
     manual_edges = conn.execute(
         "MATCH (a:Code)-[r:Rel]->(b:Code) WHERE r.origin = 'manual' "
@@ -136,7 +136,7 @@ def sync_code(data_dir: str, nodes: list[dict], edges: list[dict]) -> dict:
                 "kind": str(kind or ""),
                 "name": str(name or ""),
                 "qname": str(qname or ""),
-                "file": str(file or ""),
+                "rel_path": str(file or ""),
                 "line": int(line or 0),
                 "lineEnd": int(line_end) if line_end is not None else -1,
                 "signature": str(signature or ""),
@@ -255,10 +255,10 @@ def nodes(data_dir: str, limit: int = 500, offset: int = 0, kinds: list[str] | N
     total = conn.execute(f"MATCH (c:Code){where} RETURN count(c)", params).get_next()[0]
     # ★ 入口节点排最前（main / __main__），其余按文件、行号 —— 与旧版分页排序一致
     items = conn.execute(
-        f"MATCH (c:Code){where} RETURN c.vid, c.kind, c.name, c.qname, c.file, c.line, "
+        f"MATCH (c:Code){where} RETURN c.vid, c.kind, c.name, c.qname, c.rel_path, c.line, "
         f"c.lineEnd, c.signature, c.origin "
         f"ORDER BY CASE WHEN c.name = 'main' OR c.name = '__main__' THEN 0 ELSE 1 END, "
-        f"c.file, c.line SKIP {int(offset)} LIMIT {int(limit)}",
+        f"c.rel_path, c.line SKIP {int(offset)} LIMIT {int(limit)}",
         params,
     ).get_all()
     cols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "signature", "origin"]
@@ -283,7 +283,7 @@ def graph_full(data_dir: str) -> dict:
     """整张代码图（图谱页用）。★ 两点之间**聚合成一条展示边**，details 带全部原始边。"""
     conn = _open(data_dir)
     nodes = conn.execute(
-        "MATCH (c:Code) RETURN c.vid, c.kind, c.name, c.qname, c.file, c.line, c.lineEnd, c.origin"
+        "MATCH (c:Code) RETURN c.vid, c.kind, c.name, c.qname, c.rel_path, c.line, c.lineEnd, c.origin"
     ).get_all()
     edges = conn.execute(
         "MATCH (a:Code)-[r:Rel]->(b:Code) RETURN a.vid, b.vid, r.kind, r.origin, r.line "
@@ -323,12 +323,12 @@ def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
     d = max(1, min(MAX_HOPS, int(depth)))
     out = conn.execute(
         f"MATCH (a:Code {{vid:$v}})-[:Rel*1..{d}]->(b:Code) "
-        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line, b.origin",
+        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.rel_path, b.line, b.origin",
         {"v": int(vid)},
     ).get_all()
     back = conn.execute(
         f"MATCH (b:Code)-[:Rel*1..{d}]->(a:Code {{vid:$v}}) "
-        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.file, b.line, b.origin",
+        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.rel_path, b.line, b.origin",
         {"v": int(vid)},
     ).get_all()
     # ★ `origin` 用来区分「解析器产出的」和「作者手工补的」
@@ -405,7 +405,7 @@ def _is_dup_pk(exc) -> bool:
 
 _CODE_CREATE = (
     "CREATE (:Code {vid:$vid, kind:$kind, name:$name, qname:$qname, "
-    "file:$file, line:$line, lineEnd:$lineEnd, signature:$signature, origin:$origin})"
+    "rel_path:$rel_path, line:$line, lineEnd:$lineEnd, signature:$signature, origin:$origin})"
 )
 
 
@@ -422,10 +422,10 @@ def _create_code(conn, row: dict, attempt: int = 0) -> bool:
     except Exception as exc:  # noqa: BLE001
         if not _is_dup_pk(exc) or attempt > 8:
             raise
-        canon = _canon(row["kind"], row["file"], row["name"], row["line"], row["lineEnd"])
+        canon = _canon(row["kind"], row["rel_path"], row["name"], row["line"], row["lineEnd"])
         cur = _get_code(conn, int(row["vid"]))
         if cur is not None and (
-            _canon(cur["kind"], cur["file"], cur["name"], cur["line"], cur["line_end"]) == canon
+            _canon(cur["kind"], cur["rel_path"], cur["name"], cur["line"], cur["line_end"]) == canon
         ):
             return False
         row["vid"] = _hash(f"{canon}|{attempt + 1}")
@@ -438,7 +438,7 @@ def _clear_code(conn) -> None:
 
 def _get_code(conn, vid: int) -> dict | None:
     rows = conn.execute(
-        "MATCH (c:Code {vid:$v}) RETURN c.vid, c.kind, c.name, c.qname, c.file, "
+        "MATCH (c:Code {vid:$v}) RETURN c.vid, c.kind, c.name, c.qname, c.rel_path, "
         "c.line, c.lineEnd, c.signature, c.origin",
         {"v": int(vid)},
     ).get_all()
@@ -446,7 +446,7 @@ def _get_code(conn, vid: int) -> dict | None:
         return None
     return dict(
         zip(
-            ["vid", "kind", "name", "qname", "file", "line", "line_end", "signature", "origin"],
+            ["vid", "kind", "name", "qname", "rel_path", "line", "line_end", "signature", "origin"],
             rows[0],
         )
     )
@@ -474,7 +474,7 @@ def add_code(
         "kind": kind,
         "name": name,
         "qname": qname or name,
-        "file": file,
+        "rel_path": file,
         "line": line,
         "lineEnd": line_end,
         "signature": signature,
@@ -497,14 +497,14 @@ def update_code(data_dir: str, vid: int, patch: dict) -> dict:
 
     nk = str(pick("kind", cur["kind"]))
     nn = str(pick("name", cur["name"]))
-    nf = str(pick("file_path", cur["file"]))
+    nf = str(pick("file_path", cur["rel_path"]))
     nl = int(pick("line", cur["line"]))
     ne = int(pick("line_end", cur["line_end"]))
     new_vid = _new_vid(nk, nf, nn, nl, ne)
 
     if new_vid == vid:
         conn.execute(
-            "MATCH (c:Code {vid:$v}) SET c.kind=$k, c.name=$n, c.qname=$q, c.file=$f, "
+            "MATCH (c:Code {vid:$v}) SET c.kind=$k, c.name=$n, c.qname=$q, c.rel_path=$f, "
             "c.line=$l, c.lineEnd=$e, c.origin='manual'",
             {"v": vid, "k": nk, "n": nn, "q": patch.get("qname") or cur["qname"], "f": nf, "l": nl, "e": ne},
         )
@@ -813,7 +813,7 @@ def communities_of(
     meta = {
         int(v): (str(f or ""), str(nm or ""))
         for v, f, nm in conn.execute(
-            "MATCH (c:Code) RETURN c.vid, c.file, c.name"
+            "MATCH (c:Code) RETURN c.vid, c.rel_path, c.name"
         ).get_all()
     }
 
@@ -860,12 +860,12 @@ def edges_of(data_dir: str, vid: int) -> dict:
     conn = _open(data_dir)
     out = conn.execute(
         "MATCH (a:Code {vid:$v})-[r:Rel]->(b:Code) "
-        "RETURN a.vid, b.vid, r.kind, r.origin, r.line, b.name, b.file ORDER BY r.kind",
+        "RETURN a.vid, b.vid, r.kind, r.origin, r.line, b.name, b.rel_path ORDER BY r.kind",
         {"v": int(vid)},
     ).get_all()
     inc = conn.execute(
         "MATCH (a:Code)-[r:Rel]->(b:Code {vid:$v}) "
-        "RETURN a.vid, b.vid, r.kind, r.origin, r.line, a.name, a.file ORDER BY r.kind",
+        "RETURN a.vid, b.vid, r.kind, r.origin, r.line, a.name, a.rel_path ORDER BY r.kind",
         {"v": int(vid)},
     ).get_all()
 
@@ -901,11 +901,17 @@ def shortest_path(data_dir: str, from_vid: int, to_vid: int, max_hops: int = 10)
 
 
 def get_code(data_dir: str, vid: int) -> dict | None:
-    """单个节点；同时给 file / file_path 两种键名，兼容老的调用方。"""
+    """单个节点；同时给 rel_path / file_path 两种键名。
+
+    ★ Code 表的字段已从 file 改名为 rel_path（所有者 2026-11-18：
+      「file字段不要叫file了，太有迷惑性了，应该叫rel_path，表示相对路径」）。
+    ⚠ file_path 只是为了不破坏旧调用方（前端 GraphNode 用的就是它），
+      值完全一样；新代码请用 rel_path。
+    """
     row = _get_code(_open(data_dir), vid)
     if row is None:
         return None
-    row["file_path"] = row["file"]
+    row["file_path"] = row["rel_path"]
     return row
 
 
@@ -916,8 +922,8 @@ def search_code(data_dir: str, q: str, limit: int = 8) -> list[dict]:
     if not key:
         return []
     rows = conn.execute(
-        "MATCH (c:Code) WHERE c.name CONTAINS $q OR c.qname CONTAINS $q OR c.file CONTAINS $q "
-        "RETURN c.vid, c.kind, c.name, c.file, c.line "
+        "MATCH (c:Code) WHERE c.name CONTAINS $q OR c.qname CONTAINS $q OR c.rel_path CONTAINS $q "
+        "RETURN c.vid, c.kind, c.name, c.rel_path, c.line "
         "ORDER BY (CASE WHEN c.name CONTAINS $q THEN 0 ELSE 1 END), size(c.name) "
         f"LIMIT {int(limit)}",
         {"q": key},

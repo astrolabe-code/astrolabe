@@ -953,7 +953,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                         meta, text = notefile.read_file(abs_md)
                         meta["node_vid"] = new_vid
                         meta["node"] = node.get("name") or meta.get("node", "")
-                        meta["anchor"] = f"{node.get('file') or ''}:{node.get('line') or 0}"
+                        meta["anchor"] = f"{node.get('rel_path') or ''}:{node.get('line') or 0}"
                         notefile.write_file(abs_md, meta, text)
                         st = os.stat(abs_md)
                         # ★ 锚点只在 SQLite（node_vid）里，改名换了 vid 必须跟着改
@@ -1575,7 +1575,7 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     lang = ""
     snippet = "（源码读不到）"
     try:
-        f = source.read(project["root"], node["file"])
+        f = source.read(project["root"], node["rel_path"])
         lang = str(f.get("lang") or "")
         all_lines = str(f.get("text") or "").splitlines()
         start = max(0, int(node["line"] or 1) - 1)
@@ -1642,7 +1642,7 @@ READ_TOOLS = [
                 "直接查代码图谱（只读 cypher）——想怎么连就怎么连，比专用工具灵活。\n"
                 "\n"
                 "图谱结构（LadybugDB）：\n"
-                "  节点表 Code(vid, kind, name, qname, file, line, lineEnd, signature, origin)\n"
+                "  节点表 Code(vid, kind, name, qname, rel_path, line, lineEnd, signature, origin)\n"
                 "    kind: dir / file / function / method / class / interface / struct / union /\n"
                 "          enum / typedef / record / macro / module / package / variable /\n"
                 "          constant / field / type\n"
@@ -1814,7 +1814,7 @@ def _make_tool_executor(project):
             return "\n".join(lines)
 
         try:
-            text = str(source.read(project["root"], node.get("file") or "").get("text") or "")
+            text = str(source.read(project["root"], node.get("rel_path") or "").get("text") or "")
         except Exception:  # noqa: BLE001
             return "（源码读取失败：文件打不开或编码不支持）"
         if not text.strip():
@@ -1917,10 +1917,10 @@ def _make_tool_executor(project):
             kind = str(node.get("kind") or "")
             vid = int(node.get("vid") or 0)
 
-            out = [
-                f"【节点】{kind} {node.get('name')}  "
-                f"@ {node.get('file_path')}:{node.get('line')}"
-            ]
+            # ⚠ dir 节点的 file/file_path 是空串，路径在 qname
+            loc = str(node.get("file_path") or "").strip() or str(node.get("qname") or "").strip()
+            pos = f"{loc}:{node.get('line')}" if node.get("line") else loc
+            out = [f"【节点】{kind} {node.get('name')}  @ {pos}"]
             sig = str(node.get("signature") or "").strip()
             if sig:
                 out.append(f"【签名】{sig}")

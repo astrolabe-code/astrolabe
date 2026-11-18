@@ -1657,7 +1657,7 @@ READ_TOOLS = [
                 "     CREATE / MERGE / DELETE / SET / REMOVE / DROP / CALL 一律拒绝\n"
                 "  ② 必须带 LIMIT（≤200），否则不执行\n"
                 "  ③ 图里只有行号与 rel_path，没有源码正文 —— 读内容用 read_node\n"
-                "     想知道某个目录里有什么，查 Rel 的 contains 边（或直接 read_node 那个 dir）\n"
+                "     想知道某个目录包含什么，查 Rel 的 contains 边\n"
                 "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
                 "\n"
                 "例：\n"
@@ -1680,14 +1680,12 @@ READ_TOOLS = [
         "function": {
             "name": "read_node",
             "description": (
-                "读一个节点的内容，**按 kind 返回不同的东西**：\n"
-                "  · function / method / class / struct 等 → 源码正文 + 直接上游/下游\n"
-                "  · file → 这个文件的源码（默认前 120 行，可用 max_lines 调）\n"
-                "  · dir → 它包含的文件与子目录（⚠ 目录本来就没有源码，这是正常的）\n"
+                "看一个节点**里面**是什么。\n"
+                "返回什么由节点本身决定 —— 有内容就给内容，没有就说明情况。\n"
                 "\n"
-                "WHEN TO USE: 想看某段代码具体怎么写，或某目录里有什么。\n"
-                "AFTER THIS: 想看它和谁相连，用 cypher 查 Rel；想知道作者写过什么，用 read_notes。\n"
-                "⚠ 源码是按 rel_path 读文件的：rel_path 对不上磁盘文件时才会失败。"
+                "WHEN TO USE: 你需要知道这个节点里面是什么的时候。\n"
+                "⛔ 不要在调用前猜「它有没有内容」：需要就看，不需要就不看。\n"
+                "AFTER THIS: 想看它和谁相连，用 cypher 查 Rel；想知道作者写过什么，用 read_notes。"
             ),
             "parameters": {
                 "type": "object",
@@ -1814,8 +1812,8 @@ def _make_tool_executor(project):
             except Exception:  # noqa: BLE001
                 kids = []
             if not kids:
-                return "（目录节点，没有源码；目录里也没有直接子项）"
-            lines = ["（目录节点，没有源码；直接子项如下）"]
+                return "（这个节点下面没有子项）"
+            lines = ["（它包含以下子项）"]
             for k in kids[:40]:
                 lines.append(f"- [{'目录' if k['kind'] == 'dir' else '文件'}] {k['name']}")
             return "\n".join(lines)
@@ -1935,7 +1933,9 @@ def _make_tool_executor(project):
 
             # ★ 目录：只列子项，⛔ 不出现「源码」二字（否则模型以为读取失败）
             if kind == "dir":
-                out.append("【目录，没有源码】直接子项：")
+                # ⛔ 不写「没有源码」：那是替模型判断「它该有什么」，
+                #   只陈述这里给出的是什么
+                out.append("【它包含】")
                 out.append(snippet_of(node, 40))
                 return "\n".join(out)
 
@@ -1947,7 +1947,7 @@ def _make_tool_executor(project):
             out.append(f"【调用它】{label(nei.get('upstream') or [])}")
 
             max_lines = min(400, max(40, int(args.get("max_lines") or 120)))
-            out.append("【文件内容】" if kind == "file" else "【源码】")
+            out.append("【内容】")
             out.append("```")
             out.append(snippet_of(node, max_lines))
             out.append("```")

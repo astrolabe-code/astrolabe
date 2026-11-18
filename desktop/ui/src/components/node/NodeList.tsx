@@ -18,7 +18,7 @@ import EmptyState from '../ui/EmptyState'
  *
  * | # | 口径 |
  * |---|---|
- * | ① | ★ 搜索按 `name` / `qname` 命中（⛔ 不按 file_path —— 那样搜出来太杂） |
+ * | ① | ★ 搜索按 `name` / `qname` 命中（⛔ 不按 rel_path —— 那样搜出来太杂） |
  * | ② | ★ kind 过滤用**数据里出现过的**种类（⛔ 不写死 —— 后端可能加新种类） |
  * | ③ | ★ 分页「加载更多」而不是无限滚动（一次一页，请求可数） |
  */
@@ -288,7 +288,7 @@ export default function NodeList({
                       </span>
                     </div>
                     {/* ★ 空白结构没有文件/行号 ⇒ **整行不渲染**（类型上面那个 tag 已经显示过了）⚠ */}
-                    {n.file_path && (
+                    {n.rel_path && (
                       <div
                         className="faint mono"
                         style={{
@@ -300,7 +300,7 @@ export default function NodeList({
                         }}
                         // ⛔ 同上，路径也有自定义浮窗展示
                       >
-                        {n.file_path}:{n.line}
+                        {n.rel_path}:{n.line}
                       </div>
                     )}
                   </button>
@@ -337,7 +337,7 @@ export default function NodeList({
                     </button>
                   )}
                   {/* ★★★ 2026-11-06：**点节点直接打开代码**（并定位到它所在行）⚠ */}
-                  {onOpenCode && n.file_path && (
+                  {onOpenCode && n.rel_path && (
                     <button
                       type="button"
                       title="查看这个节点的源码"

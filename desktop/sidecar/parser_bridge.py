@@ -208,7 +208,7 @@ def parse_project(
     records: list[tuple[dict, str]] = []
     canons: list[str] = []
     for pn in result.nodes:
-        canon = identity.canonical(pn.kind, pn.file_path, pn.name, pn.line, pn.line_end)
+        canon = identity.canonical(pn.kind, pn.rel_path, pn.name, pn.line, pn.line_end)
         canons.append(canon)
         records.append(
             (
@@ -216,7 +216,7 @@ def parse_project(
                     "kind": str(pn.kind) if not isinstance(pn.kind, int) else str(pn.kind),
                     "name": pn.name or "",
                     "qname": getattr(pn, "qname", "") or "",
-                    "rel_path": pn.file_path or "",
+                    "rel_path": pn.rel_path or "",
                     "line": int(pn.line or 0),
                     "line_end": int(pn.line_end if pn.line_end is not None else -1),
                     # ★ 签名（`static int f(int a)`）—— 读源码用，⛔ 不进 canonical

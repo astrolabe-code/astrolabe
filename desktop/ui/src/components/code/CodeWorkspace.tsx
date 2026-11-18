@@ -181,10 +181,10 @@ export default function CodeWorkspace({
 
   // ② 点节点 ⇒ 自动打开对应文件并跳到那一行
   useEffect(() => {
-    if (!node?.file_path) return
-    setActivePath(node.file_path)
+    if (!node?.rel_path) return
+    setActivePath(node.rel_path)
     setFocusLineNo(node.line > 0 ? node.line : null)
-  }, [node?.file_path, node?.line, node?.vid])
+  }, [node?.rel_path, node?.line, node?.vid])
 
   // ③ 读文件内容
   useEffect(() => {

@@ -90,7 +90,7 @@ export default function PathProgress({ projectRef, collapsed = 5 }: PathProgress
               key={it.vid}
               type="button"
               onClick={() => nav(`/p/${encodeURIComponent(projectRef)}?node=${it.vid}`)}
-              title={it.file_path ? `${it.file_path}:${it.line}` : it.name}
+              title={it.rel_path ? `${it.rel_path}:${it.line}` : it.name}
               style={{
                 display: 'flex',
                 alignItems: 'center',

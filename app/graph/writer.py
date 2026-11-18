@@ -62,7 +62,7 @@ class _Index:
     by_uid: dict[str, Node]
     by_qname: dict[str, list[Node]]
     by_name: dict[str, list[Node]]
-    by_file_path: dict[str, Node]
+    by_rel_path: dict[str, Node]
     by_file_basename: dict[str, list[Node]]
     by_file_stem: dict[str, list[Node]]
 
@@ -77,7 +77,7 @@ class _Index:
         """
         by_qname: dict[str, list[Node]] = {}
         by_name: dict[str, list[Node]] = {}
-        by_file_path: dict[str, Node] = {}
+        by_rel_path: dict[str, Node] = {}
         by_file_basename: dict[str, list[Node]] = {}
         by_file_stem: dict[str, list[Node]] = {}
 
@@ -89,7 +89,7 @@ class _Index:
             if node.kind in _CALLABLE_KINDS:
                 by_name.setdefault(node.name, []).append(node)
             elif node.kind == kinds.KIND_IDS["file"]:
-                by_file_path[node.file_path] = node
+                by_rel_path[node.file_path] = node
                 base = node.file_path.rsplit("/", 1)[-1]
                 by_file_basename.setdefault(base, []).append(node)
                 # ★ 文件主干名 —— 用于把「模块名」对上「文件」
@@ -100,7 +100,7 @@ class _Index:
             by_uid=nodes,
             by_qname=by_qname,
             by_name=by_name,
-            by_file_path=by_file_path,
+            by_rel_path=by_rel_path,
             by_file_basename=by_file_basename,
             by_file_stem=by_file_stem,
         )
@@ -108,7 +108,7 @@ class _Index:
 
 def _canonical(pn) -> str:
     """★ 规范串（* 唯一实现见 `graph/identity.py`）⚠"""
-    return identity.canonical(pn.kind, pn.file_path, pn.name, pn.line, pn.line_end)
+    return identity.canonical(pn.kind, pn.rel_path, pn.name, pn.line, pn.line_end)
 
 
 class EmptyGraph(Exception):
@@ -246,7 +246,7 @@ def write_graph(
                     kind=kinds.kind_id(pn.kind),
                     name=pn.name[:512],
                     qname=(pn.qname or "")[:512],
-                    file_path=pn.file_path[:1024],
+                    file_path=pn.rel_path[:1024],
                     line=pn.line,
                     line_end=(pn.line_end if pn.line_end is not None else -1),
                     lang=pn.lang,
@@ -459,7 +459,7 @@ def _resolve(ref: str, index: _Index, stats: WriteStats) -> Node | None:
         return None
 
     if what == "in":
-        node = index.by_file_path.get(value)
+        node = index.by_rel_path.get(value)
         if node is None:
             _note(stats, ref)
         return node

@@ -589,7 +589,7 @@ export default function ProjectGraphPage() {
                           {item.name}
                         </button>
                         <span className="faint" style={{ fontSize: 10.5 }}>
-                          {item.file_path}:{item.line}
+                          {item.rel_path}:{item.line}
                         </span>
                         {canWrite && (
                           <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>

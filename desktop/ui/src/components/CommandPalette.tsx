@@ -31,7 +31,7 @@ interface NodeHit {
   vid: number
   kind: string
   name: string
-  file_path: string
+  rel_path: string
   line: number
   project: string
   project_ref: string
@@ -271,7 +271,7 @@ export default function CommandPalette() {
                     </span>
                   </div>
                   <div className="faint" style={{ fontSize: 11.5, marginTop: 2 }}>
-                    {n.file_path}:{n.line}
+                    {n.rel_path}:{n.line}
                   </div>
                 </div>
               </button>

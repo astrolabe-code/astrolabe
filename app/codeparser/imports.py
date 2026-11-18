@@ -129,12 +129,12 @@ def resolve_imports(result: ParseResult, deadline: float | None = None) -> dict[
     uid_lang: dict[str, str] = {}
     uid_path: dict[str, str] = {}
     for n in result.nodes:
-        if n.kind == "file" and n.file_path:
-            file_uid[n.file_path] = n.uid
+        if n.kind == "file" and n.rel_path:
+            file_uid[n.rel_path] = n.uid
         if n.uid:
             uid_lang[n.uid] = n.lang or ""
-            if n.file_path:
-                uid_path[n.uid] = n.file_path
+            if n.rel_path:
+                uid_path[n.uid] = n.rel_path
 
     paths = list(file_uid)
     if not paths:

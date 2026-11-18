@@ -97,7 +97,7 @@ export default function CuratePanel({
   const hits = useMemo(() => {
     const kw = q.trim().toLowerCase()
     const list = kw
-      ? nodes.filter((n) => n.name.toLowerCase().includes(kw) || (n.file_path || '').toLowerCase().includes(kw))
+      ? nodes.filter((n) => n.name.toLowerCase().includes(kw) || (n.rel_path || '').toLowerCase().includes(kw))
       : nodes
     return list.slice(0, 60)
   }, [q, nodes])
@@ -254,7 +254,7 @@ export default function CuratePanel({
             >
               {n.name}
               <span className="faint" style={{ marginLeft: 6, fontSize: 10.5 }}>
-                {n.file_path ? `${n.file_path}:${n.line}` : n.kind}
+                {n.rel_path ? `${n.rel_path}:${n.line}` : n.kind}
               </span>
               {sel && sel.vid !== n.vid && (
                 <span
@@ -298,7 +298,7 @@ export default function CuratePanel({
           <>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{sel.name}</div>
             <div className="faint" style={{ fontSize: 11, marginBottom: 10 }}>
-              {sel.file_path ? `${sel.file_path}:${sel.line} · ${sel.kind}` : sel.kind}
+              {sel.rel_path ? `${sel.rel_path}:${sel.line} · ${sel.kind}` : sel.kind}
             </div>
 
             {/* 改名 / 改类型（内联，不用 prompt） */}
@@ -493,7 +493,7 @@ export default function CuratePanel({
                 {
                   kind: 'function',
                   name: newName.trim(),
-                  file_path: newFile.trim(),
+                  rel_path: newFile.trim(),
                   line: ln,
                   line_end: le >= ln ? le : -1,
                 },

@@ -202,9 +202,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         </div>
       )}
 
-      {node.file_path && (
+      {node.rel_path && (
         <div className="mono faint" style={{ fontSize: 11 }}>
-          {node.file_path}:{node.line}
+          {node.rel_path}:{node.line}
         </div>
       )}
 

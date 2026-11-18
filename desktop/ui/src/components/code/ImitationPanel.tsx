@@ -27,8 +27,8 @@ export default function ImitationPanel({
   node,
 }: ImitationPanelProps) {
   const vid = node?.vid ?? 0
-  const ext = (node?.file_path || '').split('.').pop() || 'txt'
-  const lang = langFromPath(node?.file_path || '')
+  const ext = (node?.rel_path || '').split('.').pop() || 'txt'
+  const lang = langFromPath(node?.rel_path || '')
 
   const [items, setItems] = useState<ImitationItem[]>([])
   const [activeName, setActiveName] = useState('')

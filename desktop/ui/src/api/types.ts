@@ -261,7 +261,7 @@ export interface Note {
     name: string
     kind: string
     qname: string
-    file_path: string
+    rel_path: string
     line: number
     line_end: number
   }
@@ -335,7 +335,7 @@ export interface ReadingPathItem {
   name: string
   kind: string
   qname: string
-  file_path: string
+  rel_path: string
   line: number
   line_end: number
   /** ★★ 这一站已经写过「小结」了吗（`D123`）⚠ */

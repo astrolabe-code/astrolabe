@@ -50,11 +50,11 @@ function toGraphNode(n: any): GraphNode {
   return {
     vid: Number(n.vid),
     // ⚠ 个人版没有 uid 概念；用「kind#路径#名字」合成一个稳定的可读标识
-    uid: `${n.kind}#${n.file_path}#${n.name}`,
+    uid: `${n.kind}#${n.rel_path}#${n.name}`,
     kind: String(n.kind || ''),
     name: String(n.name || ''),
     qname: String(n.qname || ''),
-    file_path: String(n.file_path || ''),
+    rel_path: String(n.rel_path || ''),
     line: Number(n.line || 0),
     line_end: Number(n.line_end ?? -1),
     // ★ 签名（`static int f(int a)`）—— 面板上显示，帮人少点开一次文件
@@ -82,7 +82,7 @@ function toNote(n: any, body = ''): Note {
       name: String(n.node_name || ''),
       kind: '',
       qname: '',
-      file_path: String(n.file_path || ''),
+      rel_path: String(n.rel_path || ''),
       line: Number(n.line || 0),
       line_end: -1,
     },
@@ -154,7 +154,7 @@ export interface BoardItem {
   name?: string
   node_name?: string
   qname?: string
-  file_path?: string
+  rel_path?: string
   mtime: number
 }
 

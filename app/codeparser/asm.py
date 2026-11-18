@@ -71,7 +71,7 @@ class AsmSymbolParser(Parser):
             ParsedNode(
                 kind="file",
                 name=path.rsplit("/", 1)[-1],
-                file_path=path,
+                rel_path=path,
                 line=1,
                 lang=self.lang,
             )
@@ -88,7 +88,7 @@ class AsmSymbolParser(Parser):
                 ParsedNode(
                     kind="function",
                     name=name,
-                    file_path=path,
+                    rel_path=path,
                     line=line,
                     lang=self.lang,
                     extra=extra or {},
@@ -114,7 +114,7 @@ class AsmSymbolParser(Parser):
                 ParsedNode(
                     kind="function",
                     name=name,
-                    file_path=path,
+                    rel_path=path,
                     line=line,
                     lang=self.lang,
                     extra={"asm_source": "export_symbol"},

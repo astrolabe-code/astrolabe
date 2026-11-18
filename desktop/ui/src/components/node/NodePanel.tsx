@@ -317,7 +317,7 @@ export default function NodePanel({
               whiteSpace: 'nowrap',
             }}
           >
-            {node.file_path}:{node.line}
+            {node.rel_path}:{node.line}
             <span style={{ opacity: 0.55 }}> · {node.lang}</span>
           </div>
           {/* ★★ `D106`：学习路径入口（* 作者才能改；* 在路径里显示序号）⚠ */}

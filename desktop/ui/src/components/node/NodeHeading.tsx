@@ -79,7 +79,7 @@ export default function NodeHeading({ node, trailing }: NodeHeadingProps) {
         )}
       </div>
 
-      {node.file_path && (
+      {node.rel_path && (
         <div
           className="faint mono"
           style={{
@@ -90,9 +90,9 @@ export default function NodeHeading({ node, trailing }: NodeHeadingProps) {
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          title={`${node.file_path}:${node.line}`}
+          title={`${node.rel_path}:${node.line}`}
         >
-          {node.file_path}:{node.line}
+          {node.rel_path}:{node.line}
         </div>
       )}
     </div>

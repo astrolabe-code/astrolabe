@@ -49,7 +49,7 @@ class ParsedNode:
 
     kind: NodeKind
     name: str
-    file_path: str          # 相对路径，'/' 分隔
+    rel_path: str          # 相对路径，'/' 分隔
     line: int               # 1-based，★ 锚点的落点
     lang: str               # c / cpp / python / java / asm
 
@@ -80,7 +80,7 @@ class ParsedNode:
         """
         # ★★ 末尾带行号：**重载**（Java/C++ 同名同参数不同签名）的 qname 相同，
         #    不带行号就会撞成一个 uid ⇒ 其中一条的包含边被去重吞掉（实测丢边）
-        return f"{self.kind}#{self.file_path}#{self.qname or self.name}@{self.line}"
+        return f"{self.kind}#{self.rel_path}#{self.qname or self.name}@{self.line}"
 
 
 # ============================================================ 边

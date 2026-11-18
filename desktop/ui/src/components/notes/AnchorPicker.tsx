@@ -51,7 +51,7 @@ export default function AnchorPicker({
         (n) =>
           n.name.toLowerCase().includes(kw) ||
           (n.qname || '').toLowerCase().includes(kw) ||
-          (n.file_path || '').toLowerCase().includes(kw),
+          (n.rel_path || '').toLowerCase().includes(kw),
       )
       .slice(0, 60)
   }, [items, q])
@@ -121,7 +121,7 @@ export default function AnchorPicker({
                   className="faint"
                   style={{ fontSize: 11, marginTop: 2, fontFamily: 'var(--font-mono, monospace)' }}
                 >
-                  {n.file_path}
+                  {n.rel_path}
                   {n.line ? `:${n.line}` : ''}
                 </div>
               </button>

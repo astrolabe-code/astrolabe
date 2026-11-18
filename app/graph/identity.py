@@ -12,7 +12,7 @@
 ## ★★ 口径
 
 ```
-stable_vid = BLAKE2b-64( "kind|file_path|name|line|line_end" ) 的低 53 位
+stable_vid = BLAKE2b-64( "kind|rel_path|name|line|line_end" ) 的低 53 位
    · · ★ 缺失行号一律 -1（* 不用 NULL / 0 —— 哈希输入必须规整）⚠
    · · ★★ 53 位 = JS 安全整数上限（`2^53-1`）—— 60 位会被前端截断成错值 ⚠
    · · ★ 同一版本重解析 ⇒ 必然相同（* 内容一样，* 串一样）✅
@@ -32,12 +32,12 @@ from graph import kinds
 _MASK = (1 << 53) - 1
 
 
-def canonical(kind, file_path: str, name: str, line, line_end) -> str:
+def canonical(kind, rel_path: str, name: str, line, line_end) -> str:
     """★★ 规范串（* 五个字段 + 四个分隔符，* 缺一不可）⚠"""
     kid = kind if isinstance(kind, int) else kinds.kind_id(str(kind))
     ln = line if isinstance(line, int) and line >= 0 else -1
     end = line_end if isinstance(line_end, int) and line_end >= 0 else -1
-    return f"{kid}|{file_path or ''}|{name or ''}|{ln}|{end}"
+    return f"{kid}|{rel_path or ''}|{name or ''}|{ln}|{end}"
 
 
 def hash53(text: str) -> int:

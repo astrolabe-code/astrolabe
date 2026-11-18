@@ -92,13 +92,15 @@ def _parse_edge_id(eid) -> tuple[int, int, str, int]:
 
 
 def _fill_note_nodes(notes) -> list[dict]:
-    """笔记行里的节点信息（name / file_path / line）从图库补。"""
+    """笔记行里的节点信息（name / rel_path / line）从图库补。"""
     for n in notes:
         vid = int(n.get("node_vid") or 0)
         code = graphdb.get_code(ROOT, vid) if vid else None
         if code:
             n["node_name"] = code.get("name") or ""
-            n["file_path"] = code.get("file_path") or ""
+            # ⚠ 不能写进 n["rel_path"]：那是**笔记文件**自己的路径
+            #   （note 表的列），节点路径另给一个字段名
+            n["node_rel_path"] = code.get("rel_path") or ""
             n["line"] = int(code.get("line") or 0)
     return notes
 
@@ -745,7 +747,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 # ★ it["name"] 是白板自己的名字，别覆盖；节点名另给一个字段
                 it["node_name"] = node["name"] if node else f"节点 {it['vid']}"
                 it["qname"] = node["qname"] if node else ""
-                it["file_path"] = node["file_path"] if node else ""
+                it["rel_path"] = node["rel_path"] if node else ""
         return ok({"items": items})
 
     # ★★★ 代码展示：列文件树 / 读源码（见 sidecar/source.py）⚠
@@ -912,7 +914,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     str(body.get("kind") or "function"),
                     name,
                     str(body.get("qname") or ""),
-                    str(body.get("file_path") or ""),
+                    str(body.get("rel_path") or ""),
                     int(body.get("line") or 0),
                     int(body.get("line_end") if body.get("line_end") is not None else -1),
                 )
@@ -937,7 +939,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                     {
                         "name": body.get("name"),
                         "kind": body.get("kind"),
-                        "file_path": body.get("file_path"),
+                        "rel_path": body.get("rel_path"),
                         "line": body.get("line"),
                         "line_end": body.get("line_end"),
                     },
@@ -1352,7 +1354,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             #   （⛔ 绝不覆盖已有笔记 —— 那是用户写的东西）
             for _ in range(50):
                 no = store.next_no(CONN)
-                fname = notefile.file_name(no, node["name"] or node["file_path"] or "note")
+                fname = notefile.file_name(no, node["name"] or node["rel_path"] or "note")
                 # ★ 笔记统一放 `<数据目录>/notes/`（数据跟着项目走，不再有"库/项目目录"那层）
                 rel = f"notes/{fname}"
                 if not os.path.exists(os.path.join(ROOT, rel)):
@@ -1366,7 +1368,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "ref": ref,
                 "kind": str(body.get("kind") or "flash"),
                 "node": node["name"] or "",
-                "anchor": f"{node['file_path']}:{node['line']}" if node["file_path"] else "",
+                "anchor": f"{node['rel_path']}:{node['line']}" if node["rel_path"] else "",
                 # ★ 名字留空 ⇒ 从正文推（`D112`）；用户写了就用用户的
                 "title": str(body.get("title") or "").strip() or autotitle.auto_title(text),
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1452,7 +1454,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 meta["node_vid"] = new_vid
                 meta["node"] = (target or {}).get("name") or ""
                 meta["anchor"] = (
-                    f"{(target or {}).get('file_path') or ''}:"
+                    f"{(target or {}).get('rel_path') or ''}:"
                     f"{(target or {}).get('line') or 0}"
                     if target
                     else ""
@@ -1780,7 +1782,7 @@ def _make_tool_executor(project):
         for r in rows[:10]:
             lines.append(
                 f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
-                f"@ {r.get('file_path')}:{r.get('line')}"
+                f"@ {r.get('rel_path')}:{r.get('line')}"
             )
         return None, "\n".join(lines)
 

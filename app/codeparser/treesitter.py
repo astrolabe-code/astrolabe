@@ -280,7 +280,7 @@ class TreeSitterParser(Parser):
         # ---- ① 文件节点（每文件一个，与 AsmSymbolParser 保持一致）----
         file_name = path.rsplit("/", 1)[-1]
         file_node = ParsedNode(
-            kind="file", name=file_name, file_path=path, line=1, lang=self.lang
+            kind="file", name=file_name, rel_path=path, line=1, lang=self.lang
         )
         # ★★ `file_uid` 必须**从节点本身取**，⛔ 不能手拼 ⚠
         #   uid 的格式里带行号（`…@1`），手拼就会和 `by_uid` 索引对不上
@@ -359,7 +359,7 @@ class TreeSitterParser(Parser):
                     kind=kind,
                     name=name,
                     qname=qname,
-                    file_path=path,
+                    rel_path=path,
                     line=node.start_point[0] + 1,
                     line_end=node.end_point[0] + 1,
                     lang=self.lang,

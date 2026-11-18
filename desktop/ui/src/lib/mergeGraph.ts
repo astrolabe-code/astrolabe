@@ -39,7 +39,7 @@ export interface GraphNode {
   kind: string
   name: string
   qname: string
-  file_path: string
+  rel_path: string
   line: number
   line_end: number | null
   lang: string

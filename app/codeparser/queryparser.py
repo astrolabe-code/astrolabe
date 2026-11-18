@@ -112,7 +112,7 @@ class QueryParser:
             return result
 
         file_name = path.rsplit("/", 1)[-1]
-        file_node = ParsedNode(kind="file", name=file_name, file_path=path, line=1, lang=self.lang)
+        file_node = ParsedNode(kind="file", name=file_name, rel_path=path, line=1, lang=self.lang)
         file_uid = file_node.uid
         result.nodes.append(file_node)
 
@@ -182,7 +182,7 @@ class QueryParser:
                 kind=kind,
                 name=name,
                 qname=qname,
-                file_path=path,
+                rel_path=path,
                 line=outer.start_point[0] + 1,
                 line_end=outer.end_point[0] + 1,
                 lang=self.lang,

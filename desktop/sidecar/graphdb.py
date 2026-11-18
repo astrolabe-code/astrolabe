@@ -86,7 +86,9 @@ def _code_rows(nodes: list[dict]) -> list[dict]:
             "kind": str(n.get("kind") or ""),
             "name": str(n.get("name") or ""),
             "qname": str(n.get("qname") or ""),
-            "rel_path": str(n.get("file_path") or n.get("file") or ""),
+            # ★★ parser_bridge 产出的键是 rel_path；file_path / file 是旧键
+            #   ⛔ 漏掉 rel_path 会让所有节点的路径变成空串（读过一次源码就踩到）
+            "rel_path": str(n.get("rel_path") or n.get("file_path") or n.get("file") or ""),
             "line": int(n.get("line") or 0),
             "lineEnd": int(n.get("line_end") or -1),
             "signature": str(n.get("signature") or ""),
@@ -261,7 +263,7 @@ def nodes(data_dir: str, limit: int = 500, offset: int = 0, kinds: list[str] | N
         f"c.rel_path, c.line SKIP {int(offset)} LIMIT {int(limit)}",
         params,
     ).get_all()
-    cols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "signature", "origin"]
+    cols = ["vid", "kind", "name", "qname", "rel_path", "line", "line_end", "signature", "origin"]
     return {
         "total": int(total),
         "limit": int(limit),
@@ -315,7 +317,7 @@ def graph_full(data_dir: str) -> dict:
             }
         )
 
-    ncols = ["vid", "kind", "name", "qname", "file_path", "line", "line_end", "origin"]
+    ncols = ["vid", "kind", "name", "qname", "rel_path", "line", "line_end", "origin"]
     return {"nodes": [dict(zip(ncols, r)) for r in nodes], "edges": shown}
 
 def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
@@ -332,7 +334,7 @@ def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
         {"v": int(vid)},
     ).get_all()
     # ★ `origin` 用来区分「解析器产出的」和「作者手工补的」
-    cols = ["vid", "kind", "name", "qname", "file_path", "line", "origin"]
+    cols = ["vid", "kind", "name", "qname", "rel_path", "line", "origin"]
     return {
         "depth": d,
         "downstream": [dict(zip(cols, r)) for r in out],
@@ -497,7 +499,7 @@ def update_code(data_dir: str, vid: int, patch: dict) -> dict:
 
     nk = str(pick("kind", cur["kind"]))
     nn = str(pick("name", cur["name"]))
-    nf = str(pick("file_path", cur["rel_path"]))
+    nf = str(pick("rel_path", cur["rel_path"]))
     nl = int(pick("line", cur["line"]))
     ne = int(pick("line_end", cur["line_end"]))
     new_vid = _new_vid(nk, nf, nn, nl, ne)
@@ -901,18 +903,13 @@ def shortest_path(data_dir: str, from_vid: int, to_vid: int, max_hops: int = 10)
 
 
 def get_code(data_dir: str, vid: int) -> dict | None:
-    """单个节点；同时给 rel_path / file_path 两种键名。
+    """单个节点。
 
-    ★ Code 表的字段已从 file 改名为 rel_path（所有者 2026-11-18：
-      「file字段不要叫file了，太有迷惑性了，应该叫rel_path，表示相对路径」）。
-    ⚠ file_path 只是为了不破坏旧调用方（前端 GraphNode 用的就是它），
-      值完全一样；新代码请用 rel_path。
+    ★ Code 表的字段是 rel_path（所有者 2026-11-18：「file字段不要叫file了，
+      太有迷惑性了，应该叫rel_path，表示相对路径」）。
+    ⛔ 不再返回 file_path 别名 —— 两个键名并存正是之前 rel_path 为空的根源。
     """
-    row = _get_code(_open(data_dir), vid)
-    if row is None:
-        return None
-    row["file_path"] = row["rel_path"]
-    return row
+    return _get_code(_open(data_dir), vid)
 
 
 def search_code(data_dir: str, q: str, limit: int = 8) -> list[dict]:
@@ -928,7 +925,7 @@ def search_code(data_dir: str, q: str, limit: int = 8) -> list[dict]:
         f"LIMIT {int(limit)}",
         {"q": key},
     ).get_all()
-    cols = ["vid", "kind", "name", "file_path", "line"]
+    cols = ["vid", "kind", "name", "rel_path", "line"]
     return [dict(zip(cols, r)) for r in rows]
 
 

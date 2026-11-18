@@ -424,7 +424,12 @@ BASE_SYSTEM = (
     "而是作者手工添加的 —— 引用到它时要说清这一点，不要当成源码事实。"
 )
 
-ASK_SYSTEM = BASE_SYSTEM
+ASK_SYSTEM = (
+    BASE_SYSTEM
+    + "\n只给了当前节点的源码（可能还有它的笔记）。"
+    "需要看上下游或别的节点时，用 read_node / list_neighbors / search_nodes 工具去读，"
+    "⛔ 不要凭印象猜它们的实现。"
+)
 
 MAX_NEIGHBORS = 8
 MAX_SAMPLES = 2
@@ -456,10 +461,10 @@ def _context_block(
     ]
 
     def section(title: str, rows: list[dict]) -> None:
-        lines.append(f"【{title}】")
+        # ★ 没给就是没给，⛔ 不要写「（无）」—— 那会让模型以为真的没有上游/下游
         if not rows:
-            lines.append("- （无）")
             return
+        lines.append(f"【{title}】")
         for r in rows[:MAX_NEIGHBORS]:
             name = r.get("qname") or r.get("name") or ""
             tag = "（人工补的节点）" if str(r.get("origin") or "") == "manual" else ""
@@ -905,7 +910,9 @@ def parse_questions(text: str) -> dict:
         if fallback.strip():
             items.append({"type": "简评", "text": fallback.strip()[:300]})
 
-    return {"items": items[:3], "next": nxt[:2]}
+    # ★ 最多留 5 条：允许模型出「两个陷阱 + 一个优化」这种组合，
+    #   ⛔ 不要卡在 3 条——那会把第 4、5 条直接丢掉（用户看到的就是"少了"）
+    return {"items": items[:5], "next": nxt[:2]}
 
 
 def chat_with_tools(

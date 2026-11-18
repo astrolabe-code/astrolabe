@@ -1561,8 +1561,16 @@ def _is_stream(path: str) -> bool:
 def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
     """收集一个节点的 AI 上下文：(源码片段, 语言, 上游, 下游, 作者小结样例)。
 
-    ★ 只取：本节点源码（≤120 行）+ 邻居签名 + 至多 3 条作者小结的片段；
-      ⛔ 不发整个文件、不发笔记全文。
+    ★ 所有者原话（2026-11-18）：
+      「是不是上下文传多了？选中节点附近的节点信息都传过去了，有必要吗？
+        ai可以调工具，自己决定读什么的，很多我传过去的信息，可能都没有用。」
+
+    ⇒ 只给**当前节点的源码**（≤120 行）。上下游签名、别人的笔记一律不发：
+      模型需要时用 list_neighbors / read_node 自己读，比我们猜「它可能需要」
+      更准，也省 token。
+
+    ⚠ 为什么连「签名」也不给：签名的信息量极低（只有一个名字 + 参数类型），
+      而它占的位置会挤掉真正有用的东西；要看名字，一次 list_neighbors 就够了。
     """
     lang = ""
     snippet = "（源码读不到）"
@@ -1576,52 +1584,18 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
         end = min(end, start + 120, len(all_lines))
         if end > start:
             snippet = "\n".join(all_lines[start:end])
-    except Exception:  # noqa: BLE001 —— 读不到源码也要能生成（只是质量差些）
+    except Exception:  # noqa: BLE001 —— 读不到也要能生成（只是质量差些）
         pass
 
-    try:
-        nei = graphdb.neighbors(ROOT, int(node["vid"]), 1)
-    except Exception:  # noqa: BLE001
-        nei = {"upstream": [], "downstream": []}
-
-    # ★★ 邻居按**度数**降序：核心函数比叶子函数更值得占用上下文名额。
-    #    以前是图查询顺序（等于随机），前 8 个经常是没人调用的边缘函数。
-    try:
-        deg = graphdb.degrees(ROOT)
-    except Exception:  # noqa: BLE001 —— 度数算不出来就保持原顺序
-        deg = {}
-
-    def _ranked(rows: list[dict]) -> list[dict]:
-        return sorted(rows, key=lambda r: -deg.get(int(r.get("vid") or 0), 0))
-
-    up_ranked = _ranked(nei.get("upstream") or [])
-    down_ranked = _ranked(nei.get("downstream") or [])
-
-    samples: list[dict] = []
-    try:
-        for n in store.notes_of(CONN, project["id"]):
-            if str(n.get("kind") or "") != "summary" or int(n.get("node_vid") or 0) == int(node["vid"]):
-                continue
-            body = ""
-            try:
-                _meta, text = notefile.read_file(os.path.join(ROOT, str(n["rel_path"])))
-                body = str(text or "")
-            except Exception:  # noqa: BLE001
-                body = ""
-            samples.append({"title": n.get("title") or "", "excerpt": body})
-            if len(samples) >= 3:
-                break
-    except Exception:  # noqa: BLE001
-        pass
-
-    return snippet, lang, up_ranked, down_ranked, samples
+    return snippet, lang, [], [], []
 
 
 # ---------------------------------------------------------------- 只读工具
-# ★ 所有者原话（2026-11-17）：
+# ★ 所有者原话（2026-11-17 / 11-18）：
 #   「阅读工具调用是要的，这样ai才能准确，不过，调用轮数要有限制」
-#   「我只是不给ai执行的能力，如果有需要，ai可以顺着图谱去阅读项目里其他节点的信息」
-# ⛔ 三个工具全部只读：不写文件、不改图、不执行代码。
+#   「你要写个工具，传某个节点下的笔记或白板这些，还有一根搜索工具给ai，
+#     这样ai才能更方便地找到信息」
+# ⛔ 全部只读：不写文件、不改图、不执行代码。
 
 READ_TOOLS = [
     {
@@ -1631,20 +1605,18 @@ READ_TOOLS = [
             "description": (
                 "读一个节点的源码与它的直接上游/下游。\n\n"
                 "WHEN TO USE: 需要确认某个函数具体怎么写，或它和谁直接相连时。\n"
-                "AFTER THIS: 还想看邻居的实现就再调一次；只想知道某个名字存不存在，"
+                "AFTER THIS: 还想看邻居的实现就再调一次；只想知道名字存不存在，"
                 "用 search_nodes 更便宜。\n\n"
-                "⚠ 同名节点可能有多个：结果会列出候选与 uid，用 uid 精确指定，"
-                "⛔ 不要假设第一个就对。\n"
-                "⚠ 源码默认给 120 行；确实需要更多再传 max_lines（上限 400）。"
+                "同名节点可能有多个：结果会列出候选与 uid，用 uid 精确指定。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "节点名，如 get_call_graph"},
-                    "uid": {"type": "string", "description": "从候选里拿到的精确 uid（可选，给了就不按名字找）"},
+                    "name": {"type": "string", "description": "节点名"},
+                    "uid": {"type": "string", "description": "精确 uid（可选）"},
                     "max_lines": {
                         "type": "integer",
-                        "description": "源码最多给多少行（默认 120，上限 400）",
+                        "description": "源码最多多少行（默认 120，上限 400）",
                         "default": 120,
                     },
                 },
@@ -1657,15 +1629,63 @@ READ_TOOLS = [
             "name": "list_neighbors",
             "description": (
                 "只列出某节点的上游/下游名字，不读源码。\n\n"
-                "WHEN TO USE: 想知道「还有谁参与」但不需要看实现时——比 read_node 便宜很多。\n"
-                "AFTER THIS: 挑其中感兴趣的用 read_node 深入。"
+                "WHEN TO USE: 想知道「还有谁参与」但不需要看实现时——比 read_node 便宜。\n"
+                "AFTER THIS: 挑感兴趣的用 read_node 深入。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "uid": {"type": "string", "description": "精确 uid（可选）"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_notes",
+            "description": (
+                "读某个节点下**用户自己写的笔记**（原文：类型、标题、正文摘要）。\n\n"
+                "WHEN TO USE: 想知道作者怎么理解这段代码、踩过什么坑、还困惑什么时"
+                "—— 这些在代码里看不到。\n"
+                "AFTER THIS: 想找别处提到过的概念，用 search_notes。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "节点名"},
                     "uid": {"type": "string", "description": "精确 uid（可选）"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "最多读几篇（默认 3，上限 8）",
+                        "default": 3,
+                    },
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_notes",
+            "description": (
+                "在用户笔记的正文/标题里做全文搜索，返回标题与命中片段。\n\n"
+                "WHEN TO USE: 不确定某个概念在哪提过、或想找「我以前是不是记过这个」时"
+                "—— 比逐个节点 read_notes 快得多。\n"
+                "AFTER THIS: 拿到标题后再用 read_notes 或 read_node 深入。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string", "description": "关键词"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "最多返回几条（默认 5，上限 20）",
+                        "default": 5,
+                    },
+                },
+                "required": ["q"],
             },
         },
     },
@@ -1675,13 +1695,13 @@ READ_TOOLS = [
             "name": "search_nodes",
             "description": (
                 "按名字或路径搜节点，返回候选（名字 + 文件 + 行号 + uid）。\n\n"
-                "WHEN TO USE: 不确定某个东西叫什么、或者怀疑有同名节点时，先搜再用 read_node。\n"
+                "WHEN TO USE: 不确定某个东西叫什么、或怀疑有同名节点时，先搜再读。\n"
                 "AFTER THIS: 把 uid 交给 read_node 看源码。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "关键字（名字片段或路径片段）"},
+                    "q": {"type": "string", "description": "关键字（名字或路径片段）"},
                     "limit": {
                         "type": "integer",
                         "description": "最多返回几个（默认 8，上限 20）",
@@ -1698,9 +1718,9 @@ READ_TOOLS = [
 def _make_tool_executor(project):
     """构造只读工具执行器。
 
-    ★ 借鉴 GitNexus 的 `context` 工具：**同名必须消歧** ——
-      它返回带 relevance 的候选列表让模型自己挑，绝不默认取第一个。
-      我们之前是 `rows[0]`，遇到同名函数会取错节点（真 bug）。
+    ★ 借鉴 GitNexus 的 context 工具：**同名必须消歧** ——
+      它返回候选列表让模型自己挑，绝不默认取第一个。
+    ⛔ 任何分支都不写：不落库、不改图、不执行代码。
     """
 
     def search(name: str, limit: int = 8) -> list[dict]:
@@ -1719,17 +1739,15 @@ def _make_tool_executor(project):
             return None
 
     def disambiguate(rows: list[dict], name: str) -> str:
-        """多个候选时给出清单（含 uid），让模型自己选。"""
-        lines = [f"「{name}」匹配到 {len(rows)} 个节点，请选一个用 uid 精确指定："]
+        lines = [f"「{name}」匹配到 {len(rows)} 个节点，请用 uid 指定："]
         for r in rows[:10]:
             lines.append(
-                f"- uid={r.get('vid')}  {r.get('kind')}  "
-                f"{r.get('name')}  @ {r.get('file_path')}:{r.get('line')}"
+                f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
+                f"@ {r.get('file_path')}:{r.get('line')}"
             )
         return "\n".join(lines)
 
     def resolve(args: dict) -> tuple[dict | None, str]:
-        """返回 (节点, 说明)。找不到 / 需要消歧时节点为 None。"""
         uid = str(args.get("uid") or "").strip()
         if uid:
             node = by_uid(uid)
@@ -1742,38 +1760,46 @@ def _make_tool_executor(project):
             return None, f"没有找到「{name}」，可以先用 search_nodes 搜一下"
         if len(rows) == 1:
             return rows[0], ""
-        # ⚠ 名字完全一致的唯一一个：可以直接用
         exact = [r for r in rows if str(r.get("name") or "") == name]
         if len(exact) == 1:
             return exact[0], ""
         return None, disambiguate(rows, name)
 
+    def label(rows: list) -> str:
+        """邻居名 + 可信度标注（解析边可能漏，手工边是确切的）。"""
+        names = "、".join(str(x.get("name") or "") for x in rows[:12])
+        if not names:
+            return "（无）"
+        manual = sum(1 for x in rows if str(x.get("origin") or "") == "manual")
+        if manual:
+            return f"{names}（其中 {manual} 条是手工补的，确切）"
+        return f"{names}（静态解析，可能不全）"
+
     def snippet_of(node: dict, limit: int) -> str:
-        # ★ 目录节点没有源码：列出它的直接子项，⛔ 别报「读取失败」
+        # 目录节点没有源码：列子项
         if str(node.get("kind") or "") == "dir":
             kids: list[dict] = []
             try:
                 conn = graphdb._open(ROOT)
-                rows = conn.execute(
+                got = conn.execute(
                     "MATCH (d:Code)-[r:Rel]->(c:Code) WHERE d.vid = $v AND r.kind = 'contains' "
                     "RETURN c.kind, c.name ORDER BY c.kind, c.name LIMIT 40",
                     {"v": int(node.get("vid") or 0)},
                 ).get_all()
-                kids = [{"kind": str(r[0] or ""), "name": str(r[1] or "")} for r in rows]
+                kids = [{"kind": str(r[0] or ""), "name": str(r[1] or "")} for r in got]
             except Exception:  # noqa: BLE001
                 kids = []
             if not kids:
-                return "（这是一个目录节点，没有源码；目录里也没有直接子项）"
-            lines = ["（这是一个目录节点，没有源码；直接子项如下）"]
+                return "（目录节点，没有源码；目录里也没有直接子项）"
+            lines = ["（目录节点，没有源码；直接子项如下）"]
             for k in kids[:40]:
-                mark = "目录" if str(k.get("kind")) == "dir" else "文件"
-                lines.append(f"- [{mark}] {k.get('name')}")
+                lines.append(f"- [{'目录' if k['kind'] == 'dir' else '文件'}] {k['name']}")
             return "\n".join(lines)
 
         try:
             text = str(source.read(project["root"], node.get("file") or "").get("text") or "")
         except Exception:  # noqa: BLE001
-            return "（源码读取失败）"
+            return "（源码读取失败：文件打不开或编码不支持）"
         if not text.strip():
             return "（空文件 —— 这个文件本来就没有代码）"
         lines = text.splitlines()
@@ -1789,7 +1815,16 @@ def _make_tool_executor(project):
             body += "\n…（已截断，需要更多请调高 max_lines）"
         return body
 
+    def note_body(rel_path: str, limit: int = 800) -> str:
+        try:
+            _meta, txt = notefile.read_file(os.path.join(ROOT, str(rel_path or "")))
+            # ⚠ 只给前 N 字：整篇可能很长，会把上下文撑爆
+            return " ".join(str(txt or "").split())[:limit]
+        except Exception:  # noqa: BLE001
+            return "（读不到正文）"
+
     def run(tool: str, args: dict) -> str:
+        # ---------------- 搜节点
         if tool == "search_nodes":
             q = str(args.get("q") or "").strip()
             if not q:
@@ -1804,6 +1839,61 @@ def _make_tool_executor(project):
                 for r in rows
             )
 
+        # ---------------- 搜笔记
+        if tool == "search_notes":
+            q = str(args.get("q") or "").strip()
+            if not q:
+                return "缺少参数 q"
+            limit = min(20, max(1, int(args.get("limit") or 5)))
+            try:
+                hits = store.fts_search(CONN, q, limit * 2)
+            except Exception as exc:  # noqa: BLE001
+                return f"搜索失败：{exc}"
+            if not hits:
+                return f"笔记里没有提到「{q}」"
+            # ⚠ note_fts 不分项目：再用 note 表过滤掉别的项目的笔记
+            try:
+                refs = [str(h.get("ref") or "") for h in hits]
+                marks = ",".join("?" * len(refs))
+                keep = {
+                    str(r[0])
+                    for r in CONN.execute(
+                        f"SELECT ref FROM note WHERE project_id = ? AND ref IN ({marks})",
+                        (project["id"], *refs),
+                    ).fetchall()
+                }
+                hits = [h for h in hits if str(h.get("ref") or "") in keep]
+            except Exception:  # noqa: BLE001
+                pass
+            if not hits:
+                return f"本项目笔记里没有提到「{q}」"
+            return "\n".join(
+                f"- {h.get('title') or '（无标题）'}\n  {h.get('snippet') or ''}"
+                for h in hits[:limit]
+            )
+
+        # ---------------- 读笔记
+        if tool == "read_notes":
+            node, err = resolve(args)
+            if not node:
+                return err
+            try:
+                rows = store.notes_of(CONN, project["id"], int(node.get("vid") or 0))
+            except Exception as exc:  # noqa: BLE001
+                return f"读笔记失败：{exc}"
+            if not rows:
+                return f"「{node.get('name')}」这个节点上还没有笔记"
+            limit = min(8, max(1, int(args.get("limit") or 3)))
+            out = []
+            for r in rows[:limit]:
+                kind = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
+                out.append(
+                    f"[{kind}] {r.get('title') or '（无标题）'}\n"
+                    f"{note_body(r.get('rel_path') or '')}"
+                )
+            return "\n\n".join(out)
+
+        # ---------------- 读节点 / 列邻居
         if tool in ("read_node", "list_neighbors"):
             node, err = resolve(args)
             if not node:
@@ -1813,29 +1903,13 @@ def _make_tool_executor(project):
                 nei = graphdb.neighbors(ROOT, vid, 1)
             except Exception:  # noqa: BLE001
                 nei = {"upstream": [], "downstream": []}
-            down_raw = nei.get("downstream") or []
-            up_raw = nei.get("upstream") or []
-
-            def label(rows: list) -> str:
-                """同名列表 + 可信度标注。
-
-                ★ 与上下文包同一口径：解析边可能漏（动态分派/回调/反射），
-                  手工补的边是用户给的、确切 —— ⛔ 不把两者混成「可能不准」。
-                """
-                names = "、".join(str(x.get("name") or "") for x in rows[:12])
-                if not names:
-                    return "（无）"
-                manual = sum(1 for x in rows if str(x.get("origin") or "") == "manual")
-                if manual:
-                    return f"{names}（其中 {manual} 条是手工补的，确切）"
-                return f"{names}（静态解析，可能不全）"
 
             head = (
                 f"【节点】{node.get('kind')} {node.get('name')}  "
                 f"@ {node.get('file_path')}:{node.get('line')}"
                 f"\n【签名】{node.get('signature') or '（未给出）'}"
-                f"\n【它调用】{label(down_raw)}"
-                f"\n【调用它】{label(up_raw)}"
+                f"\n【它调用】{label(nei.get('downstream') or [])}"
+                f"\n【调用它】{label(nei.get('upstream') or [])}"
             )
             if tool == "list_neighbors":
                 return head

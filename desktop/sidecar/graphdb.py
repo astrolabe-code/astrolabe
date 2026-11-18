@@ -1,7 +1,7 @@
 """LadybugDB 图库：**只存代码结构**（Code 节点 + Rel 边）。
 
 ```cypher
-CREATE NODE TABLE Code(vid INT64, kind, name, qname, file, line, lineEnd, signature, origin,
+CREATE NODE TABLE Code(vid INT64, kind, name, qname, rel_path, line, lineEnd, signature, origin,
                        PRIMARY KEY(vid))
 CREATE REL TABLE  Rel (FROM Code TO Code, kind, origin, line)
 ```
@@ -185,7 +185,7 @@ def sync_code(data_dir: str, nodes: list[dict], edges: list[dict]) -> dict:
         for i in range(0, len(rows), BATCH):
             conn.execute(
                 "UNWIND $rows AS r CREATE (:Code {vid: r.vid, kind: r.kind, "
-                "name: r.name, qname: r.qname, file: r.file, line: r.line, "
+                "name: r.name, qname: r.qname, rel_path: r.rel_path, line: r.line, "
                 "lineEnd: r.lineEnd, signature: r.signature, origin: r.origin})",
                 {"rows": rows[i : i + BATCH]},
             )
@@ -526,7 +526,7 @@ def update_code(data_dir: str, vid: int, patch: dict) -> dict:
         conn.execute("MATCH (c:Code {vid:$v}) DETACH DELETE c", {"v": vid})
         conn.execute(
             "CREATE (:Code {vid:$vid, kind:$k, name:$n, qname:$q, "
-            "file:$f, line:$l, lineEnd:$e, signature:$s, origin:'manual'})",
+            "rel_path:$f, line:$l, lineEnd:$e, signature:$s, origin:'manual'})",
             {
                 "vid": new_vid,
                 "k": nk,

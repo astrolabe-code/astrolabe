@@ -350,7 +350,10 @@ class TreeSitterParser(Parser):
                     signature = _text(sig_node, src)[:500]
 
                 # ★ 限定名：`A.run`（python/java）或 `ns::Class::method`（cpp）
-                qname = self._sep.join(scope + (name,)) if scope else name
+                # ⚠ 没有父级（顶层定义）就留空 —— ⛔ 不要退化成 name：
+                #   所有者 2026-11-18：「没有限定名就不要填限定名，保持为空，
+                #   你填个已经有的名字进去干啥？」
+                qname = self._sep.join(scope + (name,)) if scope else ""
 
                 parsed = ParsedNode(
                     kind=kind,

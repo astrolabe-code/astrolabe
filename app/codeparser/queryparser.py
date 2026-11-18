@@ -173,8 +173,10 @@ class QueryParser:
                 kind = "method"
 
             prefix = spec.def_scope(cname, caps, source)
-            parts = [p for p in (qname_of_uid.get(parent_uid, ""), prefix, name) if p]
-            qname = spec.sep.join(parts)
+            # ⚠ 只有存在父级（父 qname 或 C++ 的 `A::` 前缀）时才算「限定名」；
+            #   顶层定义留空，⛔ 不要退化成 name
+            parts = [p for p in (qname_of_uid.get(parent_uid, ""), prefix) if p]
+            qname = spec.sep.join(parts + [name]) if parts else ""
 
             parsed = ParsedNode(
                 kind=kind,

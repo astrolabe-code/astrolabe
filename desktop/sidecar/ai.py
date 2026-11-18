@@ -426,8 +426,9 @@ BASE_SYSTEM = (
 
 ASK_SYSTEM = (
     BASE_SYSTEM
-    + "\n只给了当前节点的源码（可能还有它的笔记）。"
-    "需要看上下游或别的节点时，用 read_node / list_neighbors / search_nodes 工具去读，"
+    + "\n材料只有当前节点的源码（可能还有它的笔记）。"
+    "需要看上下游或别的节点时：用 cypher 查图谱结构（谁调谁、有哪些节点），"
+    "read_node 读源码正文，read_notes / search_notes 看作者写过什么。"
     "⛔ 不要凭印象猜它们的实现。"
 )
 
@@ -707,139 +708,39 @@ QUESTIONS_SYSTEM = (
 
 
 def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> list[dict]:
-    """把一个「上下文包」渲染成 prompt。
+    """出题 prompt：**只给节点名字和类型**，其余让模型自己用工具查。
 
-    ★ 借鉴 GitNexus 的 `MODULE_USER_PROMPT`（源码 + 三层调用 + 执行流一并给），
-      但目标是**出题**而不是写文档。
-    ★ `learned` 里是用户在这个节点附近写过的笔记（原文），用于复习式提问。
+    所有者原话（2026-11-18）：
+    「不要发送信息了，让ai自己去查吧。你定死在代码里的发送格式几容易出纰漏，
+      还不如让ai根据实际需要自己用工具查，开始就给ai发送节点名字和类型就行。」
+
+    ## 为什么只给这么点
+
+    代码里拼的每一样东西（源码截断、邻居排序、可疑点正则、文件语义表）
+    都是一次**猜测**：猜模型需要什么、猜截多少行合适、猜哪个邻居更重要。
+    猜错就是纰漏（比如目录节点被套上「源码」框、一句转发被硬凑三个问题）。
+
+    ⇒ 改成：只告诉它「哪个节点」，怎么看由它自己决定 ——
+      read_node 读源码、cypher 查上下游、read_notes / search_notes 看作者的笔记。
+
+    ⚠ `learned` 参数保留只为不破坏调用方，内容不再渲染（模型自己查得到）。
     """
     node = pack.get("node") or {}
     kind = str(node.get("kind") or "").lower()
-    parts: list[str] = [
-        f"[当前节点类型]:{kind} ",
-        f"[当前节点名字]:{node.get('name') or ''}",
-        f"[当前节点路径]:{node.get('file') or ''}:{node.get('line') or 0}-{node.get('line_end') or 0}",
-        f"[当前节点签名]:{node.get('signature') or '（解析器未给出）'}",
+    name = str(node.get("name") or "")
+
+    parts = [
+        f"[节点] {kind} {name}",
+        # 路径只是定位标识（同名节点多），不是内容
+        f"[文件] {node.get('file') or ''}",
+        "",
+        "[任务] 先用工具看清这个节点：read_node 读源码；需要上下游时用 cypher 查；"
+        "想知道作者怎么理解它，用 read_notes 或 search_notes。"
+        "看清楚之后，按 system 的格式出题，或者给出简评。",
     ]
-    # ★ 按类型给关注方向（dir 和 method 不该被问同一套东西）
-    focus = KIND_FOCUS.get(kind)
-    if focus:
-        parts.append(f"[这类节点值得追问的]:{focus}")
-    # ★ 文件语义：告诉模型「这个文件本来长什么样」，避免把「空」当异常
-    hint = str(pack.get("file_hint") or "").strip()
-    if hint:
-        parts.append(f"[这个文件是]:{hint}")
-    parts.extend(
-        [
-            "[源码]",
-            "```",
-            str(pack.get("snippet") or "（读不到源码）"),
-            "```",
-        ]
-    )
-    if pack.get("truncated_node"):
-        parts.append("（注意：当前节点源码超过 200 行，上面是前 200 行）")
-
-    sibs = pack.get("siblings") or []
-    if sibs:
-        # ★ 少而全：每个带源码（原来只给名字+行号，信息量太低）
-        lines = ["【同文件的其它函数（带源码，看这个文件在做什么）】"]
-        for x in sibs:
-            lines.append(f"- {x.get('name')}  @{x.get('line')}")
-            lines.append(f"```\n{x.get('snippet') or ''}\n```")
-        more = int(pack.get("siblings_more") or 0)
-        if more:
-            lines.append(f"（同文件还有 {more} 个函数未给出）")
-        parts.append("\n".join(lines))
-
-    def block(title: str, rows: list[dict]) -> None:
-        if not rows:
-            return
-        parts.append(f"[{title}]")
-        for r in rows:
-            parts.append(
-                f"- {r.get('name')}  @ {r.get('file')}:{r.get('line')}\n"
-                f"```\n{r.get('snippet') or ''}\n```"
-            )
-
-    block("它调用的函数（完整源码）", pack.get("downstream") or [])
-    block("调用它的函数（完整源码）", pack.get("upstream") or [])
-
-    dropped = pack.get("dropped") or {}
-    lost = int(dropped.get("downstream") or 0) + int(dropped.get("upstream") or 0)
-    if lost:
-        parts.append(f"（还有 {lost} 个相邻函数因长度限制未给出）")
-
-    # ★★ 说清这份上下游有多可信：
-    #   解析边可能漏（动态分派 / 回调 / 反射），手工补的边是用户给的、确切。
-    #   ⛔ 不把两者混成一句「可能不准」——那会低估用户补图的价值。
-    ep = pack.get("epistemic") or {}
-    ep_manual = int(ep.get("manual") or 0)
-    ep_parsed = int(ep.get("parsed") or 0)
-    if ep_manual or ep_parsed:
-        lines = ["【这份上下游有多可信】"]
-        if ep_parsed:
-            lines.append(
-                f"- {ep_parsed} 条来自静态解析：动态分派、回调、反射可能没连上，"
-                "所以「没看到某个调用者」不等于「它不存在」"
-            )
-        if ep_manual:
-            lines.append(
-                f"- {ep_manual} 条是读者手工补的：这些是**确切**的，直接当真"
-            )
-        parts.append("\n".join(lines))
-
-    flows = pack.get("flows") or []
-    if flows:
-        parts.append(
-            "[它在这些执行流里]\n"
-            + "\n".join(
-                f"- 第 {i + 1} 条（{f.get('length')} 步）：" + " → ".join(f.get("labels") or [])
-                for i, f in enumerate(flows)
-            )
-        )
-
-    sus = pack.get("suspicious") or []
-    if sus:
-        parts.append(
-            "[正则扫出的线索（不完整，只用于定位；不要只依赖这些）]\n"
-            + "\n".join(f"- {x}" for x in sus)
-        )
-
-    # ★ 目录节点：给它的直接子项（文件名/子目录），让模型能问「这个目录为什么这样切分」
-    kids = pack.get("children") or []
-    if kids:
-        lines = ["[这个目录里的东西（子目录 / 文件）]"]
-        for c in kids[:30]:
-            mark = "目录" if c.get("kind") == "dir" else "文件"
-            lines.append(f"- [{mark}] {c.get('name')}")
-        if len(kids) > 30:
-            lines.append(f"（还有 {len(kids) - 30} 项未列出）")
-        parts.append("\n".join(lines))
-
-    # ---- 用户之前学过的（引用原话，⛔ 不概括）
-    if learned:
-        lines = ["[你之前学过（读者自己写的原话，不要改写）]"]
-        for it in learned[:3]:
-            age = it.get("age_days")
-            when = f"{age} 天前" if isinstance(age, int) and age >= 0 else "之前"
-            lines.append(
-                f"- {it.get('name')}（{when}写的{it.get('kind_label') or '笔记'}，"
-                f"关系：{it.get('relation') or '同一片代码'}）"
-            )
-            lines.append(f"  「{str(it.get('text') or '').strip()[:200]}」")
-        parts.append("\n".join(lines))
-    else:
-        parts.append("[你之前学过]\n（这是第一次看这附近，不要假装读者记得什么）")
-
-    parts.append(
-        "[任务]按上面的格式出 3 个问题，并给最多 2 条「下一步可以读」。"
-        "引用代码事实时以上面给出的材料为准；背景类问题只问「有什么关系」，不下结论。"
-        "线索只是定位参考，真正的疑点要你自己从源码里看出来。"
-    )
     return [
         {"role": "system", "content": QUESTIONS_SYSTEM},
-        {"role": "user", "content": "\n\n".join(parts)},
+        {"role": "user", "content": "\n".join(parts)},
     ]
 
 

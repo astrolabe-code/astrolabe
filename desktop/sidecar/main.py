@@ -1909,25 +1909,41 @@ def _make_tool_executor(project):
                 )
             return "\n\n".join(out)
 
-        # ---------------- 读源码
+        # ---------------- 读节点（按类型给不同结构）
         if tool == "read_node":
             node, err = resolve(args)
             if not node:
                 return err
+            kind = str(node.get("kind") or "")
             vid = int(node.get("vid") or 0)
+
+            out = [
+                f"【节点】{kind} {node.get('name')}  "
+                f"@ {node.get('file_path')}:{node.get('line')}"
+            ]
+            sig = str(node.get("signature") or "").strip()
+            if sig:
+                out.append(f"【签名】{sig}")
+
+            # ★ 目录：只列子项，⛔ 不出现「源码」二字（否则模型以为读取失败）
+            if kind == "dir":
+                out.append("【目录，没有源码】直接子项：")
+                out.append(snippet_of(node, 40))
+                return "\n".join(out)
+
             try:
                 nei = graphdb.neighbors(ROOT, vid, 1)
             except Exception:  # noqa: BLE001
                 nei = {"upstream": [], "downstream": []}
-            head = (
-                f"【节点】{node.get('kind')} {node.get('name')}  "
-                f"@ {node.get('file_path')}:{node.get('line')}"
-                f"\n【签名】{node.get('signature') or '（未给出）'}"
-                f"\n【它调用】{label(nei.get('downstream') or [])}"
-                f"\n【调用它】{label(nei.get('upstream') or [])}"
-            )
+            out.append(f"【它调用】{label(nei.get('downstream') or [])}")
+            out.append(f"【调用它】{label(nei.get('upstream') or [])}")
+
             max_lines = min(400, max(40, int(args.get("max_lines") or 120)))
-            return head + "\n【源码】\n```\n" + snippet_of(node, max_lines) + "\n```"
+            out.append("【文件内容】" if kind == "file" else "【源码】")
+            out.append("```")
+            out.append(snippet_of(node, max_lines))
+            out.append("```")
+            return "\n".join(out)
 
         return f"未知工具：{tool}"
 
@@ -2035,11 +2051,14 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             except Exception:  # noqa: BLE001
                 pass
 
-    # ★ 出题只给当前节点：邻居 / 同文件函数 / 执行流一律不发，
-    #   模型想看什么自己用工具读（所有者 2026-11-17）
-    pack = contextpack.build(ROOT, project["root"], vid, with_neighbors=False)
-    learned = _learned_notes(project, pack, vid)
-    messages = ai.build_questions_messages(pack, learned)
+    # ★★ 出题不组装上下文包了：只需要节点本身的名字 / 类型 / 路径。
+    #   所有者 2026-11-18：「不要发送信息了，让ai自己去查吧…开始就给ai发送
+    #   节点名字和类型就行」⇒ 省掉读文件、查边、查目录子项这一整圈。
+    node = graphdb.get_code(ROOT, vid)
+    if not node:
+        raise ValueError("节点不存在")
+    pack = {"node": node}
+    messages = ai.build_questions_messages(pack)
     # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
     #   「调用工具给这个加上也是必要的」（轮数更紧，2 轮就够）
     chunks: list[str] = []
@@ -2068,7 +2087,8 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
                 f"（工具链先报：{ai.redact(str(exc))}）"
             ) from None
     parsed = ai.parse_questions(text)
-    parsed["learned"] = learned
+    # 前端目前不展示「你之前学过的」，保留字段兼容旧响应
+    parsed["learned"] = []
 
     if parsed.get("items"):
         try:

@@ -886,38 +886,40 @@ def chat_with_tools(
     messages: list[dict],
     tools: list[dict],
     executor,
-    max_rounds: int = 3,
+    max_rounds: int | None = None,
     max_tokens: int = 800,
+    deadline_s: float = 180.0,
 ):
-    """带**只读工具**的多轮流式问答。
+    """带**只读工具**的多轮流式对话。
 
-    所有者原话（2026-11-17）：
-    「阅读工具调用是要的，这样ai才能准确，不过，调用轮数要有限制」
+    所有者原话（2026-11-18）：
+    「工具调用不要设限制了，ai读不到，列出的问题太莫名其妙了。」
 
-    ## 流程
-
-    ```
-    第 1 轮：模型看到上下文 → 可能说「我要读 X」→ 执行 → 结果喂回
-    第 2 轮：… 最多 max_rounds 轮
-    轮数用尽：补一句「工具次数已达上限」，让它只用已看到的内容作答
-    ```
-
-    ## 三条硬约束
+    ⇒ 默认**不限轮数**（`max_rounds=None`）。只保留两条安全阀，
+      它们都不是「限制 AI 思考」，而是防止真的转死：
 
     ```
-    ① ⛔ 轮数上限（默认 3）：每多一轮，整段历史重发一次，token 线性增长
-    ② ⛔ 工具只读：executor 由调用方提供，这里不碰任何写操作
-    ③ 模型不返回 tool_calls ⇒ 行为与普通流式**完全一致**（退化安全，
-       本地小模型不支持 tools 时就是这个路径）
+    ① 同一组「工具 + 参数」第二次出现 ⇒ 立刻收尾
+       模型原地打转时再跑下去只是烧钱，读不到就是读不到
+    ② 总时长超过 deadline_s（默认 180 秒）⇒ 收尾
+       本地小模型偶尔会连续吐 tool_calls，要有个兜底
     ```
 
-    产出事件：`delta` / `usage` / `step`（第几轮工具调用）。
+    ⚠ 上面的循环用 `while`；每轮都重发完整历史，轮数越多 token 越多，
+      但**这是使用者自己要的**（宁可多读，也不要瞎问）。
     """
     convo = list(messages)
+    t0 = time.time()
+    seen: set[str] = set()
+    rnd = 0
 
-    # ⚠ 是 `range(max_rounds)` 不是 +1：3 轮就是 3 次工具调用，
-    #   之后单独走一次「收尾」（不带宽 tools），否则会多跑一轮。
-    for rnd in range(max_rounds):
+    while True:
+        rnd += 1
+        if max_rounds is not None and rnd > max_rounds:
+            break
+        if time.time() - t0 > deadline_s:
+            break
+
         pending: dict[int, dict] = {}
         text_acc: list[str] = []
 
@@ -950,19 +952,23 @@ def chat_with_tools(
                 {
                     "id": slot["id"] or f"call_{idx}",
                     "type": "function",
-                    "function": {
-                        "name": slot["name"],
-                        "arguments": slot["args"] or "{}",
-                    },
+                    "function": {"name": slot["name"], "arguments": slot["args"] or "{}"},
                 }
             )
 
-        convo.append(
-            {
-                "role": "assistant",
-                "content": "".join(text_acc) or None,
-                "tool_calls": calls,
+        # ★ 安全阀 ①：同样的调用重复出现 ⇒ 它读不到了，别再转
+        signature = "|".join(f"{c['function']['name']}::{c['function']['arguments']}" for c in calls)
+        if signature in seen:
+            yield {
+                "event": "step",
+                "round": rnd,
+                "note": "重复的读取请求，已停止（读不到就是读不到，不必再试）",
             }
+            break
+        seen.add(signature)
+
+        convo.append(
+            {"role": "assistant", "content": "".join(text_acc) or None, "tool_calls": calls}
         )
 
         for c in calls:
@@ -971,28 +977,23 @@ def chat_with_tools(
                 args = json.loads(c["function"]["arguments"] or "{}")
                 if not isinstance(args, dict):
                     args = {}
-            except Exception:  # noqa: BLE001 —— 模型把 JSON 写坏了，别让整轮崩
+            except Exception:  # noqa: BLE001
                 args = {}
             try:
                 res = executor(fname, args)
             except Exception as exc:  # noqa: BLE001
                 res = f"工具 {fname} 执行失败：{redact(str(exc))}"
-            # ⚠ 单条工具结果也要截断：否则一次读到 2 万行会把上下文撑爆
             convo.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": c["id"],
-                    "content": str(res)[:4000],
-                }
+                {"role": "tool", "tool_call_id": c["id"], "content": str(res)[:4000]}
             )
 
-        yield {"event": "step", "round": rnd + 1}
+        yield {"event": "step", "round": rnd}
 
-    # 轮数用尽：再问一次，明确禁止继续调工具
+    # 到这里说明撞上了安全阀：让它只用已看到的作答
     convo.append(
         {
             "role": "user",
-            "content": "（工具调用次数已达上限。请只根据上面已经看到的内容回答，不要再请求工具。）",
+            "content": "（读取已结束。请只根据上面看到的内容回答，不要再请求工具。）",
         }
     )
     for evt in stream_chat(convo, max_tokens=max_tokens):

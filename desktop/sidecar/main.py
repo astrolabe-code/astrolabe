@@ -1751,6 +1751,27 @@ def _make_tool_executor(project):
         return None, disambiguate(rows, name)
 
     def snippet_of(node: dict, limit: int) -> str:
+        # ★ 目录节点没有源码：列出它的直接子项，⛔ 别报「读取失败」
+        if str(node.get("kind") or "") == "dir":
+            kids: list[dict] = []
+            try:
+                conn = graphdb._open(ROOT)
+                rows = conn.execute(
+                    "MATCH (d:Code)-[r:Rel]->(c:Code) WHERE d.vid = $v AND r.kind = 'contains' "
+                    "RETURN c.kind, c.name ORDER BY c.kind, c.name LIMIT 40",
+                    {"v": int(node.get("vid") or 0)},
+                ).get_all()
+                kids = [{"kind": str(r[0] or ""), "name": str(r[1] or "")} for r in rows]
+            except Exception:  # noqa: BLE001
+                kids = []
+            if not kids:
+                return "（这是一个目录节点，没有源码；目录里也没有直接子项）"
+            lines = ["（这是一个目录节点，没有源码；直接子项如下）"]
+            for k in kids[:40]:
+                mark = "目录" if str(k.get("kind")) == "dir" else "文件"
+                lines.append(f"- [{mark}] {k.get('name')}")
+            return "\n".join(lines)
+
         try:
             text = str(source.read(project["root"], node.get("file") or "").get("text") or "")
         except Exception:  # noqa: BLE001
@@ -1848,7 +1869,6 @@ def _ask_events(project, vid: int, question: str):
         messages,
         READ_TOOLS,
         _make_tool_executor(project),
-        max_rounds=3,
         max_tokens=800,
     )
 
@@ -1930,7 +1950,9 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             except Exception:  # noqa: BLE001
                 pass
 
-    pack = contextpack.build(ROOT, project["root"], vid)
+    # ★ 出题只给当前节点：邻居 / 同文件函数 / 执行流一律不发，
+    #   模型想看什么自己用工具读（所有者 2026-11-17）
+    pack = contextpack.build(ROOT, project["root"], vid, with_neighbors=False)
     learned = _learned_notes(project, pack, vid)
     messages = ai.build_questions_messages(pack, learned)
     # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
@@ -1941,7 +1963,6 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             messages,
             READ_TOOLS,
             _make_tool_executor(project),
-            max_rounds=2,
             max_tokens=600,
         ):
             if evt.get("event") == "delta":

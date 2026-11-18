@@ -1597,17 +1597,90 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
 #     这样ai才能更方便地找到信息」
 # ⛔ 全部只读：不写文件、不改图、不执行代码。
 
+_CYPHER_DENY = (
+    "CREATE", "MERGE", "DELETE", "SET", "REMOVE", "DROP", "ALTER",
+    "COPY", "INSTALL", "LOAD", "FOREACH", "CALL", "ATTACH", "DETACH",
+)
+
+
+def _cypher_guard(query: str) -> str:
+    """只读校验：拒绝写关键字，强制 MATCH + RETURN + LIMIT。
+
+    所有者原话（2026-11-18）：
+    「你只要告诉ai可以用cypher查询，不比你写的更灵活？
+      只要检查ai写的查询语句只是查询，没有任何修改功能就行。」
+
+    ⚠ 做法很粗但够用：先把单/双引号里的字符串挖掉（避免 'SET' 这种字面量误判），
+      再按单词边界匹配写关键字。
+    ⛔ 绝不拼接任何用户/模型的字符串进查询以外的地方。
+    """
+    q = str(query or "").strip()
+    if not q:
+        return "缺少 query"
+    scrubbed = re.sub(r"'(?:[^'\\]|\\.)*'", "''", q)
+    scrubbed = re.sub(r'"(?:[^"\\]|\\.)*"', '""', scrubbed)
+    up = re.sub(r"\s+", " ", scrubbed.upper())
+
+    for word in _CYPHER_DENY:
+        if re.search(rf"\b{word}\b", up):
+            return f"拒绝执行：语句里出现 {word}，这里只允许只读查询"
+    if not re.search(r"\bMATCH\b", up):
+        return "查询必须包含 MATCH"
+    if not re.search(r"\bRETURN\b", up):
+        return "查询必须包含 RETURN"
+    if not re.search(r"\bLIMIT\b", up):
+        return "请加上 LIMIT（最多 200 行）"
+    return ""
+
+
 READ_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "cypher",
+            "description": (
+                "直接查代码图谱（只读 cypher）——想怎么连就怎么连，比专用工具灵活。\n"
+                "\n"
+                "图谱结构（LadybugDB）：\n"
+                "  节点表 Code(vid, kind, name, qname, file, line, lineEnd, signature, origin)\n"
+                "    kind: dir / file / function / method / class / interface / struct / union /\n"
+                "          enum / typedef / record / macro / module / package / variable /\n"
+                "          constant / field / type\n"
+                "    origin: 'manual' 表示用户手工补的节点（确切），其它是解析产出\n"
+                "  关系表 Rel(kind, origin, line)，方向 a -> b 表示 a 依赖 b\n"
+                "    kind: call / invoke / contains / import / include / extend / implement\n"
+                "\n"
+                "规则：\n"
+                "  ① 只能 MATCH / OPTIONAL MATCH / WHERE / RETURN / WITH / ORDER BY / LIMIT\n"
+                "     CREATE / MERGE / DELETE / SET / REMOVE / DROP / CALL 一律拒绝\n"
+                "  ② 必须带 LIMIT（≤200），否则不执行\n"
+                "  ③ 图里只有行号，没有源码正文 —— 要读源码用 read_node\n"
+                "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
+                "\n"
+                "例：\n"
+                "  MATCH (c:Code)-[r:Rel]->(d:Code) WHERE c.name = 'get_call_graph'\n"
+                "  RETURN d.name, d.file, d.line, r.kind LIMIT 20\n"
+                "  MATCH (c:Code) WHERE c.kind = 'function' AND c.file CONTAINS 'engine'\n"
+                "  RETURN c.name, c.line LIMIT 50"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Cypher 语句（只读，必须带 LIMIT）"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
             "name": "read_node",
             "description": (
-                "读一个节点的源码与它的直接上游/下游。\n\n"
-                "WHEN TO USE: 需要确认某个函数具体怎么写，或它和谁直接相连时。\n"
-                "AFTER THIS: 还想看邻居的实现就再调一次；只想知道名字存不存在，"
-                "用 search_nodes 更便宜。\n\n"
-                "同名节点可能有多个：结果会列出候选与 uid，用 uid 精确指定。"
+                "读某个节点的**源码正文**，以及它的直接上游/下游。\n"
+                "cypher 只能给到行号，源码要读文件，所以用这个。\n\n"
+                "WHEN TO USE: 已经知道是哪个函数，要看它具体怎么写的。\n"
+                "AFTER THIS: 想看它调用了谁，可以再用 cypher 查。"
             ),
             "parameters": {
                 "type": "object",
@@ -1626,27 +1699,9 @@ READ_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "list_neighbors",
-            "description": (
-                "只列出某节点的上游/下游名字，不读源码。\n\n"
-                "WHEN TO USE: 想知道「还有谁参与」但不需要看实现时——比 read_node 便宜。\n"
-                "AFTER THIS: 挑感兴趣的用 read_node 深入。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "uid": {"type": "string", "description": "精确 uid（可选）"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "read_notes",
             "description": (
-                "读某个节点下**用户自己写的笔记**（原文：类型、标题、正文摘要）。\n\n"
+                "读某个节点下**用户自己写的笔记**（类型、标题、正文摘要）。\n\n"
                 "WHEN TO USE: 想知道作者怎么理解这段代码、踩过什么坑、还困惑什么时"
                 "—— 这些在代码里看不到。\n"
                 "AFTER THIS: 想找别处提到过的概念，用 search_notes。"
@@ -1672,7 +1727,7 @@ READ_TOOLS = [
             "description": (
                 "在用户笔记的正文/标题里做全文搜索，返回标题与命中片段。\n\n"
                 "WHEN TO USE: 不确定某个概念在哪提过、或想找「我以前是不是记过这个」时"
-                "—— 比逐个节点 read_notes 快得多。\n"
+                "—— 比逐个节点 read_notes 快。\n"
                 "AFTER THIS: 拿到标题后再用 read_notes 或 read_node 深入。"
             ),
             "parameters": {
@@ -1689,48 +1744,11 @@ READ_TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_nodes",
-            "description": (
-                "按名字或路径搜节点，返回候选（名字 + 文件 + 行号 + uid）。\n\n"
-                "WHEN TO USE: 不确定某个东西叫什么、或怀疑有同名节点时，先搜再读。\n"
-                "AFTER THIS: 把 uid 交给 read_node 看源码。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "q": {"type": "string", "description": "关键字（名字或路径片段）"},
-                    "limit": {
-                        "type": "integer",
-                        "description": "最多返回几个（默认 8，上限 20）",
-                        "default": 8,
-                    },
-                },
-                "required": ["q"],
-            },
-        },
-    },
 ]
 
 
 def _make_tool_executor(project):
-    """构造只读工具执行器。
-
-    ★ 借鉴 GitNexus 的 context 工具：**同名必须消歧** ——
-      它返回候选列表让模型自己挑，绝不默认取第一个。
-    ⛔ 任何分支都不写：不落库、不改图、不执行代码。
-    """
-
-    def search(name: str, limit: int = 8) -> list[dict]:
-        key = str(name or "").strip()
-        if not key:
-            return []
-        try:
-            return graphdb.search_code(ROOT, key, limit) or []
-        except Exception:  # noqa: BLE001
-            return []
+    """构造只读工具执行器。⛔ 任何分支都不写：不落库、不改图、不执行代码。"""
 
     def by_uid(uid: str) -> dict | None:
         try:
@@ -1738,16 +1756,8 @@ def _make_tool_executor(project):
         except Exception:  # noqa: BLE001
             return None
 
-    def disambiguate(rows: list[dict], name: str) -> str:
-        lines = [f"「{name}」匹配到 {len(rows)} 个节点，请用 uid 指定："]
-        for r in rows[:10]:
-            lines.append(
-                f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
-                f"@ {r.get('file_path')}:{r.get('line')}"
-            )
-        return "\n".join(lines)
-
     def resolve(args: dict) -> tuple[dict | None, str]:
+        """按 uid 或名字定位唯一节点；同名时给候选清单，⛔ 不默认取第一个。"""
         uid = str(args.get("uid") or "").strip()
         if uid:
             node = by_uid(uid)
@@ -1755,18 +1765,26 @@ def _make_tool_executor(project):
         name = str(args.get("name") or "").strip()
         if not name:
             return None, "需要 name 或 uid"
-        rows = search(name, 10)
+        try:
+            rows = graphdb.search_code(ROOT, name, 10) or []
+        except Exception:  # noqa: BLE001
+            rows = []
         if not rows:
-            return None, f"没有找到「{name}」，可以先用 search_nodes 搜一下"
+            return None, f"没有找到「{name}」，可以先用 cypher 按名字查一下"
         if len(rows) == 1:
             return rows[0], ""
         exact = [r for r in rows if str(r.get("name") or "") == name]
         if len(exact) == 1:
             return exact[0], ""
-        return None, disambiguate(rows, name)
+        lines = [f"「{name}」匹配到 {len(rows)} 个节点，请用 uid 指定："]
+        for r in rows[:10]:
+            lines.append(
+                f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
+                f"@ {r.get('file_path')}:{r.get('line')}"
+            )
+        return None, "\n".join(lines)
 
     def label(rows: list) -> str:
-        """邻居名 + 可信度标注（解析边可能漏，手工边是确切的）。"""
         names = "、".join(str(x.get("name") or "") for x in rows[:12])
         if not names:
             return "（无）"
@@ -1776,7 +1794,6 @@ def _make_tool_executor(project):
         return f"{names}（静态解析，可能不全）"
 
     def snippet_of(node: dict, limit: int) -> str:
-        # 目录节点没有源码：列子项
         if str(node.get("kind") or "") == "dir":
             kids: list[dict] = []
             try:
@@ -1818,26 +1835,26 @@ def _make_tool_executor(project):
     def note_body(rel_path: str, limit: int = 800) -> str:
         try:
             _meta, txt = notefile.read_file(os.path.join(ROOT, str(rel_path or "")))
-            # ⚠ 只给前 N 字：整篇可能很长，会把上下文撑爆
             return " ".join(str(txt or "").split())[:limit]
         except Exception:  # noqa: BLE001
             return "（读不到正文）"
 
     def run(tool: str, args: dict) -> str:
-        # ---------------- 搜节点
-        if tool == "search_nodes":
-            q = str(args.get("q") or "").strip()
-            if not q:
-                return "缺少参数 q"
-            limit = min(20, max(1, int(args.get("limit") or 8)))
-            rows = search(q, limit)
+        # ---------------- 直接查图
+        if tool == "cypher":
+            query = str(args.get("query") or "")
+            why = _cypher_guard(query)
+            if why:
+                return why
+            try:
+                rows = graphdb._open(ROOT).execute(query).get_all()
+            except Exception as exc:  # noqa: BLE001
+                return f"查询失败：{exc}"
             if not rows:
-                return f"没有找到与「{q}」相关的节点"
-            return "\n".join(
-                f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
-                f"@ {r.get('file_path')}:{r.get('line')}"
-                for r in rows
-            )
+                return "（没有匹配结果）"
+            out = [" | ".join("" if c is None else str(c) for c in r) for r in rows[:80]]
+            tail = "" if len(rows) <= 80 else f"\n…（共 {len(rows)} 行，只显示前 80）"
+            return "\n".join(out) + tail
 
         # ---------------- 搜笔记
         if tool == "search_notes":
@@ -1851,7 +1868,6 @@ def _make_tool_executor(project):
                 return f"搜索失败：{exc}"
             if not hits:
                 return f"笔记里没有提到「{q}」"
-            # ⚠ note_fts 不分项目：再用 note 表过滤掉别的项目的笔记
             try:
                 refs = [str(h.get("ref") or "") for h in hits]
                 marks = ",".join("?" * len(refs))
@@ -1893,8 +1909,8 @@ def _make_tool_executor(project):
                 )
             return "\n\n".join(out)
 
-        # ---------------- 读节点 / 列邻居
-        if tool in ("read_node", "list_neighbors"):
+        # ---------------- 读源码
+        if tool == "read_node":
             node, err = resolve(args)
             if not node:
                 return err
@@ -1903,7 +1919,6 @@ def _make_tool_executor(project):
                 nei = graphdb.neighbors(ROOT, vid, 1)
             except Exception:  # noqa: BLE001
                 nei = {"upstream": [], "downstream": []}
-
             head = (
                 f"【节点】{node.get('kind')} {node.get('name')}  "
                 f"@ {node.get('file_path')}:{node.get('line')}"
@@ -1911,8 +1926,6 @@ def _make_tool_executor(project):
                 f"\n【它调用】{label(nei.get('downstream') or [])}"
                 f"\n【调用它】{label(nei.get('upstream') or [])}"
             )
-            if tool == "list_neighbors":
-                return head
             max_lines = min(400, max(40, int(args.get("max_lines") or 120)))
             return head + "\n【源码】\n```\n" + snippet_of(node, max_lines) + "\n```"
 

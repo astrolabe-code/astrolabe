@@ -384,6 +384,15 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [streaming, setStreaming] = useState('')
+  /**
+   * ★★ 正在进行的这一问。
+   *
+   * 所有者原话（2026-11-19）：「我输入的问题也是在回答完后，再放到问答界面上，
+   * 不是问题先上界面，然后再出现思考过程，然后再回答。」
+   * ⇒ 提问后先把问题气泡放上去，思考与回答依次出现在它下面；
+   *   完成后由 qaAppend 返回的 items 接管，这里清空。
+   */
+  const [pending, setPending] = useState('')
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
   // ★★ 有序步骤：想一句、查一下、再想一句，按发生顺序排
   const [steps, setSteps] = useState<ThinkStep[]>([])
@@ -454,6 +463,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     const question = text.trim()
     if (!question || busy || !vid || !projectRef) return false
     setErr('')
+    setPending(question)
     setBusy(true)
     setStreaming('')
     setSteps([])
@@ -538,6 +548,9 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     } finally {
       setBusy(false)
       setStreaming('')
+      // ★ 收尾：这条已经进了 items（qaAppend 返回的新列表），
+      //   撤掉临时气泡，否则会和历史里的同一条重复显示
+      setPending('')
     }
   }
 
@@ -680,6 +693,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               </div>
             </div>
 
+            {/* ★ 思考过程在**回答上方**（所有者 2026-11-19：「折叠的思考过程
+                怎么跑到回答下面了？不应该在回答上面吗？」） */}
+            <ThinkBlock steps={it.steps} ms={it.ms} />
+
             {/* 答 */}
             <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 6 }}>
               <div
@@ -725,37 +742,56 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               </button>
               <UsageLine item={it} />
             </div>
-            <ThinkBlock steps={it.steps} ms={it.ms} />
           </div>
         ))}
 
-        {/* ★ 本轮思考与工具轨迹（流式中实时显示） */}
-        <div style={{ marginBottom: 10 }}>
-          <ThinkBlock steps={steps} live={busy} ms={busy ? 0 : liveMs} />
-        </div>
-
-        {/* 流式 */}
-        {!!streaming && (
+        {/* ★★ 正在进行的一问：问题先上屏 → 思考过程 → 回答 */}
+        {!!pending && (
           <div style={{ marginBottom: 16 }}>
-            <div
-              style={{
-                padding: '6px 10px',
-                borderRadius: '10px 10px 10px 2px',
-                background: 'var(--card, #fff)',
-                border: '1px solid var(--card-border)',
-                fontSize: 12.5,
-                lineHeight: 1.75,
-                wordBreak: 'break-word',
-              }}
-            >
-              <MarkdownText text={streaming} compact />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div
+                style={{
+                  maxWidth: '82%',
+                  padding: '6px 10px',
+                  borderRadius: '10px 10px 2px 10px',
+                  background: 'var(--accent)',
+                  color: '#fff',
+                  fontSize: 12.5,
+                  lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {pending}
+              </div>
             </div>
-          </div>
-        )}
 
-        {busy && !streaming && (
-          <div className="faint" style={{ fontSize: 12 }}>
-            <Loader2 size={13} className="animate-spin" /> 思考中…
+            <ThinkBlock steps={steps} live={busy} ms={busy ? 0 : liveMs} />
+
+            {!!streaming && (
+              <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 6 }}>
+                <div
+                  style={{
+                    maxWidth: '88%',
+                    padding: '6px 10px',
+                    borderRadius: '10px 10px 10px 2px',
+                    background: 'var(--card, #fff)',
+                    border: '1px solid var(--card-border)',
+                    fontSize: 12.5,
+                    lineHeight: 1.75,
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  <MarkdownText text={streaming} compact />
+                </div>
+              </div>
+            )}
+
+            {busy && !streaming && !steps.length && (
+              <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+                <Loader2 size={13} className="animate-spin" /> 等待回答…
+              </div>
+            )}
           </div>
         )}
       </div>

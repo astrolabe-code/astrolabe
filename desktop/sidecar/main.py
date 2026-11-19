@@ -1660,11 +1660,34 @@ READ_TOOLS = [
                 "     想知道某个目录包含什么，查 Rel 的 contains 边\n"
                 "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
                 "\n"
-                "例：\n"
-                "  MATCH (c:Code)-[r:Rel]->(d:Code) WHERE c.name = 'get_call_graph'\n"
-                "  RETURN d.name, d.file, d.line, r.kind LIMIT 20\n"
-                "  MATCH (c:Code) WHERE c.kind = 'function' AND c.file CONTAINS 'engine'\n"
-                "  RETURN c.name, c.line LIMIT 50"
+                "例（照抄改名字即可）：\n"
+                "  ① 谁调用了它（上游）\n"
+                "     MATCH (a:Code)-[r:Rel {kind:'call'}]->(b:Code {name:'do_work'})\n"
+                "     RETURN a.name, a.rel_path, a.line LIMIT 30\n"
+                "  ② 它调用了谁（下游）\n"
+                "     MATCH (a:Code {name:'do_work'})-[r:Rel {kind:'call'}]->(b:Code)\n"
+                "     RETURN b.name, b.rel_path, b.line LIMIT 30\n"
+                "  ③ 上下游一起看（不限定方向）\n"
+                "     MATCH (a:Code)-[r:Rel]-(b:Code {name:'do_work'})\n"
+                "     WHERE r.kind = 'call' OR r.kind = 'invoke'\n"
+                "     RETURN a.name, b.name, r.kind LIMIT 40\n"
+                "  ④ 某个文件里有哪些节点\n"
+                "     MATCH (c:Code) WHERE c.rel_path = 'path/to/file.py'\n"
+                "     RETURN c.kind, c.name, c.line ORDER BY c.line LIMIT 100\n"
+                "  ⑤ 某个目录下有什么\n"
+                "     MATCH (d:Code {name:'some_dir'})-[r:Rel {kind:'contains'}]->(c:Code)\n"
+                "     RETURN c.kind, c.name LIMIT 50\n"
+                "  ⑥ 某个类的所有方法\n"
+                "     MATCH (c:Code {name:'SomeClass'})-[r:Rel {kind:'contains'}]->(m:Code)\n"
+                "     WHERE m.kind = 'method' RETURN m.name, m.line LIMIT 50\n"
+                "  ⑦ 按名字模糊找（不确定全名时）\n"
+                "     MATCH (c:Code) WHERE c.name CONTAINS 'handle'\n"
+                "     RETURN c.kind, c.name, c.rel_path, c.line LIMIT 40\n"
+                "  ⑧ 只看用户手工补的边\n"
+                "     MATCH (a:Code)-[r:Rel {origin:'manual'}]->(b:Code)\n"
+                "     RETURN a.name, b.name, r.kind LIMIT 30\n"
+                "\n"
+                "输出是 Markdown 表格（列名取自 RETURN 子句）。"
             ),
             "parameters": {
                 "type": "object",
@@ -1773,6 +1796,65 @@ READ_TOOLS = [
 ]
 
 
+def _cypher_columns(query: str) -> list[str]:
+    """从 RETURN 子句猜列名（`a.name AS x` → `x`；`a.name` → `name`）。
+
+    ⚠ 只是为了给 Markdown 表格加表头。猜错不影响数据，只影响表头文字，
+      所以这里宁简勿繁：取每项最后一个标识符。
+    """
+    m = re.search(
+        r"\bRETURN\b(.*?)(?:\bLIMIT\b|\bORDER\b|\bSKIP\b|\bUNION\b|$)",
+        query,
+        re.S | re.I,
+    )
+    if not m:
+        return []
+    body = m.group(1)
+    parts: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in body:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+
+    cols: list[str] = []
+    for raw in parts:
+        item = raw.strip()
+        if not item:
+            continue
+        alias = re.search(r"\bAS\s+([A-Za-z_]\w*)\s*$", item, re.I)
+        if alias:
+            cols.append(alias.group(1))
+            continue
+        ids = re.findall(r"[A-Za-z_]\w*", item)
+        cols.append(ids[-1] if ids else f"col{len(cols) + 1}")
+    return cols
+
+
+def _markdown_table(cols: list[str], rows: list) -> str:
+    """把结果拼成 Markdown 表格（值与表头里的 `|` 转义，否则会破坏表格）。"""
+    width = len(rows[0]) if rows else 0
+    head = cols[:width] or [f"col{i + 1}" for i in range(width)]
+    head += [f"col{i + 1}" for i in range(len(head), width)]
+
+    def cell(v) -> str:
+        return "—" if v is None or v == "" else str(v).replace("|", "\\|")
+
+    lines = ["| " + " | ".join(head) + " |", "|" + "|".join([" --- "] * width) + "|"]
+    for r in rows:
+        lines.append("| " + " | ".join(cell(c) for c in r) + " |")
+    return "\n".join(lines)
+
+
 def _make_tool_executor(project):
     """构造只读工具执行器。⛔ 任何分支都不写：不落库、不改图、不执行代码。"""
 
@@ -1851,9 +1933,10 @@ def _make_tool_executor(project):
                 return f"查询失败：{exc}"
             if not rows:
                 return "（没有匹配结果）"
-            out = [" | ".join("" if c is None else str(c) for c in r) for r in rows[:80]]
-            tail = "" if len(rows) <= 80 else f"\n…（共 {len(rows)} 行，只显示前 80）"
-            return "\n".join(out) + tail
+            shown = rows[:80]
+            table = _markdown_table(_cypher_columns(query), shown)
+            tail = "" if len(rows) <= 80 else f"\n\n（共 {len(rows)} 行，上面是前 80 行）"
+            return table + tail
 
         # ---------------- 搜笔记
         if tool == "search_notes":
@@ -1928,15 +2011,29 @@ def _make_tool_executor(project):
                 return f"读笔记失败：{exc}"
             if not rows:
                 return f"「{node.get('name')}」这个节点上还没有笔记"
-            limit = min(8, max(1, int(args.get("limit") or 3)))
-            out = []
-            for r in rows[:limit]:
-                kind = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
-                out.append(
-                    f"[{kind}] {r.get('title') or '（无标题）'}\n"
-                    f"{note_body(r.get('rel_path') or '')}"
-                )
-            return "\n\n".join(out)
+
+            # ★★ 默认只给**清单**（全部，最多 30 条）：
+            #   一个节点下可能有十几篇、分属五个标签，只给前几篇会让模型
+            #   以为「就这些」。正文按需展开，⛔ 不一上来就灌。
+            lines = [f"「{node.get('name')}」下有 {len(rows)} 篇笔记："]
+            for i, r in enumerate(rows[:30], 1):
+                k = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
+                lines.append(f"{i}. [{k}] {r.get('title') or '（无标题）'}")
+            if len(rows) > 30:
+                lines.append(f"（还有 {len(rows) - 30} 篇未列出）")
+
+            if bool(args.get("with_body")):
+                limit = min(20, max(1, int(args.get("limit") or 3)))
+                lines.append("")
+                for r in rows[:limit]:
+                    k = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
+                    lines.append(
+                        f"【{k}】{r.get('title') or '（无标题）'}\n"
+                        f"{note_body(r.get('rel_path') or '')}"
+                    )
+            else:
+                lines.append("（要看正文，传 with_body=true）")
+            return "\n".join(lines)
 
         # ---------------- 读代码（只按 rel_path + 行号取文件片段）
         if tool == "read_file":

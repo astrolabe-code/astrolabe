@@ -1004,6 +1004,7 @@ def stream_chat(
     #   ⛔ 不能静默返回空回答（用户只会看到「问了但没回答」，无从排查）
     got = 0
     got_tool = False
+    think_piece = ""
     try:
         # ⚠ 首字超时给足：本地 7B/14B 在 CPU 上第一块可能要几十秒，
         #   30 秒会误判成超时（此处是单次读超时，不是总时长）
@@ -1031,7 +1032,11 @@ def stream_chat(
                     choices = obj.get("choices") or []
                     if choices:
                         ch = choices[0] if isinstance(choices[0], dict) else {}
-                        piece = (ch.get("delta") or {}).get("content") or ""
+                        dl = ch.get("delta") or {}
+                        piece = dl.get("content") or ""
+                        # ★★ 思考过程：DeepSeek R1 / V3.2 用 reasoning_content，
+                        #   部分实现用 reasoning。⛔ 它与正文分开，不能混进回答。
+                        think_piece = dl.get("reasoning_content") or dl.get("reasoning") or ""
                         if not piece:
                             piece = (ch.get("message") or {}).get("content") or ""
                     if not piece and isinstance(obj.get("message"), dict):
@@ -1040,6 +1045,10 @@ def stream_chat(
                 if piece:
                     got += 1
                     yield {"event": "delta", "text": piece}
+
+                # 思考过程单独一个事件，前端折叠显示
+                if think_piece:
+                    yield {"event": "think", "text": think_piece}
 
                 # ★★ 工具调用：流式下是**增量分片**（同一 index 的 arguments 一段段来），
                 #   这里只透出原始片段，累积交给 chat_with_tools。

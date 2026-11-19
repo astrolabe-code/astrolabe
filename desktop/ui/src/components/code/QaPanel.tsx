@@ -273,6 +273,9 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [streaming, setStreaming] = useState('')
+  // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
+  const [thinking, setThinking] = useState('')
+  const [thinkOpen, setThinkOpen] = useState(false)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
   const [copiedId, setCopiedId] = useState('')
@@ -339,7 +342,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setErr('')
     setBusy(true)
     setStreaming('')
+    setThinking('')
+    setThinkOpen(false)
     let acc = ''
+    let thinkAcc = ''
     let got = false
     let tin = 0
     let tout = 0
@@ -354,6 +360,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             got = true
             acc += String(evt.text ?? '')
             setStreaming(acc)
+          } else if (evt.event === 'think') {
+            // ⚠ 思考过程不算「有回答」，只单独累积
+            thinkAcc += String(evt.text ?? '')
+            setThinking(thinkAcc)
           } else if (evt.event === 'usage') {
             tin = Number(evt.in || 0)
             tout = Number(evt.out || 0)
@@ -583,6 +593,49 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             </div>
           </div>
         ))}
+
+        {/* ★ 思考过程（DeepSeek 的 reasoning_content）：默认折叠，回答完仍保留 */}
+        {!!thinking && (
+          <div style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              onClick={() => setThinkOpen((v) => !v)}
+              className="faint"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 11,
+                padding: '1px 8px',
+                borderRadius: 999,
+                border: '1px solid var(--card-border)',
+                background: 'transparent',
+                color: 'var(--text-faint)',
+                cursor: 'pointer',
+              }}
+            >
+              {thinkOpen ? '▼' : '▶'} 思考过程
+            </button>
+            {thinkOpen && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: '8px 10px',
+                  borderLeft: '2px solid var(--card-border)',
+                  fontSize: 11.5,
+                  lineHeight: 1.7,
+                  color: 'var(--text-faint)',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}
+              >
+                {thinking}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 流式 */}
         {!!streaming && (

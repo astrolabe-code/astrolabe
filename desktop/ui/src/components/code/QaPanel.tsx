@@ -393,10 +393,16 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
    *   完成后由 qaAppend 返回的 items 接管，这里清空。
    */
   const [pending, setPending] = useState('')
+  /**
+   * ★★ 提问编号：切换节点时自增，进行中的请求作废。
+   *
+   * ⛔ 否则：在 A 节点提问、中途切到 B，A 的请求结束时
+   *   setItems(旧节点的列表) 会把 B 的历史覆盖掉。
+   */
+  const runRef = useRef(0)
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
   // ★★ 有序步骤：想一句、查一下、再想一句，按发生顺序排
   const [steps, setSteps] = useState<ThinkStep[]>([])
-  const [thinkOpen, setThinkOpen] = useState(false)
   // ★ 本轮工具调用轨迹
   const [liveMs, setLiveMs] = useState(0)
   const [err, setErr] = useState('')
@@ -427,6 +433,15 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
       live = false
     }
   }, [projectRef, vid])
+
+  // ★ 换节点：作废进行中的提问，并清掉临时气泡（否则会串到新节点上）
+  useEffect(() => {
+    runRef.current += 1
+    setPending('')
+    setSteps([])
+    setStreaming('')
+    setBusy(false)
+  }, [vid])
 
   useEffect(() => {
     const el = boxRef.current
@@ -468,8 +483,19 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setStreaming('')
     setSteps([])
     setLiveMs(0)
-    setThinkOpen(false)
+
+    const myRun = ++runRef.current
+    /** 已经切走（或又发起了新一轮）⇒ 所有回写都要放弃 */
+    const alive = () => runRef.current === myRun
+
     let acc = ''
+    // ★★ 本地累积：setSteps 是异步的，闭包读到的 `steps` 永远是初始空数组，
+    //    直接拿它去 qaAppend 会永远提交空轨迹。
+    let stepsAcc: ThinkStep[] = []
+    const pushStep = (st: ThinkStep) => {
+      stepsAcc = [...stepsAcc, st]
+      if (alive()) setSteps(stepsAcc)
+    }
 
     let got = false
     let tin = 0
@@ -484,28 +510,28 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
           if (evt.event === 'delta') {
             got = true
             acc += String(evt.text ?? '')
-            setStreaming(acc)
+            if (alive()) setStreaming(acc)
           } else if (evt.event === 'tool_use') {
             // 工具调用插在思考流中间（「想了 → 查了 → 又想了」）
-            setSteps((prev) => [
-              ...prev,
-              {
-                kind: 'tool',
-                name: String(evt.name ?? ''),
-                chars: Number(evt.chars ?? 0),
-                lines: Number(evt.lines ?? 0),
-              },
-            ])
+            pushStep({
+              kind: 'tool',
+              name: String(evt.name ?? ''),
+              chars: Number(evt.chars ?? 0),
+              lines: Number(evt.lines ?? 0),
+            })
           } else if (evt.event === 'think') {
             // ⚠ 思考不算「有回答」；同一段的后续分片拼到当前那条后面
-            setSteps((prev) => {
-              const last = prev[prev.length - 1]
-              const piece = String(evt.text ?? '')
-              if (last && last.kind === 'think') {
-                return [...prev.slice(0, -1), { ...last, text: (last.text || '') + piece }]
-              }
-              return [...prev, { kind: 'think', text: piece }]
-            })
+            const piece = String(evt.text ?? '')
+            const last = stepsAcc[stepsAcc.length - 1]
+            if (last && last.kind === 'think') {
+              stepsAcc = [
+                ...stepsAcc.slice(0, -1),
+                { ...last, text: (last.text || '') + piece },
+              ]
+              if (alive()) setSteps(stepsAcc)
+            } else {
+              pushStep({ kind: 'think', text: piece })
+            }
           } else if (evt.event === 'usage') {
             tin = Number(evt.in || 0)
             tout = Number(evt.out || 0)
@@ -538,19 +564,23 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         tokens_out: tout,
         ms,
         usage,
-        steps,
+        steps: stepsAcc,
       })
+      // ⛔ 已经切到别的节点：不要用旧节点的列表覆盖新节点
+      if (!alive()) return false
       setItems((r.items || []) as QaItem[])
       return true
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
       return false
     } finally {
-      setBusy(false)
-      setStreaming('')
-      // ★ 收尾：这条已经进了 items（qaAppend 返回的新列表），
-      //   撤掉临时气泡，否则会和历史里的同一条重复显示
-      setPending('')
+      // 切走了就别动界面状态（新节点那边可能正在跑别的请求）
+      if (alive()) {
+        setBusy(false)
+        setStreaming('')
+        // 这条已进 items（qaAppend 返回的新列表），撤掉临时气泡
+        setPending('')
+      }
     }
   }
 
@@ -576,7 +606,35 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        // ★★ 回答中把自己抬到遮罩之上：整屏只有问答区可操作，
+        //    点节点 / 切列表 / 切 tab 全部被挡住
+        //    （所有者 2026-11-19：「回答问题时，拒绝一切 url 跳转就行了」）
+        position: 'relative',
+        zIndex: busy ? 1000 : undefined,
+      }}
+    >
+      {/* 回答中：整屏遮罩；它盖住问答区以外的一切，点上去会提示原因 */}
+      {busy &&
+        createPortal(
+          <div
+            onClick={() => setErr('AI 正在回答，完成后才能切换节点')}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 999,
+              background: 'rgba(0,0,0,.04)',
+              cursor: 'not-allowed',
+            }}
+          />,
+          document.body,
+        )}
+
       {/* 头：标题 + 累计统计 + 清空 */}
       <div
         style={{

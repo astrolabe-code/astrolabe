@@ -1568,7 +1568,7 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
         ai可以调工具，自己决定读什么的，很多我传过去的信息，可能都没有用。」
 
     ⇒ 只给**当前节点的源码**（≤120 行）。上下游签名、别人的笔记一律不发：
-      模型需要时用 list_neighbors / read_node 自己读，比我们猜「它可能需要」
+      模型需要时用 list_neighbors / read_file 自己读，比我们猜「它可能需要」
       更准，也省 token。
 
     ⚠ 为什么连「签名」也不给：签名的信息量极低（只有一个名字 + 参数类型），
@@ -1656,7 +1656,7 @@ READ_TOOLS = [
                 "  ① 只能 MATCH / OPTIONAL MATCH / WHERE / RETURN / WITH / ORDER BY / LIMIT\n"
                 "     CREATE / MERGE / DELETE / SET / REMOVE / DROP / CALL 一律拒绝\n"
                 "  ② 必须带 LIMIT（≤200），否则不执行\n"
-                "  ③ 图里只有行号与 rel_path，没有源码正文 —— 读内容用 read_node\n"
+                "  ③ 图里只有行号与 rel_path，没有源码正文 —— 读代码用 read_file（它读文件）\n"
                 "     想知道某个目录包含什么，查 Rel 的 contains 边\n"
                 "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
                 "\n"
@@ -1678,13 +1678,14 @@ READ_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "read_node",
+            "name": "read_file",
             "description": (
-                "看一个节点**里面**是什么。\n"
-                "返回什么由节点本身决定 —— 有内容就给内容，没有就说明情况。\n"
+                "按节点的 rel_path 与行号范围，读那个**文件**里对应的那段代码。\n"
+                "图谱里只有行号和路径，没有源码正文。\n"
+                "只返回这段切片，**不返回上下游**（那用 cypher 查 Rel）。\n"
+                "没有对应文件的节点（比如目录，line=0）返回空。\n"
                 "\n"
-                "WHEN TO USE: 你需要知道这个节点里面是什么的时候。\n"
-                "⛔ 不要在调用前猜「它有没有内容」：需要就看，不需要就不看。\n"
+                "WHEN TO USE: 你已经定位到某个节点，想读它对应的那段代码。\n"
                 "AFTER THIS: 想看它和谁相连，用 cypher 查 Rel；想知道作者写过什么，用 read_notes。"
             ),
             "parameters": {
@@ -1733,7 +1734,7 @@ READ_TOOLS = [
                 "在用户笔记的正文/标题里做全文搜索，返回标题与命中片段。\n\n"
                 "WHEN TO USE: 不确定某个概念在哪提过、或想找「我以前是不是记过这个」时"
                 "—— 比逐个节点 read_notes 快。\n"
-                "AFTER THIS: 拿到标题后再用 read_notes 或 read_node 深入。"
+                "AFTER THIS: 拿到标题后再用 read_notes 或 read_file 深入。"
             ),
             "parameters": {
                 "type": "object",
@@ -1789,35 +1790,8 @@ def _make_tool_executor(project):
             )
         return None, "\n".join(lines)
 
-    def label(rows: list) -> str:
-        names = "、".join(str(x.get("name") or "") for x in rows[:12])
-        if not names:
-            return "（无）"
-        manual = sum(1 for x in rows if str(x.get("origin") or "") == "manual")
-        if manual:
-            return f"{names}（其中 {manual} 条是手工补的，确切）"
-        return f"{names}（静态解析，可能不全）"
-
     def snippet_of(node: dict, limit: int) -> str:
-        if str(node.get("kind") or "") == "dir":
-            kids: list[dict] = []
-            try:
-                conn = graphdb._open(ROOT)
-                got = conn.execute(
-                    "MATCH (d:Code)-[r:Rel]->(c:Code) WHERE d.vid = $v AND r.kind = 'contains' "
-                    "RETURN c.kind, c.name ORDER BY c.kind, c.name LIMIT 40",
-                    {"v": int(node.get("vid") or 0)},
-                ).get_all()
-                kids = [{"kind": str(r[0] or ""), "name": str(r[1] or "")} for r in got]
-            except Exception:  # noqa: BLE001
-                kids = []
-            if not kids:
-                return "（这个节点下面没有子项）"
-            lines = ["（它包含以下子项）"]
-            for k in kids[:40]:
-                lines.append(f"- [{'目录' if k['kind'] == 'dir' else '文件'}] {k['name']}")
-            return "\n".join(lines)
-
+        """读 rel_path 指向的文件，按节点行号截一段。"""
         try:
             text = str(source.read(project["root"], node.get("rel_path") or "").get("text") or "")
         except Exception:  # noqa: BLE001
@@ -1914,44 +1888,18 @@ def _make_tool_executor(project):
                 )
             return "\n\n".join(out)
 
-        # ---------------- 读节点（按类型给不同结构）
-        if tool == "read_node":
+        # ---------------- 读代码（只按 rel_path + 行号取文件片段）
+        if tool == "read_file":
             node, err = resolve(args)
             if not node:
                 return err
-            kind = str(node.get("kind") or "")
-            vid = int(node.get("vid") or 0)
-
-            # ★ rel_path 对所有节点都是相对路径（dir 也有）；
-            #   没有行号（dir 是 0）时只给路径，⛔ 不拼「:0」
-            loc = str(node.get("rel_path") or "").strip()
-            pos = f"{loc}:{node.get('line')}" if (loc and node.get("line")) else loc
-            out = [f"【节点】{kind} {node.get('name')}  @ {pos}"]
-            sig = str(node.get("signature") or "").strip()
-            if sig:
-                out.append(f"【签名】{sig}")
-
-            # ★ 目录：只列子项，⛔ 不出现「源码」二字（否则模型以为读取失败）
-            if kind == "dir":
-                # ⛔ 不写「没有源码」：那是替模型判断「它该有什么」，
-                #   只陈述这里给出的是什么
-                out.append("【它包含】")
-                out.append(snippet_of(node, 40))
-                return "\n".join(out)
-
-            try:
-                nei = graphdb.neighbors(ROOT, vid, 1)
-            except Exception:  # noqa: BLE001
-                nei = {"upstream": [], "downstream": []}
-            out.append(f"【它调用】{label(nei.get('downstream') or [])}")
-            out.append(f"【调用它】{label(nei.get('upstream') or [])}")
-
+            rel = str(node.get("rel_path") or "").strip()
+            line = int(node.get("line") or 0)
+            # ⛔ 没有对应文件或没有行号范围的节点（如目录，line=0）⇒ 返回空
+            if not rel or line <= 0:
+                return ""
             max_lines = min(400, max(40, int(args.get("max_lines") or 120)))
-            out.append("【内容】")
-            out.append("```")
-            out.append(snippet_of(node, max_lines))
-            out.append("```")
-            return "\n".join(out)
+            return snippet_of(node, max_lines)
 
         return f"未知工具：{tool}"
 
@@ -1971,7 +1919,7 @@ def _ask_events(project, vid: int, question: str):
     if not q:
         raise ValueError("问题不能为空")
 
-    # ★ 不再预读源码：只把节点本身交给模型，需要时它自己 read_node
+    # ★ 不再预读源码：只把节点本身交给模型，需要时它自己 read_file
     #   （所有者 2026-11-18：「让ai自己根据传入的类型，自行判断要读哪些节点信息」）
     messages = ai.build_ask_messages(node, "", "", [], [], [], q)
     # ★ 允许模型顺着图谱再读几个节点（最多 3 轮，⛔ 只读）

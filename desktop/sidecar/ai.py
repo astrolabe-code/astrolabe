@@ -703,7 +703,7 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
     猜错就是纰漏（比如目录节点被套上「源码」框、一句转发被硬凑三个问题）。
 
     ⇒ 改成：只告诉它「哪个节点」，怎么看由它自己决定 ——
-      read_node 读源码、cypher 查上下游、read_notes / search_notes 看作者的笔记。
+      read_file 读源码、cypher 查上下游、read_notes / search_notes 看作者的笔记。
 
     ⚠ `learned` 参数保留只为不破坏调用方，内容不再渲染（模型自己查得到）。
     """
@@ -717,7 +717,7 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
         # rel_path 对所有节点都是相对路径，⛔ 不需要 qname 兜底
         f"[路径] {node.get('rel_path') or ''}",
         "",
-        # ⛔ 不点名任何工具：说了「read_node 看内容」就等于规定第一步，
+        # ⛔ 不点名任何工具：说了「read_file 看内容」就等于规定第一步，
         #   而目录这类节点根本没有对应的代码片段
         "[任务] 按 system 的格式出题，或者给出简评。",
     ]
@@ -900,7 +900,7 @@ def chat_with_tools(
                 res = executor(fname, args)
             except Exception as exc:  # noqa: BLE001
                 res = f"工具 {fname} 执行失败：{redact(str(exc))}"
-            # ⚠ 工具可能返回空串（如 read_node 对没有行号范围的节点）
+            # ⚠ 工具可能返回空串（如 read_file 对没有行号范围的节点）
             #   部分服务商不接受空的 tool content ⇒ 用「（空）」占位
             convo.append(
                 {

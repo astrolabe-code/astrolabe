@@ -269,6 +269,13 @@ export const personalApi = {
       body,
     ),
 
+  /** ★★ 停止正在进行的 AI 回答（真断后端 LLM 连接） */
+  cancelAi: (ref: string, token: string) =>
+    post<{ cancelled: boolean }>(
+      `/api/projects/${encodeURIComponent(ref)}/ai/cancel/`,
+      { token },
+    ),
+
   /** ★★ 问答历史（JSON，挂在节点上；见 sidecar/qa.py） */
   qaList: (ref: string, vid: number) =>
     get<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(

@@ -403,6 +403,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const runRef = useRef(0)
   /** ★ 当前流式请求的控制器；「停止」按钮会 abort 它 */
   const abortRef = useRef<AbortController | null>(null)
+  /** 后端给的取消令牌（由 stream 的第一个 started 事件带回） */
+  const backendTokenRef = useRef('')
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
   // ★★ 有序步骤：想一句、查一下、再想一句，按发生顺序排
   const [steps, setSteps] = useState<ThinkStep[]>([])
@@ -491,6 +493,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
 
     const ctl = new AbortController()
     abortRef.current = ctl
+    backendTokenRef.current = '' 
     const myRun = ++runRef.current
     /** 已经切走（或又发起了新一轮）⇒ 所有回写都要放弃 */
     const alive = () => runRef.current === myRun
@@ -514,7 +517,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         `/api/projects/${encodeURIComponent(projectRef)}/ai/ask/`,
         { vid, question },
         (evt) => {
-          if (evt.event === 'delta') {
+          if (evt.event === 'started') {
+            // ★ 记下后端令牌，点「停止」时用它真断 LLM 连接
+            backendTokenRef.current = String(evt.token ?? '')
+          } else if (evt.event === 'delta') {
             got = true
             acc += String(evt.text ?? '')
             if (alive()) setStreaming(acc)
@@ -599,6 +605,11 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
 
   /** ★ 停止当前回答（参考 DeepSeek 的方形停止按钮） */
   const stop = () => {
+    // ★ 先通知后端断 LLM 连接（真停），再断前端自己的 fetch
+    const token = backendTokenRef.current
+    if (token && projectRef) {
+      void personalApi.cancelAi(projectRef, token).catch(() => {})
+    }
     abortRef.current?.abort()
     abortRef.current = null
     setAiBusy(false)

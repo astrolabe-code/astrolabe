@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -806,6 +807,7 @@ def chat_with_tools(
     max_rounds: int | None = None,
     max_tokens: int = 800,
     deadline_s: float = 180.0,
+    cancel: threading.Event | None = None,
 ):
     """带**只读工具**的多轮流式对话。
 
@@ -840,7 +842,7 @@ def chat_with_tools(
         pending: dict[int, dict] = {}
         text_acc: list[str] = []
 
-        for evt in stream_chat(convo, max_tokens=max_tokens, tools=tools):
+        for evt in stream_chat(convo, max_tokens=max_tokens, cancel=cancel, tools=tools):
             kind = evt.get("event")
             if kind == "delta":
                 text_acc.append(str(evt.get("text") or ""))
@@ -924,7 +926,7 @@ def chat_with_tools(
             "content": "（读取已结束。请只根据上面看到的内容回答，不要再请求工具。）",
         }
     )
-    for evt in stream_chat(convo, max_tokens=max_tokens):
+    for evt in stream_chat(convo, max_tokens=max_tokens, cancel=cancel):
         if evt.get("event") == "delta":
             yield evt
         elif evt.get("event") == "usage":
@@ -968,11 +970,57 @@ def chat_once(messages: list[dict], max_tokens: int = 120) -> str:
     return "".join(parts).strip()
 
 
+# ★★ 取消令牌表：一次回答（一个 chat_with_tools 调用）对应一个 Event。
+#
+# 所有者原话（2026-11-19）：「后端不会立刻停吗？openwebui应该都可以的吧？
+# 这是这类工具的标准配置吧？」
+#
+# ⚠ 前端 AbortController 只能断浏览器 → 边车这条连接，
+#   边车 → LLM 的请求还在跑（照样烧 token）。要真停，得让边车主动关掉
+#   那个 urllib 连接。这里用 threading.Event 做线程安全的取消令牌：
+#   /ai/cancel/ 收到请求就把对应 Event 置位，读取循环每块检查一次。
+
+_cancel_lock = threading.Lock()
+_cancel_tokens: dict[str, threading.Event] = {}
+_cancel_seq = 0
+
+
+def new_cancel_token() -> tuple[str, threading.Event]:
+    """登记一次回答，返回 (token, event)。调用方用完后一定 unregister。"""
+    global _cancel_seq
+    with _cancel_lock:
+        _cancel_seq += 1
+        token = f"q{_cancel_seq}"
+        ev = threading.Event()
+        _cancel_tokens[token] = ev
+        return token, ev
+
+
+def cancel_token(token: str) -> bool:
+    """前端点「停止」时调用：置位对应 Event。返回是否找到。"""
+    with _cancel_lock:
+        ev = _cancel_tokens.get(str(token or ''))
+        if ev is None:
+            return False
+    ev.set()
+    return True
+
+
+def unregister_token(token: str) -> None:
+    with _cancel_lock:
+        _cancel_tokens.pop(str(token or ''), None)
+
+
+class CancelledError(RuntimeError):
+    """用户主动停止（不算错误，前端别弹提示）。"""
+
+
 def stream_chat(
     messages: list[dict],
     max_tokens: int = 600,
     deadline_s: float = 120,
     tools: list[dict] | None = None,
+    cancel: threading.Event | None = None,
 ):
     """逐块 yield `{"event":"delta","text":...}`，最后可能有一条 `usage`。
 
@@ -1015,6 +1063,9 @@ def stream_chat(
         #   30 秒会误判成超时（此处是单次读超时，不是总时长）
         with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310
             for raw in resp:
+                # ★★ 用户点了停止 ⇒ 立刻跳出（关闭 resp 会断掉 LLM 连接）
+                if cancel is not None and cancel.is_set():
+                    raise CancelledError("已停止")
                 if time.time() - t0 > deadline_s:
                     raise RuntimeError("生成超时")
                 line = raw.decode("utf-8", "replace").strip()

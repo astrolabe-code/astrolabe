@@ -244,6 +244,7 @@ R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
 R_AQUESTIONS = re.compile(r"^/api/projects/([^/]+)/ai/questions/$")
 R_PQA = re.compile(r"^/api/projects/([^/]+)/qa/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
+R_AICANCEL = re.compile(r"^/api/projects/([^/]+)/ai/cancel/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
@@ -1177,6 +1178,16 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"问答历史读写失败：{exc}", 500)
 
+    # ★★ 停止正在进行的 AI 回答（真断 LLM 连接，不是只断浏览器）
+    m = R_AICANCEL.match(path)
+    if m:
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        token = str(body.get("token") or "")
+        if not token:
+            return bad("缺少 token")
+        return ok({"cancelled": ai.cancel_token(token)})
+
     # ★★ 起标题：正文够，不读图（省一截 token）
     m = R_AITITLE.match(path)
     if m:
@@ -2072,13 +2083,24 @@ def _ask_events(project, vid: int, question: str):
     # ★ 不再预读源码：只把节点本身交给模型，需要时它自己 read_file
     #   （所有者 2026-11-18：「让ai自己根据传入的类型，自行判断要读哪些节点信息」）
     messages = ai.build_ask_messages(node, "", "", [], [], [], q)
-    # ★ 允许模型顺着图谱再读几个节点（最多 3 轮，⛔ 只读）
-    yield from ai.chat_with_tools(
-        messages,
-        READ_TOOLS,
-        _make_tool_executor(project),
-        max_tokens=800,
-    )
+    # ★★ 建取消令牌，并把 token 作为第一个事件告诉前端
+    #   （所有者 2026-11-19：「openwebui应该都可以的吧？这是标准配置吧？」）
+    token, cancel_evt = ai.new_cancel_token()
+    try:
+        yield {"event": "started", "token": token}
+        # ★ 允许模型顺着图谱再读几个节点（⛔ 只读，停止时立刻断 LLM 连接）
+        yield from ai.chat_with_tools(
+            messages,
+            READ_TOOLS,
+            _make_tool_executor(project),
+            max_tokens=800,
+            cancel=cancel_evt,
+        )
+    except ai.CancelledError:
+        # 用户主动停止：不往前端抛错误，悄悄结束
+        yield {"event": "cancelled"}
+    finally:
+        ai.unregister_token(token)
 
 
 def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
@@ -2169,12 +2191,14 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
     # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
     #   「调用工具给这个加上也是必要的」（轮数更紧，2 轮就够）
     chunks: list[str] = []
+    token, cancel_evt = ai.new_cancel_token()
     try:
         for evt in ai.chat_with_tools(
             messages,
             READ_TOOLS,
             _make_tool_executor(project),
             max_tokens=600,
+            cancel=cancel_evt,
         ):
             if evt.get("event") == "delta":
                 chunks.append(str(evt.get("text") or ""))
@@ -2196,6 +2220,8 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
     parsed = ai.parse_questions(text)
     # 前端目前不展示「你之前学过的」，保留字段兼容旧响应
     parsed["learned"] = []
+
+    ai.unregister_token(token)
 
     if parsed.get("items"):
         try:

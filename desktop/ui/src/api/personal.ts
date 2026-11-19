@@ -26,11 +26,14 @@ import type { GraphNode } from '../lib/mergeGraph'
 
 // ---------------------------------------------------------------- 基础请求
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string, path: string, body?: unknown, signal?: AbortSignal,
+): Promise<T> {
   const r = await fetch(path, {
     method,
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   })
   const j = await r.json()
   if (!j || j.ok !== true) throw new Error((j && j.error) || `请求失败（${r.status}）`)
@@ -38,7 +41,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 const get = <T>(p: string) => call<T>('GET', p)
-const post = <T>(p: string, b?: unknown) => call<T>('POST', p, b ?? {})
+const post = <T>(p: string, b?: unknown, signal?: AbortSignal) => call<T>('POST', p, b ?? {}, signal)
 const patch = <T>(p: string, b: unknown) => call<T>('PATCH', p, b)
 const put = <T>(p: string, b: unknown) => call<T>('PUT', p, b)
 const del = <T>(p: string) => call<T>('DELETE', p)
@@ -330,12 +333,18 @@ export const personalApi = {
     ),
 
   /** ★★ 节点思考题：带上下文出题，并引用用户之前写过的原话 */
-  aiQuestions: (ref: string, body: { vid: number; refresh?: boolean }) =>
+  aiQuestions: (
+    ref: string,
+    body: { vid: number; refresh?: boolean; token?: string },
+    signal?: AbortSignal,
+  ) =>
     post<{
       items: { type: string; text: string }[]
       next: { name: string; why: string }[]
       learned: { name: string; kind_label: string; age_days: number; text: string; relation: string }[]
-    }>(`/api/projects/${encodeURIComponent(ref)}/ai/questions/`, body),
+      _token?: string
+      _cancelled?: boolean
+    }>(`/api/projects/${encodeURIComponent(ref)}/ai/questions/`, body, signal),
 
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>

@@ -985,15 +985,29 @@ _cancel_tokens: dict[str, threading.Event] = {}
 _cancel_seq = 0
 
 
-def new_cancel_token() -> tuple[str, threading.Event]:
-    """登记一次回答，返回 (token, event)。调用方用完后一定 unregister。"""
+def new_cancel_token(token: str = "") -> tuple[str, threading.Event]:
+    """登记一次回答，返回 (token, event)。调用方用完后一定 unregister。
+
+    ⚠ 非流式接口（如浮窗出题）没法中途发 started 事件，所以前端会
+      先取 token、再带着它来调 —— 这里允许调用方指定 token。
+    """
     global _cancel_seq
     with _cancel_lock:
+        if token:
+            ev = threading.Event()
+            _cancel_tokens[token] = ev
+            return token, ev
         _cancel_seq += 1
         token = f"q{_cancel_seq}"
         ev = threading.Event()
         _cancel_tokens[token] = ev
         return token, ev
+
+
+def token_event(token: str) -> threading.Event | None:
+    """按 token 取回 Event（非流式出题用）。"""
+    with _cancel_lock:
+        return _cancel_tokens.get(str(token or ""))
 
 
 def cancel_token(token: str) -> bool:

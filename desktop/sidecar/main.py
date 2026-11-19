@@ -1221,7 +1221,16 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             vid = int(body.get("vid") or 0)
             if not vid:
                 return bad("缺少 vid")
-            return ok(_questions(p, vid, bool(body.get("refresh"))))
+            # ★ 浮窗出题也支持停止：建令牌 → 传给 _questions → 放响应头
+            incoming = str(body.get("token") or "").strip()
+            token, cancel_evt = ai.new_cancel_token(incoming)
+            result = _questions(
+                p, vid, bool(body.get("refresh")),
+                cancel_evt=cancel_evt, token=token,
+            )
+            resp = ok(result)
+            resp.headers["X-AI-Token"] = token
+            return resp
         except Exception as exc:  # noqa: BLE001
             return bad(f"出题失败：{ai.redact(exc)}", 500)
 
@@ -2173,7 +2182,9 @@ def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
     return out[:3]
 
 
-def _questions(project, vid: int, refresh: bool = False) -> dict:
+def _questions(
+    project, vid: int, refresh: bool = False, cancel_evt=None, token: str = ""
+) -> dict:
     """节点思考题：上下文包 → 合并已学笔记 → 出题 → 解析 → 缓存。
 
     ⚠ 缓存口径 (vid, provider, model)：同一个节点再打开是 **0 次调用**；
@@ -2199,7 +2210,11 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
     # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
     #   「调用工具给这个加上也是必要的」（轮数更紧，2 轮就够）
     chunks: list[str] = []
-    token, cancel_evt = ai.new_cancel_token()
+    if token and cancel_evt is None:
+        cancel_evt = ai.token_event(token)
+    if not token or cancel_evt is None:
+        token, cancel_evt = ai.new_cancel_token()
+    cancelled = False
     try:
         for evt in ai.chat_with_tools(
             messages,
@@ -2216,16 +2231,26 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             #    不认 tools 直接返回空）⇒ 必须退回普通一次调用。
             #    ⛔ 之前只处理异常、不处理"空"，界面就显示"没有返回任何内容"。
             text = ai.chat_once(messages, max_tokens=3000)
+    except ai.CancelledError:
+        # ★ 用户点停止：别走兜底（那会重新请求、白烧 token）
+        cancelled = True
+        text = ""
     except Exception as exc:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
-        try:
-            text = ai.chat_once(messages, max_tokens=3000)
-        except Exception as exc2:  # noqa: BLE001
-            # ⛔ 两层都失败就别再静默：把两条原因都带给前端
-            raise RuntimeError(
-                f"出题失败：{ai.redact(str(exc2))}"
-                f"（工具链先报：{ai.redact(str(exc))}）"
-            ) from None
+        if cancel_evt is not None and cancel_evt.is_set():
+            cancelled = True
+            text = ""
+        else:
+            try:
+                text = ai.chat_once(messages, max_tokens=3000)
+            except Exception as exc2:  # noqa: BLE001
+                # ⛔ 两层都失败就别再静默：把两条原因都带给前端
+                raise RuntimeError(
+                    f"出题失败：{ai.redact(str(exc2))}"
+                    f"（工具链先报：{ai.redact(str(exc))}）"
+                ) from None
     parsed = ai.parse_questions(text)
+    parsed["_token"] = token
+    parsed["_cancelled"] = cancelled
     # 前端目前不展示「你之前学过的」，保留字段兼容旧响应
     parsed["learned"] = []
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { RefreshCw } from 'lucide-react'
 import { useParams } from 'react-router-dom'
@@ -99,40 +99,63 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   const [questions, setQuestions] = useState<QaQuestion[] | null>(null)
   const [asking, setAsking] = useState(false)
+  /** ★ 出题的取消控制器：点「停止」时同时断浏览器 + 通知后端 */
+  const abortRef = useRef<AbortController | null>(null)
+  const backendTokenRef = useRef('')
 
   useEffect(() => {
     setQuestions(questionCache.get(node.vid) ?? null)
     setAsking(false)
   }, [node.vid])
 
-  const ask = async (refresh = false) => {
-    if (asking) return
-    if (!projectRef || !node.vid) {
-      setQuestions([])
-      return
+    const ask = async (refresh = false) => {
+      if (asking) return
+      if (!projectRef || !node.vid) {
+        setQuestions([])
+        return
+      }
+      const ctl = new AbortController()
+      abortRef.current = ctl
+      backendTokenRef.current = ''
+      setAsking(true)
+      try {
+        const r = await personalApi.aiQuestions(
+          projectRef,
+          { vid: Number(node.vid), refresh },
+          ctl.signal,
+        )
+        if (r._cancelled) return // 用户已停止，别覆盖已显示的
+        const items = r.items || []
+        questionCache.set(node.vid, items)
+        setQuestions(items)
+      } catch (e) {
+        // ★ 用户主动停止不弹错误；其它原因显示真实报错
+        if (!(e instanceof DOMException && e.name === 'AbortError')) {
+          setQuestions([
+            {
+              type: '简评',
+              text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
+            },
+          ])
+        }
+      } finally {
+        abortRef.current = null
+        setAsking(false)
+      }
     }
-    setAsking(true)
-    try {
-      const r = await personalApi.aiQuestions(projectRef, {
-        vid: Number(node.vid),
-        refresh,
-      })
-      const items = r.items || []
-      questionCache.set(node.vid, items)
-      setQuestions(items)
-    } catch (e) {
-      // ★ 把真实原因显示出来：之前静默成空数组，界面只说「没有返回任何内容」，
-      //   看的人根本不知道是没配模型、超时，还是 HTTP 500。
-      setQuestions([
-        {
-          type: '简评',
-          text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
-        },
-      ])
-    } finally {
+
+    /** ★ 停止出题：真断后端 LLM + 断前端 fetch */
+    const stop = () => {
+      const token = backendTokenRef.current
+      if (token && projectRef) {
+        void personalApi.cancelAi(projectRef, token).catch(() => {})
+      }
+      abortRef.current?.abort()
+      abortRef.current = null
       setAsking(false)
+      // ⛔ 不清 questions：已显示的保留
     }
-  }
+
 
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
@@ -220,21 +243,21 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         {questions === null && (
           <button
             type="button"
-            onClick={() => void ask()}
-            disabled={asking}
+            // ★ 出题中也可点：点它是「停止」，不是「再问一次」
+            onClick={asking ? stop : () => void ask()}
             style={{
               fontSize: 11,
               lineHeight: '18px',
               padding: '2px 10px',
               borderRadius: 999,
-              border: '1px solid var(--card-border)',
-              background: 'transparent',
-              color: 'var(--accent)',
-              cursor: asking ? 'default' : 'pointer',
+              border: asking ? '1px solid var(--accent)' : '1px solid var(--card-border)',
+              background: asking ? 'var(--accent)' : 'transparent',
+              color: asking ? '#fff' : 'var(--accent)',
+              cursor: 'pointer',
             }}
-          >
-            {asking ? '出题中…' : '💭 挑战问题'}
-          </button>
+            >
+              {asking ? '■ 停止出题' : '💭 挑战问题'}
+            </button>
         )}
 
         {questions !== null && questions.length === 0 && (

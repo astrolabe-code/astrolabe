@@ -427,8 +427,7 @@ BASE_SYSTEM = (
 ASK_SYSTEM = (
     BASE_SYSTEM
     + "\n材料只有这个节点本身（类型、名字、路径）。"
-    "要了解它，用工具：read_node 看这个节点的内容，"
-    "cypher 查图谱结构与上下游，read_notes / search_notes 看作者写过什么。"
+    "需要更多信息时用工具，具体用哪个由你判断（工具说明里写了各自的用途）。"
     "⛔ 不要凭印象猜。"
 )
 
@@ -718,9 +717,9 @@ def build_questions_messages(pack: dict, learned: list[dict] | None = None) -> l
         # rel_path 对所有节点都是相对路径，⛔ 不需要 qname 兜底
         f"[路径] {node.get('rel_path') or ''}",
         "",
-        "[任务] 先用工具看清这个节点：read_node 看它的内容；需要上下游时用 cypher 查；"
-        "想知道作者怎么理解它，用 read_notes 或 search_notes。"
-        "看清楚之后，按 system 的格式出题，或者给出简评。",
+        # ⛔ 不点名任何工具：说了「read_node 看内容」就等于规定第一步，
+        #   而目录这类节点根本没有对应的代码片段
+        "[任务] 按 system 的格式出题，或者给出简评。",
     ]
     return [
         {"role": "system", "content": QUESTIONS_SYSTEM},
@@ -901,8 +900,14 @@ def chat_with_tools(
                 res = executor(fname, args)
             except Exception as exc:  # noqa: BLE001
                 res = f"工具 {fname} 执行失败：{redact(str(exc))}"
+            # ⚠ 工具可能返回空串（如 read_node 对没有行号范围的节点）
+            #   部分服务商不接受空的 tool content ⇒ 用「（空）」占位
             convo.append(
-                {"role": "tool", "tool_call_id": c["id"], "content": str(res)[:4000]}
+                {
+                    "role": "tool",
+                    "tool_call_id": c["id"],
+                    "content": str(res)[:4000] or "（空）",
+                }
             )
 
         yield {"event": "step", "round": rnd}

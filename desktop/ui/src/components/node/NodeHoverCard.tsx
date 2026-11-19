@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Square } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 
 import { personalApi } from '../../api/personal'
@@ -109,53 +109,71 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   }, [node.vid])
 
     const ask = async (refresh = false) => {
-      if (asking) return
-      if (!projectRef || !node.vid) {
-        setQuestions([])
-        return
-      }
-      const ctl = new AbortController()
-      abortRef.current = ctl
-      backendTokenRef.current = ''
-      setAsking(true)
-      try {
-        const r = await personalApi.aiQuestions(
-          projectRef,
-          { vid: Number(node.vid), refresh },
-          ctl.signal,
-        )
-        if (r._cancelled) return // 用户已停止，别覆盖已显示的
-        const items = r.items || []
-        questionCache.set(node.vid, items)
-        setQuestions(items)
-      } catch (e) {
-        // ★ 用户主动停止不弹错误；其它原因显示真实报错
-        if (!(e instanceof DOMException && e.name === 'AbortError')) {
-          setQuestions([
-            {
-              type: '简评',
-              text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
-            },
-          ])
-        }
-      } finally {
-        abortRef.current = null
-        setAsking(false)
-      }
+    if (asking) return
+    if (!projectRef || !node.vid) {
+      setQuestions([])
+      return
     }
-
-    /** ★ 停止出题：真断后端 LLM + 断前端 fetch */
-    const stop = () => {
-      const token = backendTokenRef.current
-      if (token && projectRef) {
-        void personalApi.cancelAi(projectRef, token).catch(() => {})
+    const ctl = new AbortController()
+    abortRef.current = ctl
+    backendTokenRef.current = ''
+    setAsking(true)
+    // ★ 流式中：先清空旧卡片，问题逐条到达逐条显示
+    const collected: QaQuestion[] = []
+    setQuestions([])
+    try {
+      await personalApi.aiQuestions(
+        projectRef,
+        { vid: Number(node.vid), refresh },
+        (evt) => {
+          if (evt.event === 'started') {
+            // ★ 后端给的 token，点「停止」时用它真断 LLM
+            backendTokenRef.current = String(evt.token ?? '')
+          } else if (evt.event === 'question') {
+            const t = String(evt.type ?? '')
+            const text = String(evt.text ?? '').trim()
+            if (!text) return
+            collected.push({ type: t, text })
+            setQuestions([...collected]) // 立刻上屏，不等全部生成完
+          } else if (evt.event === 'think') {
+            // 思考过程暂不在浮窗显示（体积有限），只留问题本身
+          } else if (evt.event === 'cancelled') {
+            // 用户主动停止：已收到的卡片保留，不弹错误
+          }
+          // next / done 无需处理：下一步已在问题区末尾，缓存由后端写
+        },
+        ctl.signal,
+      )
+      // 全部到达后写缓存：下次悬停直接显示，不再请求
+      if (collected.length) questionCache.set(node.vid, collected)
+    } catch (e) {
+      // ★ 用户主动停止不弹错误；其它原因显示真实报错
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        setQuestions([
+          {
+            type: '简评',
+            text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
+          },
+        ])
       }
-      abortRef.current?.abort()
+    } finally {
       abortRef.current = null
+      backendTokenRef.current = ''
       setAsking(false)
-      // ⛔ 不清 questions：已显示的保留
     }
+  }
 
+  /** ★ 停止出题：流式下与问答一致 —— 通知后端取消 + 断前端 fetch */
+  const stop = () => {
+    const token = backendTokenRef.current
+    if (token && projectRef) {
+      void personalApi.cancelAi(projectRef, token).catch(() => {})
+    }
+    abortRef.current?.abort()
+    abortRef.current = null
+    setAsking(false)
+    // ⛔ 不清 questions：已经吐出来的卡片保留
+  }
 
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
@@ -288,9 +306,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
               </span>
               <button
                 type="button"
-                title="换一批问题"
-                disabled={asking}
-                onClick={() => void ask(true)}
+                title={asking ? '停止出题' : '换一批问题'}
+                // ★ 出题中也可点：点它是「停止」，不是「再问一次」
+                onClick={asking ? stop : () => void ask(true)}
                 style={{
                   marginLeft: 'auto',
                   display: 'inline-flex',
@@ -299,14 +317,14 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                   fontSize: 10,
                   padding: '1px 7px',
                   borderRadius: 999,
-                  border: '1px solid var(--card-border)',
-                  background: 'transparent',
-                  color: 'var(--text-faint)',
-                  cursor: asking ? 'default' : 'pointer',
+                  border: asking ? '1px solid var(--accent)' : '1px solid var(--card-border)',
+                  background: asking ? 'var(--accent)' : 'transparent',
+                  color: asking ? '#fff' : 'var(--text-faint)',
+                  cursor: 'pointer',
                 }}
               >
-                <RefreshCw size={9} />
-                {asking ? '出题中…' : '换一批'}
+                {asking ? <Square size={9} fill="currentColor" /> : <RefreshCw size={9} />}
+                {asking ? '停止' : '换一批'}
               </button>
             </div>
 

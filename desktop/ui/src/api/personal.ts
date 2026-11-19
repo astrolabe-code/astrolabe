@@ -332,19 +332,23 @@ export const personalApi = {
       `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
     ),
 
-  /** ★★ 节点思考题：带上下文出题，并引用用户之前写过的原话 */
+  /**
+   * ★★ 节点思考题（流式）：问题逐条到达，与问答共用 streamCall。
+   * 事件：started(token) / think / question(type,text) / next(name,why)
+   *       / cancelled / done(cached)
+   */
   aiQuestions: (
     ref: string,
     body: { vid: number; refresh?: boolean; token?: string },
+    onEvent: (evt: Record<string, unknown> & { event: string }) => void,
     signal?: AbortSignal,
   ) =>
-    post<{
-      items: { type: string; text: string }[]
-      next: { name: string; why: string }[]
-      learned: { name: string; kind_label: string; age_days: number; text: string; relation: string }[]
-      _token?: string
-      _cancelled?: boolean
-    }>(`/api/projects/${encodeURIComponent(ref)}/ai/questions/`, body, signal),
+    streamCall(
+      `/api/projects/${encodeURIComponent(ref)}/ai/questions/`,
+      body,
+      onEvent,
+      signal,
+    ),
 
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>

@@ -1208,32 +1208,6 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         except Exception as exc:  # noqa: BLE001
             return bad(f"起标题失败：{ai.redact(exc)}", 500)
 
-    # ★★ 节点思考题：带上下文出题 + 联系已学笔记
-    m = R_AQUESTIONS.match(path)
-    if m:
-        p = _project(m.group(1))
-        if not p:
-            return bad("项目不存在", 404)
-        if method != "POST":
-            return bad("不支持的方法", 405)
-        try:
-            _graph_ready(p)
-            vid = int(body.get("vid") or 0)
-            if not vid:
-                return bad("缺少 vid")
-            # ★ 浮窗出题也支持停止：建令牌 → 传给 _questions → 放响应头
-            incoming = str(body.get("token") or "").strip()
-            token, cancel_evt = ai.new_cancel_token(incoming)
-            result = _questions(
-                p, vid, bool(body.get("refresh")),
-                cancel_evt=cancel_evt, token=token,
-            )
-            resp = ok(result)
-            resp.headers["X-AI-Token"] = token
-            return resp
-        except Exception as exc:  # noqa: BLE001
-            return bad(f"出题失败：{ai.redact(exc)}", 500)
-
     # ★★ 行内补全（非流式）：短文本，一次返回
     m = R_AICOMPLETE.match(path)
     if m:
@@ -1582,6 +1556,7 @@ def _is_stream(path: str) -> bool:
     return (
         path.startswith("/api/ai/stream")
         or bool(R_AIASK.match(path))
+        or bool(R_AQUESTIONS.match(path))   # ★ 出题也走 SSE
     )
 
 
@@ -2182,88 +2157,176 @@ def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
     return out[:3]
 
 
-def _questions(
-    project, vid: int, refresh: bool = False, cancel_evt=None, token: str = ""
-) -> dict:
-    """节点思考题：上下文包 → 合并已学笔记 → 出题 → 解析 → 缓存。
+def _question_line(line: str) -> dict | None:
+    """解析一行模型输出为事件；只认固定前缀，⛔ 不做整段兜底。
 
-    ⚠ 缓存口径 (vid, provider, model)：同一个节点再打开是 **0 次调用**；
-      「换一批」才重跑（复用上下文包，只重问模型）。
+    与 ai.parse_questions 的前缀保持一致；兜底（自由文字→简评）
+    留给流结束时的 parse_questions，避免逐行重复触发。
+    """
+    v = str(line or "").strip().lstrip("-·•* 　").strip()
+    if not v:
+        return None
+    for label in ("陷阱", "优化", "背景"):
+        for sep in ("：", ":"):
+            if v.startswith(label + sep):
+                body = v[len(label) + 1 :].strip()
+                return {"event": "question", "type": label, "text": body} if body else None
+    for sep in ("：", ":"):
+        if v.startswith("简评" + sep):
+            body = v[3:].strip()
+            return {"event": "question", "type": "简评", "text": body} if body else None
+        if v.startswith("下一步" + sep):
+            rest = v[4:].strip()
+            name, _, why = rest.partition("——")
+            if not why:
+                name, _, why = rest.partition("-")
+            if name.strip():
+                return {"event": "next", "name": name.strip(), "why": why.strip()}
+    return None
+
+
+def _questions_events(project, vid: int, refresh: bool = False, token: str = ""):
+    """出题（流式）：started / think / question / next / cancelled / done。
+
+    ★ 与问答统一走 SSE（所有者 2026-11-19：「出题为什么不也改成流式输出？」）：
+      · 问题逐条吐，写完一行就发一张卡片；
+      · 思考过程也发，用户看得到 AI 在查什么；
+      · started 带 token，停止逻辑与问答一致（⛔ 不再用响应头那套）。
     """
     act = ai.active()
+
+    # 缓存命中：按同一套事件格式一次性吐完
     if not refresh:
         cached = store.get_ai_questions(CONN, vid, act["id"], act["model"])
         if cached:
             try:
-                return json.loads(cached)
+                old = json.loads(cached)
+                for it in (old.get("items") or []):
+                    yield {
+                        "event": "question",
+                        "type": str(it.get("type") or ""),
+                        "text": str(it.get("text") or ""),
+                    }
+                for nx in (old.get("next") or []):
+                    yield {
+                        "event": "next",
+                        "name": str(nx.get("name") or ""),
+                        "why": str(nx.get("why") or ""),
+                    }
+                yield {"event": "done", "cached": True}
+                return
             except Exception:  # noqa: BLE001
                 pass
 
-    # ★★ 出题不组装上下文包了：只需要节点本身的名字 / 类型 / 路径。
-    #   所有者 2026-11-18：「不要发送信息了，让ai自己去查吧…开始就给ai发送
-    #   节点名字和类型就行」⇒ 省掉读文件、查边、查目录子项这一整圈。
     node = graphdb.get_code(ROOT, vid)
     if not node:
         raise ValueError("节点不存在")
-    pack = {"node": node}
-    messages = ai.build_questions_messages(pack)
-    # ★ 出题也允许顺着图谱再读：所有者 2026-11-17
-    #   「调用工具给这个加上也是必要的」（轮数更紧，2 轮就够）
-    chunks: list[str] = []
-    if token and cancel_evt is None:
-        cancel_evt = ai.token_event(token)
-    if not token or cancel_evt is None:
-        token, cancel_evt = ai.new_cancel_token()
+    messages = ai.build_questions_messages({"node": node})
+
+    token, cancel_evt = ai.new_cancel_token(token)
+    yield {"event": "started", "token": token}
+
+    # 完整文本：既用于逐行吐，也用于最后 parse_questions（含兜底）
+    full: list[str] = []
+    emitted: set[str] = set()  # 已发过的行，最后不重复发
     cancelled = False
+
+    def take_complete(force: bool = False) -> list[str]:
+        """从 full 里取走尚未发过的完整行（未写完的半行不动）。"""
+        joined = "".join(full)
+        lines = joined.split("\n")
+        if not force:
+            tail = lines.pop()  # 最后一段可能还没写完
+        else:
+            tail = ""
+            if lines and not lines[-1].strip():
+                lines.pop()
+        ready = [ln for ln in lines if ln.strip()]
+        full[:] = [tail]
+        return ready
+
     try:
         for evt in ai.chat_with_tools(
             messages,
             READ_TOOLS,
             _make_tool_executor(project),
-            max_tokens=3000,  # ★ 出题同样要给思考留额度
+            max_tokens=3000,
             cancel=cancel_evt,
         ):
-            if evt.get("event") == "delta":
-                chunks.append(str(evt.get("text") or ""))
-        text = "".join(chunks)
+            kind = evt.get("event")
+            if kind == "delta":
+                full.append(str(evt.get("text") or ""))
+                for ln in take_complete():
+                    key = ln.strip()
+                    if key in emitted:
+                        continue
+                    emitted.add(key)
+                    out = _question_line(ln)
+                    if out:
+                        yield out
+            elif kind == "think":
+                yield evt
+            # step / tool_use / usage 不发：浮窗不需要
+
+        # 收尾：把最后半行也处理掉
+        for ln in take_complete(force=True):
+            key = ln.strip()
+            if key in emitted:
+                continue
+            emitted.add(key)
+            out = _question_line(ln)
+            if out:
+                yield out
+
+        text = "".join(full)
         if not text.strip():
-            # ★★ 工具链**正常结束但一个字都没吐**（模型只会调工具，或服务商
-            #    不认 tools 直接返回空）⇒ 必须退回普通一次调用。
-            #    ⛔ 之前只处理异常、不处理"空"，界面就显示"没有返回任何内容"。
+            # ★ 工具链正常结束但一个字没吐 ⇒ 退回普通一次调用
             text = ai.chat_once(messages, max_tokens=3000)
+
+        # ★ 整段解析一次（处理自由文字兜底），只补发还没发过的
+        parsed = ai.parse_questions(text)
+        for it in (parsed.get("items") or []):
+            key = f"{it.get('type')}：{it.get('text')}"
+            if key not in emitted:
+                emitted.add(key)
+                yield {
+                    "event": "question",
+                    "type": str(it.get("type") or ""),
+                    "text": str(it.get("text") or ""),
+                }
+        for nx in (parsed.get("next") or []):
+            yield {
+                "event": "next",
+                "name": str(nx.get("name") or ""),
+                "why": str(nx.get("why") or ""),
+            }
+
+        if parsed.get("items"):
+            try:
+                store.put_ai_questions(
+                    CONN, vid, act["id"], act["model"],
+                    json.dumps(parsed, ensure_ascii=False),
+                )
+            except Exception:  # noqa: BLE001
+                pass
     except ai.CancelledError:
-        # ★ 用户点停止：别走兜底（那会重新请求、白烧 token）
         cancelled = True
-        text = ""
-    except Exception as exc:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
+        yield {"event": "cancelled"}
+    except Exception as exc:
         if cancel_evt is not None and cancel_evt.is_set():
             cancelled = True
-            text = ""
+            yield {"event": "cancelled"}
         else:
-            try:
-                text = ai.chat_once(messages, max_tokens=3000)
-            except Exception as exc2:  # noqa: BLE001
-                # ⛔ 两层都失败就别再静默：把两条原因都带给前端
-                raise RuntimeError(
-                    f"出题失败：{ai.redact(str(exc2))}"
-                    f"（工具链先报：{ai.redact(str(exc))}）"
-                ) from None
-    parsed = ai.parse_questions(text)
-    parsed["_token"] = token
-    parsed["_cancelled"] = cancelled
-    # 前端目前不展示「你之前学过的」，保留字段兼容旧响应
-    parsed["learned"] = []
+            yield {
+                "event": "question",
+                "type": "简评",
+                "text": f"出题失败：{ai.redact(str(exc))}",
+            }
+    finally:
+        ai.unregister_token(token)
 
-    ai.unregister_token(token)
+    yield {"event": "done", "cached": False}
 
-    if parsed.get("items"):
-        try:
-            store.put_ai_questions(
-                CONN, vid, act["id"], act["model"], json.dumps(parsed, ensure_ascii=False)
-            )
-        except Exception:  # noqa: BLE001 —— 缓存写失败不影响这次结果
-            pass
-    return parsed
 
 
 def _complete(project, vid: int, before: str, doc: str, kind: str = "") -> dict:
@@ -2298,6 +2361,24 @@ def _stream_events(method: str, path: str, body) -> "object":
         if not vid:
             raise ValueError("缺少 vid")
         yield from _ask_events(p, vid, str(body.get("question") or ""))
+        return
+
+    # ★★ 出题也走流式（所有者 2026-11-19）
+    m = R_AQUESTIONS.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            raise ValueError("项目不存在")
+        if method != "POST":
+            raise ValueError("不支持的方法")
+        vid = int(body.get("vid") or 0)
+        if not vid:
+            raise ValueError("缺少 vid")
+        _graph_ready(p)
+        incoming = str(body.get("token") or "").strip()
+        yield from _questions_events(
+            p, vid, bool(body.get("refresh")), token=incoming,
+        )
         return
 
     if R_AISTREAM.match(path):

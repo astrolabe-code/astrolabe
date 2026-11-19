@@ -48,12 +48,35 @@ import os
 
 #: 单条问题/回答的最大长度
 MAX_TEXT = 20_000
+#: 思考过程最多存多少字（DeepSeek 的 reasoning_content，可能很长）
+MAX_THINK = 6_000
 #: 一个节点最多保留多少条问答
 MAX_ITEMS = 200
 
 
 class QaError(Exception):
     """可读错误（转成 400 返回）"""
+
+
+def _clean_text(text: str) -> str:
+    """清洗将要写进 JSON 的文本。
+
+    ★ 所有者原话（2026-11-17）：「不要把ai返回的内容直接写进json，防止弄坏，
+      系统要检查一下」
+    ⚠ 模型输出可能带控制字符（\x00–\x1f）、孤立代理项（0xD800–0xDFFF）、
+      或离谱的长度 —— 这些进了 JSON 虽然能被转义，但会让文件变得难处理。
+      ⇒ 保留换行/制表，其余控制字符一律丢弃，再按 MAX_TEXT 截断。
+    """
+    out: list[str] = []
+    for ch in str(text or ""):
+        if ch in ("\n", "\t"):
+            out.append(ch)
+            continue
+        o = ord(ch)
+        if o < 0x20 or 0xD800 <= o <= 0xDFFF:
+            continue
+        out.append(ch)
+    return "".join(out)[:MAX_TEXT]
 
 
 def _dir(data_dir: str) -> str:
@@ -104,14 +127,16 @@ def append(
     tokens_out: int = 0,
     ms: int = 0,
     usage: dict | None = None,
+    think: str = "",
+    trace: list | None = None,
 ) -> dict:
     """追加一条问答；返回追加后的完整列表。
 
     ★ `tokens_in/out/ms` 用于界面上的「速率统计」（OpenWebUI 那排按钮里的信息）。
       ⚠ 显式保存而不是每次重算：历史是**当时**的消耗，不该随后来的计价变。
     """
-    question = str(q or "").strip()[:MAX_TEXT]
-    answer = str(a or "").strip()[:MAX_TEXT]
+    question = _clean_text(str(q or "")).strip()
+    answer = _clean_text(str(a or "")).strip()
     if not question:
         raise QaError("问题不能为空")
 
@@ -127,6 +152,17 @@ def append(
         "tokens_out": max(0, int(tokens_out or 0)),
         "ms": max(0, int(ms or 0)),
         # ★ 完整用量明细（输入/输出/缓存命中/思考），用于「详情」面板
+        # ★ 思考过程与工具调用轨迹一起存：事后回看时能判断 AI 怎么走的
+        "think": _clean_text(str(think or ""))[:MAX_THINK],
+        "trace": [
+            {
+                "name": str(x.get("name") or "")[:40],
+                "chars": max(0, int(x.get("chars") or 0)),
+                "lines": max(0, int(x.get("lines") or 0)),
+            }
+            for x in (trace or [])[:40]
+            if isinstance(x, dict)
+        ],
         "usage": {
             "total": max(0, int((usage or {}).get("total") or 0)),
             "hit": max(0, int((usage or {}).get("hit") or 0)),

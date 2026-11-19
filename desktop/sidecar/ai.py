@@ -902,13 +902,18 @@ def chat_with_tools(
                 res = f"工具 {fname} 执行失败：{redact(str(exc))}"
             # ⚠ 工具可能返回空串（如 read_file 对没有行号范围的节点）
             #   部分服务商不接受空的 tool content ⇒ 用「（空）」占位
+            text_res = str(res)[:4000] or "（空）"
             convo.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": c["id"],
-                    "content": str(res)[:4000] or "（空）",
-                }
+                {"role": "tool", "tool_call_id": c["id"], "content": text_res}
             )
+            # ★★ 把「调了哪个工具、回来多少」报给前端：
+            #   用户要能判断 AI 有没有走偏（所有者 2026-11-19）
+            yield {
+                "event": "tool_use",
+                "name": fname,
+                "chars": len(text_res),
+                "lines": text_res.count("\n") + 1,
+            }
 
         yield {"event": "step", "round": rnd}
 

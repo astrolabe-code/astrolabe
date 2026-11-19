@@ -47,6 +47,10 @@ interface QaItem {
   tokens_out?: number
   ms?: number
   usage?: QaUsage
+  /** ★ 思考过程（DeepSeek reasoning_content） */
+  think?: string
+  /** ★ 工具调用轨迹：调了什么、回来多少 */
+  trace?: { name: string; chars: number; lines: number }[]
 }
 
 const EMPTY_USAGE: QaUsage = { total: 0, hit: 0, miss: 0, write: 0, think: 0, response: 0 }
@@ -78,6 +82,92 @@ const dot: React.CSSProperties = {
   height: 8,
   borderRadius: 2,
   flexShrink: 0,
+}
+
+/**
+ * ★★ 思考过程 + 工具调用轨迹（可折叠）。
+ *
+ * 所有者原话（2026-11-19）：
+ * 「思考过程不要清空，还有这个可折叠的思考界面应该看到调用了哪些工具、
+ *   返回了多少个值，供用户判断 ai 有没有走偏。」
+ *
+ * ⇒ 每条回答都有自己的 think + trace（存在 qa JSON 里），
+ *   展开能看到「调了 cypher 回来 12 行、读文件 34 行…」。
+ */
+function ThinkBlock({
+  think,
+  trace,
+}: {
+  think?: string
+  trace?: { name: string; chars: number; lines: number }[]
+}) {
+  const [open, setOpen] = useState(false)
+  const calls = trace || []
+  if (!think && !calls.length) return null
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="faint"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          fontSize: 10.5,
+          padding: '1px 8px',
+          borderRadius: 999,
+          border: '1px solid var(--card-border)',
+          background: 'transparent',
+          color: 'var(--text-faint)',
+          cursor: 'pointer',
+        }}
+      >
+        {open ? '▼' : '▶'} 思考过程
+        {calls.length > 0 && ` · ${calls.length} 次工具调用`}
+      </button>
+
+      {open && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: '8px 10px',
+            borderLeft: '2px solid var(--card-border)',
+            fontSize: 11.5,
+            lineHeight: 1.7,
+            color: 'var(--text-faint)',
+          }}
+        >
+          {calls.length > 0 && (
+            <div style={{ marginBottom: think ? 8 : 0 }}>
+              {calls.map((t, i) => (
+                <div
+                  key={`${i}-${t.name}`}
+                  className="mono"
+                  style={{ fontSize: 10.5, lineHeight: 1.8 }}
+                >
+                  · {t.name || '(未知)'} → {t.lines} 行 / {t.chars} 字
+                </div>
+              ))}
+            </div>
+          )}
+          {!!think && (
+            <div
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxHeight: 260,
+                overflowY: 'auto',
+              }}
+            >
+              {think}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -276,6 +366,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
   const [thinking, setThinking] = useState('')
   const [thinkOpen, setThinkOpen] = useState(false)
+  // ★ 本轮工具调用轨迹
+  const [trace, setTrace] = useState<{ name: string; chars: number; lines: number }[]>([])
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
   const [copiedId, setCopiedId] = useState('')
@@ -343,6 +435,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setBusy(true)
     setStreaming('')
     setThinking('')
+    setTrace([])
     setThinkOpen(false)
     let acc = ''
     let thinkAcc = ''
@@ -360,6 +453,15 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             got = true
             acc += String(evt.text ?? '')
             setStreaming(acc)
+          } else if (evt.event === 'tool_use') {
+            setTrace((prev) => [
+              ...prev,
+              {
+                name: String(evt.name ?? ''),
+                chars: Number(evt.chars ?? 0),
+                lines: Number(evt.lines ?? 0),
+              },
+            ])
           } else if (evt.event === 'think') {
             // ⚠ 思考过程不算「有回答」，只单独累积
             thinkAcc += String(evt.text ?? '')
@@ -395,6 +497,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         tokens_out: tout,
         ms,
         usage,
+        think: thinking,
+        trace,
       })
       setItems((r.items || []) as QaItem[])
       return true
@@ -591,51 +695,14 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               </button>
               <UsageLine item={it} />
             </div>
+            <ThinkBlock think={it.think} trace={it.trace} />
           </div>
         ))}
 
-        {/* ★ 思考过程（DeepSeek 的 reasoning_content）：默认折叠，回答完仍保留 */}
-        {!!thinking && (
-          <div style={{ marginBottom: 12 }}>
-            <button
-              type="button"
-              onClick={() => setThinkOpen((v) => !v)}
-              className="faint"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                fontSize: 11,
-                padding: '1px 8px',
-                borderRadius: 999,
-                border: '1px solid var(--card-border)',
-                background: 'transparent',
-                color: 'var(--text-faint)',
-                cursor: 'pointer',
-              }}
-            >
-              {thinkOpen ? '▼' : '▶'} 思考过程
-            </button>
-            {thinkOpen && (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: '8px 10px',
-                  borderLeft: '2px solid var(--card-border)',
-                  fontSize: 11.5,
-                  lineHeight: 1.7,
-                  color: 'var(--text-faint)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  maxHeight: 260,
-                  overflowY: 'auto',
-                }}
-              >
-                {thinking}
-              </div>
-            )}
-          </div>
-        )}
+        {/* ★ 本轮思考与工具轨迹（流式中实时显示） */}
+        <div style={{ marginBottom: 10 }}>
+          <ThinkBlock think={thinking} trace={trace} />
+        </div>
 
         {/* 流式 */}
         {!!streaming && (

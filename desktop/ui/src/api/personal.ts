@@ -285,6 +285,10 @@ export const personalApi = {
       tokens_out?: number
       /** 本次耗时（毫秒），用于算 tok/s */
       ms?: number
+      /** ★ 思考过程（DeepSeek reasoning_content），存下来供回看 */
+      think?: string
+      /** ★ 工具调用轨迹：调了什么、回来多少 */
+      trace?: { name: string; chars: number; lines: number }[]
       /** ★ 完整用量明细：输入/输出拆分、缓存命中、思考 token */
       usage?: {
         total?: number

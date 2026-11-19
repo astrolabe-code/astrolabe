@@ -624,10 +624,13 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     }
     abortRef.current?.abort()
     abortRef.current = null
+    // ★ 让进行中的 ask 失效：它的 finally 就不会清掉已输出的内容
+    //   （所有者 2026-11-19：「停止就清空，不对吧？」）
+    runRef.current += 1
     setAiBusy(false)
     setBusy(false)
-    setPending('')
-    setStreaming('')
+    // ⛔ 不清 pending / streaming / steps —— 用户已经看到的问题、思考、
+    //   以及流到一半的回答，全部原样留在界面上。
   }
 
   /** 有输入 ≠ 空；回答中不算「可发送」 */

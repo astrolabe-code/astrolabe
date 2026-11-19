@@ -289,6 +289,14 @@ export const personalApi = {
       think?: string
       /** ★ 工具调用轨迹：调了什么、回来多少 */
       trace?: { name: string; chars: number; lines: number }[]
+      /** ★★ 有序步骤：思考与工具调用按发生顺序交错 */
+      steps?: {
+        kind: 'think' | 'tool'
+        text?: string
+        name?: string
+        chars?: number
+        lines?: number
+      }[]
       /** ★ 完整用量明细：输入/输出拆分、缓存命中、思考 token */
       usage?: {
         total?: number

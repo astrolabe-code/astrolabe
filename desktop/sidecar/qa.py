@@ -129,6 +129,7 @@ def append(
     usage: dict | None = None,
     think: str = "",
     trace: list | None = None,
+    steps: list | None = None,
 ) -> dict:
     """追加一条问答；返回追加后的完整列表。
 
@@ -152,6 +153,26 @@ def append(
         "tokens_out": max(0, int(tokens_out or 0)),
         "ms": max(0, int(ms or 0)),
         # ★ 完整用量明细（输入/输出/缓存命中/思考），用于「详情」面板
+        # ★★ 有序步骤：思考与工具调用**按发生顺序**交错，
+        #   前端照这个顺序渲染（「想了什么 → 查了什么 → 又想到什么」）。
+        #   think / trace 保留为兼容字段（老数据、以及只关心纯文本的场景）。
+        "steps": [
+            (
+                {
+                    "kind": "think",
+                    "text": _clean_text(str(x.get("text") or ""))[:MAX_THINK],
+                }
+                if str(x.get("kind") or "") == "think"
+                else {
+                    "kind": "tool",
+                    "name": str(x.get("name") or "")[:40],
+                    "chars": max(0, int(x.get("chars") or 0)),
+                    "lines": max(0, int(x.get("lines") or 0)),
+                }
+            )
+            for x in (steps or [])[:80]
+            if isinstance(x, dict)
+        ],
         # ★ 思考过程与工具调用轨迹一起存：事后回看时能判断 AI 怎么走的
         "think": _clean_text(str(think or ""))[:MAX_THINK],
         "trace": [

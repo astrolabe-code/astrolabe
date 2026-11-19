@@ -51,6 +51,17 @@ interface QaItem {
   think?: string
   /** ★ 工具调用轨迹：调了什么、回来多少 */
   trace?: { name: string; chars: number; lines: number }[]
+  /** ★★ 有序步骤：思考与工具调用按发生顺序交错 */
+  steps?: ThinkStep[]
+}
+
+/** 一步：想了什么，或查了什么 */
+type ThinkStep = {
+  kind: 'think' | 'tool'
+  text?: string
+  name?: string
+  chars?: number
+  lines?: number
 }
 
 const EMPTY_USAGE: QaUsage = { total: 0, hit: 0, miss: 0, write: 0, think: 0, response: 0 }
@@ -95,28 +106,37 @@ const dot: React.CSSProperties = {
  *   展开能看到「调了 cypher 回来 12 行、读文件 34 行…」。
  */
 function ThinkBlock({
-  think,
-  trace,
+  steps,
+  live,
+  ms,
 }: {
-  think?: string
-  trace?: { name: string; chars: number; lines: number }[]
+  steps?: ThinkStep[]
+  /** 正在流式输出：自动展开，结束后自动收起 */
+  live?: boolean
+  /** 总耗时（毫秒），显示在标题里 */
+  ms?: number
 }) {
-  const [open, setOpen] = useState(false)
-  const calls = trace || []
-  if (!think && !calls.length) return null
+  // ★ 用户手动点过就听用户的；没点过就跟着 live 走
+  const [manual, setManual] = useState<boolean | null>(null)
+  const open = manual ?? Boolean(live)
+
+  const list = steps || []
+  if (!list.length) return null
+
+  const secs = ms && ms > 0 ? Math.max(1, Math.round(ms / 1000)) : 0
 
   return (
-    <div style={{ marginTop: 6 }}>
+    <div style={{ marginBottom: 10 }}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setManual((v) => !(v ?? Boolean(live)))}
         className="faint"
         style={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 4,
-          fontSize: 10.5,
-          padding: '1px 8px',
+          gap: 5,
+          fontSize: 11,
+          padding: '2px 9px',
           borderRadius: 999,
           border: '1px solid var(--card-border)',
           background: 'transparent',
@@ -124,45 +144,57 @@ function ThinkBlock({
           cursor: 'pointer',
         }}
       >
-        {open ? '▼' : '▶'} 思考过程
-        {calls.length > 0 && ` · ${calls.length} 次工具调用`}
+        {live && <Loader2 size={10} className="animate-spin" />}
+        {live ? '思考中' : '已思考'}
+        {secs > 0 && `（${secs} 秒）`}
+        <span style={{ opacity: 0.6 }}>{open ? '▾' : '▸'}</span>
       </button>
 
       {open && (
         <div
           style={{
             marginTop: 6,
-            padding: '8px 10px',
+            paddingLeft: 10,
             borderLeft: '2px solid var(--card-border)',
             fontSize: 11.5,
-            lineHeight: 1.7,
+            lineHeight: 1.75,
             color: 'var(--text-faint)',
+            maxHeight: 300,
+            overflowY: 'auto',
           }}
         >
-          {calls.length > 0 && (
-            <div style={{ marginBottom: think ? 8 : 0 }}>
-              {calls.map((t, i) => (
-                <div
-                  key={`${i}-${t.name}`}
-                  className="mono"
-                  style={{ fontSize: 10.5, lineHeight: 1.8 }}
-                >
-                  · {t.name || '(未知)'} → {t.lines} 行 / {t.chars} 字
-                </div>
-              ))}
-            </div>
-          )}
-          {!!think && (
-            <div
-              style={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                maxHeight: 260,
-                overflowY: 'auto',
-              }}
-            >
-              {think}
-            </div>
+          {list.map((st, i) =>
+            st.kind === 'tool' ? (
+              <div
+                key={`t${i}`}
+                className="mono"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 10.5,
+                  margin: '3px 0',
+                  opacity: 0.85,
+                }}
+              >
+                <span style={{ opacity: 0.7 }}>⌕</span>
+                {st.name || '工具'}
+                <span style={{ opacity: 0.55 }}>
+                  · {st.lines || 0} 行 / {fmt(st.chars || 0)} 字
+                </span>
+              </div>
+            ) : (
+              <div
+                key={`k${i}`}
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  margin: '2px 0',
+                }}
+              >
+                {st.text}
+              </div>
+            ),
           )}
         </div>
       )}
@@ -170,17 +202,6 @@ function ThinkBlock({
   )
 }
 
-/**
- * ★★ 一条回答的紧凑统计行；点开在**上方浮出**明细。
- *
- * 所有者原话（2026-11-17）：
- * 「你这个点击了，向上翻呀，现在向下翻，把框都挤变形了，不好看」
- *
- * ⇒ position: fixed + createPortal：
- *   · 不占文档流 ⇒ 展开不会把下面内容顶下去
- *   · 挂在 body 上 ⇒ 不受历史区 overflow:auto 裁剪
- *   · 位置按按钮 rect 算，向上弹
- */
 function UsageLine({ item }: { item: QaItem }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null)
@@ -364,10 +385,11 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const [busy, setBusy] = useState(false)
   const [streaming, setStreaming] = useState('')
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
-  const [thinking, setThinking] = useState('')
+  // ★★ 有序步骤：想一句、查一下、再想一句，按发生顺序排
+  const [steps, setSteps] = useState<ThinkStep[]>([])
   const [thinkOpen, setThinkOpen] = useState(false)
   // ★ 本轮工具调用轨迹
-  const [trace, setTrace] = useState<{ name: string; chars: number; lines: number }[]>([])
+  const [liveMs, setLiveMs] = useState(0)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
   const [copiedId, setCopiedId] = useState('')
@@ -434,11 +456,11 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setErr('')
     setBusy(true)
     setStreaming('')
-    setThinking('')
-    setTrace([])
+    setSteps([])
+    setLiveMs(0)
     setThinkOpen(false)
     let acc = ''
-    let thinkAcc = ''
+
     let got = false
     let tin = 0
     let tout = 0
@@ -454,18 +476,26 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             acc += String(evt.text ?? '')
             setStreaming(acc)
           } else if (evt.event === 'tool_use') {
-            setTrace((prev) => [
+            // 工具调用插在思考流中间（「想了 → 查了 → 又想了」）
+            setSteps((prev) => [
               ...prev,
               {
+                kind: 'tool',
                 name: String(evt.name ?? ''),
                 chars: Number(evt.chars ?? 0),
                 lines: Number(evt.lines ?? 0),
               },
             ])
           } else if (evt.event === 'think') {
-            // ⚠ 思考过程不算「有回答」，只单独累积
-            thinkAcc += String(evt.text ?? '')
-            setThinking(thinkAcc)
+            // ⚠ 思考不算「有回答」；同一段的后续分片拼到当前那条后面
+            setSteps((prev) => {
+              const last = prev[prev.length - 1]
+              const piece = String(evt.text ?? '')
+              if (last && last.kind === 'think') {
+                return [...prev.slice(0, -1), { ...last, text: (last.text || '') + piece }]
+              }
+              return [...prev, { kind: 'think', text: piece }]
+            })
           } else if (evt.event === 'usage') {
             tin = Number(evt.in || 0)
             tout = Number(evt.out || 0)
@@ -482,6 +512,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
       )
       if (!got) throw new Error('没有收到任何内容（检查 AI 设置）')
       const ms = Math.round(performance.now() - t0)
+      setLiveMs(ms) // 流式结束后标题显示「已思考（N 秒）」
       if (replaceId) {
         try {
           await personalApi.qaRemove(projectRef, vid, replaceId)
@@ -497,8 +528,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         tokens_out: tout,
         ms,
         usage,
-        think: thinking,
-        trace,
+        steps,
       })
       setItems((r.items || []) as QaItem[])
       return true
@@ -695,13 +725,13 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               </button>
               <UsageLine item={it} />
             </div>
-            <ThinkBlock think={it.think} trace={it.trace} />
+            <ThinkBlock steps={it.steps} ms={it.ms} />
           </div>
         ))}
 
         {/* ★ 本轮思考与工具轨迹（流式中实时显示） */}
         <div style={{ marginBottom: 10 }}>
-          <ThinkBlock think={thinking} trace={trace} />
+          <ThinkBlock steps={steps} live={busy} ms={busy ? 0 : liveMs} />
         </div>
 
         {/* 流式 */}

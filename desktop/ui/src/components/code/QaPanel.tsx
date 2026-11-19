@@ -591,8 +591,12 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   const send = async () => {
     const text = q.trim()
     if (!text) return
+    // ★ 立刻清空输入框：问题已经作为气泡上屏了，留在输入框里会重复
+    //   （所有者 2026-11-19：「都开始输出思考了，提问栏里的问题还在」）
+    setQ('')
+    // 失败时把问题填回去，免得白打一遍
     const ok = await ask(text)
-    if (ok) setQ('')
+    if (!ok) setQ(text)
   }
 
   const clearAll = async () => {

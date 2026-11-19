@@ -1102,8 +1102,11 @@ def stream_chat(
                     got += 1
                     yield {"event": "delta", "text": piece}
 
-                # 思考过程单独一个事件，前端折叠显示
+                # ★★ 思考也计入 got：推理模型的思考会吃大量 max_tokens，
+                #   可能只出思考不出正文。⛔ 原来 got 只数 delta.content，
+                #   于是明明流了一半思考却报「模型没有返回任何内容」。
                 if think_piece:
+                    got += 1
                     yield {"event": "think", "text": think_piece}
 
                 # ★★ 工具调用：流式下是**增量分片**（同一 index 的 arguments 一段段来），

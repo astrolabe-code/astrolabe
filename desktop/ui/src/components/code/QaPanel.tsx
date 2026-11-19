@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Copy, Info, Loader2, RefreshCw, Send, Square, Trash2 } from 'lucide-react'
+import { ArrowUp, Check, Copy, Info, Loader2, RefreshCw, Square, Trash2 } from 'lucide-react'
 
 import { personalApi, streamCall } from '../../api/personal'
 import { setAiBusy } from '../../lib/aiBusy'
@@ -508,6 +508,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     }
 
     let got = false
+    let sawThink = false
     let tin = 0
     let tout = 0
     let usage: QaUsage = { ...EMPTY_USAGE }
@@ -533,6 +534,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               lines: Number(evt.lines ?? 0),
             })
           } else if (evt.event === 'think') {
+            sawThink = true
             // ⚠ 思考不算「有回答」；同一段的后续分片拼到当前那条后面
             const piece = String(evt.text ?? '')
             const last = stepsAcc[stepsAcc.length - 1]
@@ -560,7 +562,17 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         },
         ctl.signal,
       )
-      if (!got) throw new Error('没有收到任何内容（检查 AI 设置）')
+      if (!got) {
+        if (sawThink) {
+          // ★ 只有思考、没有正文：多半是 max_tokens 被思考吃光，
+          //   不是配置错 —— 明确告诉用户，别再误导去「检查 AI 设置」
+          acc = '（模型只输出了思考，没有给出回答。可能是思考把额度用完了，请重试或调高 max_tokens。）'
+          setStreaming(acc)
+          got = true
+        } else {
+          throw new Error('没有收到任何内容（检查 AI 设置）')
+        }
+      }
       const ms = Math.round(performance.now() - t0)
       setLiveMs(ms) // 流式结束后标题显示「已思考（N 秒）」
       if (replaceId) {
@@ -617,6 +629,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setPending('')
     setStreaming('')
   }
+
+  /** 有输入 ≠ 空；回答中不算「可发送」 */
+  const canSend = Boolean(q.trim())
+  const strong = busy || canSend
 
   const send = async () => {
     const text = q.trim()
@@ -909,27 +925,35 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             onClick={busy ? stop : () => void send()}
             disabled={!busy && !q.trim()}
             style={{
-              // ★ 发送 / 停止同一位置：回答中变强调色 + 方块图标（像主流网页版）
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 5,
-              height: 34,
-              minWidth: 68,
-              padding: '0 13px',
-              borderRadius: 999,
-              border: busy ? '1px solid var(--accent)' : '1px solid var(--card-border)',
-              background: busy ? 'var(--accent)' : 'transparent',
-              color: busy ? '#fff' : 'var(--text-faint)',
-              cursor: !busy && !q.trim() ? 'default' : 'pointer',
-              fontSize: 11.5,
-              opacity: !busy && !q.trim() ? 0.45 : 1,
-              whiteSpace: 'nowrap',
-            }}
-            title={busy ? '停止回答' : '发送（Enter）'}
-          >
-            {busy ? <Square size={11} fill="currentColor" /> : <Send size={13} />}
-            {busy ? '停止' : '发送'}
+              // ★★ 三态（对齐 DeepSeek 输入框，所有者截图 2026-11-19）：
+                //   空输入 → 淡色、不可点
+                //   有输入 → 实心强调色 + 白色箭头
+                //   回答中 → 实心强调色 + 白色方块（点它停止）
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 5,
+                height: 34,
+                minWidth: 68,
+                padding: '0 13px',
+                borderRadius: 999,
+                border: strong ? '1px solid var(--accent)' : '1px solid var(--card-border)',
+                background: strong ? 'var(--accent)' : 'transparent',
+                color: strong ? '#fff' : 'var(--text-faint)',
+                cursor: canSend || busy ? 'pointer' : 'default',
+                fontSize: 11.5,
+                opacity: strong ? 1 : 0.45,
+                whiteSpace: 'nowrap',
+              }}
+              title={busy ? '停止回答' : '发送（Enter）'}
+            >
+              {busy ? (
+                <Square size={11} fill="currentColor" />
+              ) : (
+                <ArrowUp size={15} strokeWidth={2.2} />
+              )}
+              {busy ? '停止' : '发送'}
+            
           </button>
         </div>
       </div>

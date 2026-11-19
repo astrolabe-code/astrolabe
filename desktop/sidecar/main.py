@@ -1186,7 +1186,9 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         token = str(body.get("token") or "")
         if not token:
             return bad("缺少 token")
-        return ok({"cancelled": ai.cancel_token(token)})
+        hit = ai.cancel_token(token)
+        print(f"[AI-CANCEL] cancel request token={token} hit={hit}", flush=True)
+        return ok({"cancelled": hit})
 
     # ★★ 起标题：正文够，不读图（省一截 token）
     m = R_AITITLE.match(path)
@@ -2086,6 +2088,9 @@ def _ask_events(project, vid: int, question: str):
     # ★★ 建取消令牌，并把 token 作为第一个事件告诉前端
     #   （所有者 2026-11-19：「openwebui应该都可以的吧？这是标准配置吧？」）
     token, cancel_evt = ai.new_cancel_token()
+    # ★ 日志：用 DevTools / 控制台能看到「这次回答的 token 是多少」，
+    #   点停止后对照 /ai/cancel/ 的返回，确认取消的是同一次请求。
+    print(f"[AI-CANCEL] start token={token} vid={vid}", flush=True)
     try:
         yield {"event": "started", "token": token}
         # ★ 允许模型顺着图谱再读几个节点（⛔ 只读，停止时立刻断 LLM 连接）
@@ -2093,11 +2098,14 @@ def _ask_events(project, vid: int, question: str):
             messages,
             READ_TOOLS,
             _make_tool_executor(project),
-            max_tokens=800,
+            # ★★ 推理模型（DeepSeek R1 等）的思考也占 completion tokens：
+            #   800 会被思考吃光、正文一个字都出不来（用户看到"思考到一半就没了"）
+            max_tokens=4000,
             cancel=cancel_evt,
         )
     except ai.CancelledError:
         # 用户主动停止：不往前端抛错误，悄悄结束
+        print(f"[AI-CANCEL] stopped by user token={token}", flush=True)
         yield {"event": "cancelled"}
     finally:
         ai.unregister_token(token)
@@ -2197,7 +2205,7 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             messages,
             READ_TOOLS,
             _make_tool_executor(project),
-            max_tokens=600,
+            max_tokens=3000,  # ★ 出题同样要给思考留额度
             cancel=cancel_evt,
         ):
             if evt.get("event") == "delta":
@@ -2207,10 +2215,10 @@ def _questions(project, vid: int, refresh: bool = False) -> dict:
             # ★★ 工具链**正常结束但一个字都没吐**（模型只会调工具，或服务商
             #    不认 tools 直接返回空）⇒ 必须退回普通一次调用。
             #    ⛔ 之前只处理异常、不处理"空"，界面就显示"没有返回任何内容"。
-            text = ai.chat_once(messages, max_tokens=600)
+            text = ai.chat_once(messages, max_tokens=3000)
     except Exception as exc:  # noqa: BLE001 —— 工具链出问题就退回普通一次调用
         try:
-            text = ai.chat_once(messages, max_tokens=600)
+            text = ai.chat_once(messages, max_tokens=3000)
         except Exception as exc2:  # noqa: BLE001
             # ⛔ 两层都失败就别再静默：把两条原因都带给前端
             raise RuntimeError(

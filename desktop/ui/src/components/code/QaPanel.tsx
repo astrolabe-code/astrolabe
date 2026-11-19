@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Copy, Info, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { Check, Copy, Info, Loader2, RefreshCw, Send, Square, Trash2 } from 'lucide-react'
 
 import { personalApi, streamCall } from '../../api/personal'
 import { setAiBusy } from '../../lib/aiBusy'
@@ -401,6 +401,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
    *   setItems(旧节点的列表) 会把 B 的历史覆盖掉。
    */
   const runRef = useRef(0)
+  /** ★ 当前流式请求的控制器；「停止」按钮会 abort 它 */
+  const abortRef = useRef<AbortController | null>(null)
   // ★ 思考过程（DeepSeek R1 / V3.2 的 reasoning_content），默认折叠
   // ★★ 有序步骤：想一句、查一下、再想一句，按发生顺序排
   const [steps, setSteps] = useState<ThinkStep[]>([])
@@ -487,6 +489,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setSteps([])
     setLiveMs(0)
 
+    const ctl = new AbortController()
+    abortRef.current = ctl
     const myRun = ++runRef.current
     /** 已经切走（或又发起了新一轮）⇒ 所有回写都要放弃 */
     const alive = () => runRef.current === myRun
@@ -548,6 +552,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             }
           }
         },
+        ctl.signal,
       )
       if (!got) throw new Error('没有收到任何内容（检查 AI 设置）')
       const ms = Math.round(performance.now() - t0)
@@ -574,9 +579,13 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
       setItems((r.items || []) as QaItem[])
       return true
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
+      // ★ 用户点了「停止」⇒ 不当成错误弹出来
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        setErr(e instanceof Error ? e.message : String(e))
+      }
       return false
     } finally {
+      abortRef.current = null
       setAiBusy(false)
       // 切走了就别动界面状态（新节点那边可能正在跑别的请求）
       if (alive()) {
@@ -586,6 +595,16 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         setPending('')
       }
     }
+  }
+
+  /** ★ 停止当前回答（参考 DeepSeek 的方形停止按钮） */
+  const stop = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setAiBusy(false)
+    setBusy(false)
+    setPending('')
+    setStreaming('')
   }
 
   const send = async () => {
@@ -692,12 +711,27 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         {!!items.length && (
           <button
             type="button"
-            className="tag"
-            style={{ marginLeft: 'auto', fontSize: 10.5 }}
+            style={{
+              // ★ 跟左边的三个统计胶囊用**同一套**样式：
+              //   圆角药丸 / 细边框 / 淡色 / inline-flex（⛔ 不用 .tag，
+              //   那会让图标与文字错位，也和这一排不搭）
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              marginLeft: 'auto',
+              fontSize: 10.5,
+              padding: '2px 9px',
+              borderRadius: 999,
+              border: '1px solid var(--card-border)',
+              background: 'transparent',
+              color: 'var(--text-faint)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
             title="清空这个节点的全部问答"
             onClick={() => void clearAll()}
           >
-            <Trash2 size={10} /> 清空
+            <Trash2 size={11} /> 清空
           </button>
         )}
       </div>
@@ -861,13 +895,30 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
           />
           <button
             type="button"
-            className="tag"
-            disabled={busy || !q.trim()}
-            onClick={() => void send()}
-            style={{ height: 34, padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            onClick={busy ? stop : () => void send()}
+            disabled={!busy && !q.trim()}
+            style={{
+              // ★ 发送 / 停止同一位置：回答中变强调色 + 方块图标（像主流网页版）
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 5,
+              height: 34,
+              minWidth: 68,
+              padding: '0 13px',
+              borderRadius: 999,
+              border: busy ? '1px solid var(--accent)' : '1px solid var(--card-border)',
+              background: busy ? 'var(--accent)' : 'transparent',
+              color: busy ? '#fff' : 'var(--text-faint)',
+              cursor: !busy && !q.trim() ? 'default' : 'pointer',
+              fontSize: 11.5,
+              opacity: !busy && !q.trim() ? 0.45 : 1,
+              whiteSpace: 'nowrap',
+            }}
+            title={busy ? '停止回答' : '发送（Enter）'}
           >
-            {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-            发送
+            {busy ? <Square size={11} fill="currentColor" /> : <Send size={13} />}
+            {busy ? '停止' : '发送'}
           </button>
         </div>
       </div>

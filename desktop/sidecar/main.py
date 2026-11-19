@@ -1705,6 +1705,26 @@ READ_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_board",
+            "description": (
+                "读某个节点关联的**白板**：每块白板的名字，以及它上面摆了哪几条笔记。\n"
+                "白板是作者把若干条笔记摆在画布上形成的思考布局。\n"
+                "\n"
+                "WHEN TO USE: 想知道作者把哪些笔记放在一起比过、并成了什么结构。\n"
+                "AFTER THIS: 想知道某条笔记写了什么，用 search_notes 或 read_notes。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "节点名"},
+                    "uid": {"type": "string", "description": "精确 uid（可选）"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_notes",
             "description": (
                 "读某个节点下**用户自己写的笔记**（类型、标题、正文摘要）。\n\n"
@@ -1866,6 +1886,36 @@ def _make_tool_executor(project):
                 f"- {h.get('title') or '（无标题）'}\n  {h.get('snippet') or ''}"
                 for h in hits[:limit]
             )
+
+        # ---------------- 读白板
+        if tool == "read_board":
+            node, err = resolve(args)
+            if not node:
+                return err
+            vid = int(node.get("vid") or 0)
+            try:
+                boards = [b for b in board.list_boards(ROOT) if int(b.get("vid") or 0) == vid]
+            except Exception as exc:  # noqa: BLE001
+                return f"读白板失败：{exc}"
+            if not boards:
+                return f"「{node.get('name')}」下没有白板"
+            # 笔记 id → 标题（白板的 board[] 存的是笔记 id）
+            titles: dict[int, str] = {}
+            try:
+                for r in store.notes_of(CONN, project["id"]):
+                    titles[int(r.get("id") or 0)] = str(r.get("title") or "（无标题）")
+            except Exception:  # noqa: BLE001
+                pass
+            out = []
+            for b in boards[:5]:
+                data = board.load(ROOT, str(b.get("id") or "")) or {}
+                ids = [int(x) for x in (data.get("board") or []) if str(x).isdigit()]
+                names = [titles.get(i) or f"笔记 {i}" for i in ids[:20]]
+                out.append(
+                    f"【{b.get('name') or '白板'}】放了 {len(ids)} 条笔记："
+                    f"{'、'.join(names) if names else '（空）'}"
+                )
+            return "\n".join(out)
 
         # ---------------- 读笔记
         if tool == "read_notes":

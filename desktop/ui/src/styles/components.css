@@ -812,3 +812,14 @@ body.page-hidden *::after { animation-play-state: paused !important; }
   user-select: none;
   white-space: pre-wrap;
 }
+
+
+/* ★★ AI 回答期间被禁用的可点击元素
+   所有者原话（2026-11-19）：「禁用的按钮就变成灰色的就行」
+   ⇒ 只把能跳转的东西变灰、点不动；问答区不在此列，仍可滚动阅读。 */
+.ai-disabled {
+  pointer-events: none !important;
+  opacity: 0.42;
+  filter: grayscale(0.7);
+  cursor: not-allowed;
+}

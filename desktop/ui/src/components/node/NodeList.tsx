@@ -7,6 +7,7 @@ import NodeHoverCard from './NodeHoverCard'
 import { useGraphNodes } from '../../query/graph'
 import Button from '../ui/Button'
 import EmptyState from '../ui/EmptyState'
+import { useAiBusy } from '../../lib/aiBusy'
 
 /**
  * ★ 节点列表（`F2` · 契约 D92）
@@ -56,6 +57,7 @@ export default function NodeList({
   // ★ 悬停浮窗（所有者：列表里也要有详情浮窗，重载就靠它分辨）
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   // ★ 浮窗里有「挑战问题」按钮 ⇒ 鼠标移向浮窗时不能立刻清掉 hover
+  const aiBusy = useAiBusy()
   const cardHoverRef = useRef(false)
   const leaveTimerRef = useRef(0)
   /** 上一帧指针位置：判断「是否朝右下（弹窗方向）走」 */
@@ -196,6 +198,8 @@ export default function NodeList({
                     // ★★ 点行 = **只选中**（右栏预览 / 写笔记）
                     //   ⛔ 不再顺手跳图谱 —— 那样太容易误触（所有者 2026-10-31）
                     onClick={() => onSelect(n)}
+                    // ★ AI 回答中：点行会换节点，先禁掉（连带 hover 浮窗一起停）
+                    disabled={aiBusy}
                     onMouseEnter={(e) => {
                       // ★ 先取消上一次离开挂起的清空（否则鼠标一停它就到点，浮窗自己没了）
                       window.clearTimeout(leaveTimerRef.current)

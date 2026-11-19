@@ -13,6 +13,7 @@ import NodePanel from '../node/NodePanel'
 import NodeHeading from '../node/NodeHeading'
 import ImitationPanel from './ImitationPanel'
 import QaPanel from './QaPanel'
+import { useAiBusy } from '../../lib/aiBusy'
 import FileTree, { firstLevelDirs } from './FileTree'
 import SplitPane from '../SplitPane'
 import CodeViewer from './CodeViewer'
@@ -102,6 +103,7 @@ export default function CodeWorkspace({
   noteView,
   boardView,
 }: CodeWorkspaceProps) {
+  const aiBusy = useAiBusy()
   const [tab, setTab] = useState<Tab>(initialTab)
   // ★ 每个工作区实例一个唯一工具插槽 id（图谱页/项目页各有多个 CodeWorkspace，
   //   固定 id 会让 document.getElementById 拿到错的那个）
@@ -347,7 +349,11 @@ export default function CodeWorkspace({
               key={key}
               type="button"
               onClick={() => pickTab(key)}
-              className={`code-tab${tab === key ? ' is-active' : ''}`}
+              disabled={aiBusy}
+              // ★ AI 回答中：切 tab 会离开当前节点，先禁掉（变灰、点不动）
+              className={`code-tab${tab === key ? ' is-active' : ''}${
+                aiBusy ? ' ai-disabled' : ''
+              }`}
             >
               {label}
             </button>

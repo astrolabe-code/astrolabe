@@ -5,6 +5,7 @@ import { useTheme } from '../../hooks/useTheme'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
 import { kindColor } from '../../lib/kindLabel'
 import NodeHoverCard from '../node/NodeHoverCard'
+import { useAiBusy } from '../../lib/aiBusy'
 import EdgeHoverCard from './EdgeHoverCard'
 
 /**
@@ -186,6 +187,11 @@ export default function GraphCanvas({
     }
   }, [])
 
+  /**
+   * ★ AI 回答中：画布不接收鼠标（点节点、拖拽都停），
+   *   但问答区照常可用（用户要能滚动看输出）。
+   */
+  const aiBusy = useAiBusy()
   const boxRef = useRef<HTMLDivElement>(null)
   const gRef = useRef<Graph | null>(null)
   /** 上一轮高亮过的节点 id（换链时要先清掉，否则残留） */
@@ -1002,7 +1008,16 @@ export default function GraphCanvas({
 
   // ★ ④ position:relative —— 流星罩层靠它定位；`height:100%` 靠父卡片给高度 ⚠
   return (
-    <div ref={boxRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      ref={boxRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        // ★ AI 回答中画布不吃鼠标；问答区不受影响
+        pointerEvents: aiBusy ? 'none' : 'auto',
+      }}
+    >
       {ring && (
         <svg
           ref={ringRef}

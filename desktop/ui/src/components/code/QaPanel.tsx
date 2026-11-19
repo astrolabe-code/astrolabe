@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, Copy, Info, Loader2, RefreshCw, Send, Trash2 } from 'lucide-react'
 
 import { personalApi, streamCall } from '../../api/personal'
+import { setAiBusy } from '../../lib/aiBusy'
 import MarkdownText from '../ui/MarkdownText'
 
 /**
@@ -480,6 +481,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
     setErr('')
     setPending(question)
     setBusy(true)
+    // ★ 全应用进入「不要切节点」状态：各处的跳转按钮会变灰、点不动
+    setAiBusy(true)
     setStreaming('')
     setSteps([])
     setLiveMs(0)
@@ -574,6 +577,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
       setErr(e instanceof Error ? e.message : String(e))
       return false
     } finally {
+      setAiBusy(false)
       // 切走了就别动界面状态（新节点那边可能正在跑别的请求）
       if (alive()) {
         setBusy(false)
@@ -612,29 +616,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         flexDirection: 'column',
         height: '100%',
         minHeight: 0,
-        // ★★ 回答中把自己抬到遮罩之上：整屏只有问答区可操作，
-        //    点节点 / 切列表 / 切 tab 全部被挡住
-        //    （所有者 2026-11-19：「回答问题时，拒绝一切 url 跳转就行了」）
-        position: 'relative',
-        zIndex: busy ? 1000 : undefined,
       }}
     >
-      {/* 回答中：整屏遮罩；它盖住问答区以外的一切，点上去会提示原因 */}
-      {busy &&
-        createPortal(
-          <div
-            onClick={() => setErr('AI 正在回答，完成后才能切换节点')}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 999,
-              background: 'rgba(0,0,0,.04)',
-              cursor: 'not-allowed',
-            }}
-          />,
-          document.body,
-        )}
-
       {/* 头：标题 + 累计统计 + 清空 */}
       <div
         style={{

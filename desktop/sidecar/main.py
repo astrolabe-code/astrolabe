@@ -2231,19 +2231,24 @@ def _questions_events(project, vid: int, refresh: bool = False, token: str = "")
     emitted: set[str] = set()  # 已发过的行，最后不重复发
     cancelled = False
 
+    # ★ next_line：下一个待处理的完整行索引。
+    #   ⚠ 不能每次重新遍历 full 又不去重 —— 同一行会被发多次；
+    #     也不能像之前那样 `full[:] = [tail]` —— 那会把正文吞掉、
+    #     导致 text 变空误触发 chat_once（表现为「模型没有返回任何内容」）。
+    next_line = 0
+
     def take_complete(force: bool = False) -> list[str]:
-        """从 full 里取走尚未发过的完整行（未写完的半行不动）。"""
+        """只返回**新凑齐**的完整行；正文始终留在 full 里给整段解析。"""
+        nonlocal next_line
         joined = "".join(full)
         lines = joined.split("\n")
-        if not force:
-            tail = lines.pop()  # 最后一段可能还没写完
-        else:
-            tail = ""
-            if lines and not lines[-1].strip():
-                lines.pop()
-        ready = [ln for ln in lines if ln.strip()]
-        full[:] = [tail]
-        return ready
+        # 最后一段未写完，不算完整行（除非 force）
+        usable = len(lines) if force else len(lines) - 1
+        out = [
+            ln.strip() for ln in lines[next_line:usable] if ln.strip()
+        ]
+        next_line = max(next_line, usable)
+        return out
 
     try:
         for evt in ai.chat_with_tools(
@@ -2294,11 +2299,30 @@ def _questions_events(project, vid: int, refresh: bool = False, token: str = "")
                     "type": str(it.get("type") or ""),
                     "text": str(it.get("text") or ""),
                 }
+        # ★ 去重：逐行已发过的 next 不重复发
         for nx in (parsed.get("next") or []):
+            # ⚠ key 必须与逐行时 emitted 存的原始行一致（含「 —— 」两侧的空格）
+            nkey = f"下一步：{nx.get('name')} —— {nx.get('why')}"
+            if nkey in emitted:
+                continue
+            emitted.add(nkey)
             yield {
                 "event": "next",
                 "name": str(nx.get("name") or ""),
                 "why": str(nx.get("why") or ""),
+            }
+
+        # ★★ 一道保险：一条问题都没解析出来时，明确告诉用户原因，
+        #   ⛔ 绝不让前端停在「模型没有返回任何内容」的空状态（无从排查）
+        if not parsed.get("items") and not cancelled:
+            yield {
+                "event": "question",
+                "type": "简评",
+                "text": (
+                    "这次没出题：模型只输出了思考、没有给出可提问的内容。"
+                    "可能是 max_tokens 被思考用完，或这个节点确实没什么可问的。"
+                    "可以点「换一批」重试。"
+                ),
             }
 
         if parsed.get("items"):

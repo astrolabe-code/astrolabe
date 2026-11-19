@@ -20,7 +20,7 @@
  *    · 不用 socket 文件 ⇒ Windows 上不用处理命名管道差异
  */
 
-const { app, BrowserWindow, protocol, ipcMain, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, protocol, ipcMain, shell, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { spawn } = require('node:child_process')
@@ -197,7 +197,14 @@ function registerProtocol() {
         }
       }
       // ★★ 流式端点：逐块转发（NDJSON），前端 getReader() 读
-      if (p.startsWith('/api/ai/stream')) {
+      // ★★★ 流式端点必须**逐个列全**：这里只认 /api/ai/stream 时，
+      //   /ai/draft/ 与 /ai/ask/ 会走下面的「一次性响应」分支 ——
+      //   边车回的多条 delta 全部被丢弃，只有 closed 被当成一整块 JSON 返回，
+      //   前端读到的是一条空流 ⇒ 表现成「问了但没有任何回答、也没有报错」。
+      if (
+        p.startsWith('/api/ai/stream') ||
+        /\/ai\/(ask|draft|questions)\/$/.test(p)  // ★ questions 也走 SSE
+      ) {
         const enc = new TextEncoder()
         const stream = new ReadableStream({
           start(controller) {
@@ -285,6 +292,29 @@ function createWindow() {
   })
 
   // ★ 外部链接用系统浏览器打开，⛔ 不在应用内导航走
+    // ★★★ 右键菜单（2026-11-17）
+    //   所有者：「你这右键点击无法复制呀」
+    //   Electron 默认**不提供**右键菜单 —— 选中文字后右键什么都不会发生。
+    //   ⚠ 用中文 label + click（role 会显示英文 Copy/Paste）；
+    //     只在「有选中 / 可编辑」时才出对应项，空白处右键不弹空菜单。
+    win.webContents.on('context-menu', (_e, params) => {
+      const items = []
+      const hasSel = Boolean(params.selectionText && params.selectionText.trim())
+      if (hasSel) {
+        items.push({ label: '复制', click: () => win.webContents.copy() })
+      }
+      if (params.isEditable) {
+        if (hasSel) items.push({ label: '剪切', click: () => win.webContents.cut() })
+        items.push({ label: '粘贴', click: () => win.webContents.paste() })
+      }
+      if (hasSel || params.isEditable) {
+        items.push({ type: 'separator' })
+        items.push({ label: '全选', click: () => win.webContents.selectAll() })
+      }
+      if (!items.length) return
+      Menu.buildFromTemplate(items).popup({ window: win })
+    })
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url)
     return { action: 'deny' }

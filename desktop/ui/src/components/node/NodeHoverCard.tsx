@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, Square } from 'lucide-react'
 import { useParams } from 'react-router-dom'
-import { useAiChat, type QaItem, type ThinkStep } from '../../lib/useAiChat'
+import { useAiChat, type ThinkStep } from '../../lib/useAiChat'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -102,7 +102,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
   const chat = useAiChat(projectRef || '', node.vid)
-  const { items, busy, streaming, pending, steps, err, ask, stop } = chat
+  const { lastItem, busy, streaming, pending, steps, err, ask, stop, clearLast } = chat
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
@@ -181,22 +181,27 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         <div style={{ marginTop: 10, borderTop: '1px dashed var(--card-border)' }}>
           {err && <div style={{ fontSize: 10.5, color: 'var(--err)', marginTop: 6 }}>{err}</div>}
 
-          {items.map((it: QaItem) => (
-            <div key={it.id} style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>{it.q}</div>
-              {!!it.steps?.length && (
+          {/* ★ 只显示本轮挑战结果（关掉浮窗就没了）；历史一律留在问答 tab */}
+          {lastItem && !pending && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>
+                {lastItem.q}
+              </div>
+              {!!lastItem.steps?.length && (
                 <details style={{ marginTop: 3, fontSize: 10, opacity: 0.65 }}>
                   <summary>思考过程</summary>
-                  {it.steps.map((st: ThinkStep, i: number) => (
+                  {lastItem.steps.map((st: ThinkStep, i: number) => (
                     <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
                       {st.kind === 'tool' ? `⌕ ${st.name} · ${st.lines || 0} 行` : st.text}
                     </div>
                   ))}
                 </details>
               )}
-              <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>{it.a}</div>
+              <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>
+                {lastItem.a}
+              </div>
             </div>
-          ))}
+          )}
 
           {!!pending && (
             <div style={{ marginTop: 8 }}>
@@ -216,7 +221,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
           <button
             type="button"
-            onClick={() => (busy ? stop() : void ask(CHALLENGE_Q))}
+            onClick={() => (busy ? stop() : (clearLast(), void ask(CHALLENGE_Q)))}
             style={{
               width: '100%', height: 30, marginTop: 8, borderRadius: 999,
               border: '1px solid var(--accent)',

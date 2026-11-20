@@ -62,6 +62,8 @@ export function useAiChat(projectRef: string, vid: number | null) {
   const [liveMs, setLiveMs] = useState(0)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  /** ★ 本轮最终条目：浮窗用它显示「最后一轮」，不读全部历史 */
+  const [lastItem, setLastItem] = useState<QaItem | null>(null)
 
   const runRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -100,6 +102,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
     setPending('')
     setSteps([])
     setStreaming('')
+    setLastItem(null)
     setBusy(false)
   }, [vid])
 
@@ -216,7 +219,10 @@ export function useAiChat(projectRef: string, vid: number | null) {
           steps: stepsAcc,
         })
         if (!alive()) return false
-        setItems((r.items || []) as QaItem[])
+        const next = (r.items || []) as QaItem[]
+        setItems(next)
+        // ★ 最后一条就是这一轮（qaAppend 是追加，顺序稳定）
+        setLastItem(next[next.length - 1] || null)
         return true
       } catch (e) {
         if (!(e instanceof DOMException && e.name === 'AbortError')) {
@@ -250,6 +256,9 @@ export function useAiChat(projectRef: string, vid: number | null) {
     setBusy(false)
   }, [projectRef])
 
+  /** ★ 只清「本轮快照」（浮窗用：换一批时清掉上一轮显示，历史仍在） */
+  const clearLast = useCallback(() => setLastItem(null), [])
+
   /** ★ 清空这个节点的历史 */
   const clear = useCallback(async () => {
     if (!projectRef || !vid) return
@@ -268,9 +277,11 @@ export function useAiChat(projectRef: string, vid: number | null) {
     liveMs,
     err,
     loading,
+    lastItem,
     // 能力
     ask,
     stop,
+    clearLast,
     clear,
     reload,
     // 给界面读的累计统计（纯派生，不渲染）

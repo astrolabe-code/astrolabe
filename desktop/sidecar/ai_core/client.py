@@ -45,7 +45,7 @@ import urllib.request
 
 import library
 
-from prompts import (  # noqa: E402 —— 提示词集中在 prompts.py
+from ai_core.prompts import (  # noqa: E402 —— 提示词集中在 prompts.py
     ASK_SYSTEM,
     BASE_SYSTEM,
     COMPLETE_SYSTEM,
@@ -751,6 +751,72 @@ def parse_questions(text: str) -> dict:
     return {"items": items[:5], "next": nxt[:2]}
 
 
+# ★★ 多轮工具上下文预算（字符数，约 4 字符 = 1 token）
+#
+# 所有者原话（2026-11-20）：「对，可以，省token，不要让模型截断历史记录就行。」
+#
+# ## 为什么需要
+# 每轮工具结果最多 4000 字符，每轮全量重发 convo。十几轮下来就是几万字符，
+# 超出模型上下文窗口后服务商通常**从最前面截** —— system 和早期工具结果
+# 一起丢掉，模型反而"忘了自己是谁、前面读过什么"，丢得比主动压缩更狠。
+#
+# ## 压什么 / 不压什么
+# · ⛔ system / 用户问题 / assistant 的 tool_calls **永远不动**
+#   （丢了模型就不知道自己是谁、问的是什么、调过什么）
+# · 只压**早期** tool 结果的正文：留工具名、行数、字数这些元信息，
+#   正文换成一句「内容省略」。最近 KEEP_RECENT 条全文保留（模型正在用）。
+# · 没超预算时**一字不动** —— 绝大多数问答只有 2-3 轮，根本触发不了。
+CONTEXT_BUDGET = 24_000   # 约 6000 token；超过才压
+KEEP_RECENT_TOOLS = 3     # 最近 3 条工具结果保持全文
+
+
+def _convo_size(convo: list[dict]) -> int:
+    """粗估会话字符数（只算会发出去的内容）。"""
+    total = 0
+    for m in convo:
+        total += len(str(m.get("content") or ""))
+        for tc in (m.get("tool_calls") or []):
+            fn = tc.get("function") or {}
+            total += len(str(fn.get("arguments") or ""))
+    return total
+
+
+def _compact_tool_results(convo: list[dict]) -> list[dict]:
+    """压缩早期的 tool 结果正文；返回新列表，⛔ 不原地改 convo。
+
+    只改 role=tool 的 content；id / tool_call_id / 其它字段全部照旧，
+    保证 OpenAI 兼容协议里 assistant.tool_calls 与 tool 结果仍然一一对应。
+    """
+    if _convo_size(convo) <= CONTEXT_BUDGET:
+        return convo
+
+    # 从后往前数，最近 KEEP_RECENT_TOOLS 条不动
+    keep = set()
+    for i in range(len(convo) - 1, -1, -1):
+        if convo[i].get("role") == "tool":
+            keep.add(i)
+            if len(keep) >= KEEP_RECENT_TOOLS:
+                break
+
+    out = []
+    for i, m in enumerate(convo):
+        if m.get("role") == "tool" and i not in keep:
+            body = str(m.get("content") or "")
+            # 已经压过就不再压（避免每轮都重写成更短的无意义句子）
+            if body.startswith("["):
+                out.append(m)
+                continue
+            lines = body.count("\n") + 1
+            short = (
+                f"[已读内容省略：{lines} 行 / {len(body)} 字。"
+                "需要细节请重新用工具读取。]"
+            )
+            out.append({**m, "content": short})
+        else:
+            out.append(m)
+    return out
+
+
 def chat_with_tools(
     messages: list[dict],
     tools: list[dict],
@@ -793,6 +859,8 @@ def chat_with_tools(
         pending: dict[int, dict] = {}
         text_acc: list[str] = []
 
+        # ★ 发请求前压缩早期工具结果：不让服务商替我们截历史
+        convo = _compact_tool_results(convo)
         for evt in stream_chat(convo, max_tokens=max_tokens, cancel=cancel, tools=tools):
             kind = evt.get("event")
             if kind == "delta":
@@ -877,6 +945,7 @@ def chat_with_tools(
             "content": "（读取已结束。请只根据上面看到的内容回答，不要再请求工具。）",
         }
     )
+    convo = _compact_tool_results(convo)  # 收尾那次也压，别在最后一步超窗口
     for evt in stream_chat(convo, max_tokens=max_tokens, cancel=cancel):
         if evt.get("event") == "delta":
             yield evt

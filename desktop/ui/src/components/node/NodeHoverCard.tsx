@@ -104,8 +104,36 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
   // ★ 浮窗用 challenge 作用域：与问答 tab 的历史彻底分开
   const chat = useAiChat(projectRef || '', node.vid, 'challenge')
-  const { lastItem, busy, streaming, pending, steps, err, ask, stop, clearLast } = chat
-  /** ★ 思考+回答折叠块：出题时自动展开、完成自动收起；用户点过就听用户的 */
+  const { busy, streaming, pending, steps, err, ask, stop } = chat
+
+  /** ★ 浮窗自己保存本轮结果（思考 + 回答），⛔ 不依赖内核 lastItem ——
+   *  内核那套有「入库返回空 / alive 失效」等路径会清掉快照，导致回答完整块消失。
+   *  这里只认「这一轮我看到了什么」：busy 从 true 变 false 时把看到的内容定格。 */
+  const [snapshot, setSnapshot] = useState<{ steps: ThinkStep[]; answer: string } | null>(null)
+  const seenRef = useRef<{ steps: ThinkStep[]; answer: string }>({ steps: [], answer: '' })
+
+  // 随时记录「看到的」内容（⛔ 不加 busy 条件 ——
+  //   busy 变 false 那次渲染里 streaming 可能刚刚更新到最后一段，
+  //   跳过就会漏掉最后几个字）
+  useEffect(() => {
+    if (streaming || steps.length) {
+      seenRef.current = { steps: [...steps], answer: streaming }
+    }
+  }, [steps, streaming])
+
+  // busy 结束 ⇒ 定格本轮快照（折叠块据此一直显示）
+  const wasBusyRef = useRef(false)
+  useEffect(() => {
+    if (wasBusyRef.current && !busy) {
+      const seen = seenRef.current
+      if (seen.answer.trim() || seen.steps.length) {
+        setSnapshot(seen)
+      }
+    }
+    wasBusyRef.current = busy
+  }, [busy])
+
+  /** 思考+回答折叠块：出题时自动展开、完成自动收起；用户点过就听用户的 */
   const [foldManual, setFoldManual] = useState<boolean | null>(null)
   const foldOpen = foldManual ?? busy
   // ★ 流式中 pending 有值（系统触发词），完成后由 lastItem 接管；
@@ -191,7 +219,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
           {/* ★ 只显示本轮结果（关掉浮窗就没了）：思考 + 回答合成一个可折叠块。
               ⛔ 不显示问题气泡 —— 那句是系统触发词，对用户没有意义。 */}
-          {(!!pendingForDisplay || !!lastItem) && (
+          {(!!pendingForDisplay || !!snapshot) && (
             <div style={{ marginTop: 8 }}>
               <button
                 type="button"
@@ -225,7 +253,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                   }}
                 >
                   {/* 思考 / 工具调用（按发生顺序） */}
-                  {(steps.length ? steps : (lastItem?.steps || [])).map(
+                  {(steps.length ? steps : (snapshot?.steps || [])).map(
                     (st: ThinkStep, i: number) => (
                       <div
                         key={i}
@@ -245,9 +273,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                   )}
                   {/* 回答：流式中用 streaming，完成后用 lastItem.a；
                       ★ 与问答 tab 一样用 MarkdownText 渲染（代码/列表/链接） */}
-                  {(streaming || lastItem?.a) && (
+                  {(streaming || snapshot?.answer) && (
                     <div style={{ marginTop: 6, fontSize: 11 }}>
-                      <MarkdownText text={streaming || lastItem?.a || ''} compact />
+                      <MarkdownText text={streaming || snapshot?.answer || ''} compact />
                     </div>
                   )}
                 </div>
@@ -262,7 +290,8 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                 stop()
               } else {
                 setFoldManual(null) // 跟随新的 busy：展开 → 完成自动收起
-                clearLast()
+                setSnapshot(null)
+                seenRef.current = { steps: [], answer: '' }
                 void ask(CHALLENGE_Q, undefined, 'questions')
               }
             }}

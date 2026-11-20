@@ -250,8 +250,11 @@ export function useAiChat(
         if (!alive()) return false
         const next = (r.items || []) as QaItem[]
         setItems(next)
-        // ★ 最后一条就是这一轮（qaAppend 是追加，顺序稳定）
-        setLastItem(next[next.length - 1] || null)
+        // ★ 有真实条目就覆盖本地快照（拿真 id/at）；
+        //   ⛔ 后端返回空列表时**保留**上面的本地快照 ——
+        //     `|| null` 会把刚设好的快照清掉，导致浮窗折叠块整个消失。
+        const fresh = next[next.length - 1]
+        if (fresh) setLastItem(fresh)
         return true
       } catch (e) {
         if (!(e instanceof DOMException && e.name === 'AbortError')) {

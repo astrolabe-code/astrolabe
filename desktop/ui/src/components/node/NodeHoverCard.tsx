@@ -46,41 +46,40 @@ interface QaQuestion {
 }
 
 /**
- * ★ 已出过题的节点：再次悬停**直接显示**，不再请求、也不用再点按钮。
- *   ⚠ 模块级 Map（不持久化）：后端也有缓存，但那是「0 次调用、仍要走一次 IPC」，
- *     这里存一份纯前端副本，悬停瞬间就能显示。
+ * ★★ 把出题回答的**纯文本**切成结构化条目（前端解析，内核只输出文本）。
+ *
+ * QUESTIONS_SYSTEM 要求模型按固定格式输出：
+ *   陷阱：<...>
+ *   优化：<...>
+ *   背景：<...>
+ *   下一步：<节点名> —— <理由>
+ *
+ * 流式期间照常显示 Markdown 原文；出完后用这个切成卡片。
+ * ⛔ 不支持的类型（自由文字）不丢，挂到上一条后面；首行无前缀则整段忽略。
  */
-const questionCache = new Map<number, QaQuestion[]>()
+function parseChallenge(text: string): QaQuestion[] {
+  const out: QaQuestion[] = []
+  let cur: QaQuestion | null = null
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    // 允许全角/半角冒号，允许「**陷阱**：」这类 Markdown 强调
+    const m = line.match(/^\*{0,2}(陷阱|优化|背景|下一步|简评)\*{0,2}\s*[：:]\s*(.*)$/)
+    if (m) {
+      if (cur) out.push(cur)
+      cur = { type: m[1], text: m[2] || '' }
+    } else if (cur) {
+      cur.text = cur.text ? `${cur.text}\n${line}` : line
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+}
 
 /** 挑战问题：前端把系统预设问题灌进内核，省略用户输入那一步 */
 const CHALLENGE_Q = '请按 system 的要求，对这个节点出题。'
 
 const CARD_W = 440
-
-/** 行内 markdown：只处理反引号 `` `code` `` */
-function inlineMd(text: string): ReactNode[] {
-  return String(text || '')
-    .split('`')
-    .map((part, i) =>
-      i % 2 === 1 ? (
-        <code
-          key={i}
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.94em',
-            padding: '0 3px',
-            borderRadius: 3,
-            background: 'rgba(127,127,127,.16)',
-            wordBreak: 'break-word',
-          }}
-        >
-          {part}
-        </code>
-      ) : (
-        part
-      ),
-    )
-}
 
 /** 三类问题的视觉区分：颜色 + 一句话说明 */
 const TYPE_STYLE: Record<string, { color: string; icon: string }> = {
@@ -246,12 +245,56 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                       </div>
                     ),
                   )}
-                  {/* 回答：就是本轮消息的 a（流式就地更新，完成后保留） */}
+                  {/* 回答原文：流式时逐字显示；完成后也可点开回看 */}
                   {!!current.a && (
                     <div style={{ marginTop: 6, fontSize: 11 }}>
                       <MarkdownText text={current.a} compact />
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ★★ 出完后在**折叠块下方**排卡片（流式期间不显示，避免半句就出卡） */}
+              {!current.streaming && !busy && current.a && (
+                <div style={{ marginTop: 8 }}>
+                  {parseChallenge(current.a).map((qa, i) => {
+                    const st = TYPE_STYLE[qa.type] || { color: 'var(--accent)', icon: '·' }
+                    return (
+                      <div
+                        key={`${i}-${qa.type}`}
+                        style={{
+                          marginTop: i === 0 ? 0 : 6,
+                          padding: '7px 9px',
+                          borderRadius: 7,
+                          background: 'rgba(127,127,127,.055)',
+                          borderLeft: `2px solid ${st.color}`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 600,
+                            color: st.color,
+                            marginBottom: 3,
+                            letterSpacing: '.02em',
+                          }}
+                        >
+                          {st.icon} {qa.type}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            lineHeight: 1.75,
+                            color: 'var(--text-main)',
+                            wordBreak: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                          }}
+                        >
+                          {qa.text}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

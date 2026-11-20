@@ -335,24 +335,6 @@ export const personalApi = {
       `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&scope=${scope}`,
     ),
 
-  /**
-   * ★★ 节点思考题（流式）：问题逐条到达，与问答共用 streamCall。
-   * 事件：started(token) / think / question(type,text) / next(name,why)
-   *       / cancelled / done(cached)
-   */
-  aiQuestions: (
-    ref: string,
-    body: { vid: number; refresh?: boolean; token?: string },
-    onEvent: (evt: Record<string, unknown> & { event: string }) => void,
-    signal?: AbortSignal,
-  ) =>
-    streamCall(
-      `/api/projects/${encodeURIComponent(ref)}/ai/questions/`,
-      body,
-      onEvent,
-      signal,
-    ),
-
   /** ★ 用户确认「源码改动提示」：记住当前指纹，之后不再重复打扰 */
   ackSource: (ref: string) =>
     post<{ acked: boolean }>(`/api/projects/${encodeURIComponent(ref)}/source-ack/`),

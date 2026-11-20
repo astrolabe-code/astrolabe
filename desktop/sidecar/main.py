@@ -49,7 +49,7 @@ import graphdb
 import ai_core.client as ai
 import contextpack
 import qa
-from ai_core.events import _ask_events, _questions_events
+from ai_core.events import _ask_events
 from ai_core.log import _log
 from ai_core import context as _ai_context
 
@@ -247,7 +247,6 @@ R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
 R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
-R_AQUESTIONS = re.compile(r"^/api/projects/([^/]+)/ai/questions/$")
 R_PQA = re.compile(r"^/api/projects/([^/]+)/qa/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_AICANCEL = re.compile(r"^/api/projects/([^/]+)/ai/cancel/$")
@@ -1567,7 +1566,6 @@ def _is_stream(path: str) -> bool:
     return (
         path.startswith("/api/ai/stream")
         or bool(R_AIASK.match(path))
-        or bool(R_AQUESTIONS.match(path))   # ★ 出题也走 SSE
     )
 
 
@@ -1726,31 +1724,6 @@ def _stream_events(method: str, path: str, body) -> "object":
             p, vid, str(body.get("question") or ""),
             system=str(body.get("system") or "ask"),
         )
-        return
-
-    # ★★ 出题也走流式（所有者 2026-11-19）
-    m = R_AQUESTIONS.match(path)
-    if m:
-        p = _project(m.group(1))
-        if not p:
-            raise ValueError("项目不存在")
-        if method != "POST":
-            raise ValueError("不支持的方法")
-        vid = int(body.get("vid") or 0)
-        if not vid:
-            raise ValueError("缺少 vid")
-        _log("questions: route hit, vid=", vid, "refresh=", body.get("refresh"))
-        _graph_ready(p)
-        _log("questions: graph ready")
-        incoming = str(body.get("token") or "").strip()
-        count = 0
-        for evt in _questions_events(
-            p, vid, bool(body.get("refresh")), token=incoming,
-        ):
-            if evt.get("event") == "question":
-                count += 1
-            yield evt
-        _log("questions: stream ended, question events =", count)
         return
 
     if R_AISTREAM.match(path):

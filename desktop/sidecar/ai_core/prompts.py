@@ -14,7 +14,7 @@ ai.py 从本模块 import 这五个常量，用来组装各端点的 messages：
   ASK_SYSTEM       问答 /ai/ask/
   COMPLETE_SYSTEM  行内补全 /ai/complete/
   TITLE_SYSTEM     自动标题 /ai/title/
-  QUESTIONS_SYSTEM 出题 /ai/questions/
+  QUESTIONS_SYSTEM 出题（/ai/ask/ 传 system=questions）
 
 ⚠ ASK_SYSTEM = BASE_SYSTEM + 问答专属部分 —— 拼接关系也在这里，
   改底座时问答自动跟着变。

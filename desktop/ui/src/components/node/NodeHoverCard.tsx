@@ -18,7 +18,7 @@ import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
  * ## 思考题（2026-11-17 追加）
  *
  * 「点开一个节点，就要根据这个节点涉及到的知识提问」——
- * 问题由后端 `/ai/questions/` 生成（带上下文、引用用户写过的话）。
+ * 问题由 AI 内核生成（问答能力 + 出题 system + 结构化输出要求）。
  *
  * 三条交互约束（都来自所有者原话）：
  * ```

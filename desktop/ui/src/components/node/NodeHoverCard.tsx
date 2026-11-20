@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Loader2, Square } from 'lucide-react'
+import { Loader2, RefreshCw, Square } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { useAiChat, type ThinkStep } from '../../lib/useAiChat'
 
@@ -103,9 +103,13 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
   // ★ 浮窗用 challenge 作用域：与问答 tab 的历史彻底分开
-  const chat = useAiChat(projectRef || '', node.vid, 'challenge', false)
+  const chat = useAiChat(projectRef || '', node.vid, 'challenge')
   const { items, busy, err, ask, stop } = chat
-  /** ★ 浮窗不读历史（loadHistory=false）⇒ items 里只有本次打开期间的消息，取最后一条 */
+  /**
+   * ★ 读 challenge 历史，但只显示**最后一条**：
+   *   已出过题的节点 ⇒ 打开即能看到上次的结果（默认折叠）；
+   *   没出过 ⇒ current 为 null，显示「挑战问题」按钮。
+   */
   const current = items.length ? items[items.length - 1] : null
   /** 思考+回答折叠块：出题时自动展开、完成自动收起；用户点过就听用户的 */
   const [foldManual, setFoldManual] = useState<boolean | null>(null)
@@ -260,7 +264,8 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                 stop()
               } else {
                 setFoldManual(null) // 跟随新的 busy：展开 → 完成自动收起
-                void ask(CHALLENGE_Q, undefined, 'questions')
+                // ★ 已出过题 ⇒ 「换一批」：replaceId 顶掉上一条（历史只留最新一份）
+                void ask(CHALLENGE_Q, current?.id, 'questions')
               }
             }}
             style={{
@@ -271,7 +276,13 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
               cursor: 'pointer', fontSize: 11.5,
             }}
           >
-            {busy ? <><Square size={10} fill="currentColor" /> 停止</> : '💭 挑战问题'}
+            {busy ? (
+              <><Square size={10} fill="currentColor" /> 停止</>
+            ) : current ? (
+              <><RefreshCw size={10} /> 换一批</>
+            ) : (
+              '💭 挑战问题'
+            )}
           </button>
         </div>
       </div>,

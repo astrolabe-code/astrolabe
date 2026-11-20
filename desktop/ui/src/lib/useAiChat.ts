@@ -211,6 +211,24 @@ export function useAiChat(
         const ms = Math.round(performance.now() - t0)
         if (alive()) setLiveMs(ms)
 
+        // ★★ 回答一结束就留下本轮快照（供浮窗折叠块显示）。
+        //   ⛔ 不依赖 qaAppend 成功 —— 入库失败时也要能折叠回看，
+        //     否则 finally 清了 pending 后整个块会消失。
+        if (alive()) {
+          setLastItem({
+            id: `local-${Date.now()}`,
+            q,
+            a: acc.trim(),
+            at: new Date().toISOString(),
+            model: '',
+            tokens_in: tin,
+            tokens_out: tout,
+            ms,
+            usage,
+            steps: stepsAcc,
+          })
+        }
+
         if (replaceId) {
           try {
             await personalApi.qaRemove(projectRef, vid, replaceId, scope)

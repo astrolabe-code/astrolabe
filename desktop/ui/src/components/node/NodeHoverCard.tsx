@@ -6,6 +6,7 @@ import { useAiChat, type ThinkStep } from '../../lib/useAiChat'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
+import MarkdownText from '../ui/MarkdownText'
 
 /**
  * ★★ 鼠标悬停时的**节点浮窗**（图谱 / 节点列表共用）
@@ -104,6 +105,12 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 浮窗用 challenge 作用域：与问答 tab 的历史彻底分开
   const chat = useAiChat(projectRef || '', node.vid, 'challenge')
   const { lastItem, busy, streaming, pending, steps, err, ask, stop, clearLast } = chat
+  /** ★ 思考+回答折叠块：出题时自动展开、完成自动收起；用户点过就听用户的 */
+  const [foldManual, setFoldManual] = useState<boolean | null>(null)
+  const foldOpen = foldManual ?? busy
+  // ★ 流式中 pending 有值（系统触发词），完成后由 lastItem 接管；
+  //   ⛔ 只用来判断"有没有内容"，不把这句话画到界面上
+  const pendingForDisplay = pending
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
@@ -182,47 +189,83 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         <div style={{ marginTop: 10, borderTop: '1px dashed var(--card-border)' }}>
           {err && <div style={{ fontSize: 10.5, color: 'var(--err)', marginTop: 6 }}>{err}</div>}
 
-          {/* ★ 只显示本轮挑战结果（关掉浮窗就没了）；历史一律留在问答 tab */}
-          {lastItem && !pending && (
+          {/* ★ 只显示本轮结果（关掉浮窗就没了）：思考 + 回答合成一个可折叠块。
+              ⛔ 不显示问题气泡 —— 那句是系统触发词，对用户没有意义。 */}
+          {(!!pendingForDisplay || !!lastItem) && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>
-                {lastItem.q}
-              </div>
-              {!!lastItem.steps?.length && (
-                <details style={{ marginTop: 3, fontSize: 10, opacity: 0.65 }}>
-                  <summary>思考过程</summary>
-                  {lastItem.steps.map((st: ThinkStep, i: number) => (
-                    <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
-                      {st.kind === 'tool' ? `⌕ ${st.name} · ${st.lines || 0} 行` : st.text}
+              <button
+                type="button"
+                onClick={() => setFoldManual((v) => !(v ?? busy))}
+                className="faint"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 10.5,
+                  padding: '2px 9px',
+                  borderRadius: 999,
+                  border: '1px solid var(--card-border)',
+                  background: 'transparent',
+                  color: 'var(--text-faint)',
+                  cursor: 'pointer',
+                }}
+              >
+                {busy && <Loader2 size={9} className="animate-spin" />}
+                {busy ? '思考中' : '已出题'}
+                <span style={{ opacity: 0.6 }}>{foldOpen ? '▾' : '▸'}</span>
+              </button>
+              {foldOpen && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    paddingLeft: 8,
+                    borderLeft: '2px solid var(--card-border)',
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {/* 思考 / 工具调用（按发生顺序） */}
+                  {(steps.length ? steps : (lastItem?.steps || [])).map(
+                    (st: ThinkStep, i: number) => (
+                      <div
+                        key={i}
+                        style={{
+                          fontSize: 10,
+                          lineHeight: 1.65,
+                          opacity: 0.7,
+                          whiteSpace: 'pre-wrap',
+                          margin: '3px 0',
+                        }}
+                      >
+                        {st.kind === 'tool'
+                          ? `⌕ ${st.name} · ${st.lines || 0} 行 / ${st.chars || 0} 字`
+                          : st.text}
+                      </div>
+                    ),
+                  )}
+                  {/* 回答：流式中用 streaming，完成后用 lastItem.a；
+                      ★ 与问答 tab 一样用 MarkdownText 渲染（代码/列表/链接） */}
+                  {(streaming || lastItem?.a) && (
+                    <div style={{ marginTop: 6, fontSize: 11 }}>
+                      <MarkdownText text={streaming || lastItem?.a || ''} compact />
                     </div>
-                  ))}
-                </details>
-              )}
-              <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>
-                {lastItem.a}
-              </div>
-            </div>
-          )}
-
-          {!!pending && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>{pending}</div>
-              {!!steps.length && (
-                <div style={{ fontSize: 10, opacity: 0.6, marginTop: 3, whiteSpace: 'pre-wrap' }}>
-                  {steps.map((st: ThinkStep, i: number) => (
-                    <div key={i}>{st.kind === 'tool' ? `⌕ ${st.name}` : st.text}</div>
-                  ))}
+                  )}
                 </div>
-              )}
-              {!!streaming && (
-                <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>{streaming}</div>
               )}
             </div>
           )}
 
           <button
             type="button"
-            onClick={() => (busy ? stop() : (clearLast(), void ask(CHALLENGE_Q, undefined, 'questions')))}
+            onClick={() => {
+              if (busy) {
+                stop()
+              } else {
+                setFoldManual(null) // 跟随新的 busy：展开 → 完成自动收起
+                clearLast()
+                void ask(CHALLENGE_Q, undefined, 'questions')
+              }
+            }}
             style={{
               width: '100%', height: 30, marginTop: 8, borderRadius: 999,
               border: '1px solid var(--accent)',

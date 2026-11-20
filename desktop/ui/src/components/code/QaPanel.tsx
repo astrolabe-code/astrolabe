@@ -104,10 +104,8 @@ function UsageLine({ item }: { item: QaItem }) {
 }
 
 export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
-  const {
-    items, busy, streaming, pending, steps, liveMs, err, loading, total,
-    ask, stop, clear: clearAll,
-  } = useAiChat(projectRef, vid)
+  const { items, busy, err, loading, total, ask, stop, clear: clearAll } =
+    useAiChat(projectRef, vid)
 
   const [q, setQ] = useState('')
   const [copiedId, setCopiedId] = useState('')
@@ -116,7 +114,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
   useEffect(() => {
     const el = boxRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [items, streaming])
+  }, [items])
 
   const copy = async (text: string, id: string) => {
     try {
@@ -248,7 +246,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             <Loader2 size={13} className="animate-spin" /> 正在读取历史…
           </div>
         )}
-        {!loading && !items.length && !streaming && (
+        {!loading && !items.length && (
           <div className="faint" style={{ fontSize: 12, lineHeight: 1.8 }}>
             就着这个节点问点什么。回答会存下来，下次打开还在。
             <br />
@@ -279,7 +277,7 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
 
             {/* ★ 思考过程在**回答上方**（所有者 2026-11-19：「折叠的思考过程
                 怎么跑到回答下面了？不应该在回答上面吗？」） */}
-            <ThinkBlock steps={it.steps} ms={it.ms} />
+            <ThinkBlock steps={it.steps} live={it.streaming} ms={it.ms} />
 
             {/* 答 */}
             <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 6 }}>
@@ -297,6 +295,10 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               >
                 {it.a ? (
                   <MarkdownText text={it.a} compact />
+                ) : it.streaming ? (
+                  <span className="faint">
+                    <Loader2 size={11} className="animate-spin" /> 正在回答…
+                  </span>
                 ) : (
                   <span className="faint">（没有回答）</span>
                 )}
@@ -328,56 +330,6 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
             </div>
           </div>
         ))}
-
-        {/* ★★ 正在进行的一问：问题先上屏 → 思考过程 → 回答 */}
-        {!!pending && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <div
-                style={{
-                  maxWidth: '82%',
-                  padding: '6px 10px',
-                  borderRadius: '10px 10px 2px 10px',
-                  background: 'var(--accent)',
-                  color: '#fff',
-                  fontSize: 12.5,
-                  lineHeight: 1.7,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {pending}
-              </div>
-            </div>
-
-            <ThinkBlock steps={steps} live={busy} ms={busy ? 0 : liveMs} />
-
-            {!!streaming && (
-              <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 6 }}>
-                <div
-                  style={{
-                    maxWidth: '88%',
-                    padding: '6px 10px',
-                    borderRadius: '10px 10px 10px 2px',
-                    background: 'var(--card, #fff)',
-                    border: '1px solid var(--card-border)',
-                    fontSize: 12.5,
-                    lineHeight: 1.75,
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  <MarkdownText text={streaming} compact />
-                </div>
-              </div>
-            )}
-
-            {busy && !streaming && !steps.length && (
-              <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
-                <Loader2 size={13} className="animate-spin" /> 等待回答…
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* 输入 */}

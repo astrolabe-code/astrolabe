@@ -138,6 +138,7 @@ def append(
     trace: list | None = None,
     steps: list | None = None,
     scope: str = "main",
+    item_id: str = "",
 ) -> dict:
     """追加一条问答；返回追加后的完整列表。
 
@@ -151,8 +152,12 @@ def append(
 
     data = _read(data_dir, vid, scope)
     now = datetime.datetime.now()
+    # ★★ 前端生成 id（OpenWebUI 风格）：流式期间它就已在消息列表里，
+    #   后端入库时照用 ⇒ 不需要「临时 id → 真 id 替换」那一步。
+    #   没传（老调用方）才用原来的时间戳 + 序号。
+    new_id = str(item_id or "").strip()[:120] or f"{int(now.timestamp())}-{len(data['items']) + 1}"
     item = {
-        "id": f"{int(now.timestamp())}-{len(data['items']) + 1}",
+        "id": new_id,
         "q": question,
         "a": answer,
         "at": now.isoformat(timespec="seconds"),

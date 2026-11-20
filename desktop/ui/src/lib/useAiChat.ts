@@ -1,21 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { personalApi, streamCall } from '../api/personal'
+import { setAiBusy as setAiBusyGlobal } from './aiBusy'
 
 /**
  * ★★ AI 问答内核（纯逻辑，零 JSX）。
  *
  * 所有者原话（2026-11-20）：
  * 「ai问答内核不能涉及一点界面上的事，只提供问答能力，停止能力等的接口。
- *   想想Linux内核，难道设计Linux内核时，还要控制图形界面如何显示吗？
- *   图形界面都是后来编写，调用内核基础能力，画的。」
+ *   想想Linux内核，难道设计Linux内核时，还要控制图形界面如何显示吗？」
+ * 「对，就仿照 openwebui，前端生成 id 就行了，后端用，就行了。」
+ * 「嗯，对呀，就是消息列表，为什么还要两套设计？」
  *
- * ## 内核做什么
- * · 状态：历史 items / 本轮 pending / 流式文本 / 思考步骤 / 忙碌 / 错误 / 用量
- * · 能力：ask(问一句) / stop(停止) / clear(清空历史) / reload(重读历史)
+ * ## 核心：一个消息列表（OpenWebUI 风格）
+ * ask() 一开头就把一条**乐观消息**插进 items（前端生成 id、a 为空、
+ * streaming=true），后续每个事件就地更新那一条：
+ *   delta     → it.a += 文本
+ *   think     → it.steps 追加/拼接
+ *   tool_use  → it.steps 追加
+ *   done      → qaAppend 用同一个 id 入库，后端返回列表整体替换
+ *
+ * ⛔ 没有 pending / streaming / steps / lastItem 这些独立状态 ——
+ *   那些是「历史区 + 临时区」两套设计的产物，这正是要消除的东西。
  *
  * ## 内核不做什么
- * ⛔ 不渲染任何东西、不决定输入框/按钮长什么样、不判断「挑战问题」还是「用户提问」
- * —— 那些都是 UI 层（QaPanel / NodeHoverCard）的事。
+ * 不渲染、不决定按钮/输入框长什么样、不判断「挑战问题」还是「用户提问」。
  */
 
 export interface QaUsage {
@@ -48,36 +56,40 @@ export interface QaItem {
   think?: string
   trace?: { name: string; chars: number; lines: number }[]
   steps?: ThinkStep[]
+  /** ★ 仅前端：这一条正在流式生成（后端不会存这个字段） */
+  streaming?: boolean
 }
 
 const EMPTY_USAGE: QaUsage = { total: 0, hit: 0, miss: 0, write: 0, think: 0, response: 0 }
 
 export type AiScope = 'main' | 'challenge'
 
+/** 前端生成消息 id（OpenWebUI 风格：请求发出前就有，全程不变） */
+function newMessageId(): string {
+  return `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 export function useAiChat(
   projectRef: string,
   vid: number | null,
   scope: AiScope = 'main',
+  /** ★ false = 不读历史（浮窗用：只显示本次打开期间 generated 的消息） */
+  loadHistory = true,
 ) {
   const [items, setItems] = useState<QaItem[]>([])
   const [busy, setBusy] = useState(false)
-  const [streaming, setStreaming] = useState('')
-  /** 本轮问题（已上屏气泡，回答入库后清空） */
-  const [pending, setPending] = useState('')
-  const [steps, setSteps] = useState<ThinkStep[]>([])
-  const [liveMs, setLiveMs] = useState(0)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
-  /** ★ 本轮最终条目：浮窗用它显示「最后一轮」，不读全部历史 */
-  const [lastItem, setLastItem] = useState<QaItem | null>(null)
 
   const runRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   const backendTokenRef = useRef('')
+  /** 当前正在流式的那条消息 id（停止时用它把 streaming 标记去掉） */
+  const currentIdRef = useRef('')
 
   /** 载入这个节点的历史（切节点时自动） */
   const reload = useCallback(async () => {
-    if (!projectRef || !vid) {
+    if (!loadHistory || !projectRef || !vid) {
       setItems([])
       return
     }
@@ -94,7 +106,7 @@ export function useAiChat(
     return () => {
       live = false
     }
-  }, [projectRef, vid, scope])
+  }, [projectRef, vid, scope, loadHistory])
 
   useEffect(() => {
     void reload()
@@ -105,35 +117,52 @@ export function useAiChat(
     runRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
-    setPending('')
-    setSteps([])
-    setStreaming('')
-    setLastItem(null)
+    currentIdRef.current = ''
     setBusy(false)
   }, [vid])
 
-  /** ★ 问一句。UI 层想问什么就传什么（用户输入的，或系统预设的「挑战问题」） */
+  /**
+   * ★ 问一句。UI 层想问什么就传什么（用户输入的，或系统预设的「挑战问题」）。
+   * @returns 这条消息的 id（成功）；失败返回空串
+   */
   const ask = useCallback(
     async (
       question: string,
       replaceId?: string,
       system: 'ask' | 'questions' = 'ask',
-    ): Promise<boolean> => {
+    ): Promise<string> => {
       const q = String(question || '').trim()
-      if (!q || busy || !vid || !projectRef) return false
+      if (!q || busy || !vid || !projectRef) return ''
+
+      // ★ 前端生成 id —— 这条消息从这一刻起就在列表里，全程不换 id
+      const id = newMessageId()
+      currentIdRef.current = id
+
+      const optimistic: QaItem = {
+        id,
+        q,
+        a: '',
+        at: new Date().toISOString(),
+        model: '',
+        steps: [],
+        streaming: true,
+      }
+      // 「重新回答」：新消息顶掉旧的那条（前端立刻移除，后端稍后删）
+      setItems((prev) => [...prev.filter((x) => x.id !== replaceId), optimistic])
+      setErr('')
+      setBusy(true)
 
       const ctl = new AbortController()
       abortRef.current = ctl
       backendTokenRef.current = ''
-      setErr('')
-      setPending(q)
-      setBusy(true)
-      setStreaming('')
-      setSteps([])
-      setLiveMs(0)
-
       const myRun = ++runRef.current
       const alive = () => runRef.current === myRun
+
+      /** 就地更新这一条消息（不碰其它消息） */
+      const patch = (fn: (it: QaItem) => QaItem) => {
+        if (!alive()) return
+        setItems((prev) => prev.map((it) => (it.id === id ? fn(it) : it)))
+      }
 
       let acc = ''
       let stepsAcc: ThinkStep[] = []
@@ -146,7 +175,7 @@ export function useAiChat(
 
       const pushStep = (st: ThinkStep) => {
         stepsAcc = [...stepsAcc, st]
-        if (alive()) setSteps(stepsAcc)
+        patch((it) => ({ ...it, steps: stepsAcc }))
       }
 
       try {
@@ -159,7 +188,7 @@ export function useAiChat(
             } else if (evt.event === 'delta') {
               got = true
               acc += String(evt.text ?? '')
-              if (alive()) setStreaming(acc)
+              patch((it) => ({ ...it, a: acc }))
             } else if (evt.event === 'tool_use') {
               pushStep({
                 kind: 'tool',
@@ -176,7 +205,7 @@ export function useAiChat(
                   ...stepsAcc.slice(0, -1),
                   { ...last, text: (last.text || '') + piece },
                 ]
-                if (alive()) setSteps(stepsAcc)
+                patch((it) => ({ ...it, steps: stepsAcc }))
               } else {
                 pushStep({ kind: 'think', text: piece })
               }
@@ -201,7 +230,7 @@ export function useAiChat(
         if (!got) {
           if (sawThink) {
             acc = '（模型只输出了思考，没有给出回答。可能是思考把额度用完了，请重试或调高 max_tokens。）'
-            setStreaming(acc)
+            patch((it) => ({ ...it, a: acc }))
             got = true
           } else {
             throw new Error('没有收到任何内容（检查 AI 设置）')
@@ -209,25 +238,6 @@ export function useAiChat(
         }
 
         const ms = Math.round(performance.now() - t0)
-        if (alive()) setLiveMs(ms)
-
-        // ★★ 回答一结束就留下本轮快照（供浮窗折叠块显示）。
-        //   ⛔ 不依赖 qaAppend 成功 —— 入库失败时也要能折叠回看，
-        //     否则 finally 清了 pending 后整个块会消失。
-        if (alive()) {
-          setLastItem({
-            id: `local-${Date.now()}`,
-            q,
-            a: acc.trim(),
-            at: new Date().toISOString(),
-            model: '',
-            tokens_in: tin,
-            tokens_out: tout,
-            ms,
-            usage,
-            steps: stepsAcc,
-          })
-        }
 
         if (replaceId) {
           try {
@@ -236,9 +246,12 @@ export function useAiChat(
             /* 删不掉也继续 */
           }
         }
+
+        // ★ 后端用前端传来的同一个 id 入库 ⇒ 不需要换 id、不需要搬移消息
         const r = await personalApi.qaAppend(projectRef, {
+          id,
           vid,
-          q: q,
+          q,
           a: acc.trim(),
           tokens_in: tin,
           tokens_out: tout,
@@ -247,37 +260,37 @@ export function useAiChat(
           steps: stepsAcc,
           scope,
         })
-        if (!alive()) return false
-        const next = (r.items || []) as QaItem[]
-        setItems(next)
-        // ★ 有真实条目就覆盖本地快照（拿真 id/at）；
-        //   ⛔ 后端返回空列表时**保留**上面的本地快照 ——
-        //     `|| null` 会把刚设好的快照清掉，导致浮窗折叠块整个消失。
-        const fresh = next[next.length - 1]
-        if (fresh) setLastItem(fresh)
-        return true
+        if (!alive()) return id
+        if (loadHistory) {
+          // 问答 tab：用后端返回的完整列表（同一批 id，消息没被搬移）
+          setItems(((r.items || []) as QaItem[]).map((it) => ({ ...it, streaming: false })))
+        } else {
+          // 浮窗：不读历史 ⇒ 只把本轮那条标记为已完成，不引入后端历史
+          patch((it) => ({ ...it, streaming: false }))
+        }
+        currentIdRef.current = ''
+        return id
       } catch (e) {
         if (!(e instanceof DOMException && e.name === 'AbortError')) {
-          if (alive()) setErr(e instanceof Error ? e.message : String(e))
+          if (alive()) {
+            const msg = e instanceof Error ? e.message : String(e)
+            setErr(msg)
+            // ★ 失败也留在列表里：这条消息本来就在，标上错误即可
+            patch((it) => ({ ...it, a: it.a || `（失败：${msg}）`, streaming: false }))
+          }
         }
-        return false
+        return ''
       } finally {
         abortRef.current = null
         backendTokenRef.current = ''
         setAiBusyGlobal(false)
-        if (alive()) {
-          setBusy(false)
-          // ★★ ⛔ 不清 streaming —— 它就是本轮最终回答，
-          //   浮窗直接渲染它；问答 tab 靠 pending 判流式区，不受影响。
-          //   （所有者 2026-11-20：「ai内核输出什么，前端就照样显示」）
-          setPending('')
-        }
+        if (alive()) setBusy(false)
       }
     },
-    [projectRef, vid, busy, scope],
+    [projectRef, vid, busy, scope, loadHistory],
   )
 
-  /** ★ 停止：断后端 LLM + 断前端连接；已输出的内容保留 */
+  /** ★ 停止：断后端 LLM + 断前端连接；列表里那条消息原样保留 */
   const stop = useCallback(() => {
     const token = backendTokenRef.current
     if (token && projectRef) {
@@ -285,13 +298,16 @@ export function useAiChat(
     }
     abortRef.current?.abort()
     abortRef.current = null
-    runRef.current += 1 // 让 ask 的 finally 不清已输出内容
+    runRef.current += 1 // 让进行中的 ask 的 patch/finally 不再改动界面
+    // ★ 把正在流式那条标记为已停（否则一直转圈）
+    const id = currentIdRef.current
+    if (id) {
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, streaming: false } : it)))
+    }
+    currentIdRef.current = ''
     setAiBusyGlobal(false)
     setBusy(false)
   }, [projectRef])
-
-  /** ★ 只清「本轮快照」（浮窗用：换一批时清掉上一轮显示，历史仍在） */
-  const clearLast = useCallback(() => setLastItem(null), [])
 
   /** ★ 清空这个节点的历史 */
   const clear = useCallback(async () => {
@@ -299,26 +315,20 @@ export function useAiChat(
     await personalApi.qaClear(projectRef, vid, scope)
     setItems([])
     setErr('')
-  }, [projectRef, vid, scope])
+  }, [projectRef, vid, scope, loadHistory])
 
   return {
-    // 状态
+    // 状态：一个列表，没有 pending/streaming/steps/lastItem
     items,
     busy,
-    streaming,
-    pending,
-    steps,
-    liveMs,
     err,
     loading,
-    lastItem,
     // 能力
     ask,
     stop,
-    clearLast,
     clear,
     reload,
-    // 给界面读的累计统计（纯派生，不渲染）
+    // 累计统计（纯派生）
     total: (() => {
       const t = items.reduce(
         (a, it) => ({
@@ -329,13 +339,7 @@ export function useAiChat(
         }),
         { tok: 0, ms: 0, hit: 0, miss: 0 },
       )
-      return {
-        ...t,
-        rate: t.hit + t.miss > 0 ? t.hit / (t.hit + t.miss) : 0,
-      }
+      return { ...t, rate: t.hit + t.miss > 0 ? t.hit / (t.hit + t.miss) : 0 }
     })(),
   }
 }
-
-/** 全应用「AI 回答中」状态（让界面层禁用跳转按钮用；内核只置位，不碰 UI） */
-import { setAiBusy as setAiBusyGlobal } from './aiBusy'

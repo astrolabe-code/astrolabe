@@ -1173,6 +1173,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                         body.get("trace") if isinstance(body.get("trace"), list) else None,
                         body.get("steps") if isinstance(body.get("steps"), list) else None,
                         scope,
+                        str(body.get("id") or ""),  # ★ 前端生成的 id，后端照用
                     )
                 )
             if method == "DELETE":

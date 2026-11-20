@@ -288,6 +288,8 @@ export const personalApi = {
   qaAppend: (
     ref: string,
     body: {
+      /** ★ 前端生成的 id（OpenWebUI 风格）：流式期间消息已在列表里，后端照用 */
+      id: string
       vid: number
       q: string
       a: string

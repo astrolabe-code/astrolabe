@@ -103,10 +103,10 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
   // ★ 浮窗用 challenge 作用域：与问答 tab 的历史彻底分开
-  const chat = useAiChat(projectRef || '', node.vid, 'challenge')
-  const { busy, streaming, pending, steps, err, ask, stop } = chat
-  // ★ 内核输出什么就渲染什么：steps（思考+工具）+ streaming（回答，完成后保留最终值）
-  //   浮窗不自己攒快照 —— 那是多余的一层。
+  const chat = useAiChat(projectRef || '', node.vid, 'challenge', false)
+  const { items, busy, err, ask, stop } = chat
+  /** ★ 浮窗不读历史（loadHistory=false）⇒ items 里只有本次打开期间的消息，取最后一条 */
+  const current = items.length ? items[items.length - 1] : null
   /** 思考+回答折叠块：出题时自动展开、完成自动收起；用户点过就听用户的 */
   const [foldManual, setFoldManual] = useState<boolean | null>(null)
   const foldOpen = foldManual ?? busy
@@ -190,7 +190,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
           {/* ★ 只显示本轮结果（关掉浮窗就没了）：思考 + 回答合成一个可折叠块。
               ⛔ 不显示问题气泡 —— 那句是系统触发词，对用户没有意义。 */}
-          {(!!pending || !!streaming || !!steps.length) && (
+          {current && (
             <div style={{ marginTop: 8 }}>
               <button
                 type="button"
@@ -224,7 +224,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                   }}
                 >
                   {/* 思考 / 工具调用（按发生顺序） */}
-                  {steps.map(
+                  {(current.steps || []).map(
                     (st: ThinkStep, i: number) => (
                       <div
                         key={i}
@@ -242,11 +242,10 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                       </div>
                     ),
                   )}
-                  {/* 回答：内核的 streaming（流式更新，完成后保留最终值）；
-                      ★ 与问答 tab 一样用 MarkdownText 渲染（代码/列表/链接） */}
-                  {!!streaming && (
+                  {/* 回答：就是本轮消息的 a（流式就地更新，完成后保留） */}
+                  {!!current.a && (
                     <div style={{ marginTop: 6, fontSize: 11 }}>
-                      <MarkdownText text={streaming} compact />
+                      <MarkdownText text={current.a} compact />
                     </div>
                   )}
                 </div>

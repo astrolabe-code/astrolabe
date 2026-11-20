@@ -280,9 +280,10 @@ export const personalApi = {
     ),
 
   /** ★★ 问答历史（JSON，挂在节点上；见 sidecar/qa.py） */
-  qaList: (ref: string, vid: number) =>
+  /** ★ scope: main=问答 tab / challenge=节点浮窗（两份历史互不读写） */
+  qaList: (ref: string, vid: number, scope: 'main' | 'challenge' = 'main') =>
     get<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
-      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&scope=${scope}`,
     ),
   qaAppend: (
     ref: string,
@@ -316,6 +317,8 @@ export const personalApi = {
         think?: number
         response?: number
       }
+      /** ★ 两份历史：main=问答 tab / challenge=浮窗挑战 */
+      scope?: 'main' | 'challenge'
     },
   ) =>
     post<{ vid: number; items: { id: string; q: string; a: string; at: string; model: string }[] }>(
@@ -323,13 +326,13 @@ export const personalApi = {
       body,
     ),
   /** ★ 删一条（「重新回答」前先删旧的） */
-  qaRemove: (ref: string, vid: number, id: string) =>
+  qaRemove: (ref: string, vid: number, id: string, scope: 'main' | 'challenge' = 'main') =>
     del<{ vid: number; items: unknown[] }>(
-      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&id=${encodeURIComponent(id)}`,
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&id=${encodeURIComponent(id)}&scope=${scope}`,
     ),
-  qaClear: (ref: string, vid: number) =>
+  qaClear: (ref: string, vid: number, scope: 'main' | 'challenge' = 'main') =>
     del<{ vid: number; items: unknown[] }>(
-      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}`,
+      `/api/projects/${encodeURIComponent(ref)}/qa/?vid=${vid}&scope=${scope}`,
     ),
 
   /**

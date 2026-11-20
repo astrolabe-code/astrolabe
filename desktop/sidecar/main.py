@@ -46,9 +46,12 @@ import imitation
 import links
 import board
 import graphdb
-import ai
+import ai_core.client as ai
 import contextpack
 import qa
+from ai_core.events import _ask_events, _questions_events
+from ai_core.log import _log
+from ai_core import context as _ai_context
 
 VERSION = "0.3.0"
 
@@ -188,6 +191,9 @@ def _activate(entry: dict) -> None:
     ROOT = data
     fresh = not os.path.exists(db)
     CONN = store.connect(data)
+    # ★★ 换库后必须重新注入内核：events.py 从 context 读 ROOT / CONN，
+    #   ⛔ 只在启动时 bind 空值会让内核永远拿到 "" / None
+    _ai_context.bind(ROOT, CONN)
 
     # ★ 索引重建时，项目行也在库里（一个数据目录只有一个项目）⇒ 得补回来
     if CONN.execute("SELECT 1 FROM project LIMIT 1").fetchone() is None:
@@ -1148,8 +1154,10 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             vid = int(body.get("vid") or 0)
             if not vid:
                 return bad("缺少 vid")
+            # ★ 两份历史：main=问答 tab / challenge=节点浮窗
+            scope = str(body.get("scope") or "main")
             if method == "GET":
-                return ok(qa.list_items(ROOT, vid))
+                return ok(qa.list_items(ROOT, vid, scope))
             if method == "POST":
                 return ok(
                     qa.append(
@@ -1165,12 +1173,13 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                         str(body.get("think") or ""),
                         body.get("trace") if isinstance(body.get("trace"), list) else None,
                         body.get("steps") if isinstance(body.get("steps"), list) else None,
+                        scope,
                     )
                 )
             if method == "DELETE":
                 item_id = str(body.get("id") or "")
                 return ok(
-                    qa.remove_item(ROOT, vid, item_id) if item_id else qa.clear(ROOT, vid)
+                    qa.remove_item(ROOT, vid, item_id, scope) if item_id else qa.clear(ROOT, vid, scope)
                 )
             return bad("不支持的方法", 405)
         except qa.QaError as exc:
@@ -1552,6 +1561,8 @@ def _scan_dir(root: str, limit: int = 200000) -> dict:
 #     不流式的话界面会像卡死。
 
 
+
+
 def _is_stream(path: str) -> bool:
     return (
         path.startswith("/api/ai/stream")
@@ -1599,500 +1610,18 @@ def _node_context(project, node: dict) -> tuple[str, str, list, list, list]:
 #     这样ai才能更方便地找到信息」
 # ⛔ 全部只读：不写文件、不改图、不执行代码。
 
-_CYPHER_DENY = (
-    "CREATE", "MERGE", "DELETE", "SET", "REMOVE", "DROP", "ALTER",
-    "COPY", "INSTALL", "LOAD", "FOREACH", "CALL", "ATTACH", "DETACH",
-)
 
 
-def _cypher_guard(query: str) -> str:
-    """只读校验：拒绝写关键字，强制 MATCH + RETURN + LIMIT。
-
-    所有者原话（2026-11-18）：
-    「你只要告诉ai可以用cypher查询，不比你写的更灵活？
-      只要检查ai写的查询语句只是查询，没有任何修改功能就行。」
-
-    ⚠ 做法很粗但够用：先把单/双引号里的字符串挖掉（避免 'SET' 这种字面量误判），
-      再按单词边界匹配写关键字。
-    ⛔ 绝不拼接任何用户/模型的字符串进查询以外的地方。
-    """
-    q = str(query or "").strip()
-    if not q:
-        return "缺少 query"
-    scrubbed = re.sub(r"'(?:[^'\\]|\\.)*'", "''", q)
-    scrubbed = re.sub(r'"(?:[^"\\]|\\.)*"', '""', scrubbed)
-    up = re.sub(r"\s+", " ", scrubbed.upper())
-
-    for word in _CYPHER_DENY:
-        if re.search(rf"\b{word}\b", up):
-            return f"拒绝执行：语句里出现 {word}，这里只允许只读查询"
-    if not re.search(r"\bMATCH\b", up):
-        return "查询必须包含 MATCH"
-    if not re.search(r"\bRETURN\b", up):
-        return "查询必须包含 RETURN"
-    if not re.search(r"\bLIMIT\b", up):
-        return "请加上 LIMIT（最多 200 行）"
-    return ""
 
 
-READ_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "cypher",
-            "description": (
-                "直接查代码图谱（只读 cypher）——想怎么连就怎么连，比专用工具灵活。\n"
-                "\n"
-                "图谱结构（LadybugDB）：\n"
-                "  节点表 Code(vid, kind, name, qname, rel_path, line, lineEnd, signature, origin)\n"
-                "    kind: dir / file / function / method / class / interface / struct / union /\n"
-                "          enum / typedef / record / macro / module / package / variable /\n"
-                "          constant / field / type\n"
-                "    origin: 'manual' 表示用户手工补的节点（确切），其它是解析产出\n"
-                "  关系表 Rel(kind, origin, line)，方向 a -> b 表示 a 依赖 b\n"
-                "    kind: call / invoke / contains / import / include / extend / implement\n"
-                "\n"
-                "规则：\n"
-                "  ① 只能 MATCH / OPTIONAL MATCH / WHERE / RETURN / WITH / ORDER BY / LIMIT\n"
-                "     CREATE / MERGE / DELETE / SET / REMOVE / DROP / CALL 一律拒绝\n"
-                "  ② 必须带 LIMIT（≤200），否则不执行\n"
-                "  ③ 图里只有行号与 rel_path，没有源码正文 —— 读代码用 read_file（它读文件）\n"
-                "     想知道某个目录包含什么，查 Rel 的 contains 边\n"
-                "  ④ 不区分大小写，字段名区分（lineEnd 是驼峰）\n"
-                "\n"
-                "例（照抄改名字即可）：\n"
-                "  ① 谁调用了它（上游）\n"
-                "     MATCH (a:Code)-[r:Rel {kind:'call'}]->(b:Code {name:'do_work'})\n"
-                "     RETURN a.name, a.rel_path, a.line LIMIT 30\n"
-                "  ② 它调用了谁（下游）\n"
-                "     MATCH (a:Code {name:'do_work'})-[r:Rel {kind:'call'}]->(b:Code)\n"
-                "     RETURN b.name, b.rel_path, b.line LIMIT 30\n"
-                "  ③ 上下游一起看（不限定方向）\n"
-                "     MATCH (a:Code)-[r:Rel]-(b:Code {name:'do_work'})\n"
-                "     WHERE r.kind = 'call' OR r.kind = 'invoke'\n"
-                "     RETURN a.name, b.name, r.kind LIMIT 40\n"
-                "  ④ 某个文件里有哪些节点\n"
-                "     MATCH (c:Code) WHERE c.rel_path = 'path/to/file.py'\n"
-                "     RETURN c.kind, c.name, c.line ORDER BY c.line LIMIT 100\n"
-                "  ⑤ 某个目录下有什么\n"
-                "     MATCH (d:Code {name:'some_dir'})-[r:Rel {kind:'contains'}]->(c:Code)\n"
-                "     RETURN c.kind, c.name LIMIT 50\n"
-                "  ⑥ 某个类的所有方法\n"
-                "     MATCH (c:Code {name:'SomeClass'})-[r:Rel {kind:'contains'}]->(m:Code)\n"
-                "     WHERE m.kind = 'method' RETURN m.name, m.line LIMIT 50\n"
-                "  ⑦ 按名字模糊找（不确定全名时）\n"
-                "     MATCH (c:Code) WHERE c.name CONTAINS 'handle'\n"
-                "     RETURN c.kind, c.name, c.rel_path, c.line LIMIT 40\n"
-                "  ⑧ 只看用户手工补的边\n"
-                "     MATCH (a:Code)-[r:Rel {origin:'manual'}]->(b:Code)\n"
-                "     RETURN a.name, b.name, r.kind LIMIT 30\n"
-                "\n"
-                "输出是 Markdown 表格（列名取自 RETURN 子句）。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Cypher 语句（只读，必须带 LIMIT）"},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": (
-                "按节点的 rel_path 与行号范围，读那个**文件**里对应的那段代码。\n"
-                "图谱里只有行号和路径，没有源码正文。\n"
-                "只返回这段切片，**不返回上下游**（那用 cypher 查 Rel）。\n"
-                "没有对应文件的节点（比如目录，line=0）返回空。\n"
-                "\n"
-                "WHEN TO USE: 你已经定位到某个节点，想读它对应的那段代码。\n"
-                "AFTER THIS: 想看它和谁相连，用 cypher 查 Rel；想知道作者写过什么，用 read_notes。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "节点名"},
-                    "uid": {"type": "string", "description": "精确 uid（可选）"},
-                    "max_lines": {
-                        "type": "integer",
-                        "description": "源码最多多少行（默认 120，上限 400）",
-                        "default": 120,
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_board",
-            "description": (
-                "读某个节点关联的**白板**：每块白板的名字，以及它上面摆了哪几条笔记。\n"
-                "白板是作者把若干条笔记摆在画布上形成的思考布局。\n"
-                "\n"
-                "WHEN TO USE: 想知道作者把哪些笔记放在一起比过、并成了什么结构。\n"
-                "AFTER THIS: 想知道某条笔记写了什么，用 search_notes 或 read_notes。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "节点名"},
-                    "uid": {"type": "string", "description": "精确 uid（可选）"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_notes",
-            "description": (
-                "读某个节点下**用户自己写的笔记**（类型、标题、正文摘要）。\n\n"
-                "WHEN TO USE: 想知道作者怎么理解这段代码、踩过什么坑、还困惑什么时"
-                "—— 这些在代码里看不到。\n"
-                "AFTER THIS: 想找别处提到过的概念，用 search_notes。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "节点名"},
-                    "uid": {"type": "string", "description": "精确 uid（可选）"},
-                    "limit": {
-                        "type": "integer",
-                        "description": "最多读几篇（默认 3，上限 8）",
-                        "default": 3,
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_notes",
-            "description": (
-                "在用户笔记的正文/标题里做全文搜索，返回标题与命中片段。\n\n"
-                "WHEN TO USE: 不确定某个概念在哪提过、或想找「我以前是不是记过这个」时"
-                "—— 比逐个节点 read_notes 快。\n"
-                "AFTER THIS: 拿到标题后再用 read_notes 或 read_file 深入。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "q": {"type": "string", "description": "关键词"},
-                    "limit": {
-                        "type": "integer",
-                        "description": "最多返回几条（默认 5，上限 20）",
-                        "default": 5,
-                    },
-                },
-                "required": ["q"],
-            },
-        },
-    },
-]
 
 
-def _cypher_columns(query: str) -> list[str]:
-    """从 RETURN 子句猜列名（`a.name AS x` → `x`；`a.name` → `name`）。
-
-    ⚠ 只是为了给 Markdown 表格加表头。猜错不影响数据，只影响表头文字，
-      所以这里宁简勿繁：取每项最后一个标识符。
-    """
-    m = re.search(
-        r"\bRETURN\b(.*?)(?:\bLIMIT\b|\bORDER\b|\bSKIP\b|\bUNION\b|$)",
-        query,
-        re.S | re.I,
-    )
-    if not m:
-        return []
-    body = m.group(1)
-    parts: list[str] = []
-    cur: list[str] = []
-    depth = 0
-    for ch in body:
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        if ch == "," and depth == 0:
-            parts.append("".join(cur))
-            cur = []
-        else:
-            cur.append(ch)
-    if cur:
-        parts.append("".join(cur))
-
-    cols: list[str] = []
-    for raw in parts:
-        item = raw.strip()
-        if not item:
-            continue
-        alias = re.search(r"\bAS\s+([A-Za-z_]\w*)\s*$", item, re.I)
-        if alias:
-            cols.append(alias.group(1))
-            continue
-        ids = re.findall(r"[A-Za-z_]\w*", item)
-        cols.append(ids[-1] if ids else f"col{len(cols) + 1}")
-    return cols
 
 
-def _markdown_table(cols: list[str], rows: list) -> str:
-    """把结果拼成 Markdown 表格（值与表头里的 `|` 转义，否则会破坏表格）。"""
-    width = len(rows[0]) if rows else 0
-    head = cols[:width] or [f"col{i + 1}" for i in range(width)]
-    head += [f"col{i + 1}" for i in range(len(head), width)]
-
-    def cell(v) -> str:
-        return "—" if v is None or v == "" else str(v).replace("|", "\\|")
-
-    lines = ["| " + " | ".join(head) + " |", "|" + "|".join([" --- "] * width) + "|"]
-    for r in rows:
-        lines.append("| " + " | ".join(cell(c) for c in r) + " |")
-    return "\n".join(lines)
 
 
-def _make_tool_executor(project):
-    """构造只读工具执行器。⛔ 任何分支都不写：不落库、不改图、不执行代码。"""
-
-    def by_uid(uid: str) -> dict | None:
-        try:
-            return graphdb.get_code(ROOT, int(uid))
-        except Exception:  # noqa: BLE001
-            return None
-
-    def resolve(args: dict) -> tuple[dict | None, str]:
-        """按 uid 或名字定位唯一节点；同名时给候选清单，⛔ 不默认取第一个。"""
-        uid = str(args.get("uid") or "").strip()
-        if uid:
-            node = by_uid(uid)
-            return (node, "") if node else (None, f"uid={uid} 不存在")
-        name = str(args.get("name") or "").strip()
-        if not name:
-            return None, "需要 name 或 uid"
-        try:
-            rows = graphdb.search_code(ROOT, name, 10) or []
-        except Exception:  # noqa: BLE001
-            rows = []
-        if not rows:
-            return None, f"没有找到「{name}」，可以先用 cypher 按名字查一下"
-        if len(rows) == 1:
-            return rows[0], ""
-        exact = [r for r in rows if str(r.get("name") or "") == name]
-        if len(exact) == 1:
-            return exact[0], ""
-        lines = [f"「{name}」匹配到 {len(rows)} 个节点，请用 uid 指定："]
-        for r in rows[:10]:
-            lines.append(
-                f"- uid={r.get('vid')}  {r.get('kind')}  {r.get('name')}  "
-                f"@ {r.get('rel_path')}:{r.get('line')}"
-            )
-        return None, "\n".join(lines)
-
-    def snippet_of(node: dict, limit: int) -> str:
-        """读 rel_path 指向的文件，按节点行号截一段。"""
-        try:
-            text = str(source.read(project["root"], node.get("rel_path") or "").get("text") or "")
-        except Exception:  # noqa: BLE001
-            return "（源码读取失败：文件打不开或编码不支持）"
-        if not text.strip():
-            return "（空文件 —— 这个文件本来就没有代码）"
-        lines = text.splitlines()
-        start = max(0, int(node.get("line") or 1) - 1)
-        end = int(node.get("line_end") or 0)
-        if end <= start:
-            end = start + 40
-        end = min(end, start + limit, len(lines))
-        if end <= start:
-            return "（行号对不上，读不到这一段）"
-        body = "\n".join(lines[start:end])
-        if end < len(lines) and (node.get("line_end") or 0) > end:
-            body += "\n…（已截断，需要更多请调高 max_lines）"
-        return body
-
-    def note_body(rel_path: str, limit: int = 800) -> str:
-        try:
-            _meta, txt = notefile.read_file(os.path.join(ROOT, str(rel_path or "")))
-            return " ".join(str(txt or "").split())[:limit]
-        except Exception:  # noqa: BLE001
-            return "（读不到正文）"
-
-    def run(tool: str, args: dict) -> str:
-        # ---------------- 直接查图
-        if tool == "cypher":
-            query = str(args.get("query") or "")
-            why = _cypher_guard(query)
-            if why:
-                return why
-            try:
-                rows = graphdb._open(ROOT).execute(query).get_all()
-            except Exception as exc:  # noqa: BLE001
-                return f"查询失败：{exc}"
-            if not rows:
-                return "（没有匹配结果）"
-            shown = rows[:80]
-            table = _markdown_table(_cypher_columns(query), shown)
-            tail = "" if len(rows) <= 80 else f"\n\n（共 {len(rows)} 行，上面是前 80 行）"
-            return table + tail
-
-        # ---------------- 搜笔记
-        if tool == "search_notes":
-            q = str(args.get("q") or "").strip()
-            if not q:
-                return "缺少参数 q"
-            limit = min(20, max(1, int(args.get("limit") or 5)))
-            try:
-                hits = store.fts_search(CONN, q, limit * 2)
-            except Exception as exc:  # noqa: BLE001
-                return f"搜索失败：{exc}"
-            if not hits:
-                return f"笔记里没有提到「{q}」"
-            try:
-                refs = [str(h.get("ref") or "") for h in hits]
-                marks = ",".join("?" * len(refs))
-                keep = {
-                    str(r[0])
-                    for r in CONN.execute(
-                        f"SELECT ref FROM note WHERE project_id = ? AND ref IN ({marks})",
-                        (project["id"], *refs),
-                    ).fetchall()
-                }
-                hits = [h for h in hits if str(h.get("ref") or "") in keep]
-            except Exception:  # noqa: BLE001
-                pass
-            if not hits:
-                return f"本项目笔记里没有提到「{q}」"
-            return "\n".join(
-                f"- {h.get('title') or '（无标题）'}\n  {h.get('snippet') or ''}"
-                for h in hits[:limit]
-            )
-
-        # ---------------- 读白板
-        if tool == "read_board":
-            node, err = resolve(args)
-            if not node:
-                return err
-            vid = int(node.get("vid") or 0)
-            try:
-                boards = [b for b in board.list_boards(ROOT) if int(b.get("vid") or 0) == vid]
-            except Exception as exc:  # noqa: BLE001
-                return f"读白板失败：{exc}"
-            if not boards:
-                return f"「{node.get('name')}」下没有白板"
-            # 笔记 id → 标题（白板的 board[] 存的是笔记 id）
-            titles: dict[int, str] = {}
-            try:
-                for r in store.notes_of(CONN, project["id"]):
-                    titles[int(r.get("id") or 0)] = str(r.get("title") or "（无标题）")
-            except Exception:  # noqa: BLE001
-                pass
-            out = []
-            for b in boards[:5]:
-                data = board.load(ROOT, str(b.get("id") or "")) or {}
-                ids = [int(x) for x in (data.get("board") or []) if str(x).isdigit()]
-                names = [titles.get(i) or f"笔记 {i}" for i in ids[:20]]
-                out.append(
-                    f"【{b.get('name') or '白板'}】放了 {len(ids)} 条笔记："
-                    f"{'、'.join(names) if names else '（空）'}"
-                )
-            return "\n".join(out)
-
-        # ---------------- 读笔记
-        if tool == "read_notes":
-            node, err = resolve(args)
-            if not node:
-                return err
-            try:
-                rows = store.notes_of(CONN, project["id"], int(node.get("vid") or 0))
-            except Exception as exc:  # noqa: BLE001
-                return f"读笔记失败：{exc}"
-            if not rows:
-                return f"「{node.get('name')}」这个节点上还没有笔记"
-
-            # ★★ 默认只给**清单**（全部，最多 30 条）：
-            #   一个节点下可能有十几篇、分属五个标签，只给前几篇会让模型
-            #   以为「就这些」。正文按需展开，⛔ 不一上来就灌。
-            lines = [f"「{node.get('name')}」下有 {len(rows)} 篇笔记："]
-            for i, r in enumerate(rows[:30], 1):
-                k = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
-                lines.append(f"{i}. [{k}] {r.get('title') or '（无标题）'}")
-            if len(rows) > 30:
-                lines.append(f"（还有 {len(rows) - 30} 篇未列出）")
-
-            if bool(args.get("with_body")):
-                limit = min(20, max(1, int(args.get("limit") or 3)))
-                lines.append("")
-                for r in rows[:limit]:
-                    k = ai.KIND_LABELS.get(str(r.get("kind") or ""), "笔记")
-                    lines.append(
-                        f"【{k}】{r.get('title') or '（无标题）'}\n"
-                        f"{note_body(r.get('rel_path') or '')}"
-                    )
-            else:
-                lines.append("（要看正文，传 with_body=true）")
-            return "\n".join(lines)
-
-        # ---------------- 读代码（只按 rel_path + 行号取文件片段）
-        if tool == "read_file":
-            node, err = resolve(args)
-            if not node:
-                return err
-            rel = str(node.get("rel_path") or "").strip()
-            line = int(node.get("line") or 0)
-            # ⛔ 没有对应文件或没有行号范围的节点（如目录，line=0）⇒ 返回空
-            if not rel or line <= 0:
-                return ""
-            max_lines = min(400, max(40, int(args.get("max_lines") or 120)))
-            return snippet_of(node, max_lines)
-
-        return f"未知工具：{tool}"
-
-    return run
 
 
-def _ask_events(project, vid: int, question: str):
-    """针对当前节点提问（流式）。
-
-    ★ 上下文与草稿**逐字相同** ⇒ 先跑过草稿的项目再问，能命中前缀缓存。
-    ⛔ 不缓存回答：问题的组合太多，缓存命中率极低，存了只是占地方。
-    """
-    node = graphdb.get_code(ROOT, vid)
-    if not node:
-        raise ValueError("节点不存在")
-    q = str(question or "").strip()
-    if not q:
-        raise ValueError("问题不能为空")
-
-    # ★ 不再预读源码：只把节点本身交给模型，需要时它自己 read_file
-    #   （所有者 2026-11-18：「让ai自己根据传入的类型，自行判断要读哪些节点信息」）
-    messages = ai.build_ask_messages(node, "", "", [], [], [], q)
-    # ★★ 建取消令牌，并把 token 作为第一个事件告诉前端
-    #   （所有者 2026-11-19：「openwebui应该都可以的吧？这是标准配置吧？」）
-    token, cancel_evt = ai.new_cancel_token()
-    # ★ 日志：用 DevTools / 控制台能看到「这次回答的 token 是多少」，
-    #   点停止后对照 /ai/cancel/ 的返回，确认取消的是同一次请求。
-    print(f"[AI-CANCEL] start token={token} vid={vid}", flush=True)
-    try:
-        yield {"event": "started", "token": token}
-        # ★ 允许模型顺着图谱再读几个节点（⛔ 只读，停止时立刻断 LLM 连接）
-        yield from ai.chat_with_tools(
-            messages,
-            READ_TOOLS,
-            _make_tool_executor(project),
-            # ★★ 推理模型（DeepSeek R1 等）的思考也占 completion tokens：
-            #   800 会被思考吃光、正文一个字都出不来（用户看到"思考到一半就没了"）
-            max_tokens=4000,
-            cancel=cancel_evt,
-        )
-    except ai.CancelledError:
-        # 用户主动停止：不往前端抛错误，悄悄结束
-        print(f"[AI-CANCEL] stopped by user token={token}", flush=True)
-        yield {"event": "cancelled"}
-    finally:
-        ai.unregister_token(token)
 
 
 def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
@@ -2157,199 +1686,8 @@ def _learned_notes(project, pack: dict, vid: int) -> list[dict]:
     return out[:3]
 
 
-def _question_line(line: str) -> dict | None:
-    """解析一行模型输出为事件；只认固定前缀，⛔ 不做整段兜底。
-
-    与 ai.parse_questions 的前缀保持一致；兜底（自由文字→简评）
-    留给流结束时的 parse_questions，避免逐行重复触发。
-    """
-    v = str(line or "").strip().lstrip("-·•* 　").strip()
-    if not v:
-        return None
-    for label in ("陷阱", "优化", "背景"):
-        for sep in ("：", ":"):
-            if v.startswith(label + sep):
-                body = v[len(label) + 1 :].strip()
-                return {"event": "question", "type": label, "text": body} if body else None
-    for sep in ("：", ":"):
-        if v.startswith("简评" + sep):
-            body = v[3:].strip()
-            return {"event": "question", "type": "简评", "text": body} if body else None
-        if v.startswith("下一步" + sep):
-            rest = v[4:].strip()
-            name, _, why = rest.partition("——")
-            if not why:
-                name, _, why = rest.partition("-")
-            if name.strip():
-                return {"event": "next", "name": name.strip(), "why": why.strip()}
-    return None
 
 
-def _questions_events(project, vid: int, refresh: bool = False, token: str = ""):
-    """出题（流式）：started / think / question / next / cancelled / done。
-
-    ★ 与问答统一走 SSE（所有者 2026-11-19：「出题为什么不也改成流式输出？」）：
-      · 问题逐条吐，写完一行就发一张卡片；
-      · 思考过程也发，用户看得到 AI 在查什么；
-      · started 带 token，停止逻辑与问答一致（⛔ 不再用响应头那套）。
-    """
-    act = ai.active()
-
-    # 缓存命中：按同一套事件格式一次性吐完
-    if not refresh:
-        cached = store.get_ai_questions(CONN, vid, act["id"], act["model"])
-        if cached:
-            try:
-                old = json.loads(cached)
-                for it in (old.get("items") or []):
-                    yield {
-                        "event": "question",
-                        "type": str(it.get("type") or ""),
-                        "text": str(it.get("text") or ""),
-                    }
-                for nx in (old.get("next") or []):
-                    yield {
-                        "event": "next",
-                        "name": str(nx.get("name") or ""),
-                        "why": str(nx.get("why") or ""),
-                    }
-                yield {"event": "done", "cached": True}
-                return
-            except Exception:  # noqa: BLE001
-                pass
-
-    node = graphdb.get_code(ROOT, vid)
-    if not node:
-        raise ValueError("节点不存在")
-    messages = ai.build_questions_messages({"node": node})
-
-    token, cancel_evt = ai.new_cancel_token(token)
-    yield {"event": "started", "token": token}
-
-    # 完整文本：既用于逐行吐，也用于最后 parse_questions（含兜底）
-    full: list[str] = []
-    emitted: set[str] = set()  # 已发过的行，最后不重复发
-    cancelled = False
-
-    # ★ next_line：下一个待处理的完整行索引。
-    #   ⚠ 不能每次重新遍历 full 又不去重 —— 同一行会被发多次；
-    #     也不能像之前那样 `full[:] = [tail]` —— 那会把正文吞掉、
-    #     导致 text 变空误触发 chat_once（表现为「模型没有返回任何内容」）。
-    next_line = 0
-
-    def take_complete(force: bool = False) -> list[str]:
-        """只返回**新凑齐**的完整行；正文始终留在 full 里给整段解析。"""
-        nonlocal next_line
-        joined = "".join(full)
-        lines = joined.split("\n")
-        # 最后一段未写完，不算完整行（除非 force）
-        usable = len(lines) if force else len(lines) - 1
-        out = [
-            ln.strip() for ln in lines[next_line:usable] if ln.strip()
-        ]
-        next_line = max(next_line, usable)
-        return out
-
-    try:
-        for evt in ai.chat_with_tools(
-            messages,
-            READ_TOOLS,
-            _make_tool_executor(project),
-            max_tokens=3000,
-            cancel=cancel_evt,
-        ):
-            kind = evt.get("event")
-            if kind == "delta":
-                full.append(str(evt.get("text") or ""))
-                for ln in take_complete():
-                    key = ln.strip()
-                    if key in emitted:
-                        continue
-                    emitted.add(key)
-                    out = _question_line(ln)
-                    if out:
-                        yield out
-            elif kind == "think":
-                yield evt
-            # step / tool_use / usage 不发：浮窗不需要
-
-        # 收尾：把最后半行也处理掉
-        for ln in take_complete(force=True):
-            key = ln.strip()
-            if key in emitted:
-                continue
-            emitted.add(key)
-            out = _question_line(ln)
-            if out:
-                yield out
-
-        text = "".join(full)
-        if not text.strip():
-            # ★ 工具链正常结束但一个字没吐 ⇒ 退回普通一次调用
-            text = ai.chat_once(messages, max_tokens=3000)
-
-        # ★ 整段解析一次（处理自由文字兜底），只补发还没发过的
-        parsed = ai.parse_questions(text)
-        for it in (parsed.get("items") or []):
-            key = f"{it.get('type')}：{it.get('text')}"
-            if key not in emitted:
-                emitted.add(key)
-                yield {
-                    "event": "question",
-                    "type": str(it.get("type") or ""),
-                    "text": str(it.get("text") or ""),
-                }
-        # ★ 去重：逐行已发过的 next 不重复发
-        for nx in (parsed.get("next") or []):
-            # ⚠ key 必须与逐行时 emitted 存的原始行一致（含「 —— 」两侧的空格）
-            nkey = f"下一步：{nx.get('name')} —— {nx.get('why')}"
-            if nkey in emitted:
-                continue
-            emitted.add(nkey)
-            yield {
-                "event": "next",
-                "name": str(nx.get("name") or ""),
-                "why": str(nx.get("why") or ""),
-            }
-
-        # ★★ 一道保险：一条问题都没解析出来时，明确告诉用户原因，
-        #   ⛔ 绝不让前端停在「模型没有返回任何内容」的空状态（无从排查）
-        if not parsed.get("items") and not cancelled:
-            yield {
-                "event": "question",
-                "type": "简评",
-                "text": (
-                    "这次没出题：模型只输出了思考、没有给出可提问的内容。"
-                    "可能是 max_tokens 被思考用完，或这个节点确实没什么可问的。"
-                    "可以点「换一批」重试。"
-                ),
-            }
-
-        if parsed.get("items"):
-            try:
-                store.put_ai_questions(
-                    CONN, vid, act["id"], act["model"],
-                    json.dumps(parsed, ensure_ascii=False),
-                )
-            except Exception:  # noqa: BLE001
-                pass
-    except ai.CancelledError:
-        cancelled = True
-        yield {"event": "cancelled"}
-    except Exception as exc:
-        if cancel_evt is not None and cancel_evt.is_set():
-            cancelled = True
-            yield {"event": "cancelled"}
-        else:
-            yield {
-                "event": "question",
-                "type": "简评",
-                "text": f"出题失败：{ai.redact(str(exc))}",
-            }
-    finally:
-        ai.unregister_token(token)
-
-    yield {"event": "done", "cached": False}
 
 
 
@@ -2398,11 +1736,18 @@ def _stream_events(method: str, path: str, body) -> "object":
         vid = int(body.get("vid") or 0)
         if not vid:
             raise ValueError("缺少 vid")
+        _log("questions: route hit, vid=", vid, "refresh=", body.get("refresh"))
         _graph_ready(p)
+        _log("questions: graph ready")
         incoming = str(body.get("token") or "").strip()
-        yield from _questions_events(
+        count = 0
+        for evt in _questions_events(
             p, vid, bool(body.get("refresh")), token=incoming,
-        )
+        ):
+            if evt.get("event") == "question":
+                count += 1
+            yield evt
+        _log("questions: stream ended, question events =", count)
         return
 
     if R_AISTREAM.match(path):

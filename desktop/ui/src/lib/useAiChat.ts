@@ -52,7 +52,13 @@ export interface QaItem {
 
 const EMPTY_USAGE: QaUsage = { total: 0, hit: 0, miss: 0, write: 0, think: 0, response: 0 }
 
-export function useAiChat(projectRef: string, vid: number | null) {
+export type AiScope = 'main' | 'challenge'
+
+export function useAiChat(
+  projectRef: string,
+  vid: number | null,
+  scope: AiScope = 'main',
+) {
   const [items, setItems] = useState<QaItem[]>([])
   const [busy, setBusy] = useState(false)
   const [streaming, setStreaming] = useState('')
@@ -78,7 +84,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
     let live = true
     setLoading(true)
     try {
-      const r = await personalApi.qaList(projectRef, vid)
+      const r = await personalApi.qaList(projectRef, vid, scope)
       if (live) setItems((r.items || []) as QaItem[])
     } catch {
       if (live) setItems([])
@@ -88,7 +94,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
     return () => {
       live = false
     }
-  }, [projectRef, vid])
+  }, [projectRef, vid, scope])
 
   useEffect(() => {
     void reload()
@@ -203,7 +209,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
 
         if (replaceId) {
           try {
-            await personalApi.qaRemove(projectRef, vid, replaceId)
+            await personalApi.qaRemove(projectRef, vid, replaceId, scope)
           } catch {
             /* 删不掉也继续 */
           }
@@ -217,6 +223,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
           ms,
           usage,
           steps: stepsAcc,
+          scope,
         })
         if (!alive()) return false
         const next = (r.items || []) as QaItem[]
@@ -240,7 +247,7 @@ export function useAiChat(projectRef: string, vid: number | null) {
         }
       }
     },
-    [projectRef, vid, busy],
+    [projectRef, vid, busy, scope],
   )
 
   /** ★ 停止：断后端 LLM + 断前端连接；已输出的内容保留 */
@@ -262,10 +269,10 @@ export function useAiChat(projectRef: string, vid: number | null) {
   /** ★ 清空这个节点的历史 */
   const clear = useCallback(async () => {
     if (!projectRef || !vid) return
-    await personalApi.qaClear(projectRef, vid)
+    await personalApi.qaClear(projectRef, vid, scope)
     setItems([])
     setErr('')
-  }, [projectRef, vid])
+  }, [projectRef, vid, scope])
 
   return {
     // 状态

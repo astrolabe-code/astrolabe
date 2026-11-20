@@ -83,13 +83,20 @@ def _dir(data_dir: str) -> str:
     return os.path.join(data_dir, "qa")
 
 
-def _path(data_dir: str, vid: int) -> str:
-    return os.path.join(_dir(data_dir), f"{int(vid)}.json")
+def _path(data_dir: str, vid: int, scope: str = "main") -> str:
+    """main → <vid>.json；challenge → <vid>-challenge.json。"""
+    safe = str(scope or "main").strip()
+    # ⛔ 只允许两种 scope，别让外部字符串拼进文件名
+    suffix = "" if safe == "main" else "-challenge" if safe == "challenge" else ""
+    if not suffix:
+        safe = "main"
+    name = f"{int(vid)}{suffix}.json"
+    return os.path.join(_dir(data_dir), name)
 
 
-def _read(data_dir: str, vid: int) -> dict:
+def _read(data_dir: str, vid: int, scope: str = "main") -> dict:
     """读历史；文件不存在/损坏都当空，⛔ 不让一轮问答因为读失败而崩。"""
-    p = _path(data_dir, vid)
+    p = _path(data_dir, vid, scope)
     if not os.path.isfile(p):
         return {"vid": int(vid), "items": []}
     try:
@@ -102,19 +109,19 @@ def _read(data_dir: str, vid: int) -> dict:
     return {"vid": int(vid), "items": clean}
 
 
-def _write(data_dir: str, vid: int, data: dict) -> None:
+def _write(data_dir: str, vid: int, data: dict, scope: str = "main") -> None:
     d = _dir(data_dir)
     os.makedirs(d, exist_ok=True)
-    p = _path(data_dir, vid)
+    p = _path(data_dir, vid, scope)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)
 
 
-def list_items(data_dir: str, vid: int) -> dict:
-    """列出该节点的全部问答（按时间正序）。"""
-    return _read(data_dir, vid)
+def list_items(data_dir: str, vid: int, scope: str = "main") -> dict:
+    """列出该节点的问答（按时间正序）。"""
+    return _read(data_dir, vid, scope)
 
 
 def append(
@@ -130,6 +137,7 @@ def append(
     think: str = "",
     trace: list | None = None,
     steps: list | None = None,
+    scope: str = "main",
 ) -> dict:
     """追加一条问答；返回追加后的完整列表。
 
@@ -141,7 +149,7 @@ def append(
     if not question:
         raise QaError("问题不能为空")
 
-    data = _read(data_dir, vid)
+    data = _read(data_dir, vid, scope)
     now = datetime.datetime.now()
     item = {
         "id": f"{int(now.timestamp())}-{len(data['items']) + 1}",
@@ -196,20 +204,20 @@ def append(
     data["items"].append(item)
     if len(data["items"]) > MAX_ITEMS:
         data["items"] = data["items"][-MAX_ITEMS:]
-    _write(data_dir, vid, data)
+    _write(data_dir, vid, data, scope)
     return data
 
 
-def remove_item(data_dir: str, vid: int, item_id: str) -> dict:
+def remove_item(data_dir: str, vid: int, item_id: str, scope: str = "main") -> dict:
     """删一条（按 id）。"""
-    data = _read(data_dir, vid)
+    data = _read(data_dir, vid, scope)
     data["items"] = [x for x in data["items"] if str(x.get("id") or "") != str(item_id)]
-    _write(data_dir, vid, data)
+    _write(data_dir, vid, data, scope)
     return data
 
 
-def clear(data_dir: str, vid: int) -> dict:
+def clear(data_dir: str, vid: int, scope: str = "main") -> dict:
     """清空该节点的历史（文件保留为空数组，避免删文件）。"""
     data = {"vid": int(vid), "items": []}
-    _write(data_dir, vid, data)
+    _write(data_dir, vid, data, scope)
     return data

@@ -101,7 +101,8 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
-  const chat = useAiChat(projectRef || '', node.vid)
+  // ★ 浮窗用 challenge 作用域：与问答 tab 的历史彻底分开
+  const chat = useAiChat(projectRef || '', node.vid, 'challenge')
   const { lastItem, busy, streaming, pending, steps, err, ask, stop, clearLast } = chat
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name

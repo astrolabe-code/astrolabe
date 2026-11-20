@@ -474,6 +474,7 @@ def build_ask_messages(
     downstream: list[dict],
     samples: list[dict],
     question: str,
+    system: str = "ask",
 ) -> list[dict]:
     """组装**问答**的 prompt。
 
@@ -482,8 +483,10 @@ def build_ask_messages(
     """
     ctx = _context_block(node, snippet, lang, upstream, downstream, samples)
     q = str(question or "").strip()
+    # ★ "questions" = 用出题 system（浮窗挑战）；默认 "ask" = 问答
+    sys_text = QUESTIONS_SYSTEM if system == "questions" else ASK_SYSTEM
     return [
-        {"role": "system", "content": ASK_SYSTEM},
+        {"role": "system", "content": sys_text},
         {"role": "user", "content": f"{ctx}\n【问题】{q}\n（只答这个问题，不要写小结。）"},
     ]
 

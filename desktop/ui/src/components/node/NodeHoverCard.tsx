@@ -52,7 +52,7 @@ interface QaQuestion {
 const questionCache = new Map<number, QaQuestion[]>()
 
 /** 挑战问题：前端把系统预设问题灌进内核，省略用户输入那一步 */
-const CHALLENGE_Q = '请根据这个节点，提出几个值得思考的问题（陷阱 / 优化 / 背景），并给出下一步可以读的节点。'
+const CHALLENGE_Q = '请按 system 的要求，对这个节点出题。'
 
 const CARD_W = 440
 
@@ -222,7 +222,7 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
 
           <button
             type="button"
-            onClick={() => (busy ? stop() : (clearLast(), void ask(CHALLENGE_Q)))}
+            onClick={() => (busy ? stop() : (clearLast(), void ask(CHALLENGE_Q, undefined, 'questions')))}
             style={{
               width: '100%', height: 30, marginTop: 8, borderRadius: 999,
               border: '1px solid var(--accent)',

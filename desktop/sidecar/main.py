@@ -1722,7 +1722,10 @@ def _stream_events(method: str, path: str, body) -> "object":
         vid = int(body.get("vid") or 0)
         if not vid:
             raise ValueError("缺少 vid")
-        yield from _ask_events(p, vid, str(body.get("question") or ""))
+        yield from _ask_events(
+            p, vid, str(body.get("question") or ""),
+            system=str(body.get("system") or "ask"),
+        )
         return
 
     # ★★ 出题也走流式（所有者 2026-11-19）

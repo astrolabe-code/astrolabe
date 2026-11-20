@@ -114,7 +114,11 @@ export function useAiChat(
 
   /** ★ 问一句。UI 层想问什么就传什么（用户输入的，或系统预设的「挑战问题」） */
   const ask = useCallback(
-    async (question: string, replaceId?: string): Promise<boolean> => {
+    async (
+      question: string,
+      replaceId?: string,
+      system: 'ask' | 'questions' = 'ask',
+    ): Promise<boolean> => {
       const q = String(question || '').trim()
       if (!q || busy || !vid || !projectRef) return false
 
@@ -148,7 +152,7 @@ export function useAiChat(
       try {
         await streamCall(
           `/api/projects/${encodeURIComponent(projectRef)}/ai/ask/`,
-          { vid, question: q },
+          { vid, question: q, system },
           (evt) => {
             if (evt.event === 'started') {
               backendTokenRef.current = String(evt.token ?? '')

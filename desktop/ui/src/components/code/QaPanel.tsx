@@ -98,13 +98,7 @@ const dot: React.CSSProperties = {
 
 /**
  * ★★ 思考过程 + 工具调用轨迹（可折叠）。
- *
- * 所有者原话（2026-11-19）：
- * 「思考过程不要清空，还有这个可折叠的思考界面应该看到调用了哪些工具、
- *   返回了多少个值，供用户判断 ai 有没有走偏。」
- *
- * ⇒ 每条回答都有自己的 think + trace（存在 qa JSON 里），
- *   展开能看到「调了 cypher 回来 12 行、读文件 34 行…」。
+ * 与问答同一套：想一句 → 查一下 → 又想一句，按 steps 顺序渲染。
  */
 function ThinkBlock({
   steps,
@@ -378,9 +372,15 @@ interface QaPanelProps {
   projectRef: string
   vid: number | null
   name?: string
+  /**
+   * ★ 紧凑模式：嵌在节点浮窗里。
+   *   隐藏顶部的累计统计条与「清空」——浮窗空间小，只留
+   *   「历史 / 输入 / 发送 / 思考」这套问答内核。
+   */
+  compact?: boolean
 }
 
-export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
+export default function QaPanel({ projectRef, vid, name, compact = false }: QaPanelProps) {
   const [items, setItems] = useState<QaItem[]>([])
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
@@ -691,36 +691,8 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
         )}
 
         {/* ★ 累计统计：总 token / 耗时 / 命中率（对齐 OpenWebUI 的顶部胶囊） */}
-        <span
-          className="faint"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            fontSize: 10.5,
-            padding: '2px 8px',
-            borderRadius: 999,
-            border: '1px solid var(--card-border)',
-          }}
-          title="本次会话累计"
-        >
-          Tokens {fmt(total.tok)}
-        </span>
-        <span
-          className="faint"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            fontSize: 10.5,
-            padding: '2px 8px',
-            borderRadius: 999,
-            border: '1px solid var(--card-border)',
-          }}
-        >
-          Elapsed {fmtMs(total.ms)}
-        </span>
-        {total.hit + total.miss > 0 && (
+        {!compact && (
+          <>
           <span
             className="faint"
             style={{
@@ -732,10 +704,42 @@ export default function QaPanel({ projectRef, vid, name }: QaPanelProps) {
               borderRadius: 999,
               border: '1px solid var(--card-border)',
             }}
-            title="前缀缓存命中率"
+            title="本次会话累计"
           >
-            Hit {(total.rate * 100).toFixed(1)}%
+            Tokens {fmt(total.tok)}
           </span>
+          <span
+            className="faint"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 10.5,
+              padding: '2px 8px',
+              borderRadius: 999,
+              border: '1px solid var(--card-border)',
+            }}
+          >
+            Elapsed {fmtMs(total.ms)}
+          </span>
+          {total.hit + total.miss > 0 && (
+            <span
+              className="faint"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 10.5,
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: '1px solid var(--card-border)',
+              }}
+              title="前缀缓存命中率"
+            >
+              Hit {(total.rate * 100).toFixed(1)}%
+            </span>
+          )}
+          </>
         )}
 
         {!!items.length && (

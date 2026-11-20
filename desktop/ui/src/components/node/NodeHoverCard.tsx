@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCw, Square } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { useParams } from 'react-router-dom'
+import QaPanel from '../code/QaPanel'
 
-import { personalApi } from '../../api/personal'
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 
@@ -97,84 +97,6 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   const top = y + 14
 
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
-  const [questions, setQuestions] = useState<QaQuestion[] | null>(null)
-  const [asking, setAsking] = useState(false)
-  /** ★ 出题的取消控制器：点「停止」时同时断浏览器 + 通知后端 */
-  const abortRef = useRef<AbortController | null>(null)
-  const backendTokenRef = useRef('')
-
-  useEffect(() => {
-    setQuestions(questionCache.get(node.vid) ?? null)
-    setAsking(false)
-  }, [node.vid])
-
-    const ask = async (refresh = false) => {
-    if (asking) return
-    if (!projectRef || !node.vid) {
-      setQuestions([])
-      return
-    }
-    const ctl = new AbortController()
-    abortRef.current = ctl
-    backendTokenRef.current = ''
-    setAsking(true)
-    // ★ 流式中：先清空旧卡片，问题逐条到达逐条显示
-    const collected: QaQuestion[] = []
-    setQuestions([])
-    try {
-      await personalApi.aiQuestions(
-        projectRef,
-        { vid: Number(node.vid), refresh },
-        (evt) => {
-          if (evt.event === 'started') {
-            // ★ 后端给的 token，点「停止」时用它真断 LLM
-            backendTokenRef.current = String(evt.token ?? '')
-          } else if (evt.event === 'question') {
-            const t = String(evt.type ?? '')
-            const text = String(evt.text ?? '').trim()
-            if (!text) return
-            collected.push({ type: t, text })
-            setQuestions([...collected]) // 立刻上屏，不等全部生成完
-          } else if (evt.event === 'think') {
-            // 思考过程暂不在浮窗显示（体积有限），只留问题本身
-          } else if (evt.event === 'cancelled') {
-            // 用户主动停止：已收到的卡片保留，不弹错误
-          }
-          // next / done 无需处理：下一步已在问题区末尾，缓存由后端写
-        },
-        ctl.signal,
-      )
-      // 全部到达后写缓存：下次悬停直接显示，不再请求
-      if (collected.length) questionCache.set(node.vid, collected)
-    } catch (e) {
-      // ★ 用户主动停止不弹错误；其它原因显示真实报错
-      if (!(e instanceof DOMException && e.name === 'AbortError')) {
-        setQuestions([
-          {
-            type: '简评',
-            text: `出题请求失败：${e instanceof Error ? e.message : String(e)}`,
-          },
-        ])
-      }
-    } finally {
-      abortRef.current = null
-      backendTokenRef.current = ''
-      setAsking(false)
-    }
-  }
-
-  /** ★ 停止出题：流式下与问答一致 —— 通知后端取消 + 断前端 fetch */
-  const stop = () => {
-    const token = backendTokenRef.current
-    if (token && projectRef) {
-      void personalApi.cancelAi(projectRef, token).catch(() => {})
-    }
-    abortRef.current?.abort()
-    abortRef.current = null
-    setAsking(false)
-    // ⛔ 不清 questions：已经吐出来的卡片保留
-  }
-
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
@@ -249,125 +171,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         </div>
       )}
 
-      {/* ────────────────────────── 思考题 */}
-      <div
-        style={{
-          marginTop: 9,
-          paddingTop: 8,
-          borderTop: '1px dashed var(--card-border)',
-        }}
-      >
-        {/* 还没出过题：只给按钮 */}
-        {questions === null && (
-          <button
-            type="button"
-            // ★ 出题中也可点：点它是「停止」，不是「再问一次」
-            onClick={asking ? stop : () => void ask()}
-            style={{
-              fontSize: 11,
-              lineHeight: '18px',
-              padding: '2px 10px',
-              borderRadius: 999,
-              border: asking ? '1px solid var(--accent)' : '1px solid var(--card-border)',
-              background: asking ? 'var(--accent)' : 'transparent',
-              color: asking ? '#fff' : 'var(--accent)',
-              cursor: 'pointer',
-            }}
-            >
-              {asking ? '■ 停止出题' : '💭 挑战问题'}
-            </button>
-        )}
-
-        {questions !== null && questions.length === 0 && (
-          <div className="faint" style={{ fontSize: 10.5 }}>
-            模型没有返回任何内容
-          </div>
-        )}
-
-        {!!questions?.length && (
-          <>
-            {/* 区块标题 + 换一批 */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                marginBottom: 6,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  color: 'var(--text-sub)',
-                  letterSpacing: '.02em',
-                }}
-              >
-                💭 想一想
-              </span>
-              <button
-                type="button"
-                title={asking ? '停止出题' : '换一批问题'}
-                // ★ 出题中也可点：点它是「停止」，不是「再问一次」
-                onClick={asking ? stop : () => void ask(true)}
-                style={{
-                  marginLeft: 'auto',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  fontSize: 10,
-                  padding: '1px 7px',
-                  borderRadius: 999,
-                  border: asking ? '1px solid var(--accent)' : '1px solid var(--card-border)',
-                  background: asking ? 'var(--accent)' : 'transparent',
-                  color: asking ? '#fff' : 'var(--text-faint)',
-                  cursor: 'pointer',
-                }}
-              >
-                {asking ? <Square size={9} fill="currentColor" /> : <RefreshCw size={9} />}
-                {asking ? '停止' : '换一批'}
-              </button>
-            </div>
-
-            {/* 每条问题一张小卡片：类型徽章 + 正文 */}
-            {questions.map((q, i) => {
-              const st = TYPE_STYLE[q.type] || { color: 'var(--accent)', icon: '·' }
-              return (
-                <div
-                  key={`${i}-${q.type}`}
-                  style={{
-                    marginTop: i === 0 ? 0 : 6,
-                    padding: '7px 9px',
-                    borderRadius: 7,
-                    background: 'rgba(127,127,127,.055)',
-                    borderLeft: `2px solid ${st.color}`,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 9.5,
-                      fontWeight: 600,
-                      color: st.color,
-                      marginBottom: 3,
-                      letterSpacing: '.02em',
-                    }}
-                  >
-                    {st.icon} {q.type}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      lineHeight: 1.75,
-                      color: 'var(--text-main)',
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    {inlineMd(q.text)}
-                  </div>
-                </div>
-              )
-            })}
-          </>
-        )}
+      {/* ★★ 问答区内核：直接把 QaPanel 贴进来（与问答 tab 一模一样） */}
+      <div style={{ height: 340, marginTop: 10, borderTop: '1px dashed var(--card-border)' }}>
+        <QaPanel projectRef={projectRef || ''} vid={node.vid} name={node.name} compact />
       </div>
     </div>,
     document.body,

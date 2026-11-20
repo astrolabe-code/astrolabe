@@ -264,8 +264,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
                 stop()
               } else {
                 setFoldManual(null) // 跟随新的 busy：展开 → 完成自动收起
-                // ★ 已出过题 ⇒ 「换一批」：replaceId 顶掉上一条（历史只留最新一份）
-                void ask(CHALLENGE_Q, current?.id, 'questions')
+                // ★ 换一批 = **追加**：历史里换几次都留着，
+                //   浮窗只显示 items 最后一条（最新那份）
+                void ask(CHALLENGE_Q, undefined, 'questions')
               }
             }}
             style={{

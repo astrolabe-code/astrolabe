@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Square } from 'lucide-react'
 import { useParams } from 'react-router-dom'
-import QaPanel from '../code/QaPanel'
+import { useAiChat, type QaItem, type ThinkStep } from '../../lib/useAiChat'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
@@ -51,6 +51,9 @@ interface QaQuestion {
  */
 const questionCache = new Map<number, QaQuestion[]>()
 
+/** 挑战问题：前端把系统预设问题灌进内核，省略用户输入那一步 */
+const CHALLENGE_Q = '请根据这个节点，提出几个值得思考的问题（陷阱 / 优化 / 背景），并给出下一步可以读的节点。'
+
 const CARD_W = 440
 
 /** 行内 markdown：只处理反引号 `` `code` `` */
@@ -97,6 +100,9 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   const top = y + 14
 
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
+  // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调
+  const chat = useAiChat(projectRef || '', node.vid)
+  const { items, busy, streaming, pending, steps, err, ask, stop } = chat
   const kc = kindColor(node.kind)
   const title = node.qname && node.qname !== node.name ? node.qname : node.name
 
@@ -171,11 +177,58 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
         </div>
       )}
 
-      {/* ★★ 问答区内核：直接把 QaPanel 贴进来（与问答 tab 一模一样） */}
-      <div style={{ height: 340, marginTop: 10, borderTop: '1px dashed var(--card-border)' }}>
-        <QaPanel projectRef={projectRef || ''} vid={node.vid} name={node.name} compact />
-      </div>
-    </div>,
+        {/* ★★ 浮窗自己的界面：直接调内核 ask/stop；内核不知道「挑战问题」 */}
+        <div style={{ marginTop: 10, borderTop: '1px dashed var(--card-border)' }}>
+          {err && <div style={{ fontSize: 10.5, color: 'var(--err)', marginTop: 6 }}>{err}</div>}
+
+          {items.map((it: QaItem) => (
+            <div key={it.id} style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>{it.q}</div>
+              {!!it.steps?.length && (
+                <details style={{ marginTop: 3, fontSize: 10, opacity: 0.65 }}>
+                  <summary>思考过程</summary>
+                  {it.steps.map((st: ThinkStep, i: number) => (
+                    <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
+                      {st.kind === 'tool' ? `⌕ ${st.name} · ${st.lines || 0} 行` : st.text}
+                    </div>
+                  ))}
+                </details>
+              )}
+              <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>{it.a}</div>
+            </div>
+          ))}
+
+          {!!pending && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textAlign: 'right' }}>{pending}</div>
+              {!!steps.length && (
+                <div style={{ fontSize: 10, opacity: 0.6, marginTop: 3, whiteSpace: 'pre-wrap' }}>
+                  {steps.map((st: ThinkStep, i: number) => (
+                    <div key={i}>{st.kind === 'tool' ? `⌕ ${st.name}` : st.text}</div>
+                  ))}
+                </div>
+              )}
+              {!!streaming && (
+                <div style={{ fontSize: 11, lineHeight: 1.65, marginTop: 3, whiteSpace: 'pre-wrap' }}>{streaming}</div>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => (busy ? stop() : void ask(CHALLENGE_Q))}
+            style={{
+              width: '100%', height: 30, marginTop: 8, borderRadius: 999,
+              border: '1px solid var(--accent)',
+              background: busy ? 'var(--accent)' : 'transparent',
+              color: busy ? '#fff' : 'var(--accent)',
+              cursor: 'pointer', fontSize: 11.5,
+            }}
+          >
+            {busy ? <><Square size={10} fill="currentColor" /> 停止</> : '💭 挑战问题'}
+          </button>
+        </div>
+      </div>,
     document.body,
   )
 }

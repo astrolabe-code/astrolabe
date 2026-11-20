@@ -267,7 +267,9 @@ export function useAiChat(
         setAiBusyGlobal(false)
         if (alive()) {
           setBusy(false)
-          setStreaming('')
+          // ★★ ⛔ 不清 streaming —— 它就是本轮最终回答，
+          //   浮窗直接渲染它；问答 tab 靠 pending 判流式区，不受影响。
+          //   （所有者 2026-11-20：「ai内核输出什么，前端就照样显示」）
           setPending('')
         }
       }

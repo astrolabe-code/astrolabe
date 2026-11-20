@@ -483,11 +483,21 @@ def build_ask_messages(
     """
     ctx = _context_block(node, snippet, lang, upstream, downstream, samples)
     q = str(question or "").strip()
-    # ★ "questions" = 用出题 system（浮窗挑战）；默认 "ask" = 问答
-    sys_text = QUESTIONS_SYSTEM if system == "questions" else ASK_SYSTEM
+    # ★★ 提示词要**完全分开**：这是两件不同的事，不只是 system 不同
+    #   所有者原话（2026-11-20）：「提示词要分开，这是在做两件不同的事」
+    #   · ask       → 用户提问，期待对这个问题的回答
+    #   · questions → 系统出题，期待符合格式的问题清单
+    if system == "questions":
+        sys_text = QUESTIONS_SYSTEM
+        # ⛔ 不写「【问题】用户原话」——这一轮根本没有用户问题，
+        #   只有节点本身；出题指令全在 system 里
+        user_text = f"{ctx}\n【任务】按 system 的要求，对这个节点出题。"
+    else:
+        sys_text = ASK_SYSTEM
+        user_text = f"{ctx}\n【问题】{q}\n（只答这个问题，不要写小结。）"
     return [
         {"role": "system", "content": sys_text},
-        {"role": "user", "content": f"{ctx}\n【问题】{q}\n（只答这个问题，不要写小结。）"},
+        {"role": "user", "content": user_text},
     ]
 
 

@@ -122,6 +122,7 @@ export default function GraphCanvas({
   /** sigma 专用容器：kill() 会清空它，绝不挂 React 管理的 box */
   const sigmaHostRef = useRef<HTMLDivElement>(null)
   const sigmaRef = useRef<Sigma | null>(null)
+  const cleanupRef = useRef<(() => void) | null>(null)
   const graphRef = useRef<DirectedGraph | null>(null)
   const infoRef = useRef<Map<string, GraphNode>>(new Map())
   const activeRef = useRef<string[]>([])
@@ -158,8 +159,16 @@ export default function GraphCanvas({
   )
   useEffect(() => { hoverRef.current = hover }, [hover])
 
-  // ------------------------------------------------------------ 建图（只一次）
+  // ------------------------------------------------------------ 建图（graph 变时才重建）
+  // ★ 页面层已修 shownCount 竞争（深链时不再先设 initialBatch），
+  //   所以这里 graph 只变一次 ⇒ 只建一次图。⛔ 不需要防抖补丁。
   useEffect(() => {
+    buildGraph()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph])
+
+  /** 真正的建图逻辑（用最新 props） */
+  function buildGraph() {
     const box = boxRef.current
     const host = sigmaHostRef.current
     if (!box || !host || !graph) return
@@ -167,6 +176,14 @@ export default function GraphCanvas({
     const W = box.clientWidth || 900
     const H = box.clientHeight || 600
     graphLog('build:start', { nodes: graph.nodes.length, edges: graph.edges.length, W, H })
+
+    // ★★ 先 kill 旧实例（清空 sigmaHost），⛔ 必须在新 Sigma 之前 ——
+    //   否则 kill 会把刚创建的 canvas 一起删掉（一闪而过）⚠
+    const prev = sigmaRef.current
+    if (prev) {
+      cleanupRef.current?.()
+      cleanupRef.current = null
+    }
 
     const G = new DirectedGraph({ type: 'directed' })
     graph.nodes.forEach((n, i) => {
@@ -304,17 +321,19 @@ export default function GraphCanvas({
     })
     sigma.on('clickStage', () => setRing(null))
 
-    return () => {
+    // 把新实例的清理函数存起来，供 unmount / 下一次 build 调用
+    cleanupRef.current = () => {
       cancelAnimationFrame(raf)
       clearTimeout(settle)
       sigmaRef.current = null
       graphRef.current = null
       readyRef.current = 0
-      sigma.kill()   // 只清 sigmaHost，不碰 React 的 box
+      sigma.kill()
     }
-    // ★ 只依赖 graph —— 主题/选中/高亮都走属性更新，不重建
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph])
+  }
+
+  // 组件卸载：清理当前 sigma 实例
+  useEffect(() => () => cleanupRef.current?.(), [])
 
   // ------------------------------------------------------------ 主题色：只更新属性
   useEffect(() => {

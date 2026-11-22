@@ -194,8 +194,14 @@ export default function ProjectGraphPage() {
   }, [pathItems])
 
   useEffect(() => {
-    if (shownCount == null) setShownCount(initialBatch())
-  }, [shownCount])
+    if (shownCount != null) return
+    // ★★ 深链进入（?node=xxx）：⛔ 不要先设 initialBatch()——
+    //   那会渲染一次「前 15 个节点」，紧接着深链 effect 又设成 focusVids.length（2/7），
+    //   graph prop 变两次 ⇒ GraphCanvas 建图两次 ⇒ sigma.kill() 清空容器 ⇒ 图谱一闪而过。
+    //   ⇒ 有 deepVid 时**不设**，等深链 effect 算出 focusVids 后一次设到位。
+    if (deepVid != null) return
+    setShownCount(initialBatch())
+  }, [shownCount, deepVid])
 
   /**
    * ★★ `D105`：展示顺序 = **学习路径优先，其余按度数补齐** ⚠

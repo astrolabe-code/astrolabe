@@ -259,139 +259,113 @@ export default function GraphCanvas({
     graphLog('sigma:created', { nodes: G.order, edges: G.size, canvas: `${dim.width}×${dim.height}` })
     onPhase?.('布局动画中…')
 
-    // ★★★ 布局动画：分帧跑 ForceAtlas2，每帧 refresh + camera 跟随
-    //   节点从中心小圆环**逐渐散开**（像 GitNexus），不是 2 秒后突然跳变。
-    //   ⚠ 每帧都更新 camera ⇒ 节点始终在视口内，不会跑出去导致空白。
+    // ★★★ 布局动画：**先同步算出最终布局并记录快照，再按 1.5 秒回放**
+    //
+    //   ⚠ 为什么不直接「每帧跑几次 FA2」：
+    //   sigma 每次 refresh 都按**当前 bbox** 归一化（createNormalizationFunction），
+    //   节点坐标变大 ⇒ bbox 同步变大 ⇒ 归一化后始终铺满视口
+    //   ⇒ 视觉上根本看不出「散开」，只有位置抖动（所有者实测看不到动画）。
+    //   解法：setCustomBBox() 把归一化基准**固定成最终布局范围**，
+    //   再让坐标从中心小圆环逐渐长到最终位置 —— 这才是真的散开。
     const t0 = performance.now()
     const TOTAL_ITER = 120
-    const ITER_PER_FRAME = 3
+    const FRAMES = 90            // 快照帧数
+    const DURATION_MS = 1500     // ★ 动画总时长（所有者要 1-2 秒）
     const settings = forceAtlas2.inferSettings(G)
-    let doneIter = 0
     let raf = 0
     let finished = false
 
-    /**
-     * ★ 仿 GitNexus（Cytoscape fcose）的动画口径：
-     *   布局过程中**只动节点坐标**（每帧 refresh 看散开），camera 不动；
-     *   结束后 fit 一次（animate 250ms）。⛔ 绝不每帧 setState camera ——
-     *   那等于每帧「突然跳」，不是平滑动画。
-     */
-    const fitOnce = () => {
-      // ★★★ sigma 的 camera.x/y 是**归一化坐标**（见 createNormalizationFunction）：
-      //     normalized = 0.5 + (raw - bboxCenter) / bboxSize
-      //   ⇒ 归一化后 bbox 中心**恒为 (0.5, 0.5)**，与原始坐标无关。
-      //   ⛔ 之前传原始 bbox 中心（如 -3.3），等于把视口移出图外
-      //     ⇒ 图跑到右边、只露半截（所有者截图）。
-      //   ratio=1 即「图撑满视口」，留 8% 边距用 1.08。
-      sigma.getCamera().animate(
-        { ratio: 1.08, x: 0.5, y: 0.5 },
-        { duration: 250 },   // ★ 只 fit 一次，平滑收尾
-      )
+    /** 记录当前所有节点坐标 */
+    const snap = () => {
+      const out: { id: string; x: number; y: number }[] = []
+      G.forEachNode((id, a) => out.push({ id, x: a.x, y: a.y }))
+      return out
+    }
+    /** 应用一帧坐标 */
+    const applyFrame = (f: { id: string; x: number; y: number }[]) => {
+      for (const p of f) {
+        if (!G.hasNode(p.id)) continue
+        G.setNodeAttribute(p.id, 'x', p.x)
+        G.setNodeAttribute(p.id, 'y', p.y)
+      }
+    }
+    /** 算 bbox */
+    const bboxOf = (f: { id: string; x: number; y: number }[]) => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+      for (const p of f) {
+        if (p.x < minX) minX = p.x
+        if (p.x > maxX) maxX = p.x
+        if (p.y < minY) minY = p.y
+        if (p.y > maxY) maxY = p.y
+      }
+      return { minX, maxX, minY, maxY }
     }
 
-    const tick = () => {
-      if (sigmaRef.current !== sigma || finished) return
+    // ① 同步跑完布局，逐帧记录快照
+    const snapshots: { id: string; x: number; y: number }[][] = [snap()]
+    const per = Math.max(1, Math.round(TOTAL_ITER / FRAMES))
+    for (let i = 0; i < FRAMES; i++) {
       try {
-        forceAtlas2.assign(G, { iterations: ITER_PER_FRAME, settings })
-        doneIter += ITER_PER_FRAME
-        // ★ 动画期间 camera 不动（归一化中心恒为 0.5,0.5，图自然居中）：
-        //   只把 ratio 阻尼收敛到 1.08，避免初始 ratio=1 与目标的细微跳变。
-        {
-          const cur = sigma.getCamera().getState()
-          sigma.getCamera().setState({
-            x: 0.5,
-            y: 0.5,
-            ratio: cur.ratio + (1.08 - cur.ratio) * 0.15,
-          })
-        }
-        sigma.refresh()
+        forceAtlas2.assign(G, { iterations: per, settings })
       } catch (e) {
         graphLog('layout:ERROR', { err: String(e) })
-        finished = true
+        break
       }
-      if (doneIter < TOTAL_ITER) {
-        raf = requestAnimationFrame(tick)
+      snapshots.push(snap())
+    }
+    const finalFrame = snapshots[snapshots.length - 1]
+    let bb = bboxOf(finalFrame)
+
+    // ★ 退化保护：某一维接近 0（节点共线/只有一个节点）时撑开，
+    //   ⛔ 否则 sigma 归一化除零 ⇒ 节点全在视口外（实测 2 节点 bh=0）。
+    {
+      const w0 = bb.maxX - bb.minX
+      const h0 = bb.maxY - bb.minY
+      if (w0 < 0.5 || h0 < 0.5) {
+        const base = Math.max(w0, h0, 1)
+        finalFrame.forEach((p, idx) => {
+          if (w0 < 0.5) p.x = Math.cos(idx * 2.399963) * base * 0.6
+          if (h0 < 0.5) p.y = Math.sin(idx * 2.399963) * base * 0.6
+        })
+        bb = bboxOf(finalFrame)
+        graphLog('layout:degenerate-fixed', { w0: n1(w0), h0: n1(h0) })
+      }
+    }
+    graphLog('diag:bbox', {
+      minX: n1(bb.minX), maxX: n1(bb.maxX), minY: n1(bb.minY), maxY: n1(bb.maxY),
+      bw: n1(bb.maxX - bb.minX), bh: n1(bb.maxY - bb.minY),
+      frames: snapshots.length, durationMs: DURATION_MS,
+    })
+
+    // ② 固定归一化基准 = 最终布局范围 ⇒ 动画期间不会被自动缩放吃掉
+    sigma.setCustomBBox({ x: [bb.minX, bb.maxX], y: [bb.minY, bb.maxY] })
+    sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1.08 })
+
+    // ③ 从第一帧开始回放
+    applyFrame(snapshots[0])
+    sigma.refresh()
+
+    const playStart = performance.now()
+    const play = () => {
+      if (sigmaRef.current !== sigma || finished) return
+      const t = Math.min(1, (performance.now() - playStart) / DURATION_MS)
+      const idx = Math.min(snapshots.length - 1, Math.round(t * (snapshots.length - 1)))
+      applyFrame(snapshots[idx])
+      sigma.refresh()
+      if (t < 1) {
+        raf = requestAnimationFrame(play)
       } else {
         finished = true
-        graphLog('layout:done', { ms: Math.round(performance.now() - t0), iterations: doneIter })
-
-        // ★★★ 退化保护：某一维 bbox 接近 0（节点共线/只有一个节点）时，
-        //   手动在那一维上撑开 —— ⛔ 否则 sigma 归一化会除零，
-        //   节点全被映射到视口外（实测：2 节点 bh=0 ⇒ y=-68.9）。
-        {
-          const xs0: number[] = [], ys0: number[] = []
-          G.forEachNode((_id, a) => { xs0.push(a.x); ys0.push(a.y) })
-          const w0 = Math.max(...xs0) - Math.min(...xs0)
-          const h0 = Math.max(...ys0) - Math.min(...ys0)
-          if (w0 < 0.5 || h0 < 0.5) {
-            // 沿退化维度按黄金角铺开，幅度取另一维的 0.6（都退化就用 1）
-            const base = Math.max(w0, h0, 1)
-            G.nodes().forEach((id, i) => {
-              if (w0 < 0.5) G.updateNodeAttribute(id, 'x', () => Math.cos(i * 2.399963) * base * 0.6)
-              if (h0 < 0.5) G.updateNodeAttribute(id, 'y', () => Math.sin(i * 2.399963) * base * 0.6)
-            })
-            graphLog('layout:degenerate-fixed', { w0: n1(w0), h0: n1(h0) })
-          }
-        }
-
-        // ★★★ 诊断：布局结束时的原始数据（fit 之前）
-        const xs2: number[] = [], ys2: number[] = []
-        G.forEachNode((_id, a) => { xs2.push(a.x); ys2.push(a.y) })
-        const bMinX = Math.min(...xs2), bMaxX = Math.max(...xs2)
-        const bMinY = Math.min(...ys2), bMaxY = Math.max(...ys2)
-        const bbw = bMaxX - bMinX, bbh = bMaxY - bMinY
-        const zCalc = Math.min((W - 120) / Math.max(1, bbw), (H - 120) / Math.max(1, bbh))
-        const dimNow = sigma.getDimensions()
-        graphLog('diag:bbox', {
-          minX: n1(bMinX), maxX: n1(bMaxX), minY: n1(bMinY), maxY: n1(bMaxY),
-          bw: n1(bbw), bh: n1(bbh),
-          canvas: `${dimNow.width}×${dimNow.height}`,
-          zCalc: n1(zCalc), ratioCalc: n1(1 / Math.max(0.001, zCalc)),
-        })
-
-        fitOnce()         // ★ 结束后 fit 一次（GitNexus 的 fit:true）
-
-        // ★★★ 诊断：fit 之后（等动画 300ms 再读真值）
-        window.setTimeout(() => {
-          if (sigmaRef.current !== sigma) return
-          const cam = sigma.getCamera().getState()
-          // 取第一个节点，看它落在屏幕哪里（应该在 0~W / 0~H 内）
-          const firstId = G.nodes()[0]
-          const fa = G.getNodeAttributes(firstId)
-          const vp = sigma.graphToViewport({ x: fa.x, y: fa.y })
-          // WebGL 信息（判断是不是渲染层问题）
-          let gl = ''
-          try {
-            const c = (host.querySelector('canvas') as HTMLCanvasElement | null)
-            const ctx = c?.getContext('webgl2') || c?.getContext('webgl')
-            if (ctx) {
-              const dbg = (ctx as WebGLRenderingContext).getExtension('WEBGL_debug_renderer_info')
-              gl = dbg
-                ? String((ctx as WebGLRenderingContext).getParameter(dbg.UNMASKED_RENDERER_WEBGL))
-                : 'webgl-ok(no-debug-info)'
-            } else gl = 'NO-WEBGL-CONTEXT'
-          } catch (e) { gl = 'err:' + String(e) }
-          graphLog('diag:camera', {
-            camX: n1(cam.x), camY: n1(cam.y), camRatio: cam.ratio,
-            nodeGraph: { x: n1(fa.x), y: n1(fa.y) },
-            nodeViewport: { x: n1(vp.x), y: n1(vp.y) },
-            inViewport: vp.x >= 0 && vp.x <= dimNow.width && vp.y >= 0 && vp.y <= dimNow.height,
-            webgl: gl,
-          })
-        }, 320)
-
+        graphLog('layout:done', { ms: Math.round(performance.now() - t0), frames: snapshots.length })
+        // ④ 结束：恢复自动归一化（此刻实际 bbox == customBBox，不会跳）
+        sigma.setCustomBBox(null)
+        sigma.getCamera().animate({ ratio: 1.08, x: 0.5, y: 0.5 }, { duration: 200 })
         readyRef.current = Date.now()
-        const dim = sigma.getDimensions()
-        graphLog('ready', { nodes: G.order, canvas: `${dim.width}×${dim.height}` })
+        graphLog('ready', { nodes: G.order })
         onPhase?.('布局完成')
       }
     }
-
-    // ★ 初始 camera 对准初始圆环中心（节点散开时不用移动视口）
-    // ★ 归一化中心恒为 (0.5, 0.5)；初始就用居中 + fit 的 ratio
-    sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1.08 })
-    raf = requestAnimationFrame(tick)
-
+    raf = requestAnimationFrame(play)
     // 清理时取消动画帧
     const settle = window.setTimeout(() => {
       if (sigmaRef.current !== sigma) return
@@ -407,6 +381,29 @@ export default function GraphCanvas({
       onSelect(Number(node))
     })
     sigma.on('clickStage', () => setRing(null))
+
+    // ★★ 节点拖拽：sigma 3 没有内置 drag-element（G6 有），手动实现
+    //   downNode 抓住节点 → 禁用相机（否则会同时拖画布）→ 移动时改坐标 → 松开恢复
+    let dragging: string | null = null
+    sigma.on('downNode', ({ node }: { node: string }) => {
+      if (!readyRef.current) return   // 布局动画期间不拖
+      dragging = node
+      sigma.getCamera().disable()
+    })
+    sigma.getMouseCaptor().on('mouseup', () => {
+      if (!dragging) return
+      dragging = null
+      sigma.getCamera().enable()
+    })
+    sigma.getMouseCaptor().on('mousemovebody', (e) => {
+      if (!dragging) return
+      const GG = graphRef.current
+      if (!GG || !GG.hasNode(dragging)) return
+      const p = sigma.viewportToGraph({ x: e.x, y: e.y })
+      GG.setNodeAttribute(dragging, 'x', p.x)
+      GG.setNodeAttribute(dragging, 'y', p.y)
+      sigma.refresh()
+    })
 
     // 把新实例的清理函数存起来，供 unmount / 下一次 build 调用
     cleanupRef.current = () => {

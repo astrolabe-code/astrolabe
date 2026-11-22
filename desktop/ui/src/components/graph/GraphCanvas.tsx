@@ -135,6 +135,8 @@ export default function GraphCanvas({
   const hoverRef = useRef<typeof hover>(null)
   const cardHoverRef = useRef(false)
   const leaveTimerRef = useRef(0)
+  /** 边详情弹窗的延迟清除定时器 */
+  const edgeLeaveRef = useRef(0)
   const [dataVersion, setDataVersion] = useState(0)
   const readyRef = useRef(0)
   const aiBusy = useAiBusy()
@@ -382,6 +384,33 @@ export default function GraphCanvas({
     })
     sigma.on('clickStage', () => setRing(null))
 
+    // ★★★ 边：悬停 / 点击都显示详情弹窗
+    //   ⚠ sigma 重写后这块丢了（只加了节点事件）⇒ 点边没反应（所有者反馈）
+    //   聚合边：两点之间只画一条线，底下可能有多条（类型/方向/行号/来源），
+    //   详情卡里逐条列出（EdgeHoverCard 的 details）。
+    const findEdge = (edgeId: string): GraphEdge | null =>
+      (graph?.edges ?? []).find((e) => String(e.id) === edgeId) ?? null
+    const showEdge = (edgeId: string, ev: { x: number; y: number }) => {
+      const e = findEdge(edgeId)
+      if (!e) return
+      // ★ 事件坐标是相对 canvas，弹窗是 position:fixed ⇒ 加画布偏移
+      const rect = boxRef.current?.getBoundingClientRect()
+      setEdgeHover({ edge: e, x: ev.x + (rect?.left ?? 0), y: ev.y + (rect?.top ?? 0) })
+    }
+    sigma.on('enterEdge', ({ edge, event }) => {
+      window.clearTimeout(edgeLeaveRef.current)
+      showEdge(edge, event)
+    })
+    sigma.on('clickEdge', ({ edge, event }) => {
+      window.clearTimeout(edgeLeaveRef.current)
+      showEdge(edge, event)
+    })
+    // ★ 延迟 300ms 再清：给眼睛/鼠标一点时间，避免一离开边就消失
+    sigma.on('leaveEdge', () => {
+      window.clearTimeout(edgeLeaveRef.current)
+      edgeLeaveRef.current = window.setTimeout(() => setEdgeHover(null), 300)
+    })
+
     // ★★ 节点拖拽：sigma 3 没有内置 drag-element（G6 有），手动实现
     //   downNode 抓住节点 → 禁用相机（否则会同时拖画布）→ 移动时改坐标 → 松开恢复
     let dragging: string | null = null
@@ -409,6 +438,7 @@ export default function GraphCanvas({
     cleanupRef.current = () => {
       cancelAnimationFrame(raf)
       clearTimeout(settle)
+      window.clearTimeout(edgeLeaveRef.current)
       sigmaRef.current = null
       graphRef.current = null
       readyRef.current = 0

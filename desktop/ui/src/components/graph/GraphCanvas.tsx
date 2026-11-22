@@ -5,6 +5,7 @@ import forceAtlas2 from 'graphology-layout-forceatlas2'
 import { startMeteor } from '../../lib/meteorFx'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
 import { kindColor } from '../../lib/kindLabel'
+import { graphLog, n1 } from '../../lib/graphLog'
 import {
   nodePos, toGraph, toViewport, zoomOf, setStates, applyVisual,
   nodeSizeOf, nodeColorOf, addNode, addEdge, dropNodes, focusOn,
@@ -202,6 +203,8 @@ export default function GraphCanvas({
   const gRef = useRef<Sigma | null>(null)
   /** graphology 图数据（sigma 的单一数据源） */
   const graphRef = useRef<DirectedGraph | null>(null)
+  /** 供浮窗 onLeave 调用：清除 hover 高亮 */
+  const clearActiveRef = useRef<(() => void) | null>(null)
   /** 上一轮高亮过的节点 id（换链时要先清掉，否则残留） */
   const flowIdsRef = useRef<string[]>([])
   const selectedRef = useRef<number | null>(null)
@@ -280,6 +283,45 @@ export default function GraphCanvas({
 
     let raf = 0
     let last: PointerEvent | null = null
+    /** ★ 当前高亮的一度邻居（替代 G6 的 hover-activate） */
+    let activeIds: string[] = []
+    /** hover 打点去重：只在命中节点变化时输出 */
+    let lastLoggedHover = ''
+
+    /** 清掉上一次的 hover 高亮 */
+    const clearActive = () => {
+      if (!graphRef.current) return
+      for (const id of activeIds) {
+        if (graphRef.current.hasNode(id)) {
+          graphRef.current.updateNodeAttribute(id, 'active', () => false)
+          for (const e of graphRef.current.edges(id)) {
+            graphRef.current.updateEdgeAttribute(e, 'active', () => false)
+          }
+        }
+      }
+      activeIds = []
+      gRef.current?.refresh()
+    }
+    // ★ 暴露给浮窗 onLeave（鼠标离开浮窗时清高亮）
+    clearActiveRef.current = clearActive
+
+    /** 高亮节点 + 直接邻居 + 相连边 */
+    const setActive = (id: string) => {
+      const G = graphRef.current
+      if (!G || !G.hasNode(id)) return
+      G.updateNodeAttribute(id, 'active', () => true)
+      activeIds = [id]
+      for (const e of G.edges(id)) {
+        G.updateEdgeAttribute(e, 'active', () => true)
+        const [s, t] = G.extremities(e)
+        const other = s === id ? t : s
+        if (G.hasNode(other) && !activeIds.includes(other)) {
+          G.updateNodeAttribute(other, 'active', () => true)
+          activeIds.push(other)
+        }
+      }
+      gRef.current?.refresh()
+    }
 
     const update = () => {
       raf = 0
@@ -307,11 +349,23 @@ export default function GraphCanvas({
       const n = bestId ? nodeInfoRef.current.get(bestId) : undefined
       // ★ 半径用画布单位（节点 size 就是画布单位），不随缩放漂
       const hit = !!n && bestD <= nodeSizePx / 2 + 4
+      const hoverKey = hit && n ? String(n.vid) : ''
+      if (hoverKey !== lastLoggedHover) {
+        lastLoggedHover = hoverKey
+        graphLog('hover', {
+          node: hoverKey || null,
+          name: n ? n.name : null,
+          dist: n1(bestD), threshold: nodeSizePx / 2 + 4,
+          visibleCount: visibleRef.current.size,
+        })
+      }
       if (hit && n) {
         // ★★★ 进入节点必须**先取消**上一次离开挂起的清空定时器！
         //   ⛔ 否则：从上个节点/空白移进来时，那次离开的 timer 还在跑，
         //   鼠标一停下它就到期，把刚出现的浮窗清掉（表现为「过几秒自己消失」）。
         window.clearTimeout(leaveTimerRef.current)
+        // ★ 恢复 G6 hover-activate：高亮这个节点 + 一度邻居 + 相连边
+        setActive(String(n.vid))
         // ★★★ 位置策略（所有者 2026-11-17）：
         //   「鼠标向左向上，弹窗就跟着走，向右下就定住，不就完了。
         //    触发定住的就是鼠标向右下角移动」
@@ -346,7 +400,10 @@ export default function GraphCanvas({
       if (hoverRef.current && !cardHoverRef.current) {
         window.clearTimeout(leaveTimerRef.current)
         leaveTimerRef.current = window.setTimeout(() => {
-          if (!cardHoverRef.current) setHoverSync(null)
+          if (!cardHoverRef.current) {
+            setHoverSync(null)
+            clearActive()   // 高亮也一起清（移到浮窗上时保留）
+          }
         }, HOVER_LINGER_MS)
       }
 
@@ -379,7 +436,10 @@ export default function GraphCanvas({
       //   ⇒ 与「离开节点」共用同一个 800ms 定时器，给鼠标跨过去的时间。
       window.clearTimeout(leaveTimerRef.current)
       leaveTimerRef.current = window.setTimeout(() => {
-        if (!cardHoverRef.current) setHoverSync(null)
+        if (!cardHoverRef.current) {
+          setHoverSync(null)
+          clearActive()
+        }
       }, HOVER_LINGER_MS)
       setEdgeHover(null)   // 边的浮窗没有交互按钮，仍然立即清
     }
@@ -407,6 +467,10 @@ export default function GraphCanvas({
     const W = box.clientWidth || 900
     const H = box.clientHeight || 600
     const total = Math.max(1, graph.nodes.length)
+    graphLog('build:start', {
+      nodes: graph.nodes.length, edges: graph.edges.length,
+      boxW: box.clientWidth, boxH: box.clientHeight, usingFallback: !box.clientWidth,
+    })
 
     // ★ graphology：sigma 的数据容器（有向图，对应原来的 G6 data）
     const G = new DirectedGraph({ type: 'directed', multi: true })
@@ -482,6 +546,11 @@ export default function GraphCanvas({
 
     gRef.current = sigma
     graphRef.current = G
+    const dim0 = sigma.getDimensions()
+    graphLog('sigma:created', {
+      graphNodes: G.order, graphEdges: G.size,
+      canvasW: dim0.width, canvasH: dim0.height,
+    })
 
     let alive = true
     onPhase?.('布局动画中…')
@@ -490,12 +559,14 @@ export default function GraphCanvas({
     const t0 = performance.now()
     const settle = window.setTimeout(() => {
       if (!alive) return
+      const tLayout = performance.now()
       try {
         const sensible = forceAtlas2.inferSettings(G)
         forceAtlas2.assign(G, { iterations: 120, settings: sensible })
         sigma.refresh()
-      } catch {
-        /* 布局失败不影响看图 */
+        graphLog('layout:done', { ms: Math.round(performance.now() - tLayout) })
+      } catch (e) {
+        graphLog('layout:ERROR', { err: String(e) })
       }
       // ★ bbox 适配（替代 G6 fitCenter/zoomTo）
       try {
@@ -504,17 +575,28 @@ export default function GraphCanvas({
         G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
         const minX = Math.min(...xs), maxX = Math.max(...xs)
         const minY = Math.min(...ys), maxY = Math.max(...ys)
+        graphLog('bbox', {
+          x: [n1(minX), n1(maxX)], y: [n1(minY), n1(maxY)],
+          w: n1(maxX - minX), h: n1(maxY - minY),
+        })
         if (isFinite(minX) && maxX - minX > 1 && maxY - minY > 1) {
           const pad = 70
           const z = Math.min((W - pad * 2) / (maxX - minX), (H - pad * 2) / (maxY - minY), 1.6)
+          const ratio = 1 / Math.max(0.15, z)
           sigma.getCamera().setState({
-            ratio: 1 / Math.max(0.15, z),
+            ratio,
             x: (minX + maxX) / 2,
             y: (minY + maxY) / 2,
           })
+          sigma.refresh()   // ★ camera 变了必须重绘，否则画面还在旧视口
+          graphLog('camera', { z: n1(z), ratio: n1(ratio), cx: n1((minX+maxX)/2), cy: n1((minY+maxY)/2) })
+        } else {
+          graphLog('bbox:skip', { reason: 'degenerate', minX, maxX, minY, maxY })
         }
-      } catch { /* 适配失败不影响看图 */ }
+      } catch (e) { graphLog('bbox:ERROR', { err: String(e) }) }
       readyRef.current = Date.now() || t0
+      const dim = sigma.getDimensions()
+      graphLog('ready', { nodes: G.order, canvas: `${dim.width}×${dim.height}` })
       onPhase?.('布局完成')
     }, SETTLE_MS)
 
@@ -674,16 +756,27 @@ export default function GraphCanvas({
     const sigma = gRef.current
     const box = boxRef.current
     if (!sigma || !box) return
-    // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* 必须显式 resize，
-    //   * 否则 G6 的 canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
+    // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* sigma 必须显式 resize()，
+    //   * 否则 WebGL canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
+    let lastSize = ''
     const ro = new ResizeObserver(() => {
       requestAnimationFrame(() => {
         try {
           const w = box.clientWidth
           const h = box.clientHeight
-          if (w > 0 && h > 0) sigma.refresh()
-        } catch {
-          /* 实例已销毁 */
+          if (w > 0 && h > 0) {
+            const key = `${w}x${h}`
+            if (key !== lastSize) {
+              lastSize = key
+              graphLog('resize', { w, h })
+            }
+            sigma.resize()   // ★ 重算 canvas 尺寸（不是只 refresh）
+            sigma.refresh()
+          } else {
+            graphLog('resize:zero', { w, h })
+          }
+        } catch (e) {
+          graphLog('resize:ERROR', { err: String(e) })
         }
       })
     })
@@ -802,6 +895,7 @@ export default function GraphCanvas({
       if (String(e.to) === id) nbrs.add(String(e.from))
     }
     const missing = [...nbrs].filter((v) => !existing.has(v) && byId.has(v))
+    graphLog('expand', { host: id, neighbors: nbrs.size, adding: missing.length, before: G.order })
     if (missing.length === 0) return
 
     const base = nodePos(G, id)
@@ -889,6 +983,7 @@ export default function GraphCanvas({
 
     const cur = new Set(nodes)
     const ids = [...removing].filter((v) => cur.has(v))
+    graphLog('hide', { target: id, removing: [...removing], actuallyDropped: ids.length, before: G.order })
     if (ids.length === 0) return
 
     // 先删边（两头沾到被移除节点的边），再删点
@@ -1036,6 +1131,7 @@ export default function GraphCanvas({
           onLeave={() => {
             cardHoverRef.current = false
             setHoverSync(null)
+            clearActiveRef.current?.()
             setEdgeHover(null)
           }}
         />

@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Graph } from '@antv/g6'
+import Sigma from 'sigma'
+import DirectedGraph from 'graphology'
+import forceAtlas2 from 'graphology-layout-forceatlas2'
 import { startMeteor } from '../../lib/meteorFx'
-import { useTheme } from '../../hooks/useTheme'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
 import { kindColor } from '../../lib/kindLabel'
+import {
+  nodePos, toGraph, toViewport, zoomOf, setStates, applyVisual,
+  nodeSizeOf, nodeColorOf, addNode, addEdge, dropNodes, focusOn,
+} from '../../lib/sigmaBridge' 
 import NodeHoverCard from '../node/NodeHoverCard'
 import { useAiBusy } from '../../lib/aiBusy'
 import EdgeHoverCard from './EdgeHoverCard'
@@ -193,7 +198,10 @@ export default function GraphCanvas({
    */
   const aiBusy = useAiBusy()
   const boxRef = useRef<HTMLDivElement>(null)
-  const gRef = useRef<Graph | null>(null)
+  /** sigma 实例（替代 G6 gRef） */
+  const gRef = useRef<Sigma | null>(null)
+  /** graphology 图数据（sigma 的单一数据源） */
+  const graphRef = useRef<DirectedGraph | null>(null)
   /** 上一轮高亮过的节点 id（换链时要先清掉，否则残留） */
   const flowIdsRef = useRef<string[]>([])
   const selectedRef = useRef<number | null>(null)
@@ -275,26 +283,22 @@ export default function GraphCanvas({
 
     const update = () => {
       raf = 0
-      const g = gRef.current
-      if (!g || !last) return
+      const sigma = gRef.current
+      const G = graphRef.current
+      if (!sigma || !G || !last) return
       const rect = box.getBoundingClientRect()
-      let p: ArrayLike<number>
+      let p: { x: number; y: number }
       try {
-        p = g.getCanvasByViewport([last.clientX - rect.left, last.clientY - rect.top] as never) as ArrayLike<number>
+        p = toGraph(sigma, last.clientX - rect.left, last.clientY - rect.top)
       } catch {
         return
       }
       let bestId = ''
       let bestD = Infinity
       for (const id of visibleRef.current) {
-        let pos: ArrayLike<number> | undefined
-        try {
-          pos = g.getElementPosition(id) as ArrayLike<number>
-        } catch {
-          continue
-        }
+        const pos = nodePos(G, id)
         if (!pos) continue
-        const d = Math.hypot(pos[0] - p[0], pos[1] - p[1])
+        const d = Math.hypot(pos.x - p.x, pos.y - p.y)
         if (d < bestD) {
           bestD = d
           bestId = id
@@ -354,14 +358,10 @@ export default function GraphCanvas({
       let bestED = Infinity
       for (const e of graph?.edges ?? []) {
         if (!visibleRef.current.has(String(e.from)) || !visibleRef.current.has(String(e.to))) continue
-        let pa: ArrayLike<number> | undefined
-        let pb: ArrayLike<number> | undefined
-        try {
-          pa = g.getElementPosition(String(e.from)) as ArrayLike<number>
-          pb = g.getElementPosition(String(e.to)) as ArrayLike<number>
-        } catch { continue }
+        const pa = nodePos(G, String(e.from))
+        const pb = nodePos(G, String(e.to))
         if (!pa || !pb) continue
-        const d = distToSegment(p, pa, pb)
+        const d = distToSegment([p.x, p.y], [pa.x, pa.y], [pb.x, pb.y])
         if (d < bestED) { bestED = d; bestEdge = e }
       }
       setEdgeHover(
@@ -408,188 +408,135 @@ export default function GraphCanvas({
     const H = box.clientHeight || 600
     const total = Math.max(1, graph.nodes.length)
 
-    const g = new Graph({
-      container: box,
-      autoResize: true,
-      // ★ ① 必须开：关掉的话布局过渡是瞬时的（看不到散开）
-      animation: true,
-      data: {
-        nodes: graph.nodes.map((n, i) => {
-          // ★ ③ 小圆环初始分布（视觉上聚在中心，但布局能散开）
-          const ang = (i / total) * Math.PI * 2
-          const manual = n.origin === 'manual'
-          return {
-            id: String(n.vid),
-            type: manual ? 'diamond' : 'circle',
-            style: {
-              x: W / 2 + Math.cos(ang) * RING,
-              y: H / 2 + Math.sin(ang) * RING,
-              size: nodeSize(n),
-              fill: colorOf(n),
-              // ★★ 白描边 2px ——* 深色背景上一圈白边，* 节点立刻"跳"出来（形似 code_network）⚠
-              stroke: n.patched ? '#fbbf24' : '#ffffff',
-              lineWidth: n.patched ? 2.5 : 2,
-              lineDash: n.patched ? [4, 3] : undefined,
-              labelText: truncateLabel(
-                n.name,
-                n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME,
-              ),
-              labelPlacement: 'bottom',
-              labelFill: labelColor,
-              labelFontSize: 11,
-            },
-          }
-        }),
-        edges: graph.edges.map((e) => {
-          const src = nodeById.get(String(e.from))
-          return {
-            id: String(e.id),
-            source: String(e.from),
-            target: String(e.to),
-            style: {
-              // ★★★ 连线颜色 = **发出节点的颜色**（* 所有者：「就用发出节点的颜色」）⚠
-              //   · · ★ 以后连线颜色可能承载别的含义，* 现在统一跟节点走 ✅
-              stroke: src ? colorOf(src) : '#94a3b8',
-              lineWidth: 1,
-              opacity: 0.65,
-              endArrow: true,
-              // ★★ 箭头调小（* 默认 10 左右 ⇒* 满屏都是箭头，* 密密麻麻）⚠
-              endArrowSize: 4,
-              lineDash: e.origin === 'manual' ? [5, 4] : undefined,
-            },
-          }
-        }),
-      },
-      node: {
-        style: { labelPlacement: 'bottom', labelFill: labelColor, labelFontSize: 11 },
-        state: {
-          // ⛔ 不设 stroke（* 保住节点自己的白描边）；* 只加粗 + 放大，* 无色无阴影 ⚠
-          selected: { lineWidth: 3, size: 35 },
-          // ★ 执行流高亮：略微放大 + 加粗，⛔ 不改颜色（和「选中」区分开）
-          flow: { lineWidth: 3, size: 33 },
-          // ★★ `hover-activate` 的高亮态：* 描边加粗 + 光晕，
-          //    * 鼠标扫过一眼就能看出「这个节点连到谁」⚠
-          // ⚠ 不要加 shadowBlur ——* 那会在节点外形成一圈深色光圈（* 所有者要求消掉）⚠
-          // ★ 只加粗、* 不换色、* 不加阴影 ⇒ 不会出现"多一圈"的观感 ⚠
-          active: { lineWidth: 3.5 },
-        },
-      },
-      edge: {
-        style: { endArrow: true, lineWidth: 1 },
-        state: {
-          // ★ 相关边变亮变粗（* 其余边保持原位，* 不做淡化以免闪烁）⚠
-          active: { stroke: '#22d3ee', lineWidth: 2.5, opacity: 1 },
-        },
-      },
-      layout: {
-        // ★ 从圆环出发，fruchterman 把它散开
-        type: 'fruchterman',
-        // ★★ 布局区域缩到画布 85% ——* 否则边缘节点会被切掉（* fit 后仍顶边）⚠
-        width: W * 0.85,
-        height: H * 0.85,
-        // ★★ 节点 28px ⇒ 向心力必须小（* 8 太聚，* 24 个圆挤成一团）⚠
-        gravity: 4,
-        speed: 10,
-      },
-      behaviors: [
-        // ★ 滚轮缩放（默认 trigger:[] ⇒ 内部走 wheel 分支）
-        'zoom-canvas',
-        // ★★★ **双指缩放**（移动端）——* G6 默认 `trigger: []` **只绑 wheel**，
-        //   · · 要想双指捏合必须显式 `trigger: ['pinch']`（* 否则静默不生效）⚠
-        { type: 'zoom-canvas', trigger: ['pinch'] },
-        'drag-canvas',
-        'drag-element',
-        // ⚠ 不用 `click-select` ——* 它会给选中元素套一层 G6 默认高亮（* 那圈深色）
-        //   · * 选中态改由页面受控的 `selected` state 驱动（* 见下面的 effect）⚠
-        // ★★ 悬停高亮：* 鼠标扫过节点 ⇒ 它和**直接邻居**（1 度）一起亮，
-        //    * 一眼看清「谁调谁」（* 形似所有者原型）⚠
-        { type: 'hover-activate', degree: 1, state: 'active' },
-      ],
+    // ★ graphology：sigma 的数据容器（有向图，对应原来的 G6 data）
+    const G = new DirectedGraph({ type: 'directed', multi: true })
+    graph.nodes.forEach((n, i) => {
+      const ang = (i / total) * Math.PI * 2
+      const patched = !!n.patched
+      G.addNode(String(n.vid), {
+        // 初始小圆环（ForceAtlas2 从它出发散开）
+        x: W / 2 + Math.cos(ang) * RING,
+        y: H / 2 + Math.sin(ang) * RING,
+        // 显示属性（reducer 会用到）
+        size: nodeSize(n),
+        color: colorOf(n),
+        border: patched ? '#fbbf24' : '#ffffff',
+        borderWidth: patched ? 2.5 : 2,
+        label: truncateLabel(
+          n.name,
+          n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME,
+        ),
+        labelColor,
+        // 内部标记（reducer 读）
+        kind: n.kind,
+        origin: n.origin,
+        patched,
+        flow: false,
+        selected: false,
+        active: false,
+        hideLabel: false,
+      })
+    })
+    graph.edges.forEach((e) => {
+      if (!G.hasNode(String(e.from)) || !G.hasNode(String(e.to))) return
+      const src = nodeById.get(String(e.from))
+      G.addEdge(String(e.from), String(e.to), {
+        key: String(e.id),
+        color: src ? colorOf(src) : '#94a3b8',
+        size: 1,
+        manual: e.origin === 'manual',
+        active: false,
+      })
     })
 
-    // ★★★ **初始化可见集合**（* 之前漏了这行 ⇒ 一直是空集 ⇒
-    //   环形按钮一出现就被判"节点不存在"、* 一闪而过）⚠
     visibleRef.current = new Set(graph.nodes.map((n) => String(n.vid)))
     nodeInfoRef.current = new Map(graph.nodes.map((n) => [String(n.vid), n]))
 
-    let alive = true
+    // ★ sigma 实例：替代 G6 Graph
+    const sigma = new Sigma(G, box, {
+      // ★ sigma 3：属性名固定为 color/size/label（reducer 里返回即可）
+      labelRenderedSizeThreshold: 0,
+      renderEdgeLabels: false,
+      // ★ sigma 3：标签颜色从节点属性 labelColor 读
+      labelColor: { attribute: 'labelColor', color: '#94a3b8' },
+      defaultNodeColor: '#94a3b8',
+      defaultEdgeColor: '#94a3b8',
+      zIndex: true,
+      // 节点 reducer：把 flow/selected/active/hideLabel 映射成样式
+      nodeReducer: (_node, data) => ({
+        ...data,
+        // ★ 直接用节点自带 size（展开邻居时已写入），不查 nodeInfoRef 避免 undefined
+        size: data.selected ? Number(data.size || 14) * 1.25
+            : data.flow ? Number(data.size || 14) * 1.18
+            : data.active ? Number(data.size || 14) * 1.08
+            : data.size,
+        borderWidth: data.selected ? 3 : data.flow ? 3 : data.active ? 3.5 : data.borderWidth,
+        label: data.hideLabel ? '' : data.label,
+      }),
+      edgeReducer: (_edge, data) => ({
+        ...data,
+        color: data.active ? '#22d3ee' : data.color,
+        size: data.active ? 2.5 : data.size,
+      }),
+    })
 
-    // ★ ② 不 await / 不 then —— `animation:true` 时 promise 永不 resolve
-    void g.render()
+    gRef.current = sigma
+    graphRef.current = G
+
+    let alive = true
     onPhase?.('布局动画中…')
 
-    // ★ 2.5 秒后：适配视图 + 标记"布局完成"
+    // ★★★ ForceAtlas2：从圆环出发散开（同步 assign，分帧执行避免卡 UI）
+    const t0 = performance.now()
     const settle = window.setTimeout(() => {
       if (!alive) return
-      void (async () => {
-        try {
-          // ★★★ **自己算缩放**：* `fitView` 会顶边（* 边缘节点被切），
-          //   * 而 `zoomTo(常数)` 在大小图上都不合适 ⇒* 算 bbox + 留白 ⚠
-          const fit = async () => {
-            const ids = graph.nodes.map((n) => String(n.vid))
-            let minX = Infinity
-            let minY = Infinity
-            let maxX = -Infinity
-            let maxY = -Infinity
-            for (const id of ids) {
-              const p = g.getElementPosition(id)
-              if (!p) continue
-              minX = Math.min(minX, p[0])
-              minY = Math.min(minY, p[1])
-              maxX = Math.max(maxX, p[0])
-              maxY = Math.max(maxY, p[1])
-            }
-            if (!isFinite(minX) || maxX - minX < 1 || maxY - minY < 1) return
-            const pad = 70 // 四周留白（* 像素）
-            const bw = maxX - minX
-            const bh = maxY - minY
-            const z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 1.6)
-            // ★★ 必须 await ——* 否则 `fitCenter` 用旧 zoom（* 实测图不放大）⚠
-            await g.zoomTo(Math.max(0.15, z))
-            await g.fitCenter()
-          }
-          void fit()
-          window.setTimeout(() => void fit(), 700)
-        } catch {
-          /* 适配失败不影响看图 */
+      try {
+        const sensible = forceAtlas2.inferSettings(G)
+        forceAtlas2.assign(G, { iterations: 120, settings: sensible })
+        sigma.refresh()
+      } catch {
+        /* 布局失败不影响看图 */
+      }
+      // ★ bbox 适配（替代 G6 fitCenter/zoomTo）
+      try {
+        const xs: number[] = []
+        const ys: number[] = []
+        G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
+        const minX = Math.min(...xs), maxX = Math.max(...xs)
+        const minY = Math.min(...ys), maxY = Math.max(...ys)
+        if (isFinite(minX) && maxX - minX > 1 && maxY - minY > 1) {
+          const pad = 70
+          const z = Math.min((W - pad * 2) / (maxX - minX), (H - pad * 2) / (maxY - minY), 1.6)
+          sigma.getCamera().setState({
+            ratio: 1 / Math.max(0.15, z),
+            x: (minX + maxX) / 2,
+            y: (minY + maxY) / 2,
+          })
         }
-      })()
-      readyRef.current = Date.now()
+      } catch { /* 适配失败不影响看图 */ }
+      readyRef.current = Date.now() || t0
       onPhase?.('布局完成')
     }, SETTLE_MS)
 
-    g.on('node:dragstart', () => setHoverSync(null))
-
-
-    g.on('node:click', (evt: unknown) => {
-      const e = evt as { target?: { id?: string | number } }
-      if (e?.target?.id != null) {
-        const id = String(e.target.id)
-        const p = g.getViewportByCanvas(g.getElementPosition(id) as never) as ArrayLike<number>
-        setRing({ id, x: p[0], y: p[1] })
-        setRingScale(Math.max(1, Math.min(g.getZoom(), 1.6)))
-        onSelect(Number(id))
-      }
+    // ★ 事件：点节点 / 点空白
+    sigma.on('clickNode', ({ node }) => {
+      const pos = sigma.graphToViewport({ x: G.getNodeAttribute(node, 'x'), y: G.getNodeAttribute(node, 'y') })
+      setRing({ id: node, x: pos.x, y: pos.y })
+      setRingScale(Math.max(1, Math.min(1 / sigma.getCamera().getState().ratio, 1.6)))
+      onSelect(Number(node))
+      setHoverSync(null)
     })
-    g.on('canvas:click', () => {
-      // ★★ 只收起环形按钮，**不清空选中** ——
-      //   · · 所有者：「应该点击节点才切换，点击节点以外的地方，写作区内容不变。
-      //     不然，写作时，不小心点了别的地方写作内容直接换成别的了」⚠
-      //   · · ★ 否则写笔记时点到画布空白 ⇒ selectedVid 变 null ⇒ 写作区瞬间清空 ⚠
-      setRing(null)
-    })
-
-    gRef.current = g
+    sigma.on('clickStage', () => setRing(null))
 
     return () => {
       alive = false
       window.clearTimeout(settle)
       readyRef.current = 0
       gRef.current = null
+      graphRef.current = null
       selectedRef.current = null
-      g.destroy()
+      sigma.kill()
     }
-    // ★★ `labelColor` 也进依赖：* 主题切换 ⇒ 重建图 ⇒ 标签用新色 ⚠
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, labelColor])
 
@@ -600,33 +547,21 @@ export default function GraphCanvas({
    *   ⚠ 节点可能被「显示前 N 个」过滤掉，`setElementState` 会抛错 —— 逐个 try。
    */
   useEffect(() => {
-    const g = gRef.current
-    if (!g) return
-    for (const id of flowIdsRef.current) {
-      try {
-        g.setElementState(id, [])
-      } catch {
-        /* 已不在画布上 */
-      }
-    }
+    const G = graphRef.current
+    const sigma = gRef.current
+    if (!G || !sigma) return
+    for (const id of flowIdsRef.current) setStates(G, id, [])
     flowIdsRef.current = []
     for (const v of highlightVids || []) {
       const id = String(v)
-      try {
-        g.setElementState(id, ['flow'])
-        flowIdsRef.current.push(id)
-      } catch {
-        /* 被过滤掉了 */
-      }
+      if (!G.hasNode(id)) continue
+      setStates(G, id, ['flow'])
+      flowIdsRef.current.push(id)
     }
-    // 选中的那个仍然要显示选中态（两个 state 可以同时生效）
-    if (selectedVid != null) {
-      try {
-        g.setElementState(String(selectedVid), ['flow', 'selected'])
-      } catch {
-        /* 不在画布上 */
-      }
+    if (selectedVid != null && G.hasNode(String(selectedVid))) {
+      setStates(G, String(selectedVid), ['flow', 'selected'])
     }
+    sigma.refresh()
   }, [highlightVids, selectedVid, graph])
 
   // ============================================================ 标签疏密（按缩放）
@@ -645,8 +580,9 @@ export default function GraphCanvas({
    * ⚠ 只改 `labelText`，不动节点/边结构；用 rAF 合并连续的缩放事件。
    */
   useEffect(() => {
-    const g = gRef.current
-    if (!g || !graph || graph.nodes.length < LABEL_MIN_NODES) return
+    const sigma = gRef.current
+    const G = graphRef.current
+    if (!sigma || !G || !graph || graph.nodes.length < LABEL_MIN_NODES) return
 
     const labelOf = new Map<string, string>()
     for (const n of graph.nodes) {
@@ -667,7 +603,7 @@ export default function GraphCanvas({
     let lastDense: boolean | null = null
     const apply = () => {
       raf = 0
-      const dense = g.getZoom() < LABEL_ZOOM_THRESHOLD
+      const dense = zoomOf(sigma) < LABEL_ZOOM_THRESHOLD
       if (dense === lastDense) return
       lastDense = dense
       let keep: Set<string> | null = null
@@ -685,21 +621,20 @@ export default function GraphCanvas({
           }
         }
       }
-      const updates = [...labelOf].map(([id, text]) => ({
-        id,
-        style: { labelText: keep && !keep.has(id) ? '' : text },
-      }))
-      g.updateNodeData(updates)
-      void g.draw()
+      for (const [id, text] of labelOf) {
+        if (!G.hasNode(id)) continue
+        applyVisual(G, id, { label: keep && !keep.has(id) ? '' : text })
+      }
+      sigma.refresh()
     }
     const onTransform = () => {
       if (!raf) raf = requestAnimationFrame(apply)
     }
 
-    g.on('aftertransform', onTransform)
+    sigma.getCamera().on('updated', onTransform)
     apply()
     return () => {
-      g.off('aftertransform', onTransform)
+      sigma.getCamera().off('updated', onTransform)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [graph, selectedVid])
@@ -709,25 +644,23 @@ export default function GraphCanvas({
     if (!ring) return
     let raf = 0
     const tick = () => {
-      const g = gRef.current
+      const sigma = gRef.current
+      const G = graphRef.current
       const el = ringRef.current
       // 节点被隐藏 ⇒ 收起按钮（* 先判断数据，* 不做异常兜底）⚠
       if (!visibleRef.current.has(ring.id)) {
         setRing(null)
         return
       }
-      if (g && el) {
-        try {
-          const p = g.getViewportByCanvas(
-            g.getElementPosition(ring.id) as never,
-          ) as ArrayLike<number>
-          const z = Math.max(1, Math.min(g.getZoom(), 1.6))
-          // ★★ 直接写 DOM style ——* 走 setState 会因 React 排帧慢而「跟不住」⚠
-          el.style.left = `${p[0]}px`
-          el.style.top = `${p[1]}px`
+      if (sigma && G && el) {
+        const np = nodePos(G, ring.id)
+        if (np) {
+          const p = toViewport(sigma, np.x, np.y)
+          const z = Math.max(1, Math.min(zoomOf(sigma), 1.6))
+          // ★★ 直接写 DOM style —— 走 setState 会因 React 排帧慢而「跟不住」⚠
+          el.style.left = `${p.x}px`
+          el.style.top = `${p.y}px`
           el.style.transform = `translate(-50%, -50%) scale(${z})`
-        } catch {
-          /* 节点已不在 */
         }
       }
       raf = requestAnimationFrame(tick)
@@ -738,9 +671,9 @@ export default function GraphCanvas({
 
   // ============================================================ 容器尺寸 ⇒ 重画
   useEffect(() => {
-    const g = gRef.current
+    const sigma = gRef.current
     const box = boxRef.current
-    if (!g || !box) return
+    if (!sigma || !box) return
     // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* 必须显式 resize，
     //   * 否则 G6 的 canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
     const ro = new ResizeObserver(() => {
@@ -748,7 +681,7 @@ export default function GraphCanvas({
         try {
           const w = box.clientWidth
           const h = box.clientHeight
-          if (w > 0 && h > 0) g.resize(w, h)
+          if (w > 0 && h > 0) sigma.refresh()
         } catch {
           /* 实例已销毁 */
         }
@@ -760,8 +693,9 @@ export default function GraphCanvas({
 
   // ============================================================ 选中态（受控）
   useEffect(() => {
-    const g = gRef.current
-    if (!g || !graph) return
+    const sigma = gRef.current
+    const G = graphRef.current
+    if (!sigma || !G || !graph) return
     const cur = selectedVid ?? null
     const prev = selectedRef.current
 
@@ -776,16 +710,9 @@ export default function GraphCanvas({
       if (!n) return
       // ★★ 查**可见集合**（* 已被隐藏移除的节点直接跳过，不碰 G6）⚠
       if (!visibleRef.current.has(String(vid))) return
-      g.updateNodeData([
-        {
-          id: String(vid),
-          style: {
-            stroke,
-            lineWidth,
-            size: nodeSize(n) * scale,
-          },
-        },
-      ])
+      applyVisual(G, String(vid), {
+        stroke, lineWidth, size: nodeSize(n) * scale,
+      })
     }
     if (prev != null && prev !== cur) {
       const p = graph.nodes.find((x) => x.vid === prev)
@@ -795,21 +722,23 @@ export default function GraphCanvas({
     //   小、* 视觉上反而"缩小"，* 所以必须同时放大尺寸）⚠
     if (cur != null) paint(cur, '#ffffff', 3, 1.25)
     selectedRef.current = cur
-    void g.draw()
+    sigma.refresh()
   }, [selectedVid, graph])
 
   // ============================================================ 搜索聚焦
   useEffect(() => {
-    const g = gRef.current
-    if (!g || focusVid == null) return
-    void g.focusElement(String(focusVid))
+    const sigma = gRef.current
+    const G = graphRef.current
+    if (!sigma || !G || focusVid == null) return
+    focusOn(sigma, G, String(focusVid))
   }, [focusVid])
 
   // ============================================================ 流星（等布局稳定后启动）
   useEffect(() => {
-    const g = gRef.current
+    const sigma = gRef.current
+    const G = graphRef.current
     const box = boxRef.current
-    if (!g || !box || !graph || !meteors) return
+    if (!sigma || !G || !box || !graph || !meteors) return
     // ★★★ 所有者原话：「**不管什么情况，都给我加个动态效果**」⚠
     //   ⛔ 不再因 `prefers-reduced-motion` 跳过 —— * 那会让流星彻底不出现
     //   （* 一度就是这个原因：* 系统开了"减少动态效果" ⇒ 用户始终看不到 canvas）⚠
@@ -830,24 +759,18 @@ export default function GraphCanvas({
       // ★★ 边一律取自**画布实时数据**（`g.getEdgeData()`），⛔ 不再取页面状态 ⚠
       //   原因：「显示邻居」和改图新增是**直接往 G6 里加**节点/边，
       //   页面状态里没有它们 ⇒ 用 `graph.edges` 会漏掉这些边 ⇒ 新边没有流星（所有者踩到）
-      const liveNodes = new Map(g.getNodeData().map((n) => [String(n.id), n]))
-      const edges = g.getEdgeData().map((e) => {
-        const f = String(e.source)
-        const t = String(e.target)
-        const ns = liveNodes.get(f)
-        const nd = liveNodes.get(t)
-        const sz = Number((ns?.style as Record<string, unknown> | undefined)?.size) || 14
-        const tz = Number((nd?.style as Record<string, unknown> | undefined)?.size) || 14
+      const edges = G.edges().map((e) => {
+        const [f, t] = G.extremities(e)
         return {
           from: f,
           to: t,
-          size: sz,
+          size: nodeSizeOf(G, f),
           // 颜色 = 发出节点的填充色（和节点同源）
-          color: String((ns?.style as Record<string, unknown> | undefined)?.fill ?? '#94a3b8'),
-          toSize: tz,
+          color: nodeColorOf(G, f),
+          toSize: nodeSizeOf(G, t),
         }
       })
-      stop = startMeteor(g, box, edges, {
+      stop = startMeteor(sigma, G, box, edges, {
         speed: meteorSpeed,
         sizeRatio: meteorSizeRatio,
       })
@@ -867,10 +790,11 @@ export default function GraphCanvas({
   // ★★★ 展开邻居：**只把新节点摆到宿主四周 80px 处 + draw()** ——
   //   * ⛔ 绝不 `render()` / 跑布局（* 那会整图重排，* 是所有者踩过的坑）⚠
   const expandNeighbors = async (id: string) => {
-    const g = gRef.current
+    const sigma = gRef.current
+    const G = graphRef.current
     const src = fullGraph
-    if (!g || !src) return
-    const existing = new Set(g.getNodeData().map((n) => String(n.id)))
+    if (!sigma || !G || !src) return
+    const existing = new Set(G.nodes())
     const byId = new Map(src.nodes.map((n) => [String(n.vid), n]))
     const nbrs = new Set<string>()
     for (const e of src.edges) {
@@ -880,32 +804,25 @@ export default function GraphCanvas({
     const missing = [...nbrs].filter((v) => !existing.has(v) && byId.has(v))
     if (missing.length === 0) return
 
-    const base = g.getElementPosition(id) as ArrayLike<number>
-    const bx = base[0]
-    const by = base[1]
-    const added = missing.map((v, i) => {
+    const base = nodePos(G, id)
+    if (!base) return
+    const bx = base.x
+    const by = base.y
+    missing.forEach((v, i) => {
       const n = byId.get(v) as GraphNode
-      // ★ 沿宿主四周**均匀分布**（-90° 起）
       const ang = (Math.PI * 2 * i) / missing.length - Math.PI / 2
-      return {
-        id: v,
-        type: n.origin === 'manual' ? 'diamond' : 'circle',
-        style: {
-          x: bx + Math.cos(ang) * 90,
-          y: by + Math.sin(ang) * 90,
-          size: nodeSize(n),
-          fill: colorOf(n),
-          stroke: n.patched ? '#fbbf24' : '#ffffff',
-          lineWidth: n.patched ? 2.5 : 2,
-          labelText: truncateLabel(
-            n.name,
-            n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME,
-          ),
-          labelPlacement: 'bottom' as const,
-          labelFill: labelColor,
-          labelFontSize: 11,
-        },
-      }
+      addNode(G, v, {
+        x: bx + Math.cos(ang) * 90,
+        y: by + Math.sin(ang) * 90,
+        size: nodeSize(n),
+        color: colorOf(n),
+        border: n.patched ? '#fbbf24' : '#ffffff',
+        borderWidth: n.patched ? 2.5 : 2,
+        label: truncateLabel(n.name, n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME),
+        labelColor,
+        kind: n.kind, origin: n.origin, patched: !!n.patched,
+        flow: false, selected: false, active: false, hideLabel: false,
+      })
     })
 
     // 只加「两端都在图里」的边（* 新节点 ↔ 已在图里的节点）
@@ -918,29 +835,21 @@ export default function GraphCanvas({
         const tOk = existing.has(t) || addedIds.has(t)
         return fOk && tOk && (addedIds.has(f) || addedIds.has(t))
       })
-      .map((e) => ({
-        id: String(e.id),
-        source: String(e.from),
-        target: String(e.to),
-        style: {
-          stroke: colorOf(byId.get(String(e.from)) as GraphNode),
-          lineWidth: 1,
-          opacity: 0.65,
-          endArrow: true,
-          endArrowSize: 4,
-          lineDash: e.origin === 'manual' ? [5, 4] : undefined,
-        },
+      .forEach((e) => addEdge(G, String(e.from), String(e.to), {
+        key: String(e.id),
+        color: colorOf(byId.get(String(e.from)) as GraphNode),
+        size: 1,
+        manual: e.origin === 'manual',
+        active: false,
       }))
 
-    g.addNodeData(added)
-    if (addedEdges.length) g.addEdgeData(addedEdges)
+    sigma.refresh()
     // ★ 同步可见集合 + **实时信息表**（悬停浮窗要用）
     missing.forEach((v) => {
       visibleRef.current.add(v)
       const n = byId.get(v)
       if (n) nodeInfoRef.current.set(v, n)
     })
-    await g.draw() // ★ 只重绘，不跑布局
     setDataVersion((v) => v + 1) // ★ 新边也要有流星
     onGraphChanged?.()
   }
@@ -951,10 +860,14 @@ export default function GraphCanvas({
   //   · · ③ 还连着**其它节点**的邻居 ⇒* **保留**，* 只断开与目标之间的边 ⚠
   //   · · （* 我原来把所有直接邻居都删了 ⇒ 点个枢纽节点半张图就没了）⚠
   const hideNodeAndNeighbors = async (id: string) => {
-    const g = gRef.current
-    if (!g) return
-    const nodes = g.getNodeData()
-    const edges = g.getEdgeData()
+    const sigma = gRef.current
+    const G = graphRef.current
+    if (!sigma || !G) return
+    const nodes = G.nodes()
+    const edges = G.edges().map((e) => {
+      const [s, t] = G.extremities(e)
+      return { source: s, target: t }
+    })
 
     // 当前可见图的无向邻接表
     const adj = new Map<string, Set<string>>()
@@ -974,22 +887,22 @@ export default function GraphCanvas({
       if (nbrs && nbrs.size === 1 && nbrs.has(id)) removing.add(n)
     }
 
-    const cur = new Set(nodes.map((n) => String(n.id)))
+    const cur = new Set(nodes)
     const ids = [...removing].filter((v) => cur.has(v))
     if (ids.length === 0) return
 
     // 先删边（两头沾到被移除节点的边），再删点
-    const edgeIds = edges
-      .filter((e) => removing.has(String(e.source)) || removing.has(String(e.target)))
-      .map((e) => String(e.id))
-    if (edgeIds.length) g.removeEdgeData(edgeIds)
-    g.removeNodeData(ids)
+    for (const e of G.edges()) {
+      const [s, t] = G.extremities(e)
+      if (removing.has(s) || removing.has(t)) G.dropEdge(e)
+    }
+    dropNodes(G, ids)
+    sigma.refresh()
     // ★ 同步可见集合（* 之后任何判断都以它为准）⚠
     ids.forEach((v) => {
       visibleRef.current.delete(v)
       nodeInfoRef.current.delete(v)
     })
-    await g.draw()
     setDataVersion((v) => v + 1)
     setRing(null)
     // ★ 被隐藏的若是当前选中节点 ⇒ 清掉选中

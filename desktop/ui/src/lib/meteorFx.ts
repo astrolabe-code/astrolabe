@@ -22,7 +22,8 @@
  * ```
  */
 
-import type { Graph } from '@antv/g6'
+import type Sigma from 'sigma'
+import type DirectedGraph from 'graphology'
 
 /** 首尾各淡入/淡出的占比（占全程比例） */
 const FADE = 0.08
@@ -52,24 +53,19 @@ function hexRgb(hex: string): { r: number; g: number; b: number } {
 const rgba = (c: { r: number; g: number; b: number }, a: number) =>
   `rgba(${c.r},${c.g},${c.b},${a})`
 
-/** 取节点屏幕坐标（视口坐标优先，无效回落画布坐标） */
-function posOf(graph: Graph, id: string): [number, number] | null {
-  let raw: unknown
+/** 取节点视口坐标（sigma：graphology 坐标 → viewport） */
+function posOf(sigma: Sigma, G: DirectedGraph, id: string): [number, number] | null {
+  if (!G.hasNode(id)) return null
+  const x = Number(G.getNodeAttribute(id, 'x'))
+  const y = Number(G.getNodeAttribute(id, 'y'))
+  if (!isFinite(x) || !isFinite(y)) return null
   try {
-    raw = graph.getElementPosition(id)
+    const vp = sigma.graphToViewport({ x, y })
+    if (isFinite(vp.x) && isFinite(vp.y)) return [vp.x, vp.y]
   } catch {
-    return null
+    /* 忽略 */
   }
-  if (!raw) return null
-  const canvas = Array.from(raw as ArrayLike<number>)
-  if (!isFinite(canvas[0]) || !isFinite(canvas[1])) return null
-  try {
-    const vp = Array.from(graph.getViewportByCanvas(raw as never) as ArrayLike<number>)
-    if (isFinite(vp[0]) && isFinite(vp[1])) return [vp[0], vp[1]]
-  } catch {
-    /* 回落 */
-  }
-  return [canvas[0], canvas[1]]
+  return null
 }
 
 /**
@@ -82,7 +78,8 @@ function posOf(graph: Graph, id: string): [number, number] | null {
  * @returns 停止函数（卸载时必调）
  */
 export function startMeteor(
-  graph: Graph,
+  sigma: Sigma,
+  G: DirectedGraph,
   container: HTMLElement,
   edges: { from: string; to: string; size: number; color: string; toSize: number }[],
   opts: MeteorOptions = {},
@@ -130,7 +127,7 @@ export function startMeteor(
     // ★ 当前缩放：* 流星所有尺寸都乘它 ⇒ 滚轮缩放时同步变化 ⚠
     let zoom = 1
     try {
-      zoom = graph.getZoom() || 1
+      zoom = 1 / (sigma.getCamera().getState().ratio || 1)
     } catch {
       zoom = 1
     }
@@ -138,8 +135,8 @@ export function startMeteor(
     const n = list.length
     for (let i = 0; i < n; i++) {
       const e = list[i]
-      const p1 = posOf(graph, e.from)
-      const p2 = posOf(graph, e.to)
+      const p1 = posOf(sigma, G, e.from)
+      const p2 = posOf(sigma, G, e.to)
       if (!p1 || !p2) continue
 
       const dx = p2[0] - p1[0]

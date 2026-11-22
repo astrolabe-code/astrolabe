@@ -25,7 +25,7 @@ import EdgeHoverCard from './EdgeHoverCard'
 
 const LABEL_MAX_NAME = 16
 const LABEL_MAX_FILE = 22
-const RING = 70                 // 初始圆环半径（让布局能散开）
+const RING = 1                  // 初始圆环半径（与 ForceAtlas2 同尺度：1 不是 70px）
 const SETTLE_MS = 2000          // 布局 + 适配时间
 const HOVER_LINGER_MS = 800     // 浮窗滞留（给鼠标跨过去点按钮的时间）
 const RING_GEO = { c: 48, r1: 24, r2: 42 }
@@ -171,7 +171,7 @@ export default function GraphCanvas({
     const G = new DirectedGraph({ type: 'directed' })
     graph.nodes.forEach((n, i) => {
       const ang = (i / Math.max(1, graph.nodes.length)) * Math.PI * 2
-      G.addNode(String(n.vid), nodeAttrs(n, W / 2 + Math.cos(ang) * RING, H / 2 + Math.sin(ang) * RING, nodeSizePx, labelColor))
+      G.addNode(String(n.vid), nodeAttrs(n, Math.cos(ang) * RING, Math.sin(ang) * RING, nodeSizePx, labelColor))
     })
     graph.edges.forEach((e) => {
       if (!G.hasNode(String(e.from)) || !G.hasNode(String(e.to))) return
@@ -209,33 +209,89 @@ export default function GraphCanvas({
     graphLog('sigma:created', { nodes: G.order, edges: G.size, canvas: `${dim.width}×${dim.height}` })
     onPhase?.('布局动画中…')
 
-    // 布局：从圆环散开 → bbox 适配
+    // ★★★ 布局动画：分帧跑 ForceAtlas2，每帧 refresh + camera 跟随
+    //   节点从中心小圆环**逐渐散开**（像 GitNexus），不是 2 秒后突然跳变。
+    //   ⚠ 每帧都更新 camera ⇒ 节点始终在视口内，不会跑出去导致空白。
     const t0 = performance.now()
-    const settle = window.setTimeout(() => {
-      if (sigmaRef.current !== sigma) return
+    const TOTAL_ITER = 120
+    const ITER_PER_FRAME = 3
+    const settings = forceAtlas2.inferSettings(G)
+    let doneIter = 0
+    let raf = 0
+    let finished = false
+
+    /**
+     * ★ 仿 GitNexus（Cytoscape fcose）的动画口径：
+     *   布局过程中**只动节点坐标**（每帧 refresh 看散开），camera 不动；
+     *   结束后 fit 一次（animate 250ms）。⛔ 绝不每帧 setState camera ——
+     *   那等于每帧「突然跳」，不是平滑动画。
+     */
+    const fitOnce = () => {
+      const xs: number[] = [], ys: number[] = []
+      G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
+      if (!xs.length) return
+      const minX = Math.min(...xs), maxX = Math.max(...xs)
+      const minY = Math.min(...ys), maxY = Math.max(...ys)
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+      const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
+      const pad = 60
+      // ★ 不 clamp 上限 —— FA2 尺度下 bbox 只有几个单位，
+      //   clamp 到 1.6 会让图缩成中心一小团（GitNexus 的 fit:true 是撑满视口）
+      const z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)
+      sigma.getCamera().animate(
+        { ratio: 1 / Math.max(0.001, z), x: cx, y: cy },
+        { duration: 250 },   // ★ 只 fit 一次，平滑收尾
+      )
+    }
+
+    const tick = () => {
+      if (sigmaRef.current !== sigma || finished) return
       try {
-        forceAtlas2.assign(G, { iterations: 120, settings: forceAtlas2.inferSettings(G) })
-        graphLog('layout:done', { ms: Math.round(performance.now() - t0) })
-      } catch (e) {
-        graphLog('layout:ERROR', { err: String(e) })
-      }
-      try {
+        forceAtlas2.assign(G, { iterations: ITER_PER_FRAME, settings })
+        doneIter += ITER_PER_FRAME
+        // ★ 动画期间平滑跟随 bbox（GitNexus fit:true 的口径）：
+        //   用 setState 但 ratio 带阻尼（每帧只靠近目标 15%），不是硬跳。
         const xs: number[] = [], ys: number[] = []
         G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
-        const minX = Math.min(...xs), maxX = Math.max(...xs)
-        const minY = Math.min(...ys), maxY = Math.max(...ys)
-        graphLog('bbox', { x: [n1(minX), n1(maxX)], y: [n1(minY), n1(maxY)] })
-        if (isFinite(minX) && maxX - minX > 1 && maxY - minY > 1) {
-          const pad = 60
-          const z = Math.min((W - pad * 2) / (maxX - minX), (H - pad * 2) / (maxY - minY), 1.6)
-          sigma.getCamera().setState({ ratio: 1 / Math.max(0.15, z), x: (minX + maxX) / 2, y: (minY + maxY) / 2 })
+        if (xs.length) {
+          const minX = Math.min(...xs), maxX = Math.max(...xs)
+          const minY = Math.min(...ys), maxY = Math.max(...ys)
+          const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
+          const targetRatio = Math.min(1 / 0.001, Math.min((W - 120) / bw, (H - 120) / bh))
+          const cur = sigma.getCamera().getState()
+          const eased = {
+            x: cur.x + ((minX + maxX) / 2 - cur.x) * 0.15,
+            y: cur.y + ((minY + maxY) / 2 - cur.y) * 0.15,
+            ratio: cur.ratio + (1 / targetRatio - cur.ratio) * 0.15,
+          }
+          sigma.getCamera().setState(eased)
         }
-      } catch (e) { graphLog('bbox:ERROR', { err: String(e) }) }
-      sigma.refresh()
-      readyRef.current = Date.now()
-      const d = sigma.getDimensions()
-      graphLog('ready', { nodes: G.order, canvas: `${d.width}×${d.height}` })
-      onPhase?.('布局完成')
+        sigma.refresh()
+      } catch (e) {
+        graphLog('layout:ERROR', { err: String(e) })
+        finished = true
+      }
+      if (doneIter < TOTAL_ITER) {
+        raf = requestAnimationFrame(tick)
+      } else {
+        finished = true
+        graphLog('layout:done', { ms: Math.round(performance.now() - t0), iterations: doneIter })
+        fitOnce()         // ★ 结束后 fit 一次（GitNexus 的 fit:true）
+        readyRef.current = Date.now()
+        const dim = sigma.getDimensions()
+        graphLog('ready', { nodes: G.order, canvas: `${dim.width}×${dim.height}` })
+        onPhase?.('布局完成')
+      }
+    }
+
+    // ★ 初始 camera 对准初始圆环中心（节点散开时不用移动视口）
+    sigma.getCamera().setState({ x: 0, y: 0, ratio: 1 })
+    raf = requestAnimationFrame(tick)
+
+    // 清理时取消动画帧
+    const settle = window.setTimeout(() => {
+      if (sigmaRef.current !== sigma) return
+      graphLog('settle:noop', { nodes: G.order })
     }, SETTLE_MS)
 
     // sigma 原生事件
@@ -249,6 +305,7 @@ export default function GraphCanvas({
     sigma.on('clickStage', () => setRing(null))
 
     return () => {
+      cancelAnimationFrame(raf)
       clearTimeout(settle)
       sigmaRef.current = null
       graphRef.current = null
@@ -525,7 +582,7 @@ export default function GraphCanvas({
     missing.forEach((v, i) => {
       const n = byId.get(v)!
       const ang = (Math.PI * 2 * i) / missing.length - Math.PI / 2
-      G.addNode(v, nodeAttrs(n, base.x + Math.cos(ang) * 90, base.y + Math.sin(ang) * 90, nodeSizePx, labelColor))
+      G.addNode(v, nodeAttrs(n, base.x + Math.cos(ang) * 1.2, base.y + Math.sin(ang) * 1.2, nodeSizePx, labelColor))
       infoRef.current.set(v, n)
     })
     for (const e of src.edges) {

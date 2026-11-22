@@ -187,8 +187,13 @@ export default function GraphCanvas({
 
     const G = new DirectedGraph({ type: 'directed' })
     graph.nodes.forEach((n, i) => {
-      const ang = (i / Math.max(1, graph.nodes.length)) * Math.PI * 2
-      G.addNode(String(n.vid), nodeAttrs(n, Math.cos(ang) * RING, Math.sin(ang) * RING, nodeSizePx, labelColor))
+      // ★★★ 初始位置用**黄金角螺旋**，⛔ 不用「i/N * 2π」均匀圆周 ——
+      //   后者在 2 个节点时正好是 0 和 π（都在 y=0），FA2 因对称永远散不开，
+      //   结果 bh=0 ⇒ sigma 归一化 y 方向除零 ⇒ 节点全在视口外（实测 ogy 日志）。
+      //   黄金角保证任意节点数都不共线。
+      const ang = i * 2.399963229728653
+      const r = RING * Math.sqrt(i + 1)
+      G.addNode(String(n.vid), nodeAttrs(n, Math.cos(ang) * r, Math.sin(ang) * r, nodeSizePx, labelColor))
     })
     graph.edges.forEach((e) => {
       if (!G.hasNode(String(e.from)) || !G.hasNode(String(e.to))) return
@@ -244,19 +249,14 @@ export default function GraphCanvas({
      *   那等于每帧「突然跳」，不是平滑动画。
      */
     const fitOnce = () => {
-      const xs: number[] = [], ys: number[] = []
-      G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
-      if (!xs.length) return
-      const minX = Math.min(...xs), maxX = Math.max(...xs)
-      const minY = Math.min(...ys), maxY = Math.max(...ys)
-      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-      const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
-      const pad = 60
-      // ★ 不 clamp 上限 —— FA2 尺度下 bbox 只有几个单位，
-      //   clamp 到 1.6 会让图缩成中心一小团（GitNexus 的 fit:true 是撑满视口）
-      const z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh)
+      // ★★★ sigma 的 camera.x/y 是**归一化坐标**（见 createNormalizationFunction）：
+      //     normalized = 0.5 + (raw - bboxCenter) / bboxSize
+      //   ⇒ 归一化后 bbox 中心**恒为 (0.5, 0.5)**，与原始坐标无关。
+      //   ⛔ 之前传原始 bbox 中心（如 -3.3），等于把视口移出图外
+      //     ⇒ 图跑到右边、只露半截（所有者截图）。
+      //   ratio=1 即「图撑满视口」，留 8% 边距用 1.08。
       sigma.getCamera().animate(
-        { ratio: 1 / Math.max(0.001, z), x: cx, y: cy },
+        { ratio: 1.08, x: 0.5, y: 0.5 },
         { duration: 250 },   // ★ 只 fit 一次，平滑收尾
       )
     }
@@ -266,22 +266,15 @@ export default function GraphCanvas({
       try {
         forceAtlas2.assign(G, { iterations: ITER_PER_FRAME, settings })
         doneIter += ITER_PER_FRAME
-        // ★ 动画期间平滑跟随 bbox（GitNexus fit:true 的口径）：
-        //   用 setState 但 ratio 带阻尼（每帧只靠近目标 15%），不是硬跳。
-        const xs: number[] = [], ys: number[] = []
-        G.forEachNode((_id, a) => { xs.push(a.x); ys.push(a.y) })
-        if (xs.length) {
-          const minX = Math.min(...xs), maxX = Math.max(...xs)
-          const minY = Math.min(...ys), maxY = Math.max(...ys)
-          const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
-          const targetRatio = Math.min(1 / 0.001, Math.min((W - 120) / bw, (H - 120) / bh))
+        // ★ 动画期间 camera 不动（归一化中心恒为 0.5,0.5，图自然居中）：
+        //   只把 ratio 阻尼收敛到 1.08，避免初始 ratio=1 与目标的细微跳变。
+        {
           const cur = sigma.getCamera().getState()
-          const eased = {
-            x: cur.x + ((minX + maxX) / 2 - cur.x) * 0.15,
-            y: cur.y + ((minY + maxY) / 2 - cur.y) * 0.15,
-            ratio: cur.ratio + (1 / targetRatio - cur.ratio) * 0.15,
-          }
-          sigma.getCamera().setState(eased)
+          sigma.getCamera().setState({
+            x: 0.5,
+            y: 0.5,
+            ratio: cur.ratio + (1.08 - cur.ratio) * 0.15,
+          })
         }
         sigma.refresh()
       } catch (e) {
@@ -293,7 +286,72 @@ export default function GraphCanvas({
       } else {
         finished = true
         graphLog('layout:done', { ms: Math.round(performance.now() - t0), iterations: doneIter })
+
+        // ★★★ 退化保护：某一维 bbox 接近 0（节点共线/只有一个节点）时，
+        //   手动在那一维上撑开 —— ⛔ 否则 sigma 归一化会除零，
+        //   节点全被映射到视口外（实测：2 节点 bh=0 ⇒ y=-68.9）。
+        {
+          const xs0: number[] = [], ys0: number[] = []
+          G.forEachNode((_id, a) => { xs0.push(a.x); ys0.push(a.y) })
+          const w0 = Math.max(...xs0) - Math.min(...xs0)
+          const h0 = Math.max(...ys0) - Math.min(...ys0)
+          if (w0 < 0.5 || h0 < 0.5) {
+            // 沿退化维度按黄金角铺开，幅度取另一维的 0.6（都退化就用 1）
+            const base = Math.max(w0, h0, 1)
+            G.nodes().forEach((id, i) => {
+              if (w0 < 0.5) G.updateNodeAttribute(id, 'x', () => Math.cos(i * 2.399963) * base * 0.6)
+              if (h0 < 0.5) G.updateNodeAttribute(id, 'y', () => Math.sin(i * 2.399963) * base * 0.6)
+            })
+            graphLog('layout:degenerate-fixed', { w0: n1(w0), h0: n1(h0) })
+          }
+        }
+
+        // ★★★ 诊断：布局结束时的原始数据（fit 之前）
+        const xs2: number[] = [], ys2: number[] = []
+        G.forEachNode((_id, a) => { xs2.push(a.x); ys2.push(a.y) })
+        const bMinX = Math.min(...xs2), bMaxX = Math.max(...xs2)
+        const bMinY = Math.min(...ys2), bMaxY = Math.max(...ys2)
+        const bbw = bMaxX - bMinX, bbh = bMaxY - bMinY
+        const zCalc = Math.min((W - 120) / Math.max(1, bbw), (H - 120) / Math.max(1, bbh))
+        const dimNow = sigma.getDimensions()
+        graphLog('diag:bbox', {
+          minX: n1(bMinX), maxX: n1(bMaxX), minY: n1(bMinY), maxY: n1(bMaxY),
+          bw: n1(bbw), bh: n1(bbh),
+          canvas: `${dimNow.width}×${dimNow.height}`,
+          zCalc: n1(zCalc), ratioCalc: n1(1 / Math.max(0.001, zCalc)),
+        })
+
         fitOnce()         // ★ 结束后 fit 一次（GitNexus 的 fit:true）
+
+        // ★★★ 诊断：fit 之后（等动画 300ms 再读真值）
+        window.setTimeout(() => {
+          if (sigmaRef.current !== sigma) return
+          const cam = sigma.getCamera().getState()
+          // 取第一个节点，看它落在屏幕哪里（应该在 0~W / 0~H 内）
+          const firstId = G.nodes()[0]
+          const fa = G.getNodeAttributes(firstId)
+          const vp = sigma.graphToViewport({ x: fa.x, y: fa.y })
+          // WebGL 信息（判断是不是渲染层问题）
+          let gl = ''
+          try {
+            const c = (host.querySelector('canvas') as HTMLCanvasElement | null)
+            const ctx = c?.getContext('webgl2') || c?.getContext('webgl')
+            if (ctx) {
+              const dbg = (ctx as WebGLRenderingContext).getExtension('WEBGL_debug_renderer_info')
+              gl = dbg
+                ? String((ctx as WebGLRenderingContext).getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+                : 'webgl-ok(no-debug-info)'
+            } else gl = 'NO-WEBGL-CONTEXT'
+          } catch (e) { gl = 'err:' + String(e) }
+          graphLog('diag:camera', {
+            camX: n1(cam.x), camY: n1(cam.y), camRatio: cam.ratio,
+            nodeGraph: { x: n1(fa.x), y: n1(fa.y) },
+            nodeViewport: { x: n1(vp.x), y: n1(vp.y) },
+            inViewport: vp.x >= 0 && vp.x <= dimNow.width && vp.y >= 0 && vp.y <= dimNow.height,
+            webgl: gl,
+          })
+        }, 320)
+
         readyRef.current = Date.now()
         const dim = sigma.getDimensions()
         graphLog('ready', { nodes: G.order, canvas: `${dim.width}×${dim.height}` })
@@ -302,7 +360,8 @@ export default function GraphCanvas({
     }
 
     // ★ 初始 camera 对准初始圆环中心（节点散开时不用移动视口）
-    sigma.getCamera().setState({ x: 0, y: 0, ratio: 1 })
+    // ★ 归一化中心恒为 (0.5, 0.5)；初始就用居中 + fit 的 ratio
+    sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1.08 })
     raf = requestAnimationFrame(tick)
 
     // 清理时取消动画帧
@@ -418,9 +477,16 @@ export default function GraphCanvas({
       sigma.refresh()
       const a = G.getNodeAttributes(node)
       const v = sigma.graphToViewport({ x: a.x, y: a.y })
+      // ★ graphToViewport 是**相对 canvas** 的坐标；浮窗用 position:fixed
+      //   ⇒ 必须加上画布在页面里的偏移，否则卡片位置会偏掉 ⚠
+      const rect = boxRef.current?.getBoundingClientRect()
       const n = infoRef.current.get(node)
       if (n) {
-        setHover({ node: n, x: v.x, y: v.y })
+        setHover({
+          node: n,
+          x: v.x + (rect?.left ?? 0),
+          y: v.y + (rect?.top ?? 0),
+        })
         graphLog('hover:enter', { node, name: n.name })
       }
       setEdgeHover(null)
@@ -444,29 +510,14 @@ export default function GraphCanvas({
     }
   }, [graph, clearActive])
 
-  // ------------------------------------------------------------ 浮窗跟随（鼠标位置，右下定住）
+  // ------------------------------------------------------------ 浮窗锚点：固定在节点右下（露出节点）
+  // ★★ ⛔ 不再把 hover 坐标换成鼠标位置 ——
+  //   那会让卡片贴着鼠标（鼠标在节点上时正好盖住节点）。
+  //   现在锚点恒为**节点中心**，由 NodeHoverCard 向右下偏移，
+  //   节点（半径 7px）始终露出来，鼠标斜向右下即可移到卡片上 ⚠
   useEffect(() => {
-    const box = boxRef.current
-    if (!box || !hover) return
-    let raf = 0
-    let last = { x: 0, y: 0 }
-    const onMove = (ev: PointerEvent) => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        const cur = { x: ev.clientX, y: ev.clientY }
-        const moving = cur.x !== last.x || cur.y !== last.y
-        const cardOnLeft = cur.x + 14 + 440 > window.innerWidth
-        const toward = moving && (cardOnLeft ? cur.x <= last.x : cur.x >= last.x)
-        last = cur
-        // 朝浮窗方向 ⇒ 定住；其余方向 ⇒ 跟随
-        if (!toward) {
-          setHover((h) => h ? { ...h, x: cur.x, y: cur.y } : h)
-        }
-      })
-    }
-    window.addEventListener('pointermove', onMove)
-    return () => { window.removeEventListener('pointermove', onMove); if (raf) cancelAnimationFrame(raf) }
+    // 鼠标离开画布 ⇒ 走 800ms 滞留（在 hover effect 里处理）
+    // 这里不再改坐标，保持节点锚点稳定
   }, [!!hover])
 
   // ------------------------------------------------------------ 环形按钮跟随节点
@@ -547,8 +598,17 @@ export default function GraphCanvas({
     const sigma = sigmaRef.current
     const G = graphRef.current
     if (!sigma || !G?.hasNode(String(focusVid))) return
-    const a = G.getNodeAttributes(String(focusVid))
-    sigma.getCamera().animate({ x: a.x, y: a.y }, { duration: 300 })
+    // ★ camera.x/y 是归一化坐标：normalized = 0.5 + (raw - bboxCenter)/bboxSize
+    //   ⛔ 不能直接传原始坐标（会把视口甩到图外）
+    const xs: number[] = [], ys: number[] = []
+    G.forEachNode((_id, at) => { xs.push(at.x); ys.push(at.y) })
+    if (!xs.length) return
+    const minX = Math.min(...xs), maxX = Math.max(...xs)
+    const minY = Math.min(...ys), maxY = Math.max(...ys)
+    const size = Math.max(maxX - minX, maxY - minY) || 1
+    const nx = 0.5 + ((G.getNodeAttribute(String(focusVid), 'x') - (minX + maxX) / 2) / size)
+    const ny = 0.5 + ((G.getNodeAttribute(String(focusVid), 'y') - (minY + maxY) / 2) / size)
+    sigma.getCamera().animate({ x: nx, y: ny }, { duration: 300 })
   }, [focusVid])
 
   // ------------------------------------------------------------ 流星

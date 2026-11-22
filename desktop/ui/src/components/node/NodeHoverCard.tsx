@@ -95,9 +95,12 @@ export default function NodeHoverCard({ node, x, y, onEnter, onLeave }: NodeHove
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight
   const { projectRef } = useParams<{ projectRef: string }>()
 
-  // 就跟着鼠标：⛔ 不做位置裁剪（超出屏幕就超出，往左上移自然回来）
-  const left = x + 14 + CARD_W > vw ? Math.max(8, x - CARD_W - 14) : x + 14
-  const top = y + 14
+  // ★★ 偏移 = 节点半径(7) + 间隙(17) = 24px：
+  //   ⛔ 原来 14px 太近 —— 卡片阴影（0 8px 24px）会盖住节点（所有者截图）⚠
+  //   右边放不下就翻到左侧（同样留 24px），保证节点始终露出。
+  const GAP = 24
+  const left = x + GAP + CARD_W > vw ? Math.max(8, x - CARD_W - GAP) : x + GAP
+  const top = y + GAP
 
   // ★ 有缓存就直接显示（②）；没缓存才是 null（显示按钮）
   // ★ 问答内核（纯逻辑）：浮窗界面自己决定「挑战问题」怎么画、怎么调

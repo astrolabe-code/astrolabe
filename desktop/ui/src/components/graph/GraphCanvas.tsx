@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Sigma from 'sigma'
+import { NodeCircleProgram, EdgeArrowProgram, EdgeRectangleProgram } from 'sigma/rendering'
 import DirectedGraph from 'graphology'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 import { startMeteor } from '../../lib/meteorFx'
@@ -518,6 +519,12 @@ export default function GraphCanvas({
 
     // ★ sigma 实例：替代 G6 Graph
     const sigma = new Sigma(G, box, {
+      // ★★ 显式注册渲染程序 —— 不注册会报
+      //   "could not find a suitable program for node type circle"（背景全白）⚠
+      nodeProgramClasses: { circle: NodeCircleProgram },
+      edgeProgramClasses: { arrow: EdgeArrowProgram, line: EdgeRectangleProgram },
+      defaultNodeType: 'circle',
+      defaultEdgeType: 'arrow',
       // ★ sigma 3：属性名固定为 color/size/label（reducer 里返回即可）
       labelRenderedSizeThreshold: 0,
       renderEdgeLabels: false,
@@ -753,15 +760,18 @@ export default function GraphCanvas({
 
   // ============================================================ 容器尺寸 ⇒ 重画
   useEffect(() => {
-    const sigma = gRef.current
     const box = boxRef.current
-    if (!sigma || !box) return
-    // ★★★ 写作区上提 / 分隔条拖动时容器尺寸会变 ——* sigma 必须显式 resize()，
-    //   * 否则 WebGL canvas 还是旧尺寸（* 图被裁、* 流星坐标也错）⚠
+    if (!box) return
+    // ★★★ 每次回调都从 ref 取**当前** sigma ——
+    //   ⛔ 不能在 effect 开头捕获：build effect 重建图（15节点→2节点）时，
+    //     这里若握着旧的已 kill 实例，resize 会报
+    //     "could not find a suitable program for node type circle" ⚠
     let lastSize = ''
     const ro = new ResizeObserver(() => {
       requestAnimationFrame(() => {
         try {
+          const sigma = gRef.current
+          if (!sigma) return
           const w = box.clientWidth
           const h = box.clientHeight
           if (w > 0 && h > 0) {
@@ -770,7 +780,7 @@ export default function GraphCanvas({
               lastSize = key
               graphLog('resize', { w, h })
             }
-            sigma.resize()   // ★ 重算 canvas 尺寸（不是只 refresh）
+            sigma.resize()
             sigma.refresh()
           } else {
             graphLog('resize:zero', { w, h })
@@ -782,7 +792,7 @@ export default function GraphCanvas({
     })
     ro.observe(box)
     return () => ro.disconnect()
-  }, [graph])
+  }, [])
 
   // ============================================================ 选中态（受控）
   useEffect(() => {

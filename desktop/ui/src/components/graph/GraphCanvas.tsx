@@ -43,7 +43,7 @@ const LABEL_TOP_DEGREE = 12
  * ⇒ 这是**唯一**一个定时器，只为了一件事：让鼠标能跨过节点与浮窗之间
  *   那十几像素的空白去点「挑战问题」。除此之外任何离开都立即消失。
  */
-const HOVER_LINGER_MS = 200
+const HOVER_LINGER_MS = 800
 
 /** 点到线段的距离（画布单位），用来判定鼠标是否落在某条聚合边上 */
 function distToSegment(p: ArrayLike<number>, a: ArrayLike<number>, b: ArrayLike<number>): number {
@@ -201,6 +201,8 @@ export default function GraphCanvas({
   const readyRef = useRef(0)
   // ★★ 环形操作按钮（* Neo4j 风格）：* 点节点后浮在它周围，* 跟随拖拽/缩放 ⚠
   // ★★ 悬停浮窗（所有者：图谱上鼠标移上去就显示详情，⛔ 不打断阅读、不用点开右栏）
+  /** 与 NodeHoverCard.CARD_W 保持一致（用于判断浮窗翻到哪一侧） */
+  const CARD_W = 440
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
   /**
@@ -212,6 +214,11 @@ export default function GraphCanvas({
   const leaveTimerRef = useRef(0)
   /** 与 `hover` 同步：`update` 是闭包，读不到最新 state，用它判断「是否刚离开节点」 */
   const hoverRef = useRef<{ node: GraphNode; x: number; y: number } | null>(null)
+  /** ★ 同步写 hover：方向判断要拿即时值，⛔ 不等 useEffect 那一帧 */
+  const setHoverSync = (v: { node: GraphNode; x: number; y: number } | null) => {
+    hoverRef.current = v
+    setHover(v)
+  }
   /** 上一帧指针位置：用来判断「是不是朝右下（弹窗方向）走」 */
   const prevPtRef = useRef({ x: 0, y: 0 })
   const [ring, setRing] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -310,13 +317,22 @@ export default function GraphCanvas({
         const cy = last.clientY
         const p0 = prevPtRef.current
         const moving = cx !== p0.x || cy !== p0.y
-        const towardCard = moving && cx >= p0.x && cy >= p0.y
+
+        // ★★ 浮窗实际在哪一侧？NodeHoverCard 的规则：
+        //    x + 14 + CARD_W > 屏宽 ⇒ 翻到鼠标左边（避免出屏）。
+        //    列表页浮窗恒在右侧，写死「右下定住」没问题；
+        //    图谱节点可在屏幕任意位置 ⇒ 必须按实际侧判断，否则靠右节点
+        //    的浮窗在左边，用户往左移想点它，代码却以为「远离」而跟着跑。
+        const cardOnLeft = cx + 14 + CARD_W > (typeof window === 'undefined' ? 1200 : window.innerWidth)
+        const towardCard = moving && (
+          cardOnLeft ? cx <= p0.x && cy >= p0.y   // 浮窗在左下 ⇒ 往左下 = 过去点它
+                     : cx >= p0.x && cy >= p0.y   // 浮窗在右下 ⇒ 往右下 = 过去点它
+        )
         prevPtRef.current = { x: cx, y: cy }
 
         const sameNode = hoverRef.current?.node.vid === n.vid
         if (!(towardCard && sameNode)) {
-          // 朝其它方向 / 刚换节点 ⇒ 跟随（换节点必须定位，否则会停在上个节点处）
-          setHover({ node: n, x: cx, y: cy })
+          setHoverSync({ node: n, x: cx, y: cy })
         }
         setEdgeHover(null)
         return
@@ -326,7 +342,7 @@ export default function GraphCanvas({
       if (hoverRef.current && !cardHoverRef.current) {
         window.clearTimeout(leaveTimerRef.current)
         leaveTimerRef.current = window.setTimeout(() => {
-          if (!cardHoverRef.current) setHover(null)
+          if (!cardHoverRef.current) setHoverSync(null)
         }, HOVER_LINGER_MS)
       }
 
@@ -358,11 +374,14 @@ export default function GraphCanvas({
       if (!raf) raf = requestAnimationFrame(update)
     }
     const onLeave = () => {
-      // ★ 离开画布 = 立即消失（⛔ 不设定时器：这里没有「移到浮窗」的可能，
-      //   因为浮窗在画布外时鼠标已经离开画布了）
+      // ★★ 浮窗 portal 到 body（画布之外）⇒ 鼠标从节点移向浮窗必然先离开画布。
+      //   若这里立即清空，浮窗根本没机会被 hover 到（用户「移上去就立刻消失」）。
+      //   ⇒ 与「离开节点」共用同一个 800ms 定时器，给鼠标跨过去的时间。
       window.clearTimeout(leaveTimerRef.current)
-      setHover(null)
-      setEdgeHover(null)
+      leaveTimerRef.current = window.setTimeout(() => {
+        if (!cardHoverRef.current) setHoverSync(null)
+      }, HOVER_LINGER_MS)
+      setEdgeHover(null)   // 边的浮窗没有交互按钮，仍然立即清
     }
 
     box.addEventListener('pointermove', onMove)
@@ -539,7 +558,7 @@ export default function GraphCanvas({
       onPhase?.('布局完成')
     }, SETTLE_MS)
 
-    g.on('node:dragstart', () => setHover(null))
+    g.on('node:dragstart', () => setHoverSync(null))
 
 
     g.on('node:click', (evt: unknown) => {
@@ -1103,7 +1122,7 @@ export default function GraphCanvas({
           }}
           onLeave={() => {
             cardHoverRef.current = false
-            setHover(null)
+            setHoverSync(null)
             setEdgeHover(null)
           }}
         />

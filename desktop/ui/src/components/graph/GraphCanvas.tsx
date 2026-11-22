@@ -209,6 +209,34 @@ export default function GraphCanvas({
       labelColor: { attribute: 'labelColor', color: '#94a3b8' },
       labelRenderedSizeThreshold: 0,
       renderEdgeLabels: false,
+      // ★★★ 标签画在**节点下方居中**（sigma 默认画在右侧 + hover 白底框）：
+      //   所有者原话：「节点名字应该在节点下面，不是右边」
+      defaultDrawNodeLabel: (context, data, settings) => {
+        if (!data.label) return
+        const size = settings.labelSize
+        const lc = settings.labelColor
+        const attr = 'attribute' in lc ? lc.attribute : undefined
+        const color = (attr ? (data as Record<string, unknown>)[attr] : undefined)
+          || lc.color || '#000'
+        context.fillStyle = String(color)
+        context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`
+        // ★ 水平居中：x - 文本宽度/2；垂直：节点底部 + 一行
+        const w = context.measureText(String(data.label)).width
+        context.fillText(String(data.label), data.x - w / 2, data.y + data.size + size + 2)
+      },
+      // ★ hover 不再画右侧白底标签框（改为我们自己画在下方 + HTML 浮窗）
+      defaultDrawNodeHover: (context, data, settings) => {
+        if (!data.label) return
+        const size = settings.labelSize
+        const lc = settings.labelColor
+        const attr = 'attribute' in lc ? lc.attribute : undefined
+        const color = (attr ? (data as Record<string, unknown>)[attr] : undefined)
+          || lc.color || '#000'
+        context.fillStyle = String(color)
+        context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`
+        const w = context.measureText(String(data.label)).width
+        context.fillText(String(data.label), data.x - w / 2, data.y + data.size + size + 2)
+      },
       // 状态样式全走 reducer（读节点/边属性），不重建图
       nodeReducer: (_id, a) => ({
         ...a,

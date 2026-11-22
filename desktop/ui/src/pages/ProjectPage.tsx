@@ -185,7 +185,12 @@ export default function ProjectPage() {
           icon={<Workflow size={13} />}
           label="图谱"
           title="打开图谱（看它和谁连着）"
-          onClick={() => navigate(`/p/${encodeURIComponent(projectRef)}/graph`)}
+          // ★★ 带 ?node= 进入：图谱页一次确定焦点（它 + 直接邻居），
+          //   ⛔ 不让它先渲染默认15个再切换 ⇒ 避免建两次图 ⚠
+          onClick={() => navigate(
+            `/p/${encodeURIComponent(projectRef)}/graph` +
+            (selected ? `?node=${selected.vid}` : ''),
+          )}
         />
         <RailButton
           icon={<FileCode2 size={13} />}

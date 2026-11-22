@@ -86,13 +86,18 @@ export default function ProjectGraphPage() {
   const meteorSizeRatio = 0.25 // 25%
   const nodeSizePx = 14
 
-  // ★★ 从节点列表点过来时带着 `?node=<vid>`：
-  //    要**以它为焦点**展示（它 + 直接邻居），⛔ 不是默认那 16 个 ⚠
+  // ★★ 焦点节点：URL 的 `?node=<vid>` 优先；没带时用**默认节点**（第一个）
+  //   ⇒ 所有进入图谱的路径都有焦点（它 + 直接邻居），shownCount 一次确定，
+  //     ⛔ 不会出现「先渲染15个再切换」导致的建图两次 ⚠
   const [sp] = useSearchParams()
-  const deepVid = Number(sp.get('node') || 0) || null
+  const urlVid = Number(sp.get('node') || 0) || null
   const navigate = useNavigate()
 
-  const [selectedVid, setSelectedVid] = useState<number | null>(deepVid)
+  /** 有效焦点：URL 有就用 URL 的；没有则 g 加载后设为默认第一个节点 */
+  const [defaultFocusVid, setDefaultFocusVid] = useState<number | null>(null)
+  const deepVid = urlVid ?? defaultFocusVid
+
+  const [selectedVid, setSelectedVid] = useState<number | null>(urlVid)
   // ★★ `D104`：* 流星轨迹开关（* 默认开；* 嫌吵能关）⚠
   // ★ 默认跟用户设置走；* 工具栏开关只是本次会话的临时覆盖 ⚠
   // ★ 流星开关来自「设置 → 外观」（`lib/uiPrefs`）；图谱页不再提供开关 ⚠
@@ -193,15 +198,10 @@ export default function ProjectGraphPage() {
     return m
   }, [pathItems])
 
-  useEffect(() => {
-    if (shownCount != null) return
-    // ★★ 深链进入（?node=xxx）：⛔ 不要先设 initialBatch()——
-    //   那会渲染一次「前 15 个节点」，紧接着深链 effect 又设成 focusVids.length（2/7），
-    //   graph prop 变两次 ⇒ GraphCanvas 建图两次 ⇒ sigma.kill() 清空容器 ⇒ 图谱一闪而过。
-    //   ⇒ 有 deepVid 时**不设**，等深链 effect 算出 focusVids 后一次设到位。
-    if (deepVid != null) return
-    setShownCount(initialBatch())
-  }, [shownCount, deepVid])
+  // ★★ shownCount **只由下面的焦点 effect 一次设到位**（focusVids.length）⚠
+  //   旧代码这里先用 initialBatch() 设 15，焦点 effect 再改成「焦点+邻居」（2/7），
+  //   graph prop 变两次 ⇒ GraphCanvas 建两次 ⇒ sigma.kill() 清空容器 ⇒ 一闪而过。
+  //   现在所有进入路径都有焦点（URL 或默认节点），不再需要 initialBatch 这条分支。
 
   /**
    * ★★ `D105`：展示顺序 = **学习路径优先，其余按度数补齐** ⚠
@@ -264,12 +264,22 @@ export default function ProjectGraphPage() {
     return [...new Set(out)]
   }, [g, deepVid])
 
-  // ★ 深链焦点：只展示「它 + 直接邻居」（正好这么多，不多也不少）
+  // ★ 焦点：只展示「它 + 直接邻居」（正好这么多，不多也不少）
+  //   URL 没带 ?node= 时，用默认第一个节点当焦点（一次确定，不重建）
   useEffect(() => {
-    if (deepVid == null || !g) return
+    if (!g || orderVids.length === 0) return
+
+    // ① 没有 URL 参数 ⇒ 设默认焦点（只设一次）
+    if (urlVid == null && defaultFocusVid == null) {
+      setDefaultFocusVid(orderVids[0])
+      return   // 等下一轮 deepVid 生效再设 shownCount
+    }
+    if (deepVid == null) return
+
+    // ② 焦点已定 ⇒ 一次设好 shownCount（它 + 邻居），⛔ 不再走 initialBatch
     if (focusVids.length) setShownCount(focusVids.length)
     setSelectedVid(deepVid)
-  }, [deepVid, g, focusVids.length])
+  }, [urlVid, defaultFocusVid, deepVid, g, orderVids, focusVids.length])
 
 
   /** ★★ `D105`：交给画布的**子集**（* 边只留两端都在集合里的）⚠ */
@@ -419,7 +429,10 @@ export default function ProjectGraphPage() {
     )
   }
 
-  const loading = graph.isLoading || pathQ.isLoading || !view
+  // ★★ 焦点没定之前不渲染画布：⛔ 否则先用 initialBatch() 渲染15个，
+  //   默认焦点 effect 再设成「它+邻居」⇒ graph prop 变两次 ⇒ 建图两次 ⇒ 一闪而过。
+  //   ⇒ 等 deepVid 确定（URL 带来 或 默认节点设好）再挂载 GraphCanvas，一次到位 ⚠
+  const loading = graph.isLoading || pathQ.isLoading || !view || deepVid == null || shownCount == null
 
   return (
     <AppLayout

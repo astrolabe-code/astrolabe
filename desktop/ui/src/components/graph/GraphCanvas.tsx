@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sigma from 'sigma'
-import { NodeCircleProgram, EdgeArrowProgram } from 'sigma/rendering'
+import { NodeCircleProgram, EdgeDoubleClampedProgram } from 'sigma/rendering'
 import DirectedGraph from 'graphology'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 import { startMeteor } from '../../lib/meteorFx'
@@ -223,7 +223,11 @@ export default function GraphCanvas({
 
     const sigma = new Sigma(G, host, {
       nodeProgramClasses: { circle: NodeCircleProgram },
-      edgeProgramClasses: { arrow: EdgeArrowProgram },
+      // ★★★ 用**双端裁剪**的箭头程序：
+      //   sigma 的 EdgeArrowProgram = [clamped 线, arrowHead]，而 clamped 只裁
+      //   **终点**（源码：var radius = targetData.size）⇒ 起点端直插节点中心
+      //   （所有者：「边直接到节点中心了？」）。EdgeDoubleClampedProgram 两端都裁。⚠
+      edgeProgramClasses: { arrow: EdgeDoubleClampedProgram },
       defaultNodeType: 'circle',
       defaultEdgeType: 'arrow',
       labelColor: { attribute: 'labelColor', color: '#94a3b8' },

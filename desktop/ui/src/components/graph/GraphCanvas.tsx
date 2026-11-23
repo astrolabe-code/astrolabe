@@ -92,20 +92,6 @@ function nodeAttrs(n: GraphNode, x: number, y: number, sizePx: number, labelColo
 }
 
 /** 构造 graphology 边属性 */
-/** 点到线段的像素距离（边命中检测用） */
-function distToSeg(
-  px: number, py: number,
-  ax: number, ay: number,
-  bx: number, by: number,
-): number {
-  const dx = bx - ax, dy = by - ay
-  const l2 = dx * dx + dy * dy
-  if (!l2) return Math.hypot(px - ax, py - ay)
-  let t = ((px - ax) * dx + (py - ay) * dy) / l2
-  t = Math.max(0, Math.min(1, t))
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
-}
-
 function edgeAttrs(e: GraphEdge, src: GraphNode | undefined) {
   return {
     // ★★ 记住原始边 id：graphology 的 addEdge 不给 key 就自动生成 "geid_N"，
@@ -116,6 +102,7 @@ function edgeAttrs(e: GraphEdge, src: GraphNode | undefined) {
     size: 1,
     manual: e.origin === 'manual',
     active: false,
+    selected: false,
   }
 }
 
@@ -155,8 +142,18 @@ export default function GraphCanvas({
   const leaveTimerRef = useRef(0)
   /** 边详情弹窗的延迟清除定时器 */
   const edgeLeaveRef = useRef(0)
-  /** 鼠标是否压在节点上（sigma 的 enterNode/leaveNode 维护，边检测 O(1) 读取） */
-  const nodeHoverRef = useRef(false)
+  /** 当前选中的边（graphology edge id）；选中后加粗并保持弹窗 */
+  const selectedEdgeRef = useRef<string | null>(null)
+
+  /** 选中/取消选中一条边（O(1)：只改新旧两条边的属性） */
+  const selectEdge = (gid: string | null) => {
+    const G = graphRef.current
+    const prev = selectedEdgeRef.current
+    if (prev && G?.hasEdge(prev)) G.setEdgeAttribute(prev, 'selected', false)
+    if (gid && G?.hasEdge(gid)) G.setEdgeAttribute(gid, 'selected', true)
+    selectedEdgeRef.current = gid
+    sigmaRef.current?.refresh()
+  }
   const [dataVersion, setDataVersion] = useState(0)
   const readyRef = useRef(0)
   const aiBusy = useAiBusy()
@@ -273,10 +270,13 @@ export default function GraphCanvas({
         borderWidth: a.selected || a.flow ? 3 : a.active ? 3.5 : a.borderWidth,
         label: a.hideLabel ? '' : a.label,
       }),
+      // ★ 边三态：默认 / hover(active) / 选中(selected)
+      //   选中加粗到 3px + 不透明，和节点的 selected 语义对齐
       edgeReducer: (_id, a) => ({
         ...a,
-        color: a.active ? '#22d3ee' : a.color,
-        size: a.active ? 2.5 : a.size,
+        color: a.selected || a.active ? '#22d3ee' : a.color,
+        size: a.selected ? 3 : a.active ? 2.5 : a.size,
+        opacity: a.selected ? 1 : (a.opacity ?? 0.65),
       }),
     })
     sigmaRef.current = sigma
@@ -406,10 +406,44 @@ export default function GraphCanvas({
       setRingScale(Math.max(1, Math.min(1 / sigma.getCamera().getState().ratio, 1.6)))
       onSelect(Number(node))
     })
-    sigma.on('clickStage', () => setRing(null))
+    // ★ 点空白：收起环形按钮 + 取消边选中 + 收起边弹窗
+    sigma.on('clickStage', () => {
+      setRing(null)
+      selectEdge(null)
+      setEdgeHover(null)
+    })
 
-    // ★ 边的交互走「鼠标到线段距离」的手动检测（见下面的 effect）——
-    //   ⛔ 不用 sigma 的 enterEdge/clickEdge：像素级精确命中，1px 线宽几乎点不中。
+    // ★★ 边：用 sigma **原生拾取**（enterEdge / leaveEdge / clickEdge）
+    //   ⛔ 不再自己遍历算「鼠标到线段距离」（所有者：循环对性能影响很大）。
+    //   ⚠ 原生拾取区域 ≈ 边渲染宽度（1.7px）× picking 降采样 ⇒ 约 3~4px，
+    //     比原来 12px 严格，需要点得准一些。
+    const findEdgeByGid = (gid: string): GraphEdge | null => {
+      const GG = graphRef.current
+      // sigma 给的是 graphology 的边 id（geid_N）⇒ 取建图时存的 origId 反查
+      const orig = GG?.hasEdge(gid) ? String(GG.getEdgeAttribute(gid, 'origId') || '') : ''
+      return (graph?.edges ?? []).find((e) => String(e.id) === (orig || gid)) ?? null
+    }
+    const showEdge = (gid: string, ev: { x: number; y: number }) => {
+      const e = findEdgeByGid(gid)
+      if (!e) return
+      const rect = boxRef.current?.getBoundingClientRect()
+      setEdgeHover({ edge: e, x: ev.x + (rect?.left ?? 0), y: ev.y + (rect?.top ?? 0) })
+    }
+    sigma.on('enterEdge', ({ edge, event }) => {
+      window.clearTimeout(edgeLeaveRef.current)
+      showEdge(edge, event)
+    })
+    sigma.on('leaveEdge', ({ edge }) => {
+      // ★ 已选中这条边 ⇒ 弹窗保持显示
+      if (selectedEdgeRef.current && selectedEdgeRef.current === edge) return
+      window.clearTimeout(edgeLeaveRef.current)
+      edgeLeaveRef.current = window.setTimeout(() => setEdgeHover(null), 200)
+    })
+    sigma.on('clickEdge', ({ edge, event }) => {
+      window.clearTimeout(edgeLeaveRef.current)
+      selectEdge(edge)
+      showEdge(edge, event)
+    })
 
     // ★★ 节点拖拽：sigma 3 没有内置 drag-element（G6 有），手动实现
     //   downNode 抓住节点 → 禁用相机（否则会同时拖画布）→ 移动时改坐标 → 松开恢复
@@ -515,7 +549,6 @@ export default function GraphCanvas({
     if (!sigma || !G) return
 
     const onEnter = ({ node }: { node: string }) => {
-      nodeHoverRef.current = true   // ★ 供边检测 O(1) 判断「鼠标在节点上」
       clearTimeout(leaveTimerRef.current)
       // 高亮自己 + 一度邻居 + 相连边
       clearActive()
@@ -549,8 +582,6 @@ export default function GraphCanvas({
     }
 
     const onLeave = () => {
-      // ★ 物理离开节点**立即**反映（弹窗另有 800ms 滞留，两回事）
-      nodeHoverRef.current = false
       clearTimeout(leaveTimerRef.current)
       leaveTimerRef.current = window.setTimeout(() => {
         if (cardHoverRef.current) return
@@ -577,104 +608,6 @@ export default function GraphCanvas({
     // 鼠标离开画布 ⇒ 走 800ms 滞留（在 hover effect 里处理）
     // 这里不再改坐标，保持节点锚点稳定
   }, [!!hover])
-
-  // ------------------------------------------------------------ 边命中：鼠标离线段 ≤8px 就显示详情
-  // ★★★ 为什么不用 sigma 的 enterEdge/clickEdge：
-  //   sigma 的边拾取是**像素级精确命中**（线宽 1px）⇒ 几乎点不中，
-  //   所有者实测「点击没有显示边信息弹窗」。
-  //   ⇒ 自己算「鼠标到线段的像素距离 ≤ 8px」，和原来 G6 版本一致。
-  useEffect(() => {
-    const box = boxRef.current
-    if (!box || !graph) return
-    graphLog('edge:effect', { edges: graph.edges.length, nodes: graph.nodes.length })
-    let raf = 0
-    let last: { x: number; y: number } | null = null
-    let lastReport = 0
-    let lastHit = ''
-
-    const update = () => {
-      raf = 0
-      const sigma = sigmaRef.current
-      const G = graphRef.current
-      if (!sigma || !G || !last) return
-      const rect = box.getBoundingClientRect()
-      const mx = last.x - rect.left
-      const my = last.y - rect.top
-      if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) return
-
-      // ★★★ 节点优先：鼠标压在节点上时不显示边弹窗。
-      //   ⛔ 不再遍历节点算距离（所有者：循环对性能影响很大）——
-      //   sigma 的 enterNode/leaveNode 已经精确知道鼠标在不在节点上，
-      //   读一个 ref 即可，O(1)。
-      if (nodeHoverRef.current) {
-        if (!edgeLeaveRef.current) {
-          edgeLeaveRef.current = window.setTimeout(() => {
-            edgeLeaveRef.current = 0
-            setEdgeHover(null)
-          }, 100)
-        }
-        return
-      }
-
-      let best: GraphEdge | null = null
-      let bestD = Infinity
-      let skipped = 0
-      for (const e of graph.edges) {
-        const f = String(e.from), t = String(e.to)
-        if (!G.hasNode(f) || !G.hasNode(t)) { skipped++; continue }
-        const av = G.getNodeAttributes(f)
-        const bv = G.getNodeAttributes(t)
-        const pa = sigma.graphToViewport({ x: av.x, y: av.y })
-        const pb = sigma.graphToViewport({ x: bv.x, y: bv.y })
-        const d = distToSeg(mx, my, pa.x, pa.y, pb.x, pb.y)
-        if (d < bestD) { bestD = d; best = e }
-      }
-
-      if (best && bestD <= 12) {
-        const key = String(best.id)
-        if (lastHit !== key) {
-          lastHit = key
-          graphLog('edge:hit', { id: key, dist: n1(bestD) })
-        }
-        window.clearTimeout(edgeLeaveRef.current)
-        edgeLeaveRef.current = 0
-        setEdgeHover({ edge: best, x: last.x, y: last.y })
-      } else {
-        // ★ 每 2 秒报一次「扫描结果」，确认检测在跑、距离大概多少
-        const now = Date.now()
-        if (now - lastReport > 2000) {
-          lastReport = now
-          lastHit = ''
-          graphLog('edge:scan', {
-            minDist: best ? n1(bestD) : -1,
-            edges: graph.edges.length,
-            skipped,
-            mouse: { x: n1(mx), y: n1(my) },
-            canvas: `${Math.round(rect.width)}×${Math.round(rect.height)}`,
-          })
-        }
-        if (!edgeLeaveRef.current) {
-          // 离开边 ⇒ 200ms 后清（给眼睛一点时间）
-          edgeLeaveRef.current = window.setTimeout(() => {
-            edgeLeaveRef.current = 0
-            setEdgeHover(null)
-          }, 200)
-        }
-      }
-    }
-
-    const onMove = (ev: PointerEvent) => {
-      last = { x: ev.clientX, y: ev.clientY }
-      if (!raf) raf = requestAnimationFrame(update)
-    }
-    box.addEventListener('pointermove', onMove)
-    return () => {
-      box.removeEventListener('pointermove', onMove)
-      if (raf) cancelAnimationFrame(raf)
-      window.clearTimeout(edgeLeaveRef.current)
-      edgeLeaveRef.current = 0
-    }
-  }, [graph])
 
   // ------------------------------------------------------------ 环形按钮跟随节点
   useEffect(() => {

@@ -155,6 +155,8 @@ export default function GraphCanvas({
   const leaveTimerRef = useRef(0)
   /** 边详情弹窗的延迟清除定时器 */
   const edgeLeaveRef = useRef(0)
+  /** 鼠标是否压在节点上（sigma 的 enterNode/leaveNode 维护，边检测 O(1) 读取） */
+  const nodeHoverRef = useRef(false)
   const [dataVersion, setDataVersion] = useState(0)
   const readyRef = useRef(0)
   const aiBusy = useAiBusy()
@@ -513,6 +515,7 @@ export default function GraphCanvas({
     if (!sigma || !G) return
 
     const onEnter = ({ node }: { node: string }) => {
+      nodeHoverRef.current = true   // ★ 供边检测 O(1) 判断「鼠标在节点上」
       clearTimeout(leaveTimerRef.current)
       // 高亮自己 + 一度邻居 + 相连边
       clearActive()
@@ -546,6 +549,8 @@ export default function GraphCanvas({
     }
 
     const onLeave = () => {
+      // ★ 物理离开节点**立即**反映（弹窗另有 800ms 滞留，两回事）
+      nodeHoverRef.current = false
       clearTimeout(leaveTimerRef.current)
       leaveTimerRef.current = window.setTimeout(() => {
         if (cardHoverRef.current) return
@@ -597,26 +602,18 @@ export default function GraphCanvas({
       const my = last.y - rect.top
       if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) return
 
-      // ★★★ 节点优先：鼠标压在节点上时**不显示边弹窗**
-      //   节点就在边的端点上，鼠标在节点上时到那条边的距离必然 ≤ 阈值，
-      //   ⛔ 不挡的话两个弹窗会一起冒出来（所有者反馈）。
-      {
-        let onNode = false
-        for (const id of G.nodes()) {
-          const a = G.getNodeAttributes(id)
-          const v = sigma.graphToViewport({ x: a.x, y: a.y })
-          const r = Number(a.size || 14) / 2 + 4
-          if (Math.hypot(mx - v.x, my - v.y) <= r) { onNode = true; break }
+      // ★★★ 节点优先：鼠标压在节点上时不显示边弹窗。
+      //   ⛔ 不再遍历节点算距离（所有者：循环对性能影响很大）——
+      //   sigma 的 enterNode/leaveNode 已经精确知道鼠标在不在节点上，
+      //   读一个 ref 即可，O(1)。
+      if (nodeHoverRef.current) {
+        if (!edgeLeaveRef.current) {
+          edgeLeaveRef.current = window.setTimeout(() => {
+            edgeLeaveRef.current = 0
+            setEdgeHover(null)
+          }, 100)
         }
-        if (onNode) {
-          if (!edgeLeaveRef.current) {
-            edgeLeaveRef.current = window.setTimeout(() => {
-              edgeLeaveRef.current = 0
-              setEdgeHover(null)
-            }, 100)
-          }
-          return
-        }
+        return
       }
 
       let best: GraphEdge | null = null

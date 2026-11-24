@@ -95,6 +95,7 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
 
 export default function GraphCanvas({
   graph,
+  fullGraph,
   selectedVid,
   highlightVids,
   focusVid,
@@ -115,9 +116,21 @@ export default function GraphCanvas({
   const tfRef = useRef<ZoomTransform>(zoomIdentity)
   const nodesRef = useRef<SimNode[]>([])
   const linksRef = useRef<SimLink[]>([])
-  /** 复用坐标：重建时保留已有节点的位置，避免每次都重新散开 */
-  /** 记住节点位置（含拖拽固定坐标 fx/fy，重建时恢复） */
+  /** 记住节点位置（含拖拽固定坐标 fx/fy，重建时保留） */
   const posRef = useRef(new Map<string, { x: number; y: number; fx?: number | null; fy?: number | null }>())
+  /**
+   * ★★ 运行时增删（不改页面传来的 props.graph）：
+   *   extra  = 「显示邻居」加进来的节点（数据从 fullGraph 取）
+   *   hidden = 「隐藏节点」去掉的节点
+   *   渲染时：nodes = (graph.nodes - hidden) ∪ (fullGraph 中属于 extra 的)
+   *   展开/隐藏后通过 setDataVersion 触发重建。
+   */
+  const extraRef = useRef(new Set<string>())
+  const hiddenRef = useRef(new Set<string>())
+  /** 是否已首次建图：首次才做「居中 + 结束 fit」，之后重建保持当前视野 */
+  const initedRef = useRef(false)
+  /** 是否已经自动 fit 过一次 */
+  const fittedRef = useRef(false)
 
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
@@ -150,9 +163,21 @@ export default function GraphCanvas({
 
     const r0 = Math.max(4, nodeSizePx / 2)
 
-    // ① 节点：优先复用旧坐标，否则黄金角螺旋（避免节点共线导致布局退化）
+    // ① 当前可见节点 = props.nodes 去 hidden，再加 fullGraph 里的 extra
+    const hidden = hiddenRef.current
+    const extra = extraRef.current
+    const visibleNodes: GraphNode[] = graph.nodes.filter((n) => !hidden.has(String(n.vid)))
+    if (extra.size && fullGraph) {
+      const have = new Set(visibleNodes.map((n) => String(n.vid)))
+      for (const n of fullGraph.nodes) {
+        const id = String(n.vid)
+        if (extra.has(id) && !hidden.has(id) && !have.has(id)) visibleNodes.push(n)
+      }
+    }
+
+    // ② 节点：优先复用旧坐标，否则黄金角螺旋（避免节点共线导致布局退化）
     const prev = posRef.current
-    const nodes: SimNode[] = graph.nodes.map((n, i) => {
+    const nodes: SimNode[] = visibleNodes.map((n, i) => {
       const id = String(n.vid)
       const old = prev.get(id)
       const ang = i * 2.399963229728653
@@ -170,13 +195,22 @@ export default function GraphCanvas({
     })
     const byId = new Map(nodes.map((n) => [n.id, n]))
 
-    // ② 边：两端都在的才画
+    // ③ 边：两端都可见才画（props.edges ∪ fullGraph.edges，去重）
     const links: SimLink[] = []
-    for (const e of graph.edges) {
+    const seenEdge = new Set<string>()
+    const allEdges: GraphEdge[] = [...graph.edges, ...(fullGraph?.edges ?? [])]
+    for (const e of allEdges) {
       const s = String(e.from), t = String(e.to)
       if (!byId.has(s) || !byId.has(t)) continue
-      links.push({ id: String(e.id), edge: e, source: s, target: t })
+      const k = String(e.id)
+      if (seenEdge.has(k)) continue
+      seenEdge.add(k)
+      links.push({ id: k, edge: e, source: s, target: t })
     }
+    graphLog('visible', {
+      nodes: nodes.length, links: links.length,
+      extra: extra.size, hidden: hidden.size,
+    })
 
     nodesRef.current = nodes
     linksRef.current = links
@@ -255,9 +289,12 @@ export default function GraphCanvas({
 
     // ⑧ 结束：fit 一次
     sim.on('end', () => {
+      // ★ 只有首次布局才自动 fit；展开/隐藏后的重建保持当前视野
+      const firstBuild = !fittedRef.current
+      fittedRef.current = true
       const xs = nodes.map((n) => n.x ?? 0)
       const ys = nodes.map((n) => n.y ?? 0)
-      if (xs.length) {
+      if (firstBuild && xs.length) {
         const minX = Math.min(...xs), maxX = Math.max(...xs)
         const minY = Math.min(...ys), maxY = Math.max(...ys)
         const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY)
@@ -305,11 +342,16 @@ export default function GraphCanvas({
     svg.call(zoomBehavior)
     svg.on('dblclick.zoom', null)   // 双击不缩放（交给节点双击）
 
-    // ★★ 初始 transform：图坐标原点 (0,0) 放到画布中心，略缩小留出散开余量。
-    //   ⛔ 不设的话默认是 identity（k=1,x=0,y=0）⇒ 节点以 0,0 为中心，
-    //     正好落在画布左上角外面，只能看到右下四分之一（所有者反馈）。
-    //   布局结束后 sim.on('end') 会再 fit 一次，铺满视口。
-    svg.call(zoomBehavior.transform, zoomIdentity.translate(W / 2, H / 2).scale(0.9))
+    // ★★ 初始 transform：
+    //   首次建图 → 图原点居中 + 留散开余量（否则节点落在左上角外面，
+    //             只能看到右下四分之一）。
+    //   之后重建（展开邻居/隐藏节点）→ 保持用户当前视野，⛔ 不重置。
+    if (!initedRef.current) {
+      svg.call(zoomBehavior.transform, zoomIdentity.translate(W / 2, H / 2).scale(0.9))
+      initedRef.current = true
+    } else {
+      svg.call(zoomBehavior.transform, tfRef.current)
+    }
 
     // ⑩ 拖拽节点
     const dragBehavior = d3drag<SVGGElement, SimNode>()
@@ -410,7 +452,7 @@ export default function GraphCanvas({
       window.clearTimeout(edgeLeaveRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, dataVersion])
+  }, [graph, fullGraph, dataVersion])
 
   // ============================================================ 选中 / 高亮 / 主题：只改属性
   useEffect(() => {
@@ -517,18 +559,82 @@ export default function GraphCanvas({
   }, [meteors, meteorSpeed, meteorSizeRatio, dataVersion, toScreen])
 
   // ============================================================ 环形按钮动作
+  /**
+   * ★ 显示邻居：从 fullGraph 里把「当前不可见」的邻居加进 extra。
+   *   新节点的初始位置放在宿主周围一圈（写进 posRef，重建时直接用）。
+   */
   const expandNeighbors = useCallback((vid: number) => {
-    // 由页面层重新计算 graph（onGraphChanged），这里只管收起按钮
     setRing(null)
-    graphLog('expand:request', { vid })
-    onSelect(vid)
-  }, [onSelect])
+    const id = String(vid)
+    const src = fullGraph
+    if (!src) return
 
+    // 当前可见集合
+    const visible = new Set(nodesRef.current.map((n) => n.id))
+
+    // 找出该节点的全部邻居
+    const nbrs = new Set<string>()
+    for (const e of src.edges) {
+      const f = String(e.from), t = String(e.to)
+      if (f === id) nbrs.add(t)
+      else if (t === id) nbrs.add(f)
+    }
+
+    const missing = [...nbrs].filter((v) => !visible.has(v))
+    graphLog('expand', { host: id, neighbors: nbrs.size, adding: missing.length })
+    if (!missing.length) return
+
+    // 新节点摆成宿主周围一圈
+    const host = nodesRef.current.find((n) => n.id === id)
+    const hx = host?.x ?? 0
+    const hy = host?.y ?? 0
+    missing.forEach((v, i) => {
+      const ang = (Math.PI * 2 * i) / missing.length - Math.PI / 2
+      posRef.current.set(v, {
+        x: hx + Math.cos(ang) * 70,
+        y: hy + Math.sin(ang) * 70,
+      })
+      extraRef.current.add(v)
+      hiddenRef.current.delete(v)   // 之前藏过的，显示时一并露出
+    })
+
+    setDataVersion((v) => v + 1)
+  }, [fullGraph])
+
+  /**
+   * ★ 隐藏节点：把它和「只连着它的孤儿邻居」一起加进 hidden。
+   *   注：只是从画布去掉，数据还在页面的 graph.json 里，重新解析/重建会回来。
+   */
   const hideNode = useCallback((vid: number) => {
     setRing(null)
-    graphLog('hide:request', { vid })
-    onDeselect?.()
-  }, [onDeselect])
+    const id = String(vid)
+
+    // 当前可见图的度数
+    const deg = new Map<string, number>()
+    for (const l of linksRef.current) {
+      const s = String(typeof l.source === 'string' ? l.source : l.source.id)
+      const t = String(typeof l.target === 'string' ? l.target : l.target.id)
+      deg.set(s, (deg.get(s) ?? 0) + 1)
+      deg.set(t, (deg.get(t) ?? 0) + 1)
+    }
+
+    const removing = new Set<string>([id])
+    for (const l of linksRef.current) {
+      const s = String(typeof l.source === 'string' ? l.source : l.source.id)
+      const t = String(typeof l.target === 'string' ? l.target : l.target.id)
+      if (s === id && (deg.get(t) ?? 0) === 1) removing.add(t)
+      if (t === id && (deg.get(s) ?? 0) === 1) removing.add(s)
+    }
+
+    for (const v of removing) {
+      hiddenRef.current.add(v)
+      extraRef.current.delete(v)
+    }
+    graphLog('hide', { target: id, removing: [...removing] })
+
+    setDataVersion((v) => v + 1)
+    if (selectedVid != null && removing.has(String(selectedVid))) onDeselect?.()
+  }, [selectedVid, onDeselect])
 
   const segments = useMemo(() => ([
     { key: 'expand', title: '显示邻居', a1: -Math.PI / 2 + 0.18, a2: Math.PI / 2 - 0.18, icon: 'M12 5v14M5 12h14', run: expandNeighbors },

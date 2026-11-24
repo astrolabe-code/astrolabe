@@ -184,6 +184,9 @@ export default function GraphCanvas({
     linksRef.current = links
 
     const svg = select(svgEl)
+    // ★ 主动设尺寸：⛔ 只靠 ResizeObserver 的话首次回调是异步的，
+    //   那一帧 SVG 还是 0×0 ⇒ 图只露出左上角一角 ⚠
+    svg.attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
     svg.selectAll('*').remove()
 
     // ③ zoom 层
@@ -303,6 +306,12 @@ export default function GraphCanvas({
     zoomRef.current = zoomBehavior
     svg.call(zoomBehavior)
     svg.on('dblclick.zoom', null)   // 双击不缩放（交给节点双击）
+
+    // ★★ 初始 transform：图坐标原点 (0,0) 放到画布中心，略缩小留出散开余量。
+    //   ⛔ 不设的话默认是 identity（k=1,x=0,y=0）⇒ 节点以 0,0 为中心，
+    //     正好落在画布左上角外面，只能看到右下四分之一（所有者反馈）。
+    //   布局结束后 sim.on('end') 会再 fit 一次，铺满视口。
+    svg.call(zoomBehavior.transform, zoomIdentity.translate(W / 2, H / 2).scale(0.9))
 
     // ⑩ 拖拽节点
     const dragBehavior = d3drag<SVGGElement, SimNode>()

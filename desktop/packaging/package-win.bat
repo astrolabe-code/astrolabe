@@ -30,6 +30,22 @@ if errorlevel 1 goto :no_python
 node -v
 python --version
 
+REM ---- 目录结构自检：解压不完整时提前报错，而不是等到 [5/6] PyInstaller 才失败
+if not exist "..\app\codeparser\scanner.py" (
+  echo   [X] missing app\codeparser - extract the full source archive again
+  goto :no_app
+)
+if not exist "ui\package.json" (
+  echo   [X] missing ui\package.json - extract the full source archive again
+  goto :no_graphdeps
+)
+findstr /C:"d3-force" "ui\package.json" >nul 2>&1
+if errorlevel 1 (
+  echo   [X] ui\package.json has no d3-force - wrong version of the source?
+  goto :no_graphdeps
+)
+echo   OK  app + graph deps
+
 echo.
 echo [1/6] Installing UI deps (first run 2-3 min)...
 pushd ui
@@ -146,6 +162,17 @@ goto :fail
 
 :no_sidecar
 echo   [X] sidecar exe not produced: packaging\out\astrolabe-sidecar.exe
+goto :fail
+
+:no_app
+echo   [X] app\codeparser not found (repo root missing from this copy)
+echo       PyInstaller needs app\codeparser + app\graph to build the sidecar.
+echo       Fix: extract the FULL source archive, do not copy desktop\ alone.
+goto :fail
+
+:no_graphdeps
+echo   [X] ui\package.json missing or has no d3-force
+echo       This copy of desktop\ui is not the D3 graph version.
 goto :fail
 
 :fail

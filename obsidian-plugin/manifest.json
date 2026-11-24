@@ -1,0 +1,10 @@
+{
+  "id": "astrolabe-code-graph",
+  "name": "Astrolabe Code Graph",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "解析 vault 内代码文件为结构化节点/边（WASM tree-sitter，无需 Python 边车）",
+  "author": "mahvm",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

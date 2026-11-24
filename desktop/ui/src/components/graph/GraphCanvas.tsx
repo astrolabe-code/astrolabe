@@ -137,12 +137,6 @@ export default function GraphCanvas({
     return [x * t.k + t.x, y * t.k + t.y]
   }, [])
 
-  /** 屏幕坐标 → 图坐标 */
-  const toGraph = useCallback((sx: number, sy: number): [number, number] => {
-    const t = tfRef.current
-    return [(sx - t.x) / t.k, (sy - t.y) / t.k]
-  }, [])
-
   // ============================================================ 主 effect：建 SVG + 布局
   useEffect(() => {
     const box = boxRef.current
@@ -320,8 +314,11 @@ export default function GraphCanvas({
         d.fx = d.x; d.fy = d.y
       })
       .on('drag', (ev, d) => {
-        const [gx, gy] = toGraph(ev.x, ev.y)
-        d.fx = gx; d.fy = gy
+        // ★★ d3-drag 的 event.x/y **已经是图坐标**（相对父 <g>，zoom transform
+        //   由 d3.pointer 的 getScreenCTM().inverse() 计入）
+        //   ⛔ 不能再调 toGraph()：那会二次换算（减 translate、除 k），
+        //     鼠标与节点差出几十上百像素（所有者反馈）。
+        d.fx = ev.x; d.fy = ev.y
       })
       .on('end', (ev, d) => {
         if (!ev.active) sim.alphaTarget(0)

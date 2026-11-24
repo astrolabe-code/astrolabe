@@ -498,8 +498,11 @@ export default function GraphCanvas({
         return d.node.patched ? 2.5 : 2
       })
       .attr('fill-opacity', (d) => {
-        if (!sel && !hl.size) return 1
-        return d.id === sel || hl.has(d.id) ? 1 : 0.35
+        // ★★ 选中（sel）**不再压暗其他节点** ——
+        //   页面一打开就把默认焦点设为选中，压暗 0.35 会让整张图发浅（所有者反馈）。
+        //   只有「执行流高亮」才压暗非相关节点。
+        if (!hl.size) return 1
+        return hl.has(d.id) || d.id === sel ? 1 : 0.45
       })
 
     nodeSel.select('text').attr('fill', (d) => {

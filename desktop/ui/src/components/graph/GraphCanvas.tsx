@@ -421,8 +421,10 @@ export default function GraphCanvas({
       .on('click', (ev: MouseEvent, d) => {
         ev.stopPropagation()
         onSelect(Number(d.id))
-        const rect = box.getBoundingClientRect()
-        setRing({ vid: Number(d.id), x: ev.clientX - rect.left, y: ev.clientY - rect.top, r: d.r })
+        // ★★ 圆心必须是**节点中心**，⛔ 不是鼠标点击点 ——
+        //   点在节点边缘时，用鼠标坐标会让圆环偏出去（所有者反馈「圆心不是节点」）
+        const [sx, sy] = toScreen(d.x ?? 0, d.y ?? 0)
+        setRing({ vid: Number(d.id), x: sx, y: sy, r: d.r })
         setRingScale(ringScaleFor(d.r, tfRef.current.k))
         setHover(null)
       })
@@ -655,10 +657,29 @@ export default function GraphCanvas({
     if (selectedVid != null && removing.has(String(selectedVid))) onDeselect?.()
   }, [selectedVid, onDeselect])
 
-  const segments = useMemo(() => ([
-    { key: 'expand', title: '显示邻居', a1: -Math.PI / 2 + 0.18, a2: Math.PI / 2 - 0.18, icon: 'M12 5v14M5 12h14', run: expandNeighbors },
-    { key: 'hide', title: '隐藏节点', a1: Math.PI / 2 + 0.18, a2: Math.PI * 1.5 - 0.18, icon: 'M2 2l20 20M2 22L22 2', run: hideNode },
-  ]), [expandNeighbors, hideNode])
+  /**
+   * ★ 扇区 + 图标位置：
+   *   图标必须画在**扇区中部**（角度中点、半径 (r1+r2)/2），
+   *   ⛔ 之前固定 translate(36 36) 把两个图标都堆在圆心，
+   *     叠成一颗白色星芒（所有者截图）。
+   */
+  const segments = useMemo(() => {
+    const midR = (RING_GEO.r1 + RING_GEO.r2) / 2
+    const mk = (
+      key: string, title: string, a1: number, a2: number, icon: string, run: (vid: number) => void,
+    ) => {
+      const mid = (a1 + a2) / 2
+      return {
+        key, title, a1, a2, icon, run,
+        ix: RING_GEO.c + Math.cos(mid) * midR,
+        iy: RING_GEO.c + Math.sin(mid) * midR,
+      }
+    }
+    return [
+      mk('expand', '显示邻居', -Math.PI / 2 + 0.18, Math.PI / 2 - 0.18, 'M12 5v14M5 12h14', expandNeighbors),
+      mk('hide', '隐藏节点', Math.PI / 2 + 0.18, Math.PI * 1.5 - 0.18, 'M2 2l20 20M2 22L22 2', hideNode),
+    ]
+  }, [expandNeighbors, hideNode])
 
   return (
     <div
@@ -688,12 +709,14 @@ export default function GraphCanvas({
             <g key={s.key}>
               <path
                 d={ringArcPath(s.a1, s.a2)}
-                /* ★ 用亮青（=--accent-strong 提亮版）+ 白描边 ——
-                   ⛔ 原来 var(--accent) 是深青 #0891b2，叠 0.9 透明后发黑 */
-                fill="#22d3ee"
-                stroke="#ffffff"
-                strokeWidth={1.5}
-                style={{ cursor: 'pointer' }}
+                /* ★ 灰白半透明（所有者要求）：白底 + 浅灰描边 + 投影，浮在图上不刺眼 */
+                fill="rgba(255,255,255,0.92)"
+                stroke="rgba(148,163,184,0.9)"
+                strokeWidth={1}
+                style={{
+                  cursor: 'pointer',
+                  filter: 'drop-shadow(0 2px 8px rgba(15,23,42,0.18))',
+                }}
                 onClick={(e) => { e.stopPropagation(); s.run(ring.vid) }}
               >
                 <title>{s.title}</title>
@@ -701,11 +724,12 @@ export default function GraphCanvas({
               <path
                 d={s.icon}
                 fill="none"
-                stroke="#ffffff"
-                strokeWidth={3}
+                /* 深灰图标：白底上清晰，且不抢节点颜色 */
+                stroke="#475569"
+                strokeWidth={2.6}
                 strokeLinecap="round"
                 style={{ pointerEvents: 'none' }}
-                transform="translate(36 36) scale(0.55)"
+                transform={`translate(${s.ix - 6.6} ${s.iy - 6.6}) scale(0.55)`}
               />
             </g>
           ))}

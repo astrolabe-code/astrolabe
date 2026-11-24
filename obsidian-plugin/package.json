@@ -4,9 +4,10 @@
   "private": true,
   "description": "Astrolabe Obsidian plugin - WASM tree-sitter code parser",
   "scripts": {
-    "build": "esbuild src/main.js --bundle --format=cjs --platform=browser --external:obsidian --outfile=main.js && node scripts/copy-wasm.js"
+    "build": "esbuild src/main.js --bundle --format=cjs --platform=browser --external:obsidian --external:@ladybugdb/core --outfile=main.js && node scripts/copy-wasm.js && node scripts/copy-lbug.js"
   },
   "dependencies": {
+    "@ladybugdb/core": "^0.18.3",
     "@vscode/tree-sitter-wasm": "^0.3.1",
     "blakejs": "1.2.1",
     "web-tree-sitter": "0.27.2"

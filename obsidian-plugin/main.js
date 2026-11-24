@@ -5149,13 +5149,89 @@ async function scanVault(app, pluginDir, opts = {}) {
   return { nodes, edges, files, scanned: targets.length, errors };
 }
 
+// src/graphdb.js
+function loadLbug() {
+  const nodeRequire = (0, eval)('typeof require === "function" ? require : null');
+  const req = typeof window !== "undefined" && window.require || nodeRequire;
+  if (!req) throw new Error("\u5F53\u524D\u73AF\u5883\u6CA1\u6709 Node require\uFF08LadybugDB \u4EC5\u652F\u6301\u684C\u9762\u7AEF Obsidian\uFF09");
+  return req("@ladybugdb/core");
+}
+var { Database, Connection } = loadLbug();
+var NODE_TABLE = `CREATE NODE TABLE IF NOT EXISTS Code(
+  vid INT64,
+  kind STRING,
+  name STRING,
+  qname STRING,
+  file STRING,
+  line INT64,
+  lineEnd INT64,
+  PRIMARY KEY (vid)
+)`;
+var REL_TABLE = `CREATE REL TABLE IF NOT EXISTS Rel(
+  FROM Code TO Code,
+  kind STRING
+)`;
+async function openGraph(dbPath) {
+  const db = new Database(dbPath);
+  await db.init();
+  const conn = new Connection(db);
+  await conn.init();
+  await conn.execute(await conn.prepare(NODE_TABLE));
+  await conn.execute(await conn.prepare(REL_TABLE));
+  return { db, conn };
+}
+async function clearGraph(conn) {
+  await conn.execute(await conn.prepare("MATCH (c:Code)-[r]->() DELETE r"));
+  await conn.execute(await conn.prepare("MATCH (c:Code) DELETE c"));
+}
+async function writeGraph(conn, nodes, edges) {
+  await clearGraph(conn);
+  const insertNode = await conn.prepare(
+    "CREATE (:Code {vid: $vid, kind: $kind, name: $name, qname: $qname, file: $file, line: $line, lineEnd: $lineEnd})"
+  );
+  for (const n of nodes) {
+    await conn.execute(insertNode, {
+      vid: Number(n.vid),
+      // 53 位 vid 在 JS Number 安全范围内
+      kind: String(n.kind || ""),
+      name: String(n.name || ""),
+      qname: String(n.qname || ""),
+      file: String(n.file || ""),
+      // ★ 不用 BigInt：LadybugDB 参数化对 BigInt(0) 处理有 bug
+      //   （实测 line=0 写进去变成 133744648564058）
+      line: Number(n.line || 0),
+      lineEnd: Number(n.lineEnd ?? -1)
+    });
+  }
+  const matchPair = await conn.prepare(
+    "MATCH (a:Code), (b:Code) WHERE a.vid = $src AND b.vid = $dst CREATE (a)-[:Rel {kind: $kind}]->(b)"
+  );
+  for (const e of edges) {
+    await conn.execute(matchPair, {
+      src: Number(e.src),
+      dst: Number(e.dst),
+      kind: String(e.type || "call")
+    });
+  }
+}
+async function closeGraph({ db, conn }) {
+  try {
+    await conn.close();
+  } catch {
+  }
+  try {
+    await db.close();
+  } catch {
+  }
+}
+
 // src/main.js
 var AstrolabePlugin = class extends import_obsidian.Plugin {
   async onload() {
     console.log("[ASTROLABE] plugin loaded");
     this.addCommand({
       id: "parse-vault",
-      name: "\u89E3\u6790\u5F53\u524D vault \u4EE3\u7801\uFF08Astrolabe\uFF09",
+      name: "\u89E3\u6790\u5F53\u524D vault \u4EE3\u7801 \u2192 LadybugDB",
       callback: () => this.runParse()
     });
   }
@@ -5164,39 +5240,47 @@ var AstrolabePlugin = class extends import_obsidian.Plugin {
   }
   async runParse() {
     const notice = new import_obsidian.Notice("Astrolabe: \u521D\u59CB\u5316 WASM \u89E3\u6790\u5668\u2026", 0);
+    let graph = null;
     try {
       const t0 = Date.now();
-      const result = await scanVault(this.app, this.manifest.dir, {
-        maxFiles: 500
-      });
+      const result = await scanVault(this.app, this.manifest.dir, { maxFiles: 500 });
+      const adapter = this.app.vault.adapter;
+      if (typeof adapter.getFullPath !== "function") {
+        throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 LadybugDB\uFF08\u9700\u8981\u684C\u9762\u7AEF Obsidian\uFF09");
+      }
+      const vaultPath = adapter.getFullPath("");
+      const dir = `${vaultPath}/astrolabe/graphs`;
+      const req = typeof window !== "undefined" && window.require || (0, eval)('typeof require === "function" ? require : null');
+      if (!req) throw new Error("\u5F53\u524D\u73AF\u5883\u6CA1\u6709 Node require\uFF08LadybugDB \u4EC5\u652F\u6301\u684C\u9762\u7AEF\uFF09");
+      const fs2 = req("node:fs") || req("fs");
+      fs2.mkdirSync(dir, { recursive: true });
+      const project = (vaultPath.split(/[\\/]/).filter(Boolean).pop() || "vault").replace(/[^\w\u4e00-\u9fa5-]/g, "_");
+      const dbPath = `${dir}/${project}.lbug`;
+      notice.setMessage(`Astrolabe: \u5199\u5165\u56FE\u5E93 ${project}.lbug \u2026`);
+      graph = await openGraph(dbPath);
+      await writeGraph(graph.conn, result.nodes, result.edges);
       const ms = Date.now() - t0;
-      const out2 = {
-        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        ms,
-        files: result.files,
-        scanned: result.scanned,
-        nodes: result.nodes,
-        edges: result.edges,
-        errors: result.errors
-      };
-      const target = "astrolabe-graph.json";
-      const existing = this.app.vault.getAbstractFileByPath(target);
-      const text = JSON.stringify(out2, null, 2);
-      if (existing) await this.app.vault.modify(existing, text);
-      else await this.app.vault.create(target, text);
       const kinds = {};
       for (const n of result.nodes) kinds[n.kind] = (kinds[n.kind] || 0) + 1;
       const summary = `\u6587\u4EF6 ${result.files}/${result.scanned} \xB7 \u8282\u70B9 ${result.nodes.length} \xB7 \u8FB9 ${result.edges.length} \xB7 ${ms}ms
-${Object.entries(kinds).map(([k, v]) => `${k}:${v}`).join(" ")}`;
+${Object.entries(kinds).map(([k, v]) => `${k}:${v}`).join(" ")}
+\u56FE\u5E93: astrolabe/graphs/${project}.lbug`;
       notice.setMessage(`Astrolabe \u89E3\u6790\u5B8C\u6210
 ${summary}`);
       console.log("[ASTROLABE] parse done", summary, "errors:", result.errors);
-      setTimeout(() => notice.hide(), 12e3);
+      setTimeout(() => notice.hide(), 15e3);
     } catch (e) {
       const msg = String(e && e.message || e);
       notice.setMessage(`Astrolabe \u89E3\u6790\u5931\u8D25\uFF1A${msg}`);
       console.error("[ASTROLABE] parse error", e);
       setTimeout(() => notice.hide(), 15e3);
+    } finally {
+      if (graph) {
+        try {
+          await closeGraph(graph);
+        } catch {
+        }
+      }
     }
   }
 };

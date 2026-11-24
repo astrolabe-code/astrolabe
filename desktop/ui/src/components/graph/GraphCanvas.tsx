@@ -116,7 +116,8 @@ export default function GraphCanvas({
   const nodesRef = useRef<SimNode[]>([])
   const linksRef = useRef<SimLink[]>([])
   /** 复用坐标：重建时保留已有节点的位置，避免每次都重新散开 */
-  const posRef = useRef(new Map<string, { x: number; y: number }>())
+  /** 记住节点位置（含拖拽固定坐标 fx/fy，重建时恢复） */
+  const posRef = useRef(new Map<string, { x: number; y: number; fx?: number | null; fy?: number | null }>())
 
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
@@ -162,6 +163,9 @@ export default function GraphCanvas({
         r: n.origin === 'manual' ? r0 * 1.15 : r0,
         x: old?.x ?? Math.cos(ang) * rad,
         y: old?.y ?? Math.sin(ang) * rad,
+        // ★ 恢复用户手动摆放的固定位置（否则重建后又被力导向拉走）
+        fx: old?.fx ?? undefined,
+        fy: old?.fy ?? undefined,
       }
     })
     const byId = new Map(nodes.map((n) => [n.id, n]))
@@ -266,8 +270,8 @@ export default function GraphCanvas({
         graphLog('fit', { k: n1(k), bw: n1(bw), bh: n1(bh) })
       }
       // 记住坐标供下次复用
-      const m = new Map<string, { x: number; y: number }>()
-      for (const n of nodes) m.set(n.id, { x: n.x ?? 0, y: n.y ?? 0 })
+      const m = new Map<string, { x: number; y: number; fx?: number | null; fy?: number | null }>()
+      for (const n of nodes) m.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, fx: n.fx, fy: n.fy })
       posRef.current = m
       graphLog('layout:done', { nodes: nodes.length })
       onPhase?.('布局完成')
@@ -322,7 +326,10 @@ export default function GraphCanvas({
       })
       .on('end', (ev, d) => {
         if (!ev.active) sim.alphaTarget(0)
-        d.fx = null; d.fy = null
+        // ★★ 不清理 fx/fy —— 用户手动摆放的位置要**定住**。
+        //   ⛔ 置 null 的话力导向会立刻把节点拽回去（所有者反馈「松开就弹回去」）。
+        //   想恢复自动布局：双击该节点（见下面 dblclick）。
+        d.fx = d.x; d.fy = d.y
       })
     nodeSel.call(dragBehavior)
 
@@ -345,6 +352,13 @@ export default function GraphCanvas({
           setHover(null)
           clearActive(nodeSel, linkSel)
         }, HOVER_LINGER_MS)
+      })
+      .on('dblclick', (ev: MouseEvent, d) => {
+        // ★ 双击节点 = 取消固定（解除用户拖拽时锁定的位置），恢复力导向
+        ev.stopPropagation()
+        d.fx = null; d.fy = null
+        sim.alpha(0.3).restart()
+        graphLog('drag:unfix', { node: d.id })
       })
       .on('click', (ev: MouseEvent, d) => {
         ev.stopPropagation()

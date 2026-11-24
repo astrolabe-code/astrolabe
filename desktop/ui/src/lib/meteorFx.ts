@@ -22,8 +22,7 @@
  * ```
  */
 
-import type Sigma from 'sigma'
-import type DirectedGraph from 'graphology'
+
 
 /** 首尾各淡入/淡出的占比（占全程比例） */
 const FADE = 0.08
@@ -53,21 +52,6 @@ function hexRgb(hex: string): { r: number; g: number; b: number } {
 const rgba = (c: { r: number; g: number; b: number }, a: number) =>
   `rgba(${c.r},${c.g},${c.b},${a})`
 
-/** 取节点视口坐标（sigma：graphology 坐标 → viewport） */
-function posOf(sigma: Sigma, G: DirectedGraph, id: string): [number, number] | null {
-  if (!G.hasNode(id)) return null
-  const x = Number(G.getNodeAttribute(id, 'x'))
-  const y = Number(G.getNodeAttribute(id, 'y'))
-  if (!isFinite(x) || !isFinite(y)) return null
-  try {
-    const vp = sigma.graphToViewport({ x, y })
-    if (isFinite(vp.x) && isFinite(vp.y)) return [vp.x, vp.y]
-  } catch {
-    /* 忽略 */
-  }
-  return null
-}
-
 /**
  * 启动流星效果。
  *
@@ -78,8 +62,7 @@ function posOf(sigma: Sigma, G: DirectedGraph, id: string): [number, number] | n
  * @returns 停止函数（卸载时必调）
  */
 export function startMeteor(
-  sigma: Sigma,
-  G: DirectedGraph,
+  getPos: (id: string) => [number, number] | null,
   container: HTMLElement,
   edges: { from: string; to: string; size: number; color: string; toSize: number }[],
   opts: MeteorOptions = {},
@@ -124,19 +107,14 @@ export function startMeteor(
     }
     ctx.clearRect(0, 0, w, h)
 
-    // ★ 当前缩放：* 流星所有尺寸都乘它 ⇒ 滚轮缩放时同步变化 ⚠
-    let zoom = 1
-    try {
-      zoom = 1 / (sigma.getCamera().getState().ratio || 1)
-    } catch {
-      zoom = 1
-    }
+    // ★ SVG 版的缩放已反映在 getPos 的坐标里，尺寸不用再叠乘
+    const zoom = 1
 
     const n = list.length
     for (let i = 0; i < n; i++) {
       const e = list[i]
-      const p1 = posOf(sigma, G, e.from)
-      const p2 = posOf(sigma, G, e.to)
+      const p1 = getPos(e.from)
+      const p2 = getPos(e.to)
       if (!p1 || !p2) continue
 
       const dx = p2[0] - p1[0]

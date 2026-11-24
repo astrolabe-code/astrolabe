@@ -52,6 +52,18 @@ const labelMax = (n: GraphNode) =>
   n.kind === 'file' || n.kind === 'dir' ? LABEL_MAX_FILE : LABEL_MAX_NAME
 const colorOf = (n: GraphNode) => kindColor(n.kind)
 
+/**
+ * 环形按钮的缩放：
+ *   基准 = 节点半径 7px（= nodeSizePx 14 的一半）
+ *   再乘 zoom（限制 0.85~2，避免缩到看不见或撑爆屏幕）
+ */
+const RING_BASE_R = 7
+function ringScaleFor(nodeR: number, zoomK: number): number {
+  const byNode = (nodeR || RING_BASE_R) / RING_BASE_R
+  const byZoom = Math.max(0.85, Math.min(zoomK, 2))
+  return byNode * byZoom
+}
+
 function ringArcPath(a1: number, a2: number): string {
   const { c, r1, r2 } = RING_GEO
   const pt = (r: number, a: number) => [c + r * Math.cos(a), c + r * Math.sin(a)] as const
@@ -134,8 +146,11 @@ export default function GraphCanvas({
 
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
-  const [ring, setRing] = useState<{ vid: number; x: number; y: number } | null>(null)
+  const [ring, setRing] = useState<{ vid: number; x: number; y: number; r: number } | null>(null)
   const [ringScale, setRingScale] = useState(1)
+  /** ring 的镜像：zoom 回调里读它，避免闭包拿到旧 state */
+  const ringRef = useRef<{ vid: number; x: number; y: number; r: number } | null>(null)
+  useEffect(() => { ringRef.current = ring }, [ring])
   const [dataVersion, setDataVersion] = useState(0)
 
   const aiBusy = useAiBusy()
@@ -328,7 +343,8 @@ export default function GraphCanvas({
           const [sx, sy] = [n.x! * ev.transform.k + ev.transform.x, n.y! * ev.transform.k + ev.transform.y]
           return { ...r, x: sx, y: sy }
         })
-        setRingScale(Math.max(1, Math.min(ev.transform.k, 1.6)))
+        const curRing = ringRef.current
+        if (curRing) setRingScale(ringScaleFor(curRing.r, ev.transform.k))
         // 标签疏密：缩小时只留高度数节点
         if (nodes.length >= LABEL_MIN_NODES) {
           const dense = ev.transform.k < LABEL_ZOOM_THRESHOLD
@@ -406,8 +422,8 @@ export default function GraphCanvas({
         ev.stopPropagation()
         onSelect(Number(d.id))
         const rect = box.getBoundingClientRect()
-        setRing({ vid: Number(d.id), x: ev.clientX - rect.left, y: ev.clientY - rect.top })
-        setRingScale(Math.max(1, Math.min(tfRef.current.k, 1.6)))
+        setRing({ vid: Number(d.id), x: ev.clientX - rect.left, y: ev.clientY - rect.top, r: d.r })
+        setRingScale(ringScaleFor(d.r, tfRef.current.k))
         setHover(null)
       })
 
@@ -669,8 +685,11 @@ export default function GraphCanvas({
             <g key={s.key}>
               <path
                 d={ringArcPath(s.a1, s.a2)}
-                fill="var(--accent)"
-                opacity={0.9}
+                /* ★ 用亮青（=--accent-strong 提亮版）+ 白描边 ——
+                   ⛔ 原来 var(--accent) 是深青 #0891b2，叠 0.9 透明后发黑 */
+                fill="#22d3ee"
+                stroke="#ffffff"
+                strokeWidth={1.5}
                 style={{ cursor: 'pointer' }}
                 onClick={(e) => { e.stopPropagation(); s.run(ring.vid) }}
               >
@@ -679,8 +698,9 @@ export default function GraphCanvas({
               <path
                 d={s.icon}
                 fill="none"
-                stroke="#fff"
-                strokeWidth={2}
+                stroke="#ffffff"
+                strokeWidth={3}
+                strokeLinecap="round"
                 style={{ pointerEvents: 'none' }}
                 transform="translate(36 36) scale(0.55)"
               />

@@ -33,6 +33,7 @@ import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
+import LearningPathPanel from '../components/graph/LearningPathPanel'
 import NodePanel from '../components/node/NodePanel'
 import FlowPanel from '../components/graph/FlowPanel'
 import CommunityPanel from '../components/graph/CommunityPanel'
@@ -112,6 +113,7 @@ export default function ProjectGraphPage() {
   const [codeOpen, setCodeOpen] = useState(false)
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
+  const [learnPathOpen, setLearnPathOpen] = useState(false)
   /** ★★ 改图抽屉（个人版核心兜底能力）⚠ */
   const [curateOpen, setCurateOpen] = useState(false)
   // ★ 搜索胶囊是否展开
@@ -470,6 +472,12 @@ export default function ProjectGraphPage() {
           active={pathOpen}
           onClick={() => setPathOpen((v) => !v)}
         />
+          <RailButton
+            icon={<Workflow size={13} />}
+            label="AI 学习路径"
+            active={learnPathOpen}
+            onClick={() => setLearnPathOpen((v) => !v)}
+          />
         {(showAllNodes || (shownCount != null && shownCount < orderVids.length)) && (
           <RailButton
             icon={showAllNodes ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -645,6 +653,16 @@ export default function ProjectGraphPage() {
                   )}
                 </div>
               )}
+                {/* AI 学习路径面板 */}
+                {learnPathOpen && (
+                  <div className="card" style={{ padding: 10, marginBottom: 8 }}>
+                    <LearningPathPanel
+                      projectRef={projectRef}
+                      selectedVid={selectedVid}
+                      onPick={(vid) => { setSelectedVid(vid); setFocusVid(vid) }}
+                    />
+                  </div>
+                )}
             </div>
             <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
               {loading ? (

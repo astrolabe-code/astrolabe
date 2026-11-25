@@ -139,6 +139,20 @@ export function toProjectSummary(raw: any, stats?: any): any {
 // ---------------------------------------------------------------- 对外
 
 // ★ 思考白板布局（存后端；pos/board/sizes 用卡片 localId 作 key，与历史 localStorage 形态一致）
+/** 学习路径：给 AI 的候选节点 */
+export interface LearningCandidate {
+  vid: number
+  kind: string
+  name: string
+  qname: string
+  rel_path: string
+  line: number
+  lineEnd: number
+  signature?: string
+  reach?: number
+}
+
+
 export interface BoardLayout {
   pos?: Record<number, { x: number; y: number }>
   board?: number[]
@@ -273,6 +287,27 @@ export const personalApi = {
     ),
 
   /** ★★ 停止正在进行的 AI 回答（真断后端 LLM 连接） */
+    /** 学习路径：从候选里挑下一个该学的节点 */
+    aiRecommend: (
+      ref: string,
+      body: { vid: number | null; direction?: 'down' | 'up'; learned: number[] },
+    ) => post<{ vid: number | null; reason: string; name?: string; qname?: string }>(
+      `/api/projects/${encodeURIComponent(ref)}/ai/recommend/`, body,
+    ),
+
+    /** 学习路径：给小结打分 */
+    aiScoreSummary: (
+      ref: string,
+      body: { body: string; vid?: number },
+    ) => post<{
+      score: number
+      level: 'solid' | 'pass' | 'weak'
+      label: string
+      comment: string
+      evidence: Record<string, boolean>
+    }>(`/api/projects/${encodeURIComponent(ref)}/ai/score/`, body),
+
+
   cancelAi: (ref: string, token: string) =>
     post<{ cancelled: boolean }>(
       `/api/projects/${encodeURIComponent(ref)}/ai/cancel/`,

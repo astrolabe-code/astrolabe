@@ -342,6 +342,56 @@ def neighbors(data_dir: str, vid: int, depth: int = 1) -> dict:
     }
 
 
+def learning_candidates(
+    data_dir: str, vid: int, learned: list[int], direction: str = "down", limit: int = 12,
+) -> list[dict]:
+    """
+    ★ 学习路径专用：给 AI 的「下一步候选」。
+
+    @param direction 'down'（探索：当前调用的）| 'up'（攻坚：调用当前的）
+    @param learned   已学 vid 列表（排除，防绕圈）
+    @return [{vid, kind, name, qname, rel_path, line, lineEnd, signature}]
+    """
+    conn = _open(data_dir)
+    learned_set = {int(v) for v in learned if int(v)}
+    if direction == "up":
+        pattern = "(b:Code)-[:Rel]->(a:Code {vid:$v})"
+    else:
+        pattern = "(a:Code {vid:$v})-[:Rel]->(b:Code)"
+    # ★ 不在 Cypher 里做 NOT IN 列表参数（LadybugDB 参数化不稳定）——
+    #   多取一些，Python 侧过滤后再截断。
+    rows = conn.execute(
+        f"MATCH {pattern} "
+        "RETURN DISTINCT b.vid, b.kind, b.name, b.qname, b.rel_path, b.line, b.lineEnd, b.signature",
+        {"v": int(vid)},
+    ).get_all()
+    cols = ["vid", "kind", "name", "qname", "rel_path", "line", "lineEnd", "signature"]
+    out = [dict(zip(cols, r)) for r in rows if int(r[0]) not in learned_set]
+    return out[: max(1, min(24, int(limit)))]
+
+
+def entry_candidates(data_dir: str, limit: int = 25) -> list[dict]:
+    """
+    ★ 学习路径专用：入口候选（入度 0 且出度 > 0）。
+    按 5 步内可达节点数排序（覆盖度高的更像主干）。
+    """
+    conn = _open(data_dir)
+    # ★ 不用 Cypher size()（LadybugDB 支持不确定）—— 先取所有入口，
+    #   Python 侧用 neighbors(depth=5) 算覆盖度再排序（节点数有限，够快）。
+    rows = conn.execute(
+        "MATCH (n:Code) "
+        "WHERE NOT (() -[:Rel]-> (n)) AND (n)-[:Rel]->() "
+        "RETURN n.vid, n.kind, n.name, n.qname, n.rel_path, n.line, n.lineEnd, n.signature",
+    ).get_all()
+    cols = ["vid", "kind", "name", "qname", "rel_path", "line", "lineEnd", "signature"]
+    out = [dict(zip(cols, r)) for r in rows]
+    for n in out:
+        nb = neighbors(data_dir, int(n["vid"]), depth=5)
+        n["reach"] = len(nb.get("downstream", []))
+    out.sort(key=lambda x: x["reach"], reverse=True)
+    return out[: max(1, min(40, int(limit)))]
+
+
 def degrees(data_dir: str) -> dict[int, int]:
     """每个节点的度数（入度 + 出度），一次全图查询。
 

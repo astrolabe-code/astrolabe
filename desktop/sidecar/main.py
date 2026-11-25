@@ -247,6 +247,8 @@ R_AIMODELS = re.compile(r"^/api/ai/models/$")
 R_AISTREAM = re.compile(r"^/api/ai/stream/$")
 R_AICOMPLETE = re.compile(r"^/api/projects/([^/]+)/ai/complete/$")
 R_AITITLE = re.compile(r"^/api/projects/([^/]+)/ai/title/$")
+R_AIRECOMMEND = re.compile(r"^/api/projects/([^/]+)/ai/recommend/$")
+R_AISCORE = re.compile(r"^/api/projects/([^/]+)/ai/score/$")
 R_PQA = re.compile(r"^/api/projects/([^/]+)/qa/$")
 R_AIASK = re.compile(r"^/api/projects/([^/]+)/ai/ask/$")
 R_AICANCEL = re.compile(r"^/api/projects/([^/]+)/ai/cancel/$")
@@ -1216,6 +1218,137 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok({"title": title})
         except Exception as exc:  # noqa: BLE001
             return bad(f"起标题失败：{ai.redact(exc)}", 500)
+
+      # ★★ 学习路径：从候选里挑下一个该学的节点（非流式、结构化输出）
+    m = R_AIRECOMMEND.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            # ★ 候选由后端查图（前端没有图数据）
+            learned_vids = [int(v) for v in (body.get("learned") or []) if int(v)]
+            cur_vid = int(body.get("vid") or 0) or None
+            direction = str(body.get("direction") or "down")
+            if direction not in ("down", "up"):
+                direction = "down"
+            if cur_vid is None:
+                candidates = graphdb.entry_candidates(ROOT, limit=25)
+            else:
+                candidates = graphdb.learning_candidates(
+                    ROOT, cur_vid, learned_vids, direction=direction, limit=12,
+                )
+            if not candidates:
+                return ok({"vid": None, "reason": "没有更多可学的候选了"})
+            vids = [int(c.get("vid") or 0) for c in candidates]
+            vids = [v for v in vids if v]
+
+            # 已学节点：summary 笔记 + 小结摘要
+            learned: list[dict] = []
+            if learned_vids:
+                conn = _ai_context.conn()
+                pid = int(p.get("id") or 0)
+                notes = store.notes_at_vids(conn, pid, learned_vids)
+                by_vid: dict[int, dict] = {}
+                for note in notes:
+                    if str(note.get("kind") or "") != "summary":
+                        continue
+                    by_vid.setdefault(int(note.get("node_vid") or 0), note)
+                try:
+                    all_nodes = graphdb.nodes(ROOT, limit=2000).get("nodes", [])
+                except Exception:
+                    all_nodes = []
+                name_by_vid = {int(n.get("vid") or 0): str(n.get("name") or n.get("qname") or "") for n in all_nodes}
+                for vid in learned_vids:
+                    note = by_vid.get(vid)
+                    summary = ""
+                    if note:
+                        try:
+                            full = store.find_note(conn, str(note.get("ref") or ""))
+                            summary = str((full or {}).get("body") or "")[:300]
+                        except Exception:
+                            pass
+                    learned.append({"vid": vid, "name": name_by_vid.get(vid, str(vid)), "summary": summary})
+
+            # 候选附源码（60 行）
+            rich: list[dict] = []
+            for c in candidates:
+                cc = dict(c)
+                rel = str(c.get("rel_path") or "")
+                snippet = "(读不到源码)"
+                if rel:
+                    try:
+                        txt = str(source.read(p["root"], rel).get("text") or "")
+                        lines = txt.splitlines()
+                        start = max(0, int(c.get("line") or 1) - 1)
+                        end = int(c.get("lineEnd") or 0)
+                        if end <= start:
+                            end = start + 60
+                        end = min(end, start + 60, len(lines))
+                        if end > start:
+                            snippet = "\n".join(lines[start:end])
+                    except Exception:
+                        pass
+                cc["snippet"] = snippet
+                rich.append(cc)
+
+            messages = ai.build_recommend_messages(learned, rich)
+            text = ai.chat_once(messages, max_tokens=220)
+            result = ai.parse_recommend(text, vids)
+            if result.get("vid") is not None:
+                hit = next((c for c in candidates if int(c.get("vid") or 0) == result["vid"]), None)
+                if hit:
+                    result["name"] = str(hit.get("name") or hit.get("qname") or "")
+                    result["qname"] = str(hit.get("qname") or "")
+            return ok(result)
+        except Exception as exc:  # noqa: BLE001
+            return bad(f"推荐失败：{ai.redact(exc)}", 500)
+
+    # ★★ 学习路径：给小结打分（证据锚点 → 固定权重算分）
+    m = R_AISCORE.match(path)
+    if m:
+        p = _project(m.group(1))
+        if not p:
+            return bad("项目不存在", 404)
+        if method != "POST":
+            return bad("不支持的方法", 405)
+        try:
+            _graph_ready(p)
+            body_text = str(body.get("body") or "").strip()
+            if not body_text:
+                return bad("小结为空")
+            vid = int(body.get("vid") or 0)
+            name, snippet = "", "(读不到源码)"
+            if vid:
+                try:
+                    rows = graphdb.nodes(ROOT, limit=2000).get("nodes", [])
+                    for n in rows:
+                        if int(n.get("vid") or 0) == vid:
+                            name = str(n.get("name") or n.get("qname") or "")
+                            rel = str(n.get("rel_path") or "")
+                            if rel:
+                                txt = str(source.read(p["root"], rel).get("text") or "")
+                                lines = txt.splitlines()
+                                start = max(0, int(n.get("line") or 1) - 1)
+                                end = int(n.get("lineEnd") or 0)
+                                if end <= start:
+                                    end = start + 80
+                                end = min(end, start + 80, len(lines))
+                                if end > start:
+                                    snippet = "\n".join(lines[start:end])
+                            break
+                except Exception:
+                    pass
+            messages = ai.build_score_messages(body_text, snippet, name)
+            text = ai.chat_once(messages, max_tokens=120)
+            return ok(ai.parse_score(text))
+        except Exception:
+            # AI 失败降级：写了小结就算合格（不阻断学习）
+            return ok({"score": 60, "level": "pass", "label": "合格",
+                       "comment": "(AI 打分不可用，按写了小结计)", "evidence": {}})
 
     # ★★ 行内补全（非流式）：短文本，一次返回
     m = R_AICOMPLETE.match(path)

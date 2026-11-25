@@ -52,6 +52,8 @@ from ai_core.prompts import (  # noqa: E402 —— 提示词集中在 prompts.py
     QUESTIONS_SYSTEM,
     TITLE_SYSTEM,
 )
+from ai_core.path_prompts import RECOMMEND_SYSTEM, SCORE_SYSTEM  # 学习路径
+from ai_core.path_score import score_evidence, LEVEL_LABEL  # 学习路径打分
 
 
 # ============================================================================
@@ -590,6 +592,105 @@ KIND_LABELS = {
     "summary": "小结",
 }
 
+
+
+def build_recommend_messages(learned: list[dict], candidates: list[dict]) -> list[dict]:
+    """
+    学习路径：从候选里挑下一个该学的节点。
+
+    @param learned    [{name, qname, summary}] —— 已学节点 + 用户小结摘要
+    @param candidates [{vid, name, qname, rel_path, line, lineEnd, snippet}]
+    """
+    parts: list[str] = []
+
+    # ★ 前缀固定：已学（可能很长）在前，易变的候选在后 —— 保住缓存命中率
+    if learned:
+        parts.append("【已学过的节点】")
+        for n in learned[:40]:
+            name = str(n.get("name") or n.get("qname") or "?")
+            sm = " ".join(str(n.get("summary") or "").split())[:160]
+            parts.append(f"· {name}" + (f" —— 小结：{sm}" if sm else ""))
+    else:
+        parts.append("【已学过的节点】无 —— 这是第一个要学的")
+
+    parts.append("\n【候选节点（只从这些里选）】")
+    for i, c in enumerate(candidates[:12]):
+        parts.append(
+            f"\n--- 候选 {i + 1} ---\n"
+            f"vid: {c.get('vid')}\n"
+            f"name: {c.get('name') or ''}  (qname: {c.get('qname') or ''})\n"
+            f"file: {c.get('rel_path') or ''}:{c.get('line') or 0}-{c.get('lineEnd') or 0}\n"
+            f"源码:\n{c.get('snippet') or '(读不到源码)'}"
+        )
+    parts.append("\n【任务】按 system 要求，从上面的候选里选一个，输出 JSON。")
+
+    return [
+        {"role": "system", "content": RECOMMEND_SYSTEM},
+        {"role": "user", "content": "\n".join(parts)},
+    ]
+
+
+def build_score_messages(body_text: str, snippet: str, name: str = "") -> list[dict]:
+    """学习路径：读小结 + 源码，输出 4 个证据布尔（分数由系统算）。"""
+    parts = [
+        f"【节点】{str(name or '').strip()[:120]}",
+        f"【用户写的小结】\n{str(body_text or '').strip()[:1200]}",
+        f"【该节点的源码】\n{str(snippet or '').strip()[:2000]}",
+        "【任务】按 system 要求输出证据锚点 JSON。",
+    ]
+    return [
+        {"role": "system", "content": SCORE_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def parse_recommend(text: str, valid_vids: list[int]) -> dict:
+    """解析推荐输出：必须是合法候选 vid，否则视为 null（本地校验）。"""
+    import json
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return {"vid": None, "reason": "(AI 输出不是合法 JSON)"}
+    try:
+        vid = int(obj.get("vid"))
+    except (TypeError, ValueError):
+        return {"vid": None, "reason": str(obj.get("reason") or "")[:200]}
+    if vid not in valid_vids:
+        return {"vid": None, "reason": "(AI 选了非候选节点，已拒绝)"}
+    return {"vid": vid, "reason": str(obj.get("reason") or "")[:300]}
+
+
+def parse_score(text: str) -> dict:
+    """解析打分输出：4 个布尔 + comment，再按固定权重算分。"""
+    import json
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        obj = {}
+    ev = {
+        "covers_what": bool(obj.get("covers_what")),
+        "covers_how": bool(obj.get("covers_how")),
+        "has_concrete": bool(obj.get("has_concrete")),
+        "has_boundary": bool(obj.get("has_boundary")),
+    }
+    score, level = score_evidence(ev)
+    return {
+        "score": score,
+        "level": level,
+        "label": LEVEL_LABEL[level],
+        "comment": str(obj.get("comment") or "")[:80],
+        "evidence": ev,
+    }
 
 
 def build_title_messages(body_text: str, kind: str = "") -> list[dict]:

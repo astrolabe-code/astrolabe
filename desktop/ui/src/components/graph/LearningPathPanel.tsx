@@ -58,7 +58,11 @@ export default function LearningPathPanel({ projectRef, selectedVid, onPick }: P
       const r = await personalApi.aiRecommend(projectRef, {
         vid: currentVid,
         direction: mode === 'attack' ? 'up' : 'down',
-        learned: [...learnedVids, ...walkedRef.current],
+        learned: [...learnedVids, ...walkedRef.current].map((vid) => ({
+          vid,
+          name: steps.find((s) => s.vid === vid)?.name || '',
+          summary: steps.find((s) => s.vid === vid)?.reason || '',
+        })),
       })
       if (myRun !== runIdRef.current) return   // 已被新的请求取代
       if (r.vid == null) {
@@ -75,7 +79,7 @@ export default function LearningPathPanel({ projectRef, selectedVid, onPick }: P
     } finally {
       if (myRun === runIdRef.current) setBusy(false)
     }
-  }, [projectRef, mode, learnedVids])
+  }, [projectRef, mode, learnedVids, steps])
 
   /** 开始：探索模式从入口（vid=null），攻坚模式从当前选中节点 */
   const start = useCallback(() => {

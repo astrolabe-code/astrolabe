@@ -290,7 +290,7 @@ export const personalApi = {
     /** 学习路径：从候选里挑下一个该学的节点 */
     aiRecommend: (
       ref: string,
-      body: { vid: number | null; direction?: 'down' | 'up'; learned: number[] },
+      body: { vid: number | null; direction?: 'down' | 'up'; learned: Array<{ vid: number; name?: string; summary?: string }> },
     ) => post<{ vid: number | null; reason: string; name?: string; qname?: string }>(
       `/api/projects/${encodeURIComponent(ref)}/ai/recommend/`, body,
     ),

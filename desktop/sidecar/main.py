@@ -1230,7 +1230,12 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         try:
             _graph_ready(p)
             # ★ 候选由后端查图（前端没有图数据）
-            learned_vids = [int(v) for v in (body.get("learned") or []) if int(v)]
+            # 兼容两种格式：数字 或 {vid,name,summary}
+            learned_vids = []
+            for it in (body.get("learned") or []):
+              v = int(it.get("vid") or 0) if isinstance(it, dict) else int(it or 0)
+              if v:
+                learned_vids.append(v)
             cur_vid = int(body.get("vid") or 0) or None
             direction = str(body.get("direction") or "down")
             if direction not in ("down", "up"):
@@ -1246,32 +1251,18 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             vids = [int(c.get("vid") or 0) for c in candidates]
             vids = [v for v in vids if v]
 
-            # 已学节点：summary 笔记 + 小结摘要
+            # 已学节点：前端直接传 {vid,name,summary}，不再查库
             learned: list[dict] = []
-            if learned_vids:
-                conn = _ai_context.conn()
-                pid = int(p.get("id") or 0)
-                notes = store.notes_at_vids(conn, pid, learned_vids)
-                by_vid: dict[int, dict] = {}
-                for note in notes:
-                    if str(note.get("kind") or "") != "summary":
-                        continue
-                    by_vid.setdefault(int(note.get("node_vid") or 0), note)
-                try:
-                    all_nodes = graphdb.nodes(ROOT, limit=2000).get("nodes", [])
-                except Exception:
-                    all_nodes = []
-                name_by_vid = {int(n.get("vid") or 0): str(n.get("name") or n.get("qname") or "") for n in all_nodes}
-                for vid in learned_vids:
-                    note = by_vid.get(vid)
-                    summary = ""
-                    if note:
-                        try:
-                            full = store.find_note(conn, str(note.get("ref") or ""))
-                            summary = str((full or {}).get("body") or "")[:300]
-                        except Exception:
-                            pass
-                    learned.append({"vid": vid, "name": name_by_vid.get(vid, str(vid)), "summary": summary})
+            for it in (body.get("learned") or []):
+              if isinstance(it, dict):
+                learned.append({
+                  "vid": int(it.get("vid") or 0),
+                  "name": str(it.get("name") or "")[:120],
+                  "summary": str(it.get("summary") or "")[:300],
+                })
+              else:
+                learned.append({"vid": int(it or 0), "name": "", "summary": ""})
+
 
             # 候选附源码（60 行）
             rich: list[dict] = []
@@ -1296,8 +1287,17 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 rich.append(cc)
 
             messages = ai.build_recommend_messages(learned, rich)
-            text = ai.chat_once(messages, max_tokens=220)
+            text = ai.chat_once(messages, max_tokens=500)
             result = ai.parse_recommend(text, vids)
+            # AI 输出格式不稳时重试一次（强调只输出 JSON）
+            if result.get("vid") is None and "不是合法 JSON" in str(result.get("reason") or ""):
+              retry = messages + [{"role": "user", "content":
+                "刚才的回答不是合法 JSON。现在只输出一个 JSON 对象："
+                "{\"vid\": 数字, \"reason\": \"一句话\"}。不要任何其它文字，不要代码围栏。"}]
+              text2 = ai.chat_once(retry, max_tokens=300)
+              result2 = ai.parse_recommend(text2, vids)
+              if result2.get("vid") is not None:
+                  result = result2
             if result.get("vid") is not None:
                 hit = next((c for c in candidates if int(c.get("vid") or 0) == result["vid"]), None)
                 if hit:
@@ -1343,7 +1343,7 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 except Exception:
                     pass
             messages = ai.build_score_messages(body_text, snippet, name)
-            text = ai.chat_once(messages, max_tokens=120)
+            text = ai.chat_once(messages, max_tokens=200)
             return ok(ai.parse_score(text))
         except Exception:
             # AI 失败降级：写了小结就算合格（不阻断学习）

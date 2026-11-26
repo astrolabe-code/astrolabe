@@ -20,8 +20,10 @@ const HANDLE_WIDTH = 1
 interface SplitPaneProps {
   /** 恰好两个子元素：左栏、右栏（条件渲染出的 false 会被忽略） */
   children: ReactNode
-  /** 哪一栏是"固定宽度、可拖拽"的 */
+  /** 哪一栏是"固定尺寸、可拖拽"的（垂直时 left=上、right=下） */
   fixed: 'left' | 'right'
+  /** ★ 分栏方向：horizontal（默认，左右）/ vertical（上下） */
+  direction?: 'horizontal' | 'vertical'
   /** 初始宽度（px） */
   initial: number
   /** 可拖拽那一栏的最小宽度 */
@@ -109,6 +111,7 @@ function clampWidth(w: number, min: number, otherMin: number, inner: number) {
 export default function SplitPane({
   children,
   fixed,
+  direction = 'horizontal',
   initial,
   min,
   otherMin,
@@ -134,7 +137,10 @@ export default function SplitPane({
    *   于是分隔条根本不渲染，用户看到「完全不能左右拉伸」。
    */
   const [innerWidth, setInnerWidth] = useState(0)
-  const stacked = innerWidth > 0 && innerWidth < breakpoint
+  /** 断点触发的自动上下（容器太窄） */
+  const autoStacked = innerWidth > 0 && innerWidth < breakpoint
+  /** 显式要求上下 或 自动上下 */
+  const vertical = direction === 'vertical' || autoStacked
 
   useEffect(() => {
     const el = ref.current
@@ -146,13 +152,13 @@ export default function SplitPane({
     ro.observe(el)
     return () => ro.disconnect()
   }, [ref])
-  const dragRef = useRef<{ startX: number; startW: number } | null>(null)
+  const dragRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null)
   /** ★ hover / 拖动时的蓝色反馈（VSCode sash 口径）：常驻仍是 1px 灰线 */
   const [hover, setHover] = useState(false)
   const [dragging, setDragging] = useState(false)
   // ★ 监听只注册一次 ⇒ 配置放 ref，避免闭包拿到旧的 min / fixed
-  const cfg = useRef({ min, otherMin, fixed })
-  cfg.current = { min, otherMin, fixed }
+  const cfg = useRef({ min, otherMin, fixed, vertical })
+  cfg.current = { min, otherMin, fixed, vertical }
 
   // 预留接口：本批没有任何调用方使用，避免未使用变量告警
   void onCollapsedChange
@@ -162,17 +168,25 @@ export default function SplitPane({
       const drag = dragRef.current
       if (!drag) return
       const { min: mn, otherMin: om, fixed: fx } = cfg.current
-      const inner = ref.current?.clientWidth ?? window.innerWidth
-      const delta = e.clientX - drag.startX
-      setWidth(clampWidth(drag.startW + (fx === 'left' ? delta : -delta), mn, om, inner))
+      const el = ref.current
+      const isV = (cfg.current as { vertical?: boolean }).vertical
+      const inner = isV
+        ? (el?.clientHeight ?? window.innerHeight)
+        : (el?.clientWidth ?? window.innerWidth)
+      const delta = isV ? e.clientY - drag.startY : e.clientX - drag.startX
+      const base = isV ? drag.startH : drag.startW
+      setWidth(clampWidth(base + (fx === 'left' ? delta : -delta), mn, om, inner))
     }
     const onUp = () => {
       dragRef.current = null
       setDragging(false)
     }
     const onWin = () => {
-      const { min: mn, otherMin: om } = cfg.current
-      const inner = ref.current?.clientWidth ?? window.innerWidth
+      const { min: mn, otherMin: om, vertical: isV } = cfg.current
+      const el = ref.current
+      const inner = isV
+        ? (el?.clientHeight ?? window.innerHeight)
+        : (el?.clientWidth ?? window.innerWidth)
       setWidth((w) => clampWidth(w, mn, om, inner))
     }
     window.addEventListener('pointermove', onMove)
@@ -189,7 +203,13 @@ export default function SplitPane({
   const onPointerDown = useCallback(
     (e: ReactPointerEvent) => {
       e.preventDefault()
-      dragRef.current = { startX: e.clientX, startW: width }
+      const el = ref.current
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        startW: width,
+        startH: el?.clientHeight ?? window.innerHeight,
+      }
       setDragging(true)
     },
     [width],
@@ -213,12 +233,14 @@ export default function SplitPane({
     const side = isLeft ? 'left' : 'right'
     if (side === hiddenSide) return null
     const size: CSSProperties = hiddenSide || sole
-      ? { flex: 1, minWidth: 0, width: undefined }
-      : stacked
-        ? { width: '100%' }
+      ? { flex: 1, minWidth: 0, minHeight: 0, width: undefined, height: undefined }
+      : autoStacked
+        ? (direction === 'vertical' ? { height: '100%' } : { width: '100%' })
         : fixed === side
-          ? { width, flex: 'none', minWidth: 0 }
-          : { flex: 1, minWidth: 0, width: undefined }
+          ? (vertical
+              ? { height: width, flex: 'none', minHeight: 0, width: undefined }
+              : { width, flex: 'none', minWidth: 0, height: undefined })
+          : { flex: 1, minWidth: 0, minHeight: 0, width: undefined, height: undefined }
     // ★★ 两栏是「贴边的平铺面板」，不是两张浮起来的卡片：
     //   去掉 .card 的边框 / 圆角 / 阴影，中间只靠 1px 分隔线分界
     const pane: CSSProperties = preserveChildStyle
@@ -235,7 +257,7 @@ export default function SplitPane({
       className={className}
       style={{
         display: 'flex',
-        flexDirection: stacked ? 'column' : 'row',
+        flexDirection: vertical ? 'column' : 'row',
         // ★ 两栏间隙统一为 0（所有者：「gap也要统一呀，都变成0就行了」）
         gap: 0,
         minHeight: 0,
@@ -246,21 +268,21 @@ export default function SplitPane({
       }}
     >
       {decorate(leftEl, true)}
-      {divider && !stacked && !hiddenSide && !sole && rightEl && (
+      {divider && !autoStacked && !hiddenSide && !sole && rightEl && (
         <div
           onPointerDown={resizable ? onPointerDown : undefined}
           onMouseEnter={resizable ? () => setHover(true) : undefined}
           onMouseLeave={resizable ? () => setHover(false) : undefined}
-          title={resizable ? '拖动调整宽度' : undefined}
+          title={resizable ? (vertical ? '拖动调整高度' : '拖动调整宽度') : undefined}
           style={{
-            width: HANDLE_WIDTH,
-            flexShrink: 0,
-            alignSelf: 'stretch',
-            minHeight: 24,
+            // ★ 垂直分栏：横条（高 1px、撑满宽）；水平分栏：竖条（宽 1px、撑满高）
+            ...(vertical
+              ? { height: HANDLE_WIDTH, width: '100%', flexShrink: 0, alignSelf: 'stretch', minWidth: 24 }
+              : { width: HANDLE_WIDTH, height: undefined, flexShrink: 0, alignSelf: 'stretch', minHeight: 24 }),
             touchAction: 'none',
             margin: 0,
             position: 'relative',
-            cursor: resizable ? 'col-resize' : 'default',
+            cursor: resizable ? (vertical ? 'row-resize' : 'col-resize') : 'default',
             // ★ 常驻一条 1px 灰线，⛔ 不再 hover 变蓝（VSCode 分屏口径）
             background: 'var(--card-border)',
           }}
@@ -270,10 +292,9 @@ export default function SplitPane({
           <div
             style={{
               position: 'absolute',
-              left: -1.5,
-              top: 0,
-              bottom: 0,
-              width: 4,
+              ...(vertical
+                ? { top: -1.5, left: 0, right: 0, height: 4 }
+                : { left: -1.5, top: 0, bottom: 0, width: 4 }),
               background: 'var(--accent)',
               opacity: hover || dragging ? 1 : 0,
               transition: 'opacity .12s',
@@ -284,11 +305,10 @@ export default function SplitPane({
           <div
             style={{
               position: 'absolute',
-              left: -4,
-              top: 0,
-              bottom: 0,
-              width: 9,
-              cursor: 'col-resize',
+              ...(vertical
+                ? { top: -4, left: 0, right: 0, height: 9 }
+                : { left: -4, top: 0, bottom: 0, width: 9 }),
+              cursor: vertical ? 'row-resize' : 'col-resize',
             }}
           />
         </div>

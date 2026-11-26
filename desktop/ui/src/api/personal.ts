@@ -308,11 +308,22 @@ export const personalApi = {
     }>(`/api/projects/${encodeURIComponent(ref)}/ai/score/`, body),
 
 
-  cancelAi: (ref: string, token: string) =>
-    post<{ cancelled: boolean }>(
-      `/api/projects/${encodeURIComponent(ref)}/ai/cancel/`,
-      { token },
-    ),
+    cancelAi: (ref: string, token: string) =>
+      post<{ cancelled: boolean }>(
+        `/api/projects/${encodeURIComponent(ref)}/ai/cancel/`,
+        { token },
+      ),
+
+    /** 知识点：读取与标注（存 Code.concepts，最多约100字） */
+    getConcepts: (ref: string, vid: number) =>
+      get<{ vid: number; concepts: string }>(
+        `/api/projects/${encodeURIComponent(ref)}/concepts/?vid=${vid}`,
+      ),
+    annotateConcepts: (ref: string, vid: number) =>
+      post<{ vid: number; concepts: string }>(
+        `/api/projects/${encodeURIComponent(ref)}/concepts/`, { vid },
+      ),
+
 
   /** ★★ 问答历史（JSON，挂在节点上；见 sidecar/qa.py） */
   /** ★ scope: main=问答 tab / challenge=节点浮窗（两份历史互不读写） */

@@ -90,6 +90,20 @@ export default function NodePanel({
   /** ★ 参见选卡（D139） */
   const [pickerCard, setPickerCard] = useState<string | null>(null)
   // ★★ 节点信息区可**收起**（* 给下面写作腾位置）⚠
+  // ★ 知识点标注（Code.concepts，最多约100字）
+  const [concepts, setConcepts] = useState('')
+  const [conceptBusy, setConceptBusy] = useState(false)
+  const [conceptErr, setConceptErr] = useState('')
+  useEffect(() => {
+    setConcepts(''); setConceptErr('')
+    if (!node?.vid) return
+    let alive = true
+    personalApi.getConcepts(projectRef, node.vid)
+      .then((r) => { if (alive) setConcepts(String(r.concepts || '')) })
+      .catch(() => { /* 未标注或后端未就绪，静默 */ })
+    return () => { alive = false }
+  }, [projectRef, node?.vid])
+
   const [infoOpen, setInfoOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
   const [delErr, setDelErr] = useState('')
@@ -371,6 +385,50 @@ export default function NodePanel({
         )}
         </>
       )}
+      {/* ★ 知识点标注（不依赖 hideInfo —— 代码工作区顶部不显示这一块） */}
+      {node?.vid ? (
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--divider, #333)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-faint, #888)' }}>知识点</span>
+            {!concepts && !conceptBusy && (
+              <button
+                style={{ fontSize: 11, cursor: 'pointer', marginLeft: 'auto' }}
+                disabled={conceptBusy}
+                onClick={async () => {
+                  setConceptBusy(true); setConceptErr('')
+                  try {
+                    const r = await personalApi.annotateConcepts(projectRef, node.vid)
+                    setConcepts(String(r.concepts || ''))
+                  } catch (e) {
+                    setConceptErr(String((e as Error)?.message || e))
+                  } finally { setConceptBusy(false) }
+                }}
+              >{conceptBusy ? '标注中…' : '标注'}</button>
+            )}
+            {concepts && (
+              <button
+                style={{ fontSize: 11, cursor: 'pointer', marginLeft: 'auto' }}
+                onClick={async () => {
+                  setConceptBusy(true); setConceptErr('')
+                  try {
+                    const r = await personalApi.annotateConcepts(projectRef, node.vid)
+                    setConcepts(String(r.concepts || ''))
+                  } catch (e) {
+                    setConceptErr(String((e as Error)?.message || e))
+                  } finally { setConceptBusy(false) }
+                }}
+              >{conceptBusy ? '重新标注…' : '重新标注'}</button>
+            )}
+          </div>
+          {concepts && (
+            <div style={{ fontSize: 12, marginTop: 4, lineHeight: 1.6 }}>{concepts}</div>
+          )}
+          {conceptErr && (
+            <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>{conceptErr}</div>
+          )}
+        </div>
+      ) : null}
+
 
       {/* ② 笔记区：* 吃掉剩余高度，* 内容多了在自己内部滚（* 不把整页撑高）⚠ */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>

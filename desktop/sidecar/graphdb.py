@@ -63,6 +63,11 @@ def _open(data_dir: str):
             conn = lb.Connection(db)
             for q in _SCHEMA:
                 conn.execute(q)
+            # 旧库兼容：Code 表可能没有 concepts 列（LadybugDB 用 ADD，不是 SQL 的 ADD COLUMN）
+            try:
+                conn.execute("ALTER TABLE Code ADD IF NOT EXISTS concepts STRING DEFAULT ''")
+            except Exception:
+                pass
         except Exception as e:
             raise RuntimeError(
                 f"打开图库失败：{e}\n"
@@ -368,6 +373,31 @@ def learning_candidates(
     cols = ["vid", "kind", "name", "qname", "rel_path", "line", "lineEnd", "signature"]
     out = [dict(zip(cols, r)) for r in rows if int(r[0]) not in learned_set]
     return out[: max(1, min(24, int(limit)))]
+
+
+def set_concepts(data_dir: str, vid: int, text: str) -> bool:
+    """★ 标注知识点：只写一个属性，不重建图。"""
+    conn = _open(data_dir)
+    try:
+        conn.execute(
+            "MATCH (c:Code {vid:$v}) SET c.concepts = $txt",
+            {"v": int(vid), "txt": str(text or "")},
+        )
+        return True
+    except Exception:
+        return False
+
+
+def get_concepts(data_dir: str, vid: int) -> str:
+    """读一个节点的知识点文本（空串 = 未标注）。"""
+    conn = _open(data_dir)
+    try:
+        rows = conn.execute(
+            "MATCH (c:Code {vid:$v}) RETURN c.concepts", {"v": int(vid)}
+        ).get_all()
+        return str(rows[0][0] or "") if rows else ""
+    except Exception:
+        return ""
 
 
 def entry_candidates(data_dir: str, limit: int = 25) -> list[dict]:

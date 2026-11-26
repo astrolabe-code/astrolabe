@@ -1,0 +1,84 @@
+"""
+知识点标注：读一段源码，列出它用到的知识点。
+
+设计：
+  · 不预设类别 —— 代码背后的知识可能来自任何领域（计算机/数学/物理/生物/工程…）
+  · 输出是一段纯文本，用顿号分隔，直接存进 Code.concepts（最多约 100 字）
+  · 截断按「知识点」为单位，⛔ 不把单个知识点截成半截（见 clip_concepts）
+"""
+
+CONCEPTS_SYSTEM = """你读代码，指出这段代码**真正用到**的知识点。
+
+知识点不限领域 —— 可以是计算机科学的（引用计数、状态机、RAII），
+也可以是数学、物理、统计、工程或其它学科的概念（排队论、反馈控制、泊松分布…）。
+
+要求：
+· 只列这段代码**确实体现**的，不要泛泛而谈（「函数」「循环」不算知识点）
+· 最多 5 个，每个 2~10 个字
+· 用中文顿号「、」分隔，写成一行
+· 不要编号、不要解释、不要标点结尾
+
+例如：引用计数、RCU、缓存局部性、无锁编程
+"""
+
+
+def build_concepts_messages(snippet: str, name: str = "") -> list[dict]:
+    """给 AI 的 prompt：只要源码片段，不要邻居/笔记/上下文。"""
+    parts = [
+        f"【函数名】{str(name or '').strip()[:120]}",
+        f"【源码】\n{str(snippet or '').strip()[:2500]}",
+        "【任务】按 system 要求，列出这段源码用到的知识点（一行，顿号分隔）。",
+    ]
+    return [
+        {"role": "system", "content": CONCEPTS_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def clip_concepts(text: str, limit: int = 100) -> str:
+    """
+    ★ 把 AI 输出的知识点文本限制在 limit 字以内。
+
+    按「知识点」为单位从后往前丢 —— ⛔ 绝不把某个知识点截成半截。
+    分隔符优先顿号「、」，兼容逗号「,」「，」和换行。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    # 归一成统一分隔符
+    for sep in ("，", ",", "\n", "；", ";"):
+        raw = raw.replace(sep, "、")
+    items = [p.strip(" 。.;；·-") for p in raw.split("、")]
+    items = [p for p in items if p]
+    if not items:
+        return ""
+    out: list[str] = []
+    for item in items:
+        candidate = "、".join(out + [item])
+        if len(candidate) <= limit:
+            out.append(item)
+        else:
+            break   # ★ 放不下就停，不切 item
+    # 若连第一个都放不下（极端长词），才硬截——但这是最后手段
+    if not out and items:
+        return items[0][:limit]
+    return "、".join(out)
+
+
+def clean_concepts(text: str) -> str:
+    """去掉模型常见包装（引号/代码围栏/「知识点：」前缀）再按单位截断。"""
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+    raw = raw.strip('"“”\'`')
+    # 反复去前缀（模型可能套好几层）
+    prefixes = ("知识点如下：", "知识点如下:", "知识点：", "知识点:", "concepts:")
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if raw.lower().startswith(prefix.lower()):
+                raw = raw[len(prefix):].strip().strip('"“”\'`')
+                changed = True
+                break
+    return clip_concepts(raw, limit=100)

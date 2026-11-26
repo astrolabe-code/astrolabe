@@ -1352,46 +1352,46 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
             return ok({"score": 60, "level": "pass", "label": "合格",
                        "comment": "(AI 打分不可用，按写了小结计)", "evidence": {}})
 
-      # ★★ 知识点标注：读节点源码 → AI 列知识点 → 按单位截断 → 存 Code.concepts
-        m = R_CONCEPTS.match(path)
-        if m:
-          p = _project(m.group(1))
-          if not p:
-            return bad("项目不存在", 404)
-          vid = int(body.get("vid") or 0)
-          if not vid:
-            return bad("缺少 vid")
-          # GET 直接读已有标注
-          if method == "GET":
-            return ok({"vid": vid, "concepts": graphdb.get_concepts(ROOT, vid)})
-          if method != "POST":
-            return bad("不支持的方法", 405)
-          try:
-            _graph_ready(p)
-            # ★ 读源码（复用 source.read，60 行）
-            snippet = "(读不到源码)"
-            name = ""
-            rows = graphdb.nodes(ROOT, limit=2000).get("items", [])
-            hit = next((n for n in rows if int(n.get("vid") or 0) == vid), None)
-            if hit:
-              name = str(hit.get("name") or hit.get("qname") or "")
-              rel = str(hit.get("rel_path") or "")
-              if rel:
-                txt = str(source.read(p["root"], rel).get("text") or "")
-                ls = txt.splitlines()
-                st = max(0, int(hit.get("line") or 1) - 1)
-                en = int(hit.get("lineEnd") or 0)
-                if en <= st: en = st + 80
-                en = min(en, st + 80, len(ls))
-                if en > st: snippet = "\n".join(ls[st:en])
-            messages = build_concepts_messages(snippet, name)
-            raw = ai.chat_once(messages, max_tokens=120)
-            # ★★ 先截断（按知识点为单位，不切半截），再存
-            concepts = clean_concepts(raw)
-            graphdb.set_concepts(ROOT, vid, concepts)
-            return ok({"vid": vid, "concepts": concepts})
-          except Exception as exc:  # noqa: BLE001
-            return bad(f"知识点标注失败：{ai.redact(exc)}", 500)
+  # ★★ 知识点标注：读节点源码 → AI 列知识点 → 按单位截断 → 存 Code.concepts
+    m = R_CONCEPTS.match(path)
+    if m:
+      p = _project(m.group(1))
+      if not p:
+        return bad("项目不存在", 404)
+      vid = int(body.get("vid") or 0)
+      if not vid:
+        return bad("缺少 vid")
+      # GET 直接读已有标注
+      if method == "GET":
+        return ok({"vid": vid, "concepts": graphdb.get_concepts(ROOT, vid)})
+      if method != "POST":
+        return bad("不支持的方法", 405)
+      try:
+        _graph_ready(p)
+        # ★ 读源码（复用 source.read，60 行）
+        snippet = "(读不到源码)"
+        name = ""
+        rows = graphdb.nodes(ROOT, limit=2000).get("items", [])
+        hit = next((n for n in rows if int(n.get("vid") or 0) == vid), None)
+        if hit:
+          name = str(hit.get("name") or hit.get("qname") or "")
+          rel = str(hit.get("rel_path") or "")
+          if rel:
+            txt = str(source.read(p["root"], rel).get("text") or "")
+            ls = txt.splitlines()
+            st = max(0, int(hit.get("line") or 1) - 1)
+            en = int(hit.get("lineEnd") or 0)
+            if en <= st: en = st + 80
+            en = min(en, st + 80, len(ls))
+            if en > st: snippet = "\n".join(ls[st:en])
+        messages = build_concepts_messages(snippet, name)
+        raw = ai.chat_once(messages, max_tokens=120)
+        # ★★ 先截断（按知识点为单位，不切半截），再存
+        concepts = clean_concepts(raw)
+        graphdb.set_concepts(ROOT, vid, concepts)
+        return ok({"vid": vid, "concepts": concepts})
+      except Exception as exc:  # noqa: BLE001
+        return bad(f"知识点标注失败：{ai.redact(exc)}", 500)
 
 
       # ★★ 行内补全（非流式）：短文本，一次返回

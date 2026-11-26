@@ -1388,8 +1388,14 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
         raw = ai.chat_once(messages, max_tokens=120)
         # ★★ 先截断（按知识点为单位，不切半截），再存
         concepts = clean_concepts(raw)
-        graphdb.set_concepts(ROOT, vid, concepts)
-        return ok({"vid": vid, "concepts": concepts})
+        saved = graphdb.set_concepts(ROOT, vid, concepts)
+        # ★ 诊断：AI 原始输出 / 清理后 / 存库结果（查「点了标注没显示」用）
+        try:
+            _log(f"[CONCEPTS] vid={vid} name={name!r} raw={str(raw)[:200]!r} "
+                 f"clean={concepts!r} saved={saved} snippetLen={len(snippet)}")
+        except Exception:
+            pass
+        return ok({"vid": vid, "concepts": concepts, "saved": saved})
       except Exception as exc:  # noqa: BLE001
         return bad(f"知识点标注失败：{ai.redact(exc)}", 500)
 

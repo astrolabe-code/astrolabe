@@ -66,12 +66,28 @@ def clip_concepts(text: str, limit: int = 100) -> str:
 
 
 def clean_concepts(text: str) -> str:
-    """去掉模型常见包装（引号/代码围栏/「知识点：」前缀）再按单位截断。"""
+    """清理模型输出 → 顿号分隔的一行知识点（≤100字，按项截断）。"""
+    import json
     raw = str(text or "").strip()
     if raw.startswith("```"):
         raw = raw.strip("`").strip()
-    raw = raw.strip('"“”\'`')
-    # 反复去前缀（模型可能套好几层）
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    # ① 兼容 JSON 数组输出：["引用计数","RCU"]
+    if raw.startswith("[") or raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, list):
+                raw = "、".join(str(x) for x in obj)
+            elif isinstance(obj, dict):
+                v = obj.get("concepts") or obj.get("knowledge") or obj.get("result")
+                if isinstance(v, list):
+                    raw = "、".join(str(x) for x in v)
+                elif isinstance(v, str):
+                    raw = v
+        except Exception:
+            pass
+    # ② 去包装前缀（反复）
     prefixes = ("知识点如下：", "知识点如下:", "知识点：", "知识点:", "concepts:")
     changed = True
     while changed:
@@ -81,4 +97,15 @@ def clean_concepts(text: str) -> str:
                 raw = raw[len(prefix):].strip().strip('"“”\'`')
                 changed = True
                 break
+    # ③ 按行拆分，丢掉「好的/我来分析」这类非知识点行
+    junk = ("好的", "我来分析", "以下是", "这是", "分析如下", "作为", "注意", "希望", "以上")
+    parts = []
+    for line in raw.splitlines():
+        line = line.strip(" 　·-*\t")
+        if not line:
+            continue
+        if any(line.startswith(j) for j in junk):
+            continue
+        parts.append(line)
+    raw = "、".join(parts)
     return clip_concepts(raw, limit=100)

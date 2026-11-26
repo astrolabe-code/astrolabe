@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Astrolabe 布局原型 v2</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px; color: #1f2937; background: #f8fafc;
+    display: flex; flex-direction: column;
+  }
+
+  /* 顶部标题栏 */
+  .titlebar {
+    height: 34px; flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 0 12px; border-bottom: 1px solid #e2e8f0; background: #fff; font-size: 12px;
+  }
+  .titlebar .dot { width: 8px; height: 8px; border-radius: 50%; background: #2563eb; }
+  .titlebar .grow { flex: 1; }
+  .titlebar .meta { color: #94a3b8; font-size: 11px; }
+
+  .shell { flex: 1; display: flex; min-height: 0; }
+
+  /* ── 左图标栏：切换右栏内容 ── */
+  .rail {
+    width: 46px; flex: none; background: #fff; border-right: 1px solid #e2e8f0;
+    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0;
+  }
+  .rail .ic {
+    width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+    color: #64748b; cursor: pointer; font-size: 15px; position: relative;
+  }
+  .rail .ic:hover { background: #f1f5f9; color: #1f2937; }
+  .rail .ic.on { background: #eff6ff; color: #2563eb; }
+  .rail .ic.on::before {
+    content: ''; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px;
+    border-radius: 0 3px 3px 0; background: #2563eb;
+  }
+  .rail .sep { width: 22px; height: 1px; background: #e2e8f0; margin: 4px 0; }
+
+  /* ── 主区：图谱常驻 ── */
+  .main { flex: 1; min-width: 0; position: relative; background: #fbfdff; }
+  .hint {
+    position: absolute; left: 10px; top: 8px; font-size: 11px; color: #94a3b8;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 8px; z-index: 2;
+  }
+  .statusbar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 24px;
+    display: flex; align-items: center; gap: 14px; padding: 0 10px;
+    font-size: 11px; color: #94a3b8; background: #fff; border-top: 1px solid #e2e8f0;
+  }
+
+  /* ── 右栏 ── */
+  .side {
+    width: 400px; flex: none; background: #fff; border-left: 1px solid #e2e8f0;
+    display: flex; flex-direction: column; min-height: 0;
+    transition: width .16s ease;
+  }
+  .side.collapsed { width: 0; overflow: hidden; border-left: none; }
+
+  .side-head {
+    height: 34px; flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 0 10px; border-bottom: 1px solid #e2e8f0;
+    font-size: 12px; color: #475569;
+  }
+  .side-head b { font-weight: 600; font-size: 12.5px; }
+  .side-head .grow { flex: 1; }
+  .side-head .x {
+    width: 22px; height: 22px; border-radius: 5px; border: 1px solid #e2e8f0;
+    background: #fff; color: #64748b; cursor: pointer; display: grid; place-items: center;
+    font-size: 12px; line-height: 1;
+  }
+  .side-head .x:hover { border-color: #2563eb; color: #2563eb; }
+
+  .side-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+  /* 节点摘要（右栏顶部常驻） */
+  .nodebar { padding: 8px 12px; border-bottom: 1px solid #eef2f7; flex: none; background: #fcfdff; }
+  .nodebar .nm { display: flex; align-items: center; gap: 6px; }
+  .nodebar .x {
+    width: 20px; height: 20px; border-radius: 5px; border: 1px solid #e2e8f0;
+    background: #fff; color: #94a3b8; cursor: pointer; display: grid; place-items: center;
+    font-size: 11px; line-height: 1; flex: none;
+  }
+  .nodebar .x:hover { border-color: #2563eb; color: #2563eb; }
+  .nodebar .nm b { font-size: 12.5px; }
+  .nodebar .badge {
+    font-size: 10px; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid #c7d2fe; color: #3730a3; background: #eef2ff;
+  }
+  .nodebar .path { font-size: 10.5px; color: #94a3b8; margin-top: 2px; font-family: ui-monospace, monospace; }
+
+  /* 代码视图 */
+  .code-view { font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding-bottom: 20px; }
+  .code-view .cl { display: flex; line-height: 1.7; }
+  .code-view .ln { width: 38px; flex: none; text-align: right; padding-right: 10px; color: #cbd5e1; user-select: none; }
+  .code-view .src { white-space: pre; padding-right: 12px; }
+  .kw { color: #7c3aed; } .fn { color: #2563eb; } .st { color: #059669; }
+
+  /* 笔记 */
+  .sec { border-bottom: 1px solid #eef2f7; }
+  .sec-h {
+    display: flex; align-items: center; gap: 6px; padding: 7px 12px;
+    font-size: 11.5px; color: #64748b; cursor: pointer; user-select: none;
+  }
+  .sec-h:hover { background: #f8fafc; }
+  .sec-h .arrow { font-size: 9px; color: #cbd5e1; transition: transform .12s; }
+  .sec-h.open .arrow { transform: rotate(90deg); }
+  .sec-h .grow { flex: 1; }
+  .sec-h .act { font-size: 10.5px; color: #2563eb; padding: 1px 7px; border-radius: 4px; }
+  .sec-h .act:hover { background: #eff6ff; }
+  .sec-b { padding: 2px 12px 10px; }
+
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 5px; background: #f1f5f9; color: #475569; margin: 0 4px 4px 0; }
+  .tag.blue { background: #eff6ff; color: #1d4ed8; }
+
+  .row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11.5px; color: #475569; }
+  .row .sw { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+  .row .num { margin-left: auto; color: #94a3b8; font-size: 10.5px; }
+
+  .note-item { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; color: #334155; }
+  .note-item:hover { background: #f8fafc; }
+  .note-item .k { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+  .newbtn {
+    margin: 6px 12px 10px; padding: 5px; text-align: center; font-size: 11.5px;
+    border: 1px dashed #cbd5e1; border-radius: 6px; color: #64748b; cursor: pointer;
+  }
+  .newbtn:hover { border-color: #2563eb; color: #2563eb; }
+
+  /* 问答 */
+  .qa-box { padding: 8px 12px; }
+  .qa-input {
+    width: 100%; border: 1px solid #e2e8f0; border-radius: 7px; padding: 7px 9px;
+    font-size: 12px; font-family: inherit; resize: none; outline: none;
+  }
+  .qa-input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px #eff6ff; }
+  .qa-send { margin-top: 6px; width: 100%; padding: 6px; border: none; border-radius: 7px; background: #2563eb; color: #fff; font-size: 12px; cursor: pointer; }
+
+
+  /* ── 右栏上下分栏 ── */
+  .pane-top { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pane-top .side-body { flex: 1; }
+  .hsplit {
+    height: 6px; flex: none; cursor: row-resize; background: #f8fafc;
+    border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; position: relative;
+  }
+  .hsplit:hover { background: #eff6ff; }
+  .hsplit::after {
+    content: ''; position: absolute; left: 50%; top: 2px; width: 24px; height: 2px;
+    margin-left: -12px; border-radius: 2px; background: #cbd5e1;
+  }
+  .pane-bottom { flex: none; height: 220px; min-height: 90px; display: flex; flex-direction: column; }
+  .pane-bhead {
+    height: 30px; flex: none; display: flex; align-items: center; gap: 6px;
+    padding: 0 10px; border-bottom: 1px solid #eef2f7; font-size: 11.5px; color: #64748b;
+    cursor: pointer; user-select: none;
+  }
+  .pane-bhead:hover { background: #f8fafc; }
+  .pane-bhead .grow { flex: 1; }
+  .pane-bottom.collapsed { height: 30px !important; }
+  .pane-bottom.collapsed .pane-bbody { display: none; }
+  .pane-bbody { flex: 1; overflow-y: auto; min-height: 0; }
+
+
+  /* 下半的小 tab */
+  .pane-bhead { cursor: default; }
+  .pane-bhead .btab {
+    padding: 4px 9px; border-radius: 5px; cursor: pointer; color: #64748b; font-size: 11.5px;
+  }
+  .pane-bhead .btab:hover { background: #f1f5f9; }
+  .pane-bhead .btab.on { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+
+  /* ── 文件树（VS Code 侧边栏） ── */
+  .tree {
+    width: 240px; flex: none; background: #fff; border-right: 1px solid #e2e8f0;
+    display: flex; flex-direction: column; min-height: 0;
+    transition: width .16s ease;
+  }
+  .tree.collapsed { width: 0; overflow: hidden; border-right: none; }
+  .tree-head {
+    height: 30px; flex: none; display: flex; align-items: center; gap: 6px;
+    padding: 0 10px; border-bottom: 1px solid #eef2f7;
+    font-size: 11px; color: #94a3b8; letter-spacing: .4px;
+  }
+  .tree-head .grow { flex: 1; }
+  .tree-body { flex: 1; overflow-y: auto; padding: 4px 0 12px; font-size: 12px; }
+  .tnode {
+    display: flex; align-items: center; gap: 5px; padding: 3px 8px 3px 0;
+    cursor: pointer; color: #334155; white-space: nowrap; overflow: hidden;
+  }
+  .tnode:hover { background: #f8fafc; }
+  .tnode.on { background: #eff6ff; color: #1d4ed8; }
+  .tnode .tw { width: 12px; flex: none; text-align: center; font-size: 8px; color: #cbd5e1; }
+  .tnode .ti { font-size: 11px; flex: none; }
+  .tnode .tt { overflow: hidden; text-overflow: ellipsis; }
+  .tnode .tf { color: #94a3b8; font-size: 10px; margin-left: auto; padding-left: 6px; flex: none; }
+
+
+  /* 左侧栏分组 */
+  .sect { border-bottom: 1px solid #eef2f7; }
+  .sect-h {
+    display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+    font-size: 11px; color: #64748b; letter-spacing: .3px; cursor: pointer; user-select: none;
+  }
+  .sect-h:hover { background: #f8fafc; }
+  .sect-h .arrow { font-size: 8px; color: #cbd5e1; transition: transform .12s; }
+  .sect-h.open .arrow { transform: rotate(90deg); }
+  .sect-h .grow { flex: 1; }
+  .sect-h .cnt { font-size: 10px; color: #cbd5e1; }
+  .nkind {
+    display: flex; align-items: center; gap: 7px; padding: 4px 10px 4px 20px;
+    font-size: 12px; color: #334155; cursor: pointer;
+  }
+  .nkind:hover { background: #f8fafc; }
+  .nkind .k { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .nkind .cnt { margin-left: auto; font-size: 10px; color: #cbd5e1; }
+
+  /* 空态 */
+  .empty { padding: 24px 16px; text-align: center; color: #cbd5e1; font-size: 12px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
+    background: #1f2937; color: #fff; font-size: 12px; padding: 7px 16px;
+    border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 99;
+  }
+  .toast.show { opacity: .92; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="dot"></span>
+  <b style="font-weight:600;">p_codeglass-0.1.2</b>
+  <span class="meta">· test_call_graph_method (func)</span>
+  <span class="grow"></span>
+  <span class="meta">图谱常驻左栏 · 右侧可切换</span>
+</div>
+
+<div class="shell">
+  <!-- 左图标栏：切换右栏内容 -->
+  <div class="rail">
+    <div class="ic on" id="btnTree" title="目录">&#128193;</div>
+    <div class="sep"></div>
+    <div class="ic" data-panel="imitation" title="仿写">✎</div>
+    <div class="ic" data-panel="path" title="学习路径">↗</div>
+    <div style="flex:1"></div>
+    <div class="ic" title="设置">⚙</div>
+  </div>
+
+
+  <!-- 左栏：多分组（代码 / 笔记） -->
+  <div class="tree" id="tree">
+    <div class="tree-head">
+      <span>EXPLORER</span>
+      <span class="grow"></span>
+      <span style="font-size:10px;color:#cbd5e1;">p_codeglass-0.1.2</span>
+    </div>
+    <div class="tree-body">
+
+      <!-- 分组：代码 -->
+      <div class="sect">
+        <div class="sect-h open" data-sect="code">
+          <span class="arrow">▶</span>
+          <span>代码</span>
+          <span class="grow"></span>
+          <span class="cnt" id="codeCount">8</span>
+        </div>
+        <div class="sect-b" id="sect-code">
+          <div id="treeBody"></div>
+        </div>
+      </div>
+
+      <!-- 分组：笔记 -->
+      <div class="sect">
+        <div class="sect-h open" data-sect="notes">
+          <span class="arrow">▶</span>
+          <span>笔记</span>
+          <span class="grow"></span>
+          <span class="cnt">0 篇</span>
+        </div>
+        <div class="sect-b" id="sect-notes">
+          <div class="nkind" onclick="toast('筛选：灵光一闪（模拟）')">
+            <span class="k" style="background:#f59e0b;"></span><span>灵光一闪</span><span class="cnt">0</span>
+          </div>
+          <div class="nkind" onclick="toast('筛选：质疑（模拟）')">
+            <span class="k" style="background:#3b82f6;"></span><span>质疑</span><span class="cnt">0</span>
+          </div>
+          <div class="nkind" onclick="toast('筛选：困惑（模拟）')">
+            <span class="k" style="background:#a855f7;"></span><span>困惑</span><span class="cnt">0</span>
+          </div>
+          <div class="nkind" onclick="toast('筛选：踩坑（模拟）')">
+            <span class="k" style="background:#ef4444;"></span><span>踩坑</span><span class="cnt">0</span>
+          </div>
+          <div class="nkind" onclick="toast('筛选：小结（模拟）')">
+            <span class="k" style="background:#10b981;"></span><span>小结</span><span class="cnt">0</span>
+          </div>
+          <div class="newbtn" style="margin:8px 10px;" onclick="toast('新建笔记（模拟）')">＋ 写一篇</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 主区：图谱常驻 -->
+  <div class="main">
+    <div class="hint">作者还没有排学习路径 —— 现在按「连接数」展示前 92 个</div>
+    <svg id="graphSvg" style="width:100%;height:100%;display:block"></svg>
+    <div class="statusbar">
+      <span>已显示 92 / 302 节点</span>
+      <span>布局完成</span>
+      <span style="margin-left:auto">631 边 · 构建 11-26 16:40</span>
+    </div>
+  </div>
+
+  <!-- 右栏 -->
+  <div class="side" id="side">
+    <!-- 节点摘要：所有面板共用 -->
+    <div class="nodebar">
+      <div class="nm">
+        <span style="width:8px;height:8px;border-radius:50%;background:#f97316;"></span>
+        <b>test_call_graph_method</b>
+        <span class="badge">func</span>
+        <span style="flex:1"></span>
+        <div class="x" id="btnCollapse" title="收起右栏">⟩</div>
+      </div>
+      <div class="path">tests/test_call_graph.py:45</div>
+    </div>
+
+    <div class="pane-top" id="paneTop">
+    <div class="side-body">
+      <!-- 代码面板 -->
+      <div id="p-code">
+        <div class="code-view">
+          <div class="cl"><span class="ln">1</span><span class="src"><span class="kw">from</span> pylens <span class="kw">import</span> CodeLens</span></div>
+          <div class="cl"><span class="ln">2</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">3</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">4</span><span class="src"><span class="kw">def</span> <span class="fn">test_get_symbols_python</span>():</span></div>
+          <div class="cl"><span class="ln">5</span><span class="src">    lens = <span class="fn">CodeLens</span>()</span></div>
+          <div class="cl"><span class="ln">6</span><span class="src">    outline = lens.<span class="fn">get_symbols</span>(<span class="st">"src/pylens"</span>)</span></div>
+          <div class="cl"><span class="ln">7</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">8</span><span class="src">    <span class="kw">assert</span> outline.language == <span class="st">"python"</span></span></div>
+          <div class="cl"><span class="ln">9</span><span class="src">    <span class="kw">assert</span> outline.symbol_count &gt; <span class="st">0</span></span></div>
+          <div class="cl"><span class="ln">10</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">11</span><span class="src">    names = [s.name <span class="kw">for</span> s <span class="kw">in</span> outline.symbols]</span></div>
+          <div class="cl"><span class="ln">12</span><span class="src">    <span class="kw">assert</span> <span class="st">"CodeLens"</span> <span class="kw">in</span> names</span></div>
+          <div class="cl"><span class="ln">13</span><span class="src">    <span class="kw">assert</span> <span class="st">"get_symbols"</span> <span class="kw">in</span> names</span></div>
+          <div class="cl"><span class="ln">14</span><span class="src">    <span class="kw">assert</span> <span class="st">"get_references"</span> <span class="kw">in</span> names</span></div>
+          <div class="cl"><span class="ln">15</span><span class="src">    <span class="kw">assert</span> <span class="st">"get_outline"</span> <span class="kw">in</span> names</span></div>
+          <div class="cl"><span class="ln">16</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">17</span><span class="src"></span></div>
+          <div class="cl"><span class="ln">18</span><span class="src"><span class="kw">def</span> <span class="fn">test_get_symbols_imports</span>():</span></div>
+          <div class="cl"><span class="ln">19</span><span class="src">    lens = <span class="fn">CodeLens</span>()</span></div>
+          <div class="cl"><span class="ln">20</span><span class="src">    outline = lens.<span class="fn">get_symbols</span>(<span class="st">"src/pylens"</span>)</span></div>
+          <div class="cl"><span class="ln">21</span><span class="src">    modules = [i.module <span class="kw">for</span> i <span class="kw">in</span> outline.imports]</span></div>
+          <div class="cl"><span class="ln">22</span><span class="src">    <span class="kw">assert</span> <span class="st">"pylens"</span> <span class="kw">in</span> modules</span></div>
+        </div>
+      </div>
+
+      <!-- 仿写面板 -->
+      <div id="p-imitation" style="display:none;">
+        <div class="empty">仿写编辑器<br><span style="font-size:11px;">（原「仿写」tab 内容）</span></div>
+      </div>
+
+      <!-- 学习路径面板 -->
+      <div id="p-path" style="display:none;">
+        <div class="empty">学习路径<br><span style="font-size:11px;">（原路径面板）</span></div>
+      </div>
+    </div>
+    </div>
+
+    <!-- 上下分割条 -->
+    <div class="hsplit" id="hsplit" title="拖动调整高度"></div>
+
+    <!-- 下半：节点信息区 -->
+    <div class="pane-bottom" id="paneBottom">
+      <div class="pane-bhead">
+        <span class="btab on" data-b="concepts">知识点</span>
+        <span class="btab" data-b="community">社区</span>
+        <span class="btab" data-b="flow">执行流</span>
+        <span class="btab" data-b="qa">问答</span>
+        <span class="grow"></span>
+        <span id="qaArrow" style="font-size:10px;color:#cbd5e1;cursor:pointer;padding:0 4px;">▾</span>
+      </div>
+      <div class="pane-bbody" id="bbody">
+        <div id="b-concepts">
+          <div style="padding:8px 12px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+              <span style="font-size:11.5px;color:#94a3b8;">AI 读出这段代码用到的概念</span>
+              <span id="btnConcepts" style="margin-left:auto;font-size:10.5px;color:#2563eb;cursor:pointer;padding:1px 7px;border-radius:4px;">标注</span>
+            </div>
+            <div id="conceptsBody"><span style="font-size:11.5px;color:#cbd5e1;">（未标注 —— 点右上「标注」）</span></div>
+          </div>
+        </div>
+        <div id="b-community" style="display:none;">
+          <div style="padding:8px 12px;">
+            <div class="row"><span class="sw" style="background:#0ea5e9;"></span>tests<span class="num">12 个 · 密度 0.26</span></div>
+            <div class="row"><span class="sw" style="background:#22c55e;"></span>tests<span class="num">11 个 · 密度 0.18</span></div>
+            <div class="row"><span class="sw" style="background:#f59e0b;"></span>src<span class="num">11 个 · 密度 0.47</span></div>
+            <div class="row"><span class="sw" style="background:#a855f7;"></span>src<span class="num">10 个 · 密度 0.36</span></div>
+          </div>
+        </div>
+        <div id="b-flow" style="display:none;">
+          <div style="padding:8px 12px;">
+            <div class="row">1步 · test_call_graph_method → CallGraphResult</div>
+            <div class="row">2步 · CallGraphResult → resolve_symbol</div>
+          </div>
+        </div>
+        <div id="b-qa" style="display:none;">
+          <div class="qa-box">
+            <div style="font-size:11.5px;color:#94a3b8;line-height:1.7;padding:2px 0 8px;">
+              历史问答会显示在这里。
+            </div>
+            <textarea class="qa-input" rows="2" placeholder="问点什么…（Ctrl+Enter 发送）"></textarea>
+            <button class="qa-send" onclick="toast('发送（模拟）')">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── 图谱 ── */
+(function drawGraph() {
+  const svg = document.getElementById('graphSvg');
+  const NS = 'http://www.w3.org/2000/svg';
+  const colors = ['#3b82f6', '#f97316', '#22c55e', '#ec4899', '#a855f7', '#0ea5e9'];
+
+  function render() {
+    svg.innerHTML = '';
+    const W = svg.clientWidth || 800, H = svg.clientHeight || 600;
+    const cx = W / 2, cy = H / 2;
+    const r1 = Math.min(W, H) * 0.2, r2 = Math.min(W, H) * 0.38;
+    const g = document.createElementNS(NS, 'g');
+    svg.appendChild(g);
+
+    for (let i = 0; i < 26; i++) {
+      const a = (Math.PI * 2 * i) / 26;
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', cx); l.setAttribute('y1', cy);
+      l.setAttribute('x2', cx + Math.cos(a) * r2 * 0.92);
+      l.setAttribute('y2', cy + Math.sin(a) * r2 * 0.92);
+      l.setAttribute('stroke', '#cbd5e1'); l.setAttribute('stroke-width', '1');
+      g.appendChild(l);
+    }
+    for (let i = 0; i < 26; i++) {
+      const a = (Math.PI * 2 * i) / 26;
+      const x = cx + Math.cos(a) * r2, y = cy + Math.sin(a) * r2;
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 5.5);
+      c.setAttribute('fill', colors[i % colors.length]); c.setAttribute('opacity', '0.85');
+      g.appendChild(c);
+      const t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', x + 9); t.setAttribute('y', y + 4);
+      t.setAttribute('font-size', '9.5'); t.setAttribute('fill', '#64748b');
+      t.textContent = 'test_' + (i % 7 === 0 ? 'call_graph_method' : 'case_' + i);
+      g.appendChild(t);
+    }
+    for (let i = 0; i < 12; i++) {
+      const a = (Math.PI * 2 * i) / 12;
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('cx', cx + Math.cos(a) * r1); c.setAttribute('cy', cy + Math.sin(a) * r1);
+      c.setAttribute('r', 6); c.setAttribute('fill', colors[(i + 3) % colors.length]);
+      g.appendChild(c);
+    }
+    const hub = document.createElementNS(NS, 'circle');
+    hub.setAttribute('cx', cx); hub.setAttribute('cy', cy); hub.setAttribute('r', 11);
+    hub.setAttribute('fill', '#f59e0b'); hub.setAttribute('stroke', '#fff'); hub.setAttribute('stroke-width', '2');
+    g.appendChild(hub);
+    const ht = document.createElementNS(NS, 'text');
+    ht.setAttribute('x', cx); ht.setAttribute('y', cy + 26);
+    ht.setAttribute('font-size', '10.5'); ht.setAttribute('fill', '#475569');
+    ht.setAttribute('text-anchor', 'middle');
+    ht.textContent = 'test_call_graph_method';
+    g.appendChild(ht);
+  }
+  render();
+  window.addEventListener('resize', render);
+})();
+
+
+/* ── 文件树 ── */
+var TREE_DATA = [
+  { n: 'src', type: 'dir', open: true, children: [
+    { n: 'pylens', type: 'dir', open: true, children: [
+      { n: '__init__.py', type: 'py' },
+      { n: 'codelens.py', type: 'py', lines: 320 },
+      { n: 'outline.py', type: 'py', lines: 188 },
+      { n: 'symbols.py', type: 'py', lines: 96 },
+    ] },
+    { n: 'pyproject.toml', type: 'toml' },
+  ] },
+  { n: 'tests', type: 'dir', open: true, children: [
+    { n: 'test_call_graph.py', type: 'py', lines: 88, active: true },
+    { n: 'test_symbols.py', type: 'py', lines: 142 },
+    { n: 'test_imports.py', type: 'py', lines: 76 },
+  ] },
+  { n: 'README.md', type: 'md', lines: 40 },
+  { n: 'LICENSE', type: 'txt' },
+];
+
+function iconOf(t) {
+  return ({ dir: '▸', py: '🐍', md: '📄', toml: '⚙', txt: '📄' })[t] || '📄';
+}
+
+function renderTree(list, depth, host) {
+  list.forEach(function (item) {
+    var row = document.createElement('div');
+    row.className = 'tnode' + (item.active ? ' on' : '');
+    row.style.paddingLeft = (8 + depth * 12) + 'px';
+
+    var tw = document.createElement('span');
+    tw.className = 'tw';
+    tw.textContent = item.type === 'dir' ? (item.open ? '▼' : '▶') : '';
+    row.appendChild(tw);
+
+    var ti = document.createElement('span');
+    ti.className = 'ti';
+    ti.textContent = iconOf(item.type);
+    row.appendChild(ti);
+
+    var tt = document.createElement('span');
+    tt.className = 'tt';
+    tt.textContent = item.n;
+    row.appendChild(tt);
+
+    if (item.lines) {
+      var tf = document.createElement('span');
+      tf.className = 'tf';
+      tf.textContent = item.lines;
+      row.appendChild(tf);
+    }
+
+    row.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (item.type === 'dir') {
+        item.open = !item.open;
+        var host2 = document.getElementById('treeBody');
+        host2.innerHTML = '';
+        renderTree(TREE_DATA, 0, host2);
+        return;
+      }
+      // 文件：高亮 + 右栏切到代码
+      document.querySelectorAll('#treeBody .tnode').forEach(function (r) { r.classList.remove('on'); });
+      row.classList.add('on');
+      showPanel('code');
+      toast('打开 ' + item.n + '（模拟）');
+    });
+
+    host.appendChild(row);
+
+    if (item.type === 'dir' && item.open && item.children) {
+      renderTree(item.children, depth + 1, host);
+    }
+  });
+}
+
+var treeEl = document.getElementById('tree');
+var btnTree = document.getElementById('btnTree');
+function renderAll() {
+  var host = document.getElementById('treeBody');
+  host.innerHTML = '';
+  renderTree(TREE_DATA, 0, host);
+}
+renderAll();
+
+btnTree.addEventListener('click', function () {
+  treeEl.classList.toggle('collapsed');
+  btnTree.classList.toggle('on', !treeEl.classList.contains('collapsed'));
+  setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 180);
+});
+
+/* ── 图标栏切换右栏面板 ── */
+const PANELS = { code: '代码', imitation: '仿写', path: '学习路径' };
+const side = document.getElementById('side');
+const btnCollapse = document.getElementById('btnCollapse');
+let active = 'code';
+
+function showPanel(key) {
+  active = key;
+  ['code', 'imitation', 'path'].forEach((k) => {
+    document.getElementById('p-' + k).style.display = k === key ? 'block' : 'none';
+  });
+  document.querySelectorAll('.rail .ic[data-panel]').forEach((ic) => {
+    ic.classList.toggle('on', ic.dataset.panel === key);
+  });
+  side.classList.remove('collapsed');
+  btnCollapse.textContent = '⟩';
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 180);
+}
+
+document.querySelectorAll('.rail .ic[data-panel]').forEach((ic) => {
+  ic.addEventListener('click', () => {
+    // 点当前图标 = 收起/展开右栏（VS Code 行为）
+    if (ic.dataset.panel === active && !side.classList.contains('collapsed')) {
+      side.classList.add('collapsed');
+      btnCollapse.textContent = '⟨';
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 180);
+      return;
+    }
+    showPanel(ic.dataset.panel);
+  });
+});
+
+btnCollapse.addEventListener('click', () => {
+  side.classList.toggle('collapsed');
+  btnCollapse.textContent = side.classList.contains('collapsed') ? '⟨' : '⟩';
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 180);
+});
+
+/* ── 折叠区 ── */
+document.querySelectorAll('[data-sec]').forEach((h) => {
+  h.addEventListener('click', (e) => {
+    if (e.target.classList.contains('act')) return;
+    h.classList.toggle('open');
+    h.nextElementSibling.style.display = h.classList.contains('open') ? 'block' : 'none';
+  });
+});
+
+/* ── 标注模拟 ── */
+document.getElementById('btnConcepts').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const b = document.getElementById('conceptsBody');
+  b.innerHTML = '<span style="font-size:12px;color:#94a3b8;">AI 分析中…</span>';
+  setTimeout(() => {
+    b.innerHTML = '<span class="tag blue">单元测试</span><span class="tag">调用图</span><span class="tag">符号解析</span><span class="tag">断言校验</span>';
+    toast('标注完成（模拟）');
+  }, 600);
+});
+
+
+/* ── 上下分割拖动 ── */
+(function () {
+  const split = document.getElementById('hsplit');
+  const bottom = document.getElementById('paneBottom');
+  let dragging = false;
+  split.addEventListener('mousedown', (e) => {
+    dragging = true; e.preventDefault();
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const rect = document.getElementById('side').getBoundingClientRect();
+    const h = Math.max(90, Math.min(rect.height - 140, rect.bottom - e.clientY));
+    bottom.style.height = h + 'px';
+    bottom.classList.remove('collapsed');
+  });
+  window.addEventListener('mouseup', () => {
+    dragging = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    window.dispatchEvent(new Event('resize'));
+  });
+})();
+
+/* ── 下半折叠 ── */
+document.getElementById('qaArrow').addEventListener('click', () => {
+  const b = document.getElementById('paneBottom');
+  b.classList.toggle('collapsed');
+  document.getElementById('qaArrow').textContent =
+    b.classList.contains('collapsed') ? '▸' : '▾';
+});
+
+
+/* 下半 tab 切换 */
+document.querySelectorAll('.pane-bhead .btab').forEach(function (t) {
+  t.addEventListener('click', function () {
+    document.querySelectorAll('.pane-bhead .btab').forEach(function (x) { x.classList.remove('on') });
+    t.classList.add('on');
+    ['concepts', 'community', 'flow', 'qa'].forEach(function (k) {
+      var el = document.getElementById('b-' + k);
+      if (el) el.style.display = (k === t.dataset.b) ? 'block' : 'none';
+    });
+    document.getElementById('paneBottom').classList.remove('collapsed');
+  });
+});
+
+
+/* 左侧栏分组折叠 */
+document.querySelectorAll('.sect-h').forEach(function (h) {
+  h.addEventListener('click', function () {
+    h.classList.toggle('open');
+    var body = h.nextElementSibling;
+    if (body) body.style.display = h.classList.contains('open') ? 'block' : 'none';
+  });
+});
+
+/* ── toast ── */
+let tt = 0;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(tt); tt = setTimeout(() => el.classList.remove('show'), 1600);
+}
+</script>
+</body>
+</html>

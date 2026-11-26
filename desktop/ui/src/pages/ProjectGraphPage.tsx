@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import {ChevronDown,
+import {FolderTree,
+  ChevronDown,
   ChevronUp,
   List,
   Loader2,
@@ -33,10 +34,10 @@ import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
+import Explorer from '../components/left/Explorer'
+import RightSidebar, { type UpperPanel } from '../components/right/RightSidebar'
+import { useCodeData } from '../components/code/useCodeData'
 import LearningPathPanel from '../components/graph/LearningPathPanel'
-import NodePanel from '../components/node/NodePanel'
-import FlowPanel from '../components/graph/FlowPanel'
-import CommunityPanel from '../components/graph/CommunityPanel'
 
 /**
  * ★ 图谱页（`D98` · AntV G6 · `D105` 学习路径 · `D107` 健壮性）
@@ -111,6 +112,8 @@ export default function ProjectGraphPage() {
   const [showAllNodes, setShowAllNodes] = useState(false)
   // ★ 代码工作区
   const [codeOpen, setCodeOpen] = useState(false)
+  const [explorerOpen, setExplorerOpen] = useState(true)
+  const [upperPanel, setUpperPanel] = useState<UpperPanel>('code')
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
   const [learnPathOpen, setLearnPathOpen] = useState(false)
@@ -315,6 +318,7 @@ export default function ProjectGraphPage() {
     if (!g || selectedVid == null) return null
     return g.nodes.find((n) => n.vid === selectedVid) || null
   }, [g, selectedVid])
+  const codeData = useCodeData(projectRef, selected)
 
   // ★★ 执行流：点某条链 → 高亮链上节点（传空数组清除）
   const [flowVids, setFlowVids] = useState<number[]>([])
@@ -444,6 +448,13 @@ export default function ProjectGraphPage() {
       {/* ★★★ 2026-11-05：顶栏工具条改用公共组件 PageBar（所有页面统一）⚠ */}
       <PageBar>
         <RailButton
+          icon={<FolderTree size={13} />}
+          label="目录"
+          title={explorerOpen ? '收起左侧目录' : '展开左侧目录'}
+          active={explorerOpen}
+          onClick={() => setExplorerOpen((v) => !v)}
+        />
+        <RailButton
           icon={<List size={13} />}
           label="列表"
           title="回到节点列表（可以从头找）"
@@ -505,6 +516,26 @@ export default function ProjectGraphPage() {
             : {}),
         }}
       >
+        <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+          {explorerOpen && (
+            <div style={{
+              width: 240, flex: 'none', minHeight: 0, minWidth: 0,
+              borderRight: '1px solid var(--divider, #e2e8f0)',
+            }}>
+              <Explorer
+                projectRef={projectRef}
+                tree={codeData.tree}
+                treeError={codeData.treeError}
+                expanded={codeData.expanded}
+                onToggleDir={codeData.toggleDir}
+                activePath={codeData.activePath}
+                onPickFile={codeData.pickFile}
+                onOpenNote={(n) => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`)}
+                onNewNote={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/new${selected ? `?node=${selected.vid}` : ''}`)}
+              />
+            </div>
+          )}
+
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
         <SplitPane
           containerRef={mainRef}
@@ -796,40 +827,25 @@ export default function ProjectGraphPage() {
               </div>
             </>
           )}
-          {/* ★★★ 右栏也贴**同一个** CodeWorkspace；笔记页仍用原来的完整 NodePanel */}
-          <CodeWorkspace
+          {/* ★★ 右栏：上下分栏（上=代码/仿写/路径，下=知识点/社区/执行流/问答） */}
+          <RightSidebar
             projectRef={projectRef}
             node={selected}
-            initialTab="notes"
-            notePanel={
-              <>
-                {/* ★★ 社区：哪几块关系紧密（点一块 → 高亮整块） */}
-                <CommunityPanel projectRef={projectRef} onPick={pickHighlight} activeKey={highlightKey} />
-                {/* ★★ 执行流：当前节点落在哪几条调用链里 */}
-                <FlowPanel
-                  projectRef={projectRef}
-                  vid={selected ? selected.vid : null}
-                  nameOf={(v) => nameMap.get(v) || String(v)}
-                  onPick={pickHighlight}
-                  activeKey={highlightKey}
-                />
-              <NodePanel
-                projectRef={projectRef}
-                node={selected}
-                canWrite={canWrite}
-                inPathOrdinal={selected ? ordinalOf.get(selected.vid) ?? null : null}
-                canEditPath={canWrite}
-                flat
-                hideInfo
-                onAddToPath={selected ? () => addToPath(selected) : undefined}
-                onRemoveFromPath={selected ? () => removeNode(selected) : undefined}
-              />
-                </>
-            }
+            upper={upperPanel}
+            onUpperChange={setUpperPanel}
+            source={codeData.source}
+            sourceError={codeData.sourceError}
+            loading={codeData.loading}
+            focusLine={codeData.focusLine}
+            onPickHighlight={pickHighlight}
+            activeKey={highlightKey}
+            nameOf={(v) => nameMap.get(v) || String(v)}
+            onPickNode={(v) => { setSelectedVid(v); setFocusVid(v) }}
           />
         </div>
         )}
         </SplitPane>
+        </div>
 
         {/* ★★★ **托底状态条**（* 所有者：「我页面底下也有一块的，你写的界面没了，
             整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}

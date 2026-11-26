@@ -10,8 +10,9 @@ import 'd3-transition'   // ★ 侧加载：给 selection 挂 .transition()
 import { startMeteor } from '../../lib/meteorFx'
 import { graphLog, n1 } from '../../lib/graphLog'
 import type { EffectiveGraph, GraphEdge, GraphNode } from '../../lib/mergeGraph'
-import { kindColor } from '../../lib/kindLabel'
-import NodeHoverCard from '../node/NodeHoverCard'
+import { kindColor, kindLabel } from '../../lib/kindLabel'
+import { useParams } from 'react-router-dom'
+import { useAiChat } from '../../lib/useAiChat'
 import { useAiBusy } from '../../lib/aiBusy'
 import EdgeHoverCard from './EdgeHoverCard'
 
@@ -36,7 +37,6 @@ import EdgeHoverCard from './EdgeHoverCard'
 
 const LABEL_MAX_NAME = 16
 const LABEL_MAX_FILE = 22
-const HOVER_LINGER_MS = 800
 const truncate = (s: string, max: number) => {
   const t = (s || '').trim()
   return t.length > max ? `${t.slice(0, max)}…` : t
@@ -135,7 +135,10 @@ export default function GraphCanvas({
   /** 是否已经自动 fit 过一次 */
   const fittedRef = useRef(false)
 
-  const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
+  const { projectRef } = useParams<{ projectRef: string }>()
+  /** 右键菜单里 AI 出题的节点（null = 不出题） */
+  const [ctxChatVid, setCtxChatVid] = useState<number | null>(null)
+  const chat = useAiChat(projectRef || '', ctxChatVid, 'challenge', false)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
   /** 右键菜单：{vid, 屏幕x, 屏幕y} */
   const [ctxMenu, setCtxMenu] = useState<{ vid: number; x: number; y: number } | null>(null)
@@ -144,7 +147,6 @@ export default function GraphCanvas({
   const aiBusy = useAiBusy()
   const leaveTimerRef = useRef(0)
   const edgeLeaveRef = useRef(0)
-  const cardHoverRef = useRef(false)
   /** 当前 hover 高亮的节点集合（含邻居） */
   const activeSetRef = useRef<Set<string>>(new Set())
 
@@ -373,24 +375,15 @@ export default function GraphCanvas({
 
     // ⑪ 节点 hover / 点击
     nodeSel
-      .on('mouseenter', (ev: MouseEvent, d) => {
-        window.clearTimeout(leaveTimerRef.current)
-        applyActive(d.id, nodes, links, nodeSel, linkSel)
-        const rect = box.getBoundingClientRect()
-        const [sx, sy] = [ev.clientX - rect.left, ev.clientY - rect.top]
-        setHover({ node: d.node, x: sx + rect.left, y: sy + rect.top })
-        setEdgeHover(null)
-        graphLog('hover:enter', { node: d.id, name: d.node.name })
-      })
-      .on('mouseleave', () => {
-        window.clearTimeout(leaveTimerRef.current)
-        leaveTimerRef.current = window.setTimeout(() => {
-          leaveTimerRef.current = 0
-          if (cardHoverRef.current) return
-          setHover(null)
+        .on('mouseenter', (_ev: MouseEvent, d) => {
+          window.clearTimeout(leaveTimerRef.current)
+          // ★ hover 只做邻居高亮，⛔ 不再弹卡片（信息与操作统一走右键菜单）
+          applyActive(d.id, nodes, links, nodeSel, linkSel)
+          setEdgeHover(null)
+        })
+        .on('mouseleave', () => {
           clearActive(nodeSel, linkSel)
-        }, HOVER_LINGER_MS)
-      })
+        })
       .on('dblclick', (ev: MouseEvent, d) => {
         // ★ 双击节点 = 取消固定（解除用户拖拽时锁定的位置），恢复力导向
         ev.stopPropagation()
@@ -402,14 +395,12 @@ export default function GraphCanvas({
         ev.stopPropagation()
         onSelect(Number(d.id))
         setCtxMenu(null)
-        setHover(null)
       })
       .on('contextmenu', (ev: MouseEvent, d) => {
         ev.preventDefault()
         ev.stopPropagation()
         onSelect(Number(d.id))
         setCtxMenu({ vid: Number(d.id), x: ev.clientX, y: ev.clientY })
-        setHover(null)
       })
 
     // ⑫ 边 hover（SVG line 自带宽命中，另加手动距离兜底）
@@ -429,7 +420,6 @@ export default function GraphCanvas({
     // ⑬ 点空白：取消选中 + 收起环形按钮
     svg.on('click', () => {
       setCtxMenu(null)
-      setHover(null)
       clearActive(nodeSel, linkSel)
       onDeselect?.()
     })
@@ -447,7 +437,6 @@ export default function GraphCanvas({
       svg.on('.zoom', null)
       svg.selectAll('*').remove()
       setCtxMenu(null)
-      setHover(null)
       setEdgeHover(null)
       window.clearTimeout(leaveTimerRef.current)
       window.clearTimeout(edgeLeaveRef.current)
@@ -650,61 +639,93 @@ export default function GraphCanvas({
         ref={svgRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
       />
-        {ctxMenu && (
-          <div
-            style={{
-              position: 'fixed',
-              left: ctxMenu.x, top: ctxMenu.y,
-              zIndex: 1000,
-              background: 'var(--background-primary, #222)',
-              border: '1px solid var(--background-modifier-border, #444)',
-              borderRadius: 6,
-              boxShadow: '0 4px 16px rgba(0,0,0,.3)',
-              padding: '4px 0',
-              minWidth: 140,
-              fontSize: 12,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {[
-              { label: '打开源码', run: () => onOpenCode?.(ctxMenu.vid), has: !!onOpenCode },
-              { label: '写小结', run: () => onWriteSummary?.(ctxMenu.vid), has: !!onWriteSummary },
-              { label: '标注知识点', run: () => onAnnotateConcepts?.(ctxMenu.vid), has: !!onAnnotateConcepts },
-              { label: '加入学习路径', run: () => onAddToPath?.(ctxMenu.vid), has: !!onAddToPath },
-              { label: '显示邻居', run: () => expandNeighbors(ctxMenu.vid), has: true },
-              { label: '隐藏节点', run: () => hideNode(ctxMenu.vid), has: true },
-              { label: '聚焦节点', run: () => onSelect(ctxMenu.vid), has: true },
-            ].filter((it) => it.has).map((it) => (
-              <div
-                key={it.label}
-                style={{ padding: '5px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--background-modifier-hover, #333)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                onClick={() => { it.run(); setCtxMenu(null) }}
-              >{it.label}</div>
-            ))}
-          </div>
-        )}
+        {ctxMenu && (() => {
+          // 节点信息（右键菜单头部）
+          const n = nodesRef.current.find((x) => Number(x.id) === ctxMenu.vid)?.node
+          const last = chat.items.length ? chat.items[chat.items.length - 1] : null
+          const kc = n ? kindColor(n.kind) : '#64748b'
+          const title = n ? ((n.qname && n.qname !== n.name) ? n.qname : n.name) : String(ctxMenu.vid)
+          return (
+            <div
+              style={{
+                position: 'fixed',
+                left: ctxMenu.x, top: ctxMenu.y,
+                zIndex: 1000,
+                background: '#ffffff',
+                color: '#1f2937',
+                border: '1px solid #d1d5db',
+                borderRadius: 6,
+                boxShadow: '0 4px 16px rgba(0,0,0,.2)',
+                padding: '4px 0',
+                minWidth: 180,
+                maxWidth: 380,
+                fontSize: 12,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* ── 节点信息头部 ── */}
+              <div style={{ padding: '6px 12px 8px', borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: kc, flexShrink: 0 }} />
+                  <b style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</b>
+                  {n && (
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6b7280', flexShrink: 0 }}>
+                      {kindLabel(n.kind)}
+                    </span>
+                  )}
+                </div>
+                {n?.rel_path && (
+                  <div style={{ fontSize: 10.5, color: '#6b7280', marginTop: 3, fontFamily: 'monospace' }}>
+                    {n.rel_path}:{n.line}
+                  </div>
+                )}
+              </div>
+
+              {/* ── 操作项 ── */}
+              {[
+                { label: '打开源码', run: () => onOpenCode?.(ctxMenu.vid), has: !!onOpenCode },
+                { label: '写小结', run: () => onWriteSummary?.(ctxMenu.vid), has: !!onWriteSummary },
+                { label: '标注知识点', run: () => onAnnotateConcepts?.(ctxMenu.vid), has: !!onAnnotateConcepts },
+                { label: '加入学习路径', run: () => onAddToPath?.(ctxMenu.vid), has: !!onAddToPath },
+                { label: '显示邻居', run: () => expandNeighbors(ctxMenu.vid), has: true },
+                { label: '隐藏节点', run: () => hideNode(ctxMenu.vid), has: true },
+                { label: '聚焦节点', run: () => onSelect(ctxMenu.vid), has: true },
+              ].filter((it) => it.has).map((it) => (
+                <div
+                  key={it.label}
+                  style={{ padding: '5px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  onClick={() => { it.run(); setCtxMenu(null) }}
+                >{it.label}</div>
+              ))}
+
+              {/* ── AI 出题（点了在菜单下方展开，不关闭菜单）── */}
+              <div style={{ borderTop: '1px solid #e5e7eb', marginTop: 4, paddingTop: 4 }}>
+                <div
+                  style={{ padding: '5px 12px', cursor: 'pointer', whiteSpace: 'nowrap', color: '#0e7490' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  onClick={() => {
+                    if (ctxChatVid !== ctxMenu.vid) setCtxChatVid(ctxMenu.vid)
+                    if (!chat.busy) void chat.ask('请按 system 的要求，对这个节点出题。', undefined, 'questions')
+                  }}
+                >{chat.busy ? '出题中…' : (last ? '换一批题目' : 'AI 出题')}</div>
+
+                {chat.err && (
+                  <div style={{ padding: '4px 12px', fontSize: 11, color: '#ef4444' }}>{chat.err}</div>
+                )}
+                {last && (
+                  <div style={{ padding: '2px 12px 8px', fontSize: 11, lineHeight: 1.6, maxHeight: 220, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                    {String((last as { answer?: string; text?: string }).answer ?? (last as { text?: string }).text ?? '')}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
 
-      {hover && (
-        <NodeHoverCard
-          node={hover.node}
-          x={hover.x}
-          y={hover.y}
-          onEnter={() => { cardHoverRef.current = true; clearTimeout(leaveTimerRef.current) }}
-          onLeave={() => {
-            cardHoverRef.current = false
-            setHover(null)
-            const svgEl = svgRef.current
-            if (svgEl) {
-              const nodeSel = select(svgEl).selectAll<SVGGElement, SimNode>('g.node')
-              const linkSel = select(svgEl).selectAll<SVGLineElement, SimLink>('line.link')
-              clearActive(nodeSel, linkSel)
-            }
-          }}
-        />
-      )}
       {edgeHover && <EdgeHoverCard edge={edgeHover.edge} x={edgeHover.x} y={edgeHover.y} />}
     </div>
   )

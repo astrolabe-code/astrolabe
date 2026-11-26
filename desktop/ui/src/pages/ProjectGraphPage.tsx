@@ -700,6 +700,14 @@ export default function ProjectGraphPage() {
                   highlightVids={flowVids}
                   onSelect={setSelectedVid}
                   onDeselect={() => setSelectedVid(null)}
+                  onOpenCode={(vid) => {
+                    const node = view?.nodes.find((n) => n.vid === vid)
+                    if (node) { setSelectedVid(vid); setCodeOpen(true) }
+                  }}
+                  onAddToPath={(vid) => {
+                    const node = view?.nodes.find((n) => n.vid === vid)
+                    if (node) void addToPath(node)
+                  }}
                   focusVid={focusVid}
                 />
                 </>

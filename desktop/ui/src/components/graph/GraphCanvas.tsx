@@ -37,13 +37,6 @@ import EdgeHoverCard from './EdgeHoverCard'
 const LABEL_MAX_NAME = 16
 const LABEL_MAX_FILE = 22
 const HOVER_LINGER_MS = 800
-const RING_GEO = { c: 48, r1: 24, r2: 42 }
-const LABEL_ZOOM_THRESHOLD = 0.7
-const LABEL_MIN_NODES = 30
-const LABEL_TOP_DEGREE = 12
-const EDGE_HIT_WIDTH = 12          // 边的透明命中宽度（SVG 里白拿的宽容度）
-const EDGE_DIST_PX = 10            // 手动边检测阈值（兜底）
-
 const truncate = (s: string, max: number) => {
   const t = (s || '').trim()
   return t.length > max ? `${t.slice(0, max)}…` : t
@@ -58,21 +51,11 @@ const colorOf = (n: GraphNode) => kindColor(n.kind)
  *   再乘 zoom（限制 0.85~2，避免缩到看不见或撑爆屏幕）
  */
 const RING_BASE_R = 7
-function ringScaleFor(nodeR: number, zoomK: number): number {
-  const byNode = (nodeR || RING_BASE_R) / RING_BASE_R
-  const byZoom = Math.max(0.85, Math.min(zoomK, 2))
-  return byNode * byZoom
-}
 
-function ringArcPath(a1: number, a2: number): string {
-  const { c, r1, r2 } = RING_GEO
-  const pt = (r: number, a: number) => [c + r * Math.cos(a), c + r * Math.sin(a)] as const
-  const [x1, y1] = pt(r2, a1), [x2, y2] = pt(r2, a2)
-  const [x3, y3] = pt(r1, a2), [x4, y4] = pt(r1, a1)
-  const large = a2 - a1 > Math.PI ? 1 : 0
-  return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r2} ${r2} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} L ${x3.toFixed(2)} ${y3.toFixed(2)} A ${r1} ${r1} 0 ${large} 0 ${x4.toFixed(2)} ${y4.toFixed(2)} Z`
-}
 
+const LABEL_ZOOM_THRESHOLD = 0.7
+const LABEL_MIN_NODES = 30
+const LABEL_TOP_DEGREE = 12
 // ---------------------------------------------------------------- 类型
 
 interface GraphCanvasProps {
@@ -85,6 +68,10 @@ interface GraphCanvasProps {
   onDeselect?: () => void
   onPhase?: (phase: string) => void
   onGraphChanged?: () => void
+    onOpenCode?: (vid: number) => void
+    onWriteSummary?: (vid: number) => void
+    onAnnotateConcepts?: (vid: number) => void
+    onAddToPath?: (vid: number) => void
   meteors?: boolean
   meteorSpeed?: number
   meteorSizeRatio?: number
@@ -114,6 +101,10 @@ export default function GraphCanvas({
   onSelect,
   onDeselect,
   onPhase,
+    onOpenCode,
+    onWriteSummary,
+    onAnnotateConcepts,
+    onAddToPath,
   meteors,
   meteorSpeed,
   meteorSizeRatio,
@@ -146,11 +137,8 @@ export default function GraphCanvas({
 
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [edgeHover, setEdgeHover] = useState<{ edge: GraphEdge; x: number; y: number } | null>(null)
-  const [ring, setRing] = useState<{ vid: number; x: number; y: number; r: number } | null>(null)
-  const [ringScale, setRingScale] = useState(1)
-  /** ring 的镜像：zoom 回调里读它，避免闭包拿到旧 state */
-  const ringRef = useRef<{ vid: number; x: number; y: number; r: number } | null>(null)
-  useEffect(() => { ringRef.current = ring }, [ring])
+  /** 右键菜单：{vid, 屏幕x, 屏幕y} */
+  const [ctxMenu, setCtxMenu] = useState<{ vid: number; x: number; y: number } | null>(null)
   const [dataVersion, setDataVersion] = useState(0)
 
   const aiBusy = useAiBusy()
@@ -336,15 +324,7 @@ export default function GraphCanvas({
         tfRef.current = ev.transform
         root.attr('transform', String(ev.transform))
         // 环形按钮跟随
-        setRing((r) => {
-          if (!r) return r
-          const n = byId.get(String(r.vid))
-          if (!n) return null
-          const [sx, sy] = [n.x! * ev.transform.k + ev.transform.x, n.y! * ev.transform.k + ev.transform.y]
-          return { ...r, x: sx, y: sy }
-        })
-        const curRing = ringRef.current
-        if (curRing) setRingScale(ringScaleFor(curRing.r, ev.transform.k))
+        setCtxMenu(null)
         // 标签疏密：缩小时只留高度数节点
         if (nodes.length >= LABEL_MIN_NODES) {
           const dense = ev.transform.k < LABEL_ZOOM_THRESHOLD
@@ -421,11 +401,14 @@ export default function GraphCanvas({
       .on('click', (ev: MouseEvent, d) => {
         ev.stopPropagation()
         onSelect(Number(d.id))
-        // ★★ 圆心必须是**节点中心**，⛔ 不是鼠标点击点 ——
-        //   点在节点边缘时，用鼠标坐标会让圆环偏出去（所有者反馈「圆心不是节点」）
-        const [sx, sy] = toScreen(d.x ?? 0, d.y ?? 0)
-        setRing({ vid: Number(d.id), x: sx, y: sy, r: d.r })
-        setRingScale(ringScaleFor(d.r, tfRef.current.k))
+        setCtxMenu(null)
+        setHover(null)
+      })
+      .on('contextmenu', (ev: MouseEvent, d) => {
+        ev.preventDefault()
+        ev.stopPropagation()
+        onSelect(Number(d.id))
+        setCtxMenu({ vid: Number(d.id), x: ev.clientX, y: ev.clientY })
         setHover(null)
       })
 
@@ -445,7 +428,7 @@ export default function GraphCanvas({
 
     // ⑬ 点空白：取消选中 + 收起环形按钮
     svg.on('click', () => {
-      setRing(null)
+      setCtxMenu(null)
       setHover(null)
       clearActive(nodeSel, linkSel)
       onDeselect?.()
@@ -463,7 +446,7 @@ export default function GraphCanvas({
       zoomRef.current = null
       svg.on('.zoom', null)
       svg.selectAll('*').remove()
-      setRing(null)
+      setCtxMenu(null)
       setHover(null)
       setEdgeHover(null)
       window.clearTimeout(leaveTimerRef.current)
@@ -585,7 +568,7 @@ export default function GraphCanvas({
    *   新节点的初始位置放在宿主周围一圈（写进 posRef，重建时直接用）。
    */
   const expandNeighbors = useCallback((vid: number) => {
-    setRing(null)
+    setCtxMenu(null)
     const id = String(vid)
     const src = fullGraph
     if (!src) return
@@ -627,7 +610,7 @@ export default function GraphCanvas({
    *   注：只是从画布去掉，数据还在页面的 graph.json 里，重新解析/重建会回来。
    */
   const hideNode = useCallback((vid: number) => {
-    setRing(null)
+    setCtxMenu(null)
     const id = String(vid)
 
     // 当前可见图的度数
@@ -657,29 +640,6 @@ export default function GraphCanvas({
     if (selectedVid != null && removing.has(String(selectedVid))) onDeselect?.()
   }, [selectedVid, onDeselect])
 
-  /**
-   * ★ 扇区 + 图标位置：
-   *   图标必须画在**扇区中部**（角度中点、半径 (r1+r2)/2），
-   *   ⛔ 之前固定 translate(36 36) 把两个图标都堆在圆心，
-   *     叠成一颗白色星芒（所有者截图）。
-   */
-  const segments = useMemo(() => {
-    const midR = (RING_GEO.r1 + RING_GEO.r2) / 2
-    const mk = (
-      key: string, title: string, a1: number, a2: number, icon: string, run: (vid: number) => void,
-    ) => {
-      const mid = (a1 + a2) / 2
-      return {
-        key, title, a1, a2, icon, run,
-        ix: RING_GEO.c + Math.cos(mid) * midR,
-        iy: RING_GEO.c + Math.sin(mid) * midR,
-      }
-    }
-    return [
-      mk('expand', '显示邻居', -Math.PI / 2 + 0.18, Math.PI / 2 - 0.18, 'M12 5v14M5 12h14', expandNeighbors),
-      mk('hide', '隐藏节点', Math.PI / 2 + 0.18, Math.PI * 1.5 - 0.18, 'M2 2l20 20M2 22L22 2', hideNode),
-    ]
-  }, [expandNeighbors, hideNode])
 
   return (
     <div
@@ -690,51 +650,42 @@ export default function GraphCanvas({
         ref={svgRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
       />
+        {ctxMenu && (
+          <div
+            style={{
+              position: 'fixed',
+              left: ctxMenu.x, top: ctxMenu.y,
+              zIndex: 1000,
+              background: 'var(--background-primary, #222)',
+              border: '1px solid var(--background-modifier-border, #444)',
+              borderRadius: 6,
+              boxShadow: '0 4px 16px rgba(0,0,0,.3)',
+              padding: '4px 0',
+              minWidth: 140,
+              fontSize: 12,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {[
+              { label: '打开源码', run: () => onOpenCode?.(ctxMenu.vid), has: !!onOpenCode },
+              { label: '写小结', run: () => onWriteSummary?.(ctxMenu.vid), has: !!onWriteSummary },
+              { label: '标注知识点', run: () => onAnnotateConcepts?.(ctxMenu.vid), has: !!onAnnotateConcepts },
+              { label: '加入学习路径', run: () => onAddToPath?.(ctxMenu.vid), has: !!onAddToPath },
+              { label: '显示邻居', run: () => expandNeighbors(ctxMenu.vid), has: true },
+              { label: '隐藏节点', run: () => hideNode(ctxMenu.vid), has: true },
+              { label: '聚焦节点', run: () => onSelect(ctxMenu.vid), has: true },
+            ].filter((it) => it.has).map((it) => (
+              <div
+                key={it.label}
+                style={{ padding: '5px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--background-modifier-hover, #333)' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                onClick={() => { it.run(); setCtxMenu(null) }}
+              >{it.label}</div>
+            ))}
+          </div>
+        )}
 
-      {ring && (
-        <svg
-          className="node-ring"
-          style={{
-            position: 'absolute',
-            left: ring.x,
-            top: ring.y,
-            width: 96,
-            height: 96,
-            transform: `translate(-50%, -50%) scale(${ringScale})`,
-            zIndex: 20,
-            overflow: 'visible',
-          }}
-        >
-          {segments.map((s) => (
-            <g key={s.key}>
-              <path
-                d={ringArcPath(s.a1, s.a2)}
-                /* ★ 灰白半透明（所有者要求）：白底 + 浅灰描边 + 投影，浮在图上不刺眼 */
-                fill="rgba(255,255,255,0.92)"
-                stroke="rgba(148,163,184,0.9)"
-                strokeWidth={1}
-                style={{
-                  cursor: 'pointer',
-                  filter: 'drop-shadow(0 2px 8px rgba(15,23,42,0.18))',
-                }}
-                onClick={(e) => { e.stopPropagation(); s.run(ring.vid) }}
-              >
-                <title>{s.title}</title>
-              </path>
-              <path
-                d={s.icon}
-                fill="none"
-                /* 深灰图标：白底上清晰，且不抢节点颜色 */
-                stroke="#475569"
-                strokeWidth={2.6}
-                strokeLinecap="round"
-                style={{ pointerEvents: 'none' }}
-                transform={`translate(${s.ix - 6.6} ${s.iy - 6.6}) scale(0.55)`}
-              />
-            </g>
-          ))}
-        </svg>
-      )}
 
       {hover && (
         <NodeHoverCard

@@ -71,19 +71,19 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
           minWidth: 0,
         }}
     >
-      <div
-        style={{
-          flex: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--card-border)',
-        }}
-      >
-        {/* ★ 目录面板已在 Explorer 里分区，这里显示项目名更有用（⛔ 不再重复「目录」） */}
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-          {kind === 'explorer' ? projectRef : TITLE[kind]}
-        </span>
+      {/* ★ 目录面板不需要标题行（所有者：「有信息行了，没必要整那么多」）；
+          收起面板点 Ribbon 上同一个图标即可 */}
+      {kind !== 'explorer' && (
+        <div
+          style={{
+            flex: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            padding: '8px 12px',
+            borderBottom: '1px solid var(--card-border)',
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{TITLE[kind]}</span>
         {kind === 'thinking' ? (
           /* ★ 所有者：「不是打开思考模式，而是新建白板，逻辑跟笔记是一样的」⚠ */
           <button
@@ -119,7 +119,8 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
             <X size={14} />
           </button>
         )}
-      </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
           {kind === 'explorer' && !codeData && (

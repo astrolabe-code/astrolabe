@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import {FolderTree,
+import {
   ChevronDown,
   ChevronUp,
   List,
@@ -34,7 +34,6 @@ import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
-import Explorer from '../components/layout/Explorer'
 import RightSidebar, { type UpperPanel } from '../components/layout/RightSidebar'
 import { useCodeData } from '../components/code/useCodeData'
 import LearningPathPanel from '../components/graph/LearningPathPanel'
@@ -112,7 +111,6 @@ export default function ProjectGraphPage() {
   const [showAllNodes, setShowAllNodes] = useState(false)
   // ★ 代码工作区
   const [codeOpen, setCodeOpen] = useState(false)
-  const [explorerOpen, setExplorerOpen] = useState(true)
   const [upperPanel, setUpperPanel] = useState<UpperPanel>('code')
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
@@ -320,6 +318,12 @@ export default function ProjectGraphPage() {
   }, [g, selectedVid])
   const codeData = useCodeData(projectRef, selected)
 
+  // ★ 把文件树/源码数据挂到 ribbonBus ⇒ 全局「目录」面板与右栏共享同一份
+  useEffect(() => {
+    patchRibbon({ codeData })
+    return () => clearRibbon(['codeData'])
+  }, [codeData])
+
   // ★★ 执行流：点某条链 → 高亮链上节点（传空数组清除）
   const [flowVids, setFlowVids] = useState<number[]>([])
   // ★ 当前高亮的是「哪一条」—— 社区与执行流共用一个，避免两边都显示选中但只亮一种
@@ -448,13 +452,6 @@ export default function ProjectGraphPage() {
       {/* ★★★ 2026-11-05：顶栏工具条改用公共组件 PageBar（所有页面统一）⚠ */}
       <PageBar>
         <RailButton
-          icon={<FolderTree size={13} />}
-          label="目录"
-          title={explorerOpen ? '收起左侧目录' : '展开左侧目录'}
-          active={explorerOpen}
-          onClick={() => setExplorerOpen((v) => !v)}
-        />
-        <RailButton
           icon={<List size={13} />}
           label="列表"
           title="回到节点列表（可以从头找）"
@@ -516,27 +513,6 @@ export default function ProjectGraphPage() {
             : {}),
         }}
       >
-          {/* ★★ 外层 SplitPane：左栏目录（可折叠/可拖动） */}
-          <SplitPane
-            fixed="left"
-            initial={240}
-            min={180}
-            otherMin={620}
-            collapsed={!explorerOpen}
-            collapsedSide="left"
-          >
-            <Explorer
-              projectRef={projectRef}
-              tree={codeData.tree}
-              treeError={codeData.treeError}
-              expanded={codeData.expanded}
-              onToggleDir={codeData.toggleDir}
-              activePath={codeData.activePath}
-              onPickFile={codeData.pickFile}
-              onOpenNote={(n) => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`)}
-              onNewNote={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/new${selected ? `?node=${selected.vid}` : ''}`)}
-            />
-
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
         <SplitPane
           containerRef={mainRef}
@@ -846,7 +822,6 @@ export default function ProjectGraphPage() {
         </div>
         )}
         </SplitPane>
-          </SplitPane>
 
         {/* ★★★ **托底状态条**（* 所有者：「我页面底下也有一块的，你写的界面没了，
             整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}

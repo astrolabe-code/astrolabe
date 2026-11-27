@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { personalApi, type BoardItem } from '../api/personal'
 import { errorMessage } from '../api/errors'
 import ConfirmDialog from './ui/ConfirmDialog'
+import Explorer from './layout/Explorer'
 import { ribbonActions, subscribeRibbon, type PanelKind } from '../lib/ribbonBus'
 import { closeTab, openTab } from '../lib/tabBus'
 
@@ -16,6 +17,7 @@ interface RibbonPanelProps {
 const TITLE: Record<PanelKind, string> = {
   search: '搜索',
   thinking: '思考模式',
+    explorer: '目录',
 }
 
 /**
@@ -29,6 +31,7 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   const m = pathname.match(/^\/p\/([^/]+)/)
   const projectRef = m ? decodeURIComponent(m[1]) : ''
   const curVid = useSyncExternalStore(subscribeRibbon, () => ribbonActions().currentNodeVid)
+  const codeData = useSyncExternalStore(subscribeRibbon, () => ribbonActions().codeData)
 
   /** ★ 搜索结果跳笔记：命中里就有标题，直接拿它开标签 */
   const go = (path: string, title?: string) => {
@@ -117,6 +120,26 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          {kind === 'explorer' && !codeData && (
+            <div style={{ padding: 20, fontSize: 12.5, color: 'var(--text-muted, #94a3b8)', lineHeight: 1.8 }}>
+              目录会在打开图谱页后出现。
+              <br />
+              <span style={{ fontSize: 11 }}>图谱页注册文件树与源码数据，这里与右侧代码栏共享。</span>
+            </div>
+          )}
+          {kind === 'explorer' && codeData && (
+            <Explorer
+              projectRef={projectRef}
+              tree={codeData.tree}
+              treeError={codeData.treeError}
+              expanded={codeData.expanded}
+              onToggleDir={codeData.toggleDir}
+              activePath={codeData.activePath}
+              onPickFile={codeData.pickFile}
+              onOpenNote={(n) => go(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`, n.title)}
+              onNewNote={() => go(`/p/${encodeURIComponent(projectRef)}/notes/new?node=${curVid ?? 0}`, '新笔记')}
+            />
+          )}
         {kind === 'search' && <SearchPane onNavigate={go} />}
         {kind === 'thinking' && (
           <ThinkingPane projectRef={projectRef} curVid={curVid} onOpen={openBoard} />

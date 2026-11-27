@@ -2,6 +2,7 @@ import { useSyncExternalStore, useState, type ReactNode } from 'react'
 import {
   Copy,
   FolderOpen,
+    FolderTree,
   Lightbulb,
   Maximize,
   MoreHorizontal,
@@ -113,6 +114,15 @@ export default function Ribbon({ active, onToggle }: RibbonProps) {
         zIndex: 40,
       }}
     >
+        <Item
+          icon={<FolderTree size={ICON} strokeWidth={1.5} />}
+          label="目录 · 打开文件树与笔记列表"
+          selected={active === 'explorer'}
+          onClick={() => {
+            setMenu(false)
+            onToggle('explorer')
+          }}
+        />
       <Item
         icon={<Search size={ICON} strokeWidth={1.5} />}
         label="搜索 · 打开功能面板"

@@ -1,3 +1,5 @@
+import type { CodeData } from '../components/code/useCodeData'
+
 /**
  * ★★ ribbon ↔ 当前工作区的轻量桥接
  *
@@ -19,6 +21,8 @@ export interface RibbonActions {
   closePanel?: () => void
   createNote?: () => void
   openPath?: (path: string) => void
+  /** ★ 图谱页共享的文件树/源码数据（RibbonPanel 的目录面板要用）⚠ */
+  codeData?: CodeData
 }
 
 let current: RibbonActions = {}
@@ -51,4 +55,4 @@ export function subscribeRibbon(l: () => void): () => void {
   }
 }
 
-export type PanelKind = 'search' | 'thinking'
+export type PanelKind = 'search' | 'thinking' | 'explorer'

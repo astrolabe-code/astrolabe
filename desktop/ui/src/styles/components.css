@@ -227,11 +227,6 @@ main, .wrap { position: relative; z-index: 1; margin-inline: auto; }
   box-shadow: var(--shadow-card);
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
-.card--flat {
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-}
 .card.hoverable:hover {
   border-color: var(--card-border-hover);
   transform: translateY(-3px);

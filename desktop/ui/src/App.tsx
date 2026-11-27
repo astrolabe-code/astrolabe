@@ -9,7 +9,7 @@ import ProjectPage from './pages/ProjectPage'
 import SettingsPage from './pages/SettingsPage'
 import Ribbon from './components/Ribbon'
 import RibbonPanel from './components/RibbonPanel'
-import SplitPane from './components/SplitPane'
+import WorkbenchShell from './components/layout/WorkbenchShell'
 import type { PanelKind } from './lib/ribbonBus'
 import { patchRibbon } from './lib/ribbonBus'
 
@@ -49,33 +49,13 @@ export default function App() {
       {/* ★ 「写一笔」只在首页出现：进项目后已经能看到节点，用标签栏的 ＋ 新建即可 */}
       {location.pathname === '/' && <QuickNote />}
 
-      {/* ★★★ 四分页 = 二层 SplitPane 嵌套（外层 ribbon │ 内层）
-          · 外层 ribbon = 图标栏（36px 固定，VS Code Activity Bar）
-          · 内层 = RibbonPanel（可拖宽窄，VS Code Side Bar）│ 内容区
-          · 面板收起走 collapsed 接口（点同一个图标开关） */}
-      <SplitPane
-        fixed="left"
-        initial={36}
-        min={36}
-        otherMin={320}
-        resizable={false}
-        divider={false}
-      >
-        <Ribbon active={panel} onToggle={togglePanel} />
-        <SplitPane
-          fixed="left"
-          initial={260}
-          min={200}
-          otherMin={320}
-          collapsed={!panel}
-          collapsedSide="left"
+        {/* ★★★ 工作台外壳：活动栏（固定 36）/ 侧边栏（可拖）/ 内容区。
+            · 语义集中在 WorkbenchShell，页面只负责路由
+            · 活动栏不可拖 ⇒ 普通 div；只有侧栏那条线用 SplitPane */}
+        <WorkbenchShell
+          activityBar={<Ribbon active={panel} onToggle={togglePanel} />}
+          sideBar={panel ? <RibbonPanel kind={panel} onClose={() => setPanel(null)} /> : null}
         >
-          {/* ⚠ panel 为 null 时这一栏被 SplitPane 整块隐藏（不会挂载、不会取数），
-              兜底 kind 只为满足类型 */}
-            <RibbonPanel kind={panel ?? 'search'} onClose={() => setPanel(null)} />
-          {/* ★ 只让内容区滚：标题栏、ribbon、功能面板都固定不动。
-              .app-scroll 把滚动条滑块隐藏（滚轮 / 触控板仍可滚） */}
-          <div className="app-scroll" style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}>
       <Routes>
         <Route path="/" element={<PersonalHome />} />
 
@@ -110,9 +90,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-          </div>
-        </SplitPane>
-      </SplitPane>
+          </WorkbenchShell>
     </div>
   )
 }

@@ -28,9 +28,10 @@ interface SplitPaneProps {
   /** 可拖拽那一栏的最小宽度 */
   min: number
   /** 另一栏的最小宽度（用来算动态上限）
-   *  ⚠ 嵌套分栏时这里要传「另一侧整个子树的最小宽之和」，
-   *    否则外层拖到最右会把内层挤得比它自己的固定栏还窄 */
-  otherMin: number
+   *  · 传了 ⇒ 用它和「容器 45%」取小；
+   *  · ⛔ 不传 ⇒ 直接用「容器 45%」当预算（嵌套时不用人肉累加子树最小值）
+   *  ⚠ 嵌套分栏时若内层有硬性下限，仍建议传「另一侧子树最小宽之和」 */
+  otherMin?: number
   /** 需要读容器尺寸的页面传入自己的 ref（图谱页窄屏抓手要用） */
   containerRef?: RefObject<HTMLDivElement>
   /** 只用于页面特有的差异（列表页的 alignItems）；通用布局组件自己写死 */
@@ -51,12 +52,15 @@ interface SplitPaneProps {
   /** 收起时隐藏哪一栏（默认隐藏固定宽那一栏 = 侧栏） */
   collapsedSide?: 'fixed' | 'left' | 'right'
 
-  /** 转上下分栏的**容器宽度**阈值 px（默认 520；⛔ 不是窗口宽度） */
+  /** 转上下分栏的**容器宽度**阈值 px（默认 520；⛔ 不是窗口宽度）
+   *  · 传 0 ⇒ 关闭自动堆叠（本来就是上下分栏、或窄屏由页面自己处理时用） */
   breakpoint?: number
   /** 分隔条是否可拖拽（默认 true；ribbon / 功能面板这种固定宽度栏传 false） */
   resizable?: boolean
   /** 是否画分隔线（默认 true；子栏自带 borderRight 时传 false 避免双线） */
   divider?: boolean
+  /** ★ 传了就自动持久化宽度到 localStorage（键名由调用方给，避免多处冲突） */
+  storageKey?: string
 }
 
 type StyledElement = ReactElement<{ style?: CSSProperties }>
@@ -70,8 +74,10 @@ type StyledElement = ReactElement<{ style?: CSSProperties }>
  *   ⇒ otherMin 改成「占比上限」：最多只保留容器的 45%，且不小于调用方给的
  *     绝对下限；这样每一层都留得出可拖空间。
  */
-function clampWidth(w: number, min: number, otherMin: number, inner: number) {
-  const budget = Math.min(otherMin, Math.floor(inner * 0.45))
+function clampWidth(w: number, min: number, otherMin: number | undefined, inner: number) {
+  const cap = Math.floor(inner * 0.45)
+  // ★ 不传 otherMin ⇒ 只受「容器 45%」约束（嵌套时免去人肉累加子树最小宽）
+  const budget = otherMin == null ? cap : Math.min(otherMin, cap)
   const max = Math.max(min, inner - HANDLE_WIDTH - budget)
   return Math.min(max, Math.max(min, w))
 }
@@ -124,10 +130,20 @@ export default function SplitPane({
   breakpoint = 520,
   resizable = true,
   divider = true,
+  storageKey,
 }: SplitPaneProps) {
   const innerRef = useRef<HTMLDivElement>(null)
   const ref = containerRef ?? innerRef
-  const [width, setWidth] = useState(initial)
+  const [width, setWidth] = useState(() => {
+    if (!storageKey) return initial
+    try {
+      const n = Number(localStorage.getItem(storageKey))
+      if (Number.isFinite(n) && n > 0) return Math.max(min, n)
+    } catch {
+      /* 隐私模式等读不到 ⇒ 用默认值 */
+    }
+    return initial
+  })
   /**
    * ★★ 2026-11-11 修「把手都不见了」：断点必须看**容器宽度**，⛔ 不是窗口宽度。
    *   嵌套到第 4 层时容器只有 500 多 px，但窗口可能有 1080px —— 用
@@ -136,9 +152,19 @@ export default function SplitPane({
    */
   const [innerWidth, setInnerWidth] = useState(0)
   /** 断点触发的自动上下（容器太窄） */
-  const autoStacked = innerWidth > 0 && innerWidth < breakpoint
+  const autoStacked = breakpoint > 0 && innerWidth > 0 && innerWidth < breakpoint
   /** 显式要求上下 或 自动上下 */
   const vertical = direction === 'vertical' || autoStacked
+
+  // ★ 宽度持久化：只在拖完 / 断点重算后落盘，⛔ 不跟每一次 pointermove
+  useEffect(() => {
+    if (!storageKey) return
+    try {
+      localStorage.setItem(storageKey, String(Math.round(width)))
+    } catch {
+      /* 写不进去就算了 */
+    }
+  }, [width, storageKey])
 
   useEffect(() => {
     const el = ref.current

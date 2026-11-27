@@ -170,7 +170,7 @@ export default function RightSidebar({
         fixed="right"
         initial={220}
         min={90}
-        otherMin={140}
+        breakpoint={0}
         collapsed={lowerCollapsed}
         collapsedSide="right"
       >

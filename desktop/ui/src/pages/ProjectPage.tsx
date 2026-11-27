@@ -229,8 +229,8 @@ export default function ProjectPage() {
         otherMin={320}
       >
         <div
-          className="card card--flat"
           style={{
+            background: 'var(--card)',
             padding: 12,
             display: 'flex',
             flexDirection: 'column',
@@ -314,10 +314,10 @@ export default function ProjectPage() {
         {/* ★★★ 右侧**始终是一整块白色面板**（* 所有者：「右边的写作区也没有白色
             背景填满，而且没有一开始就出现」）——
             · · ⛔ 不再依赖 NodePanel 自己画卡：* 没选节点时它返回空态、没有背景 ⚠
-            · · ★ 背景/边框/最小高度由这层统一给，* NodePanel 传 `flat` ✅ */}
+            · · ★ 背影与最小高度由这层给（⛔ 不是卡片：无边框/圆角/阴影），* NodePanel 传 `flat` ✅ */}
         <div
-          className="card card--flat"
           style={{
+            background: 'var(--card)',
             // ★ 高度由 SplitPane 的 stretch 撑满（⛔ 不再写死 100vh-96px）
             //   CodeWorkspace 的 height:100% 因此生效，切 tab 不会撑高页面
             minHeight: isNarrow ? 320 : 0,

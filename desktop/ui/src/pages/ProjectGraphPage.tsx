@@ -34,8 +34,8 @@ import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import GraphCanvas from '../components/graph/GraphCanvas'
-import Explorer from '../components/left/Explorer'
-import RightSidebar, { type UpperPanel } from '../components/right/RightSidebar'
+import Explorer from '../components/layout/Explorer'
+import RightSidebar, { type UpperPanel } from '../components/layout/RightSidebar'
 import { useCodeData } from '../components/code/useCodeData'
 import LearningPathPanel from '../components/graph/LearningPathPanel'
 
@@ -519,7 +519,8 @@ export default function ProjectGraphPage() {
         <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
           {explorerOpen && (
             <div style={{
-              width: 240, flex: 'none', minHeight: 0, minWidth: 0,
+              width: 240, flex: 'none', height: '100%', minHeight: 0, minWidth: 0,
+              overflow: 'hidden',
               borderRight: '1px solid var(--divider, #e2e8f0)',
             }}>
               <Explorer

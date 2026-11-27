@@ -42,9 +42,10 @@ function Section({
     <div style={{ borderBottom: '1px solid var(--divider, #eef2f7)' }}>
       <div
         style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
-          fontSize: 11, color: 'var(--text-muted, #64748b)', letterSpacing: '.3px',
+          display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+          fontSize: 11.5, fontWeight: 600, color: 'var(--text-sub, #475569)',
           cursor: 'pointer', userSelect: 'none',
+          background: 'var(--surface, #fafbfc)',
         }}
         onClick={() => setOpen((v) => !v)}
       >
@@ -91,13 +92,14 @@ export default function Explorer({
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg, #fff)' }}>
       <div style={{
-        height: 30, flex: 'none', display: 'flex', alignItems: 'center', gap: 6,
-        padding: '0 10px', borderBottom: '1px solid var(--divider, #eef2f7)',
-        fontSize: 11, color: 'var(--text-faint, #94a3b8)', letterSpacing: '.4px',
+        height: 32, flex: 'none', display: 'flex', alignItems: 'center', gap: 6,
+        padding: '0 10px', borderBottom: '1px solid var(--divider, #e2e8f0)',
+        fontSize: 12, fontWeight: 600, color: 'var(--text, #1f2937)',
+        background: 'var(--surface, #fafbfc)',
       }}>
-        <span>EXPLORER</span>
+        <span>目录</span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10 }}>{projectRef}</span>
+        <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-faint, #94a3b8)' }}>{projectRef}</span>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>

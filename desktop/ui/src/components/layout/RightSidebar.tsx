@@ -111,7 +111,7 @@ export default function RightSidebar({
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
       {/* ── 节点摘要（所有面板共用）── */}
       <div
         style={{

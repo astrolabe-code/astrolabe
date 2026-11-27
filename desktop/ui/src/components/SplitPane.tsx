@@ -277,8 +277,10 @@ export default function SplitPane({
           className={preserveChildStyle ? 'sp-pane' : 'sp-pane sp-pane--flat'}
           style={{
             ...size,
-            display: 'flex',
-            flexDirection: 'column',
+            // ★★ 只做「容器」：grid 的单个子项默认 stretch ⇒ 页面自动撑满，
+            //    子元素**不需要**写 width/height:100%（谁的地盘谁做主）
+            display: 'grid',
+            gridTemplate: '1fr / 1fr',
             overflow: 'hidden',
           }}
         >

@@ -60,17 +60,16 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
   }
 
   return (
-    <div
-      style={{
-        flexShrink: 0,
-        width: 260,
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--card, #fff)',
-        borderRight: '1px solid var(--card-border)',
-        minHeight: 0,
-      }}
+      <div
+        style={{
+          // ★ 尺寸交给 SplitPane 的容器（grid stretch 自动撑满），
+          //   这里只管内部纵向排版
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--card, #fff)',
+          minHeight: 0,
+          minWidth: 0,
+        }}
     >
       <div
         style={{

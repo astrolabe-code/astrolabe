@@ -829,6 +829,7 @@ body.page-hidden *::after { animation-play-state: paused !important; }
    自定义组件会丢弃 style prop ⇒ 宽度不生效。
    现在 SplitPane 自己包一层 wrapper，尺寸只在 wrapper 上，
    子元素保持原样。`--flat` 还原「抹掉卡片外观」的旧语义。 */
+/* 容器本身：尺寸由 SplitPane 注入；内容是 grid，自动撑满 */
 .sp-pane { min-width: 0; min-height: 0; }
 .sp-pane--flat > * {
   border: none !important;

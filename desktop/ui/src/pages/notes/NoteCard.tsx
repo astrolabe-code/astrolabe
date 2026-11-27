@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { GitBranch, Link2, Network, Pencil, Trash2 } from 'lucide-react'
 import type { Note } from '../../api/types'
 import { useUpdateNote } from '../../query/notes'
-import { kindMeta } from './kindMeta'
+import { kindMeta } from '../../lib/kindMeta'
 import { openTab } from '../../lib/tabBus'
 
 /**

@@ -1,12 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
-import QuickNote from './components/notes/QuickNote'
+import QuickNote from './pages/notes/QuickNote'
 import PersonalBar from './components/PersonalBar'
 import CommandPalette from './components/CommandPalette'
-import PersonalHome from './pages/PersonalHome'
-import ProjectPage from './pages/ProjectPage'
-import SettingsPage from './pages/SettingsPage'
+import PersonalHome from './pages/home/PersonalHome'
+import ProjectPage from './pages/project/ProjectPage'
+import SettingsPage from './pages/settings/SettingsPage'
 import Ribbon from './components/Ribbon'
 import RibbonPanel from './components/RibbonPanel'
 import WorkbenchShell from './components/layout/WorkbenchShell'
@@ -14,7 +14,7 @@ import type { PanelKind } from './lib/ribbonBus'
 import { patchRibbon } from './lib/ribbonBus'
 
 /** ★★ 图谱页懒加载 —— G6 是大件，只在打开图谱时才下载 ⚠ */
-const ProjectGraphPage = lazy(() => import('./pages/ProjectGraphPage'))
+const ProjectGraphPage = lazy(() => import('./pages/graph/ProjectGraphPage'))
 
 /**
  * ★★★ 个人版路由表（2026-11-05 从"双模式"里拆出来）

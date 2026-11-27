@@ -7,7 +7,7 @@ import {
   TriangleAlert,
   Zap,
 } from 'lucide-react'
-import type { NoteKind } from '../../api/types'
+import type { NoteKind } from '../api/types'
 
 /**
  * ★★ **笔记的 5 种「盒子」**（`B201` · 固定枚举）

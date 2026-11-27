@@ -8,8 +8,8 @@ import { useMemo, useState } from 'react'
 import type { Note, NoteKind } from '../../api/types'
 import type { FileTreeData, FileTreeNode } from '../../api/code'
 import { useNotes } from '../../query/notes'
-import { KIND_META, NOTE_KINDS } from '../notes/kindMeta'
-import FileTree from '../code/FileTree'
+import { KIND_META, NOTE_KINDS } from '../../lib/kindMeta'
+import FileTree from '../../pages/code/FileTree'
 
 interface ExplorerProps {
   projectRef: string

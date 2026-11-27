@@ -6,7 +6,7 @@ import { useAiChat, type ThinkStep } from '../../lib/useAiChat'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
-import MarkdownText from '../ui/MarkdownText'
+import MarkdownText from '../../components/ui/MarkdownText'
 
 /**
  * ★★ 鼠标悬停时的**节点浮窗**（图谱 / 节点列表共用）

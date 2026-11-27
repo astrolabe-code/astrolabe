@@ -7,24 +7,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { personalApi } from '../../api/personal'
 import type { FileTreeData, FileTreeNode, SourceFile } from '../../api/code'
+import type { CodeData } from '../../lib/codeData'
+
+export type { CodeData }
 import type { GraphNode } from '../../lib/mergeGraph'
 
 /** 默认只展开第一层目录（深层靠用户点开，避免几万文件一次铺开） */
 export function firstLevelDirs(items: FileTreeNode[]): Set<string> {
   return new Set(items.filter((n) => n.type === 'dir').map((n) => n.path))
-}
-
-export interface CodeData {
-  tree: FileTreeData | null
-  treeError: string
-  expanded: Set<string>
-  toggleDir: (path: string) => void
-  activePath: string
-  pickFile: (path: string) => void
-  source: SourceFile | null
-  sourceError: string
-  loading: boolean
-  focusLine: number | null
 }
 
 /**

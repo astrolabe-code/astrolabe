@@ -12,30 +12,30 @@ import {
   X,
   GitBranch,
 } from 'lucide-react'
-import type { GraphNode } from '../lib/mergeGraph'
-import { errorMessage } from '../api/errors'
-import CuratePanel from '../components/graph/CuratePanel'
-import { useFullGraph } from '../query/graph'
-import { useProject } from '../query/projects'
-import { useMediaQuery } from '../hooks/useMediaQuery'
-import { getMeteors } from '../lib/uiPrefs'
+import type { GraphNode } from '../../lib/mergeGraph'
+import { errorMessage } from '../../api/errors'
+import CuratePanel from './CuratePanel'
+import { useFullGraph } from '../../query/graph'
+import { useProject } from '../../query/projects'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { getMeteors } from '../../lib/uiPrefs'
 import {
   useAppendToPath,
   useReadingPath,
   useRemoveFromPath,
   useReplacePath,
-} from '../query/readingPath'
-import AppLayout from '../components/AppLayout'
-import { PageBar, RailButton } from '../components/PageBar'
-import SplitPane from '../components/SplitPane'
+} from '../../query/readingPath'
+import AppLayout from '../../components/AppLayout'
+import { PageBar, RailButton } from '../../components/PageBar'
+import SplitPane from '../../components/SplitPane'
 import { FileCode2 } from 'lucide-react'
-import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
-import Button from '../components/ui/Button'
-import EmptyState from '../components/ui/EmptyState'
-import GraphCanvas from '../components/graph/GraphCanvas'
-import RightSidebar, { type UpperPanel } from '../components/layout/RightSidebar'
-import { useCodeData } from '../components/code/useCodeData'
-import LearningPathPanel from '../components/graph/LearningPathPanel'
+import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
+import Button from '../../components/ui/Button'
+import EmptyState from '../../components/ui/EmptyState'
+import GraphCanvas from './GraphCanvas'
+import RightSidebar, { type UpperPanel } from './RightSidebar'
+import { useCodeData } from '../code/useCodeData'
+import LearningPathPanel from './LearningPathPanel'
 
 /**
  * ★ 图谱页（`D98` · AntV G6 · `D105` 学习路径 · `D107` 健壮性）
@@ -69,7 +69,7 @@ function initialBatch() {
 // ★★★ **稳定的空数组**（`B234`/`D105`）——* `|| []` 每次渲染都是新引用 ⇒
 //   * `pathVids`/`orderVids`/`view` 全变 ⇒* `GraphCanvas` 被反复重建 ⇒
 //   * 布局、流星、阶段通知**全部被打断**（* 实测踩到）⚠
-const EMPTY_ITEMS: import('../api/types').ReadingPathItem[] = []
+const EMPTY_ITEMS: import('../../api/types').ReadingPathItem[] = []
 const EMPTY_VIDS: number[] = []
 
 export default function ProjectGraphPage() {

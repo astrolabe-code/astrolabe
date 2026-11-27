@@ -4,7 +4,7 @@ import type { Note, NoteKind } from '../../api/types'
 import { useNotes } from '../../query/notes'
 import { errorMessage } from '../../api/errors'
 import NoteCard from './NoteCard'
-import { NOTE_KINDS, KIND_META } from './kindMeta'
+import { NOTE_KINDS, KIND_META } from '../../lib/kindMeta'
 
 /**
  * ★ 一个节点的笔记区（`F2` · D92）

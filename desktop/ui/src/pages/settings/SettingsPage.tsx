@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 
-import AppLayout from '../components/AppLayout'
-import { PageBar, RailButton } from '../components/PageBar'
-import PersonalUserSettings from '../components/settings/PersonalUserSettings'
-import PersonalProjectSettings from '../components/settings/PersonalProjectSettings'
-import { personalApi } from '../api/personal'
+import AppLayout from '../../components/AppLayout'
+import { PageBar, RailButton } from '../../components/PageBar'
+import PersonalUserSettings from './PersonalUserSettings'
+import PersonalProjectSettings from './PersonalProjectSettings'
+import { personalApi } from '../../api/personal'
 
 /**
  * ★★★ **个人版唯一的「设置」页面**（2026-11-06）

@@ -19,7 +19,7 @@ import { Search } from 'lucide-react'
 
 import type { GraphNode } from '../../lib/mergeGraph'
 import { useGraphNodes } from '../../query/graph'
-import Modal from '../ui/Modal'
+import Modal from '../../components/ui/Modal'
 
 interface AnchorPickerProps {
   open: boolean

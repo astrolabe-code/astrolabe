@@ -12,10 +12,10 @@
  */
 import { useState } from 'react'
 
-import MarkdownText from '../ui/MarkdownText'
+import MarkdownText from '../../components/ui/MarkdownText'
 
 import { streamCall } from '../../api/personal'
-import Modal from '../ui/Modal'
+import Modal from '../../components/ui/Modal'
 
 interface Props {
   projectRef?: string | null

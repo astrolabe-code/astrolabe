@@ -1,4 +1,4 @@
-import type { CodeData } from '../components/code/useCodeData'
+import type { CodeData } from './codeData'
 
 /**
  * ★★ ribbon ↔ 当前工作区的轻量桥接

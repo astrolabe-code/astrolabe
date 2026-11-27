@@ -19,10 +19,10 @@ import { PenLine } from 'lucide-react'
 
 import { clearResume, markResume, readResume, type ResumePoint } from '../../lib/resume'
 import { useCreateNote } from '../../query/notes'
-import { NOTE_KINDS, KIND_META } from './kindMeta'
+import { NOTE_KINDS, KIND_META } from '../../lib/kindMeta'
 import type { NoteKind } from '../../api/types'
 import AnchorPicker from './AnchorPicker'
-import Modal from '../ui/Modal'
+import Modal from '../../components/ui/Modal'
 
 export default function QuickNote() {
   const [open, setOpen] = useState(false)

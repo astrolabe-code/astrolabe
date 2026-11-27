@@ -15,9 +15,9 @@
  * ⛔ 文件树归全局 Explorer（Ribbon 面板）；本页不重复提供。
  */
 import { useNavigate } from 'react-router-dom'
-import NoteEditPage from '../NoteEditPage'
-import ThinkingBoard from '../../components/notes/ThinkingBoard'
-import NodePanel from '../../components/node/NodePanel'
+import NoteEditPage from '../notes/NoteEditPage'
+import ThinkingBoard from '../notes/ThinkingBoard'
+import NodePanel from './NodePanel'
 import { useNotes } from '../../query/notes'
 import type { GraphNode } from '../../lib/mergeGraph'
 

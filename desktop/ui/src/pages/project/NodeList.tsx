@@ -5,8 +5,8 @@ import { kindColor, kindKnown, kindLabel } from '../../lib/kindLabel'
 import { entriesFirst, isEntryNode } from '../../lib/entry'
 import NodeHoverCard from './NodeHoverCard'
 import { useGraphNodes } from '../../query/graph'
-import Button from '../ui/Button'
-import EmptyState from '../ui/EmptyState'
+import Button from '../../components/ui/Button'
+import EmptyState from '../../components/ui/EmptyState'
 import { useAiBusy } from '../../lib/aiBusy'
 
 /**

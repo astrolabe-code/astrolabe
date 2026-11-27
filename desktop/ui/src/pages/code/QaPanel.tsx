@@ -4,7 +4,7 @@ import { ArrowUp, Check, Copy, Info, Loader2, RefreshCw, Square, Trash2 } from '
 
 import { personalApi } from '../../api/personal'
 import { useAiChat, type QaItem, type QaUsage } from '../../lib/useAiChat'
-import MarkdownText from '../ui/MarkdownText'
+import MarkdownText from '../../components/ui/MarkdownText'
 
 /**
  * ★★ 问答区 = 界面层。所有问答能力来自 useAiChat 内核（零 JSX）；

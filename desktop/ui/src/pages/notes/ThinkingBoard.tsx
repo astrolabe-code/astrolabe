@@ -14,15 +14,15 @@ import {
   Save,
 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import Modal from '../ui/Modal'
-import Button from '../ui/Button'
+import Modal from '../../components/ui/Modal'
+import Button from '../../components/ui/Button'
 import type { Note, NoteKind } from '../../api/types'
 import { cardId, type CardInfo, type CardLink, type CardSearchHit } from '../../api/code'
 import { personalApi } from '../../api/personal'
 import type { BoardLayout } from '../../api/personal'
 import { ribbonActions } from '../../lib/ribbonBus'
 import { openTab, setTabTitle } from '../../lib/tabBus'
-import { NOTE_KINDS, kindMeta } from './kindMeta'
+import { NOTE_KINDS, kindMeta } from '../../lib/kindMeta'
 
 /**
  * ★★★ **思考模式**（`F2` 补充）—— 所有者原话：

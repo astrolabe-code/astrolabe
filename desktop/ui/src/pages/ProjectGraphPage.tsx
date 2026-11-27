@@ -28,7 +28,6 @@ import {
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
 import SplitPane from '../components/SplitPane'
-import CodeWorkspace from '../components/code/CodeWorkspace'
 import { FileCode2 } from 'lucide-react'
 import { patchRibbon, clearRibbon } from '../lib/ribbonBus'
 import Button from '../components/ui/Button'
@@ -110,7 +109,6 @@ export default function ProjectGraphPage() {
   // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
   const [showAllNodes, setShowAllNodes] = useState(false)
   // ★ 代码工作区
-  const [codeOpen, setCodeOpen] = useState(false)
   const [upperPanel, setUpperPanel] = useState<UpperPanel>('code')
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
@@ -463,13 +461,6 @@ export default function ProjectGraphPage() {
           title="改图：解析不准的地方在这里补"
           onClick={() => setCurateOpen(true)}
         />
-        <RailButton
-          icon={<FileCode2 size={13} />}
-          label="源码"
-          title="打开代码工作区（当前节点的源码 + 笔记）"
-          active={codeOpen}
-          onClick={() => setCodeOpen((v) => !v)}
-        />
         {/* ★★ 2026-11-08：原「工具」下拉拆成独立图标，全部直接排在左栏
             所有者：「工具点了，不要出现一个弹窗，把里面的按钮都拆到左栏」
             ⛔ 不再有 RailMenu 折叠项；开关态用 active（aria-pressed）显示 */}
@@ -708,10 +699,8 @@ export default function ProjectGraphPage() {
                   highlightVids={flowVids}
                   onSelect={setSelectedVid}
                   onDeselect={() => setSelectedVid(null)}
-                  onOpenCode={(vid) => {
-                    const node = view?.nodes.find((n) => n.vid === vid)
-                    if (node) { setSelectedVid(vid); setCodeOpen(true) }
-                  }}
+                  // ★ 全屏代码区已废弃 ⇒ 选中节点并把右栏切到「代码」
+                  onOpenCode={(vid) => { setSelectedVid(vid); setUpperPanel('code') }}
                   onAddToPath={(vid) => {
                     const node = view?.nodes.find((n) => n.vid === vid)
                     if (node) void addToPath(node)
@@ -871,23 +860,6 @@ export default function ProjectGraphPage() {
         canReparse={!(project.data as unknown as { is_blank?: boolean })?.is_blank}
         blank={!!(project.data as unknown as { is_blank?: boolean })?.is_blank}
       />
-      {/* ★★★ 代码工作区：占满内容区（顶栏仍在），关闭即回到图谱 ⚠ */}
-      {codeOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 'var(--nav-h, 40px) 0 0 0',
-            zIndex: 90,
-            background: 'var(--card, #fff)',
-          }}
-        >
-          <CodeWorkspace
-            projectRef={projectRef}
-            node={selected}
-            onClose={() => setCodeOpen(false)}
-          />
-        </div>
-      )}
     </AppLayout>
   )
 }

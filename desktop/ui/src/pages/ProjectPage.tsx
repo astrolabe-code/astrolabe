@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { FileCode2, Lock, Workflow } from 'lucide-react'
+import { Lock, Workflow } from 'lucide-react'
 import type { GraphNode } from '../lib/mergeGraph'
 import { errorMessage } from '../api/errors'
 import { useProject } from '../query/projects'
@@ -8,7 +8,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import AppLayout from '../components/AppLayout'
 import { PageBar, RailButton } from '../components/PageBar'
 import SplitPane from '../components/SplitPane'
-import CodeWorkspace from '../components/code/CodeWorkspace'
+import DetailPane from './project/DetailPane'
 import Button from '../components/ui/Button'
 import NodeList from '../components/node/NodeList'
 import PathProgress from '../components/graph/PathProgress'
@@ -110,7 +110,6 @@ export default function ProjectPage() {
   // ★★ 窄屏 ⇒ 单列（* 否则 320px 列表 + 60px 正文，挤成一长条）⚠
   const isNarrow = useMediaQuery('(max-width: 900px)')
   // ★ 代码工作区（顶栏「源码」按钮打开；关闭后回到原来的两栏）
-  const [codeOpen, setCodeOpen] = useState(false)
 
   // ★ 左右两栏 + 拖拽由 components/SplitPane 统一提供（⛔ 本页不再写第二套骨架）
 
@@ -191,13 +190,6 @@ export default function ProjectPage() {
             `/p/${encodeURIComponent(projectRef)}/graph` +
             (selected ? `?node=${selected.vid}` : ''),
           )}
-        />
-        <RailButton
-          icon={<FileCode2 size={13} />}
-          label="源码"
-          title="打开代码工作区（当前节点的源码 + 笔记）"
-          active={codeOpen}
-          onClick={() => setCodeOpen((v) => !v)}
         />
       </PageBar>
 
@@ -306,7 +298,6 @@ export default function ProjectPage() {
                 navigate(`/p/${encodeURIComponent(projectRef)}/graph?node=${n.vid}`)
               }
               selectVid={deepVid}
-              onOpenCode={() => setCodeOpen(true)}
             />
           </div>
         </div>
@@ -319,7 +310,7 @@ export default function ProjectPage() {
           style={{
             background: 'var(--card)',
             // ★ 高度由 SplitPane 的 stretch 撑满（⛔ 不再写死 100vh-96px）
-            //   CodeWorkspace 的 height:100% 因此生效，切 tab 不会撑高页面
+            //   右栏内部自己滚，不会把整页撑高
             minHeight: isNarrow ? 320 : 0,
             display: 'flex',
             flexDirection: 'column',
@@ -327,49 +318,21 @@ export default function ProjectPage() {
             overflow: 'hidden',
           }}
         >
-          {/* ★★★ 右栏直接贴**同一个** CodeWorkspace（文件树 / 代码·笔记 tab / 三枚按钮全都有）
-              ⚠ 空间窄就点右上角第一个按钮收起文件树 —— 那个按钮本来就是为这件事设计的 */}
-          <CodeWorkspace
-            projectRef={projectRef}
-            node={selected}
-            initialTab="notes"
-            noteView={
-              noteView
-                ? { ...noteView, nodeId: noteNodeId, parent: noteParent }
-                : undefined
-            }
-            boardView={boardView ?? undefined}
-            notePanel={
-              <NodePanel
-                projectRef={projectRef}
-                node={selected}
-                canWrite={canWrite}
-                flat
-                hideInfo
-              />
-            }
-          />
+            <DetailPane
+              projectRef={projectRef}
+              node={selected}
+              canWrite={canWrite}
+              noteView={
+                noteView
+                  ? { ...noteView, nodeId: noteNodeId, parent: noteParent }
+                  : undefined
+              }
+              boardView={boardView ?? undefined}
+            />
         </div>
       </SplitPane>
       </div>
 
-      {/* ★★★ 代码工作区：占满内容区（顶栏仍在），关闭即回到原两栏 ⚠ */}
-      {codeOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 'var(--nav-h, 40px) 0 0 0',
-            zIndex: 90,
-            background: 'var(--card, #fff)',
-          }}
-        >
-          <CodeWorkspace
-            projectRef={projectRef}
-            node={selected}
-            onClose={() => setCodeOpen(false)}
-          />
-        </div>
-      )}
       {/* ★★ 源码改动提示：只告知，⛔ 不重解析、⛔ 不改图 */}
       <Modal open={srcNotice} title="源码有改动" onClose={dismissSrcNotice} width={460}>
         <div style={{ fontSize: 12.5, lineHeight: 1.8 }}>

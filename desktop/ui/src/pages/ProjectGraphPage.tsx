@@ -516,26 +516,27 @@ export default function ProjectGraphPage() {
             : {}),
         }}
       >
-        <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-          {explorerOpen && (
-            <div style={{
-              width: 240, flex: 'none', height: '100%', minHeight: 0, minWidth: 0,
-              overflow: 'hidden',
-              borderRight: '1px solid var(--divider, #e2e8f0)',
-            }}>
-              <Explorer
-                projectRef={projectRef}
-                tree={codeData.tree}
-                treeError={codeData.treeError}
-                expanded={codeData.expanded}
-                onToggleDir={codeData.toggleDir}
-                activePath={codeData.activePath}
-                onPickFile={codeData.pickFile}
-                onOpenNote={(n) => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`)}
-                onNewNote={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/new${selected ? `?node=${selected.vid}` : ''}`)}
-              />
-            </div>
-          )}
+          {/* ★★ 外层 SplitPane：左栏目录（可折叠/可拖动） */}
+          <SplitPane
+            fixed="left"
+            initial={240}
+            min={180}
+            otherMin={620}
+            collapsed={!explorerOpen}
+            collapsedSide="left"
+            preserveChildStyle
+          >
+            <Explorer
+              projectRef={projectRef}
+              tree={codeData.tree}
+              treeError={codeData.treeError}
+              expanded={codeData.expanded}
+              onToggleDir={codeData.toggleDir}
+              activePath={codeData.activePath}
+              onPickFile={codeData.pickFile}
+              onOpenNote={(n) => navigate(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`)}
+              onNewNote={() => navigate(`/p/${encodeURIComponent(projectRef)}/notes/new${selected ? `?node=${selected.vid}` : ''}`)}
+            />
 
         {/* ★ 主区 **不留 gap**：* 间距全给分隔条，* 否则 12 + 6 会空出一条大缝 ⚠ */}
         <SplitPane
@@ -846,7 +847,7 @@ export default function ProjectGraphPage() {
         </div>
         )}
         </SplitPane>
-        </div>
+          </SplitPane>
 
         {/* ★★★ **托底状态条**（* 所有者：「我页面底下也有一块的，你写的界面没了，
             整个画布都是悬空的」）——* 一条固定高度，占住底部，画布不再悬空 ⚠ */}

@@ -229,7 +229,7 @@ export default function ProjectPage() {
         otherMin={320}
       >
         <div
-          className="card"
+          className="card card--flat"
           style={{
             padding: 12,
             display: 'flex',
@@ -316,7 +316,7 @@ export default function ProjectPage() {
             · · ⛔ 不再依赖 NodePanel 自己画卡：* 没选节点时它返回空态、没有背景 ⚠
             · · ★ 背景/边框/最小高度由这层统一给，* NodePanel 传 `flat` ✅ */}
         <div
-          className="card"
+          className="card card--flat"
           style={{
             // ★ 高度由 SplitPane 的 stretch 撑满（⛔ 不再写死 100vh-96px）
             //   CodeWorkspace 的 height:100% 因此生效，切 tab 不会撑高页面

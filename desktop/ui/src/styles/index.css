@@ -593,7 +593,7 @@ a.profile-avatar:active {
    ========================================================================== */
 
 /* ★★ 2026-11-11：骨架交给 SplitPane，DOM 顺序即视觉顺序（纸 → 大纲）。
-   ⚠ 纸的类别色描边由 JSX inline style 提供，SplitPane 传了 preserveChildStyle */
+   ⚠ 纸的类别色描边由 JSX inline style 提供（SplitPane 不碰子元素样式） */
 .note-edit-layout > .note-edit-rail {
   position: static;
   align-self: stretch;

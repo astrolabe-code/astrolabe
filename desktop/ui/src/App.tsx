@@ -60,7 +60,6 @@ export default function App() {
         otherMin={320}
         resizable={false}
         divider={false}
-        preserveChildStyle
       >
         <Ribbon active={panel} onToggle={togglePanel} />
         <SplitPane

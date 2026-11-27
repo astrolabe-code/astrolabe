@@ -227,6 +227,11 @@ main, .wrap { position: relative; z-index: 1; margin-inline: auto; }
   box-shadow: var(--shadow-card);
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
+.card--flat {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
 .card.hoverable:hover {
   border-color: var(--card-border-hover);
   transform: translateY(-3px);
@@ -829,10 +834,6 @@ body.page-hidden *::after { animation-play-state: paused !important; }
    自定义组件会丢弃 style prop ⇒ 宽度不生效。
    现在 SplitPane 自己包一层 wrapper，尺寸只在 wrapper 上，
    子元素保持原样。`--flat` 还原「抹掉卡片外观」的旧语义。 */
-/* 容器本身：尺寸由 SplitPane 注入；内容是 grid，自动撑满 */
+/* SplitPane 的栏容器：只承载尺寸（grid 让子项自动撑满），
+   ⛔ 不碰子元素的边框/圆角/阴影 —— 外观完全由页面自己决定 */
 .sp-pane { min-width: 0; min-height: 0; }
-.sp-pane--flat > * {
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}

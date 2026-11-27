@@ -591,7 +591,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
           · · 折叠状态记在本地，下次打开还是收着的 ⚠
           · · 2026-11-09 目录移到右边（CSS 交换列 + order，DOM 顺序不变） */}
       {/* ★★ 2026-11-11：内层改用统一的 SplitPane（嵌套二分页）
-          · preserveChildStyle 必须开：纸的类别色描边不能被组件抹掉
           · 折叠走 collapsed 接口；隐藏按钮仍用顶栏「大纲」/ 面板 × */}
       <SplitPane
         className="note-edit-layout"
@@ -600,7 +599,6 @@ export default function NoteEditPage(embedded?: NoteEditEmbeddedProps) {
         min={180}
         otherMin={240}
         collapsed={tocFolded}
-        preserveChildStyle
       >
         {/* ★ 2026-11-11（所有者：「外面这个橙色框不要了，看着很怪」）
             ⛔ 去掉类别色描边（2px + 同色淡光）：贴边分页后纸已是平铺面板，

@@ -378,7 +378,7 @@ export default function CodeWorkspace({
 
       {/* ★★ 2026-11-11：外层也改用 SplitPane ⇒ 与内层 note 页嵌套成三分页。
           · 文件树仍是 treeOpen 控制，但走 collapsed 接口（整块不渲染）
-          · preserveChildStyle：文件树自己的 display:flex 列布局要保留 */}
+      */}
       <SplitPane
         fixed="left"
         initial={240}
@@ -386,7 +386,6 @@ export default function CodeWorkspace({
         otherMin={320}
         collapsed={!treeOpen}
         collapsedSide="left"
-        preserveChildStyle
       >
         <div
           style={{

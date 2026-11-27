@@ -232,7 +232,7 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
       {/* ★★ 2026-11-11：内层改用统一的 SplitPane（嵌套二分页）
           · DOM 顺序 = children 顺序：纸在左、大纲在右，⛔ 不再靠 CSS order
           · 折叠走 collapsed 接口；隐藏按钮仍用顶栏「大纲」/ 面板 ×
-          · preserveChildStyle：纸与大纲的边框由 CSS 管，别被组件抹掉 */}
+      */}
       <SplitPane
         className="note-layout"
         fixed="right"
@@ -240,7 +240,6 @@ export default function NotePage(embedded?: NoteEmbeddedProps) {
         min={200}
         otherMin={240}
         collapsed={tocFolded}
-        preserveChildStyle
       >
         <div className="note-article">
           

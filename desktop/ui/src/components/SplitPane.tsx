@@ -53,8 +53,6 @@ interface SplitPaneProps {
 
   /** 转上下分栏的**容器宽度**阈值 px（默认 520；⛔ 不是窗口宽度） */
   breakpoint?: number
-  /** 默认抹掉两栏的 border / 圆角 / 阴影；编辑页纸的类别色描边要保留 */
-  preserveChildStyle?: boolean
   /** 分隔条是否可拖拽（默认 true；ribbon / 功能面板这种固定宽度栏传 false） */
   resizable?: boolean
   /** 是否画分隔线（默认 true；子栏自带 borderRight 时传 false 避免双线） */
@@ -88,7 +86,7 @@ function clampWidth(w: number, min: number, otherMin: number, inner: number) {
  * ★ 2026-11-11：所有者「二分页和三分页，甚至四分页都可以在二分页的基础上
  *   嵌套出来」⇒ 不再做 N 栏容器，**嵌套本组件**即可表达任意多栏。
  *   因此新增 `collapsed` 等隐藏接口（按钮暂不实现），并支持嵌套所需的
- *   `breakpoint` / `preserveChildStyle` / `className` / `style` 透传。
+ *   `breakpoint` / `className` / `style` 透传。
  *
  * ```tsx
  * <SplitPane fixed="left" initial={300} min={220} otherMin={320}>
@@ -104,10 +102,10 @@ function clampWidth(w: number, min: number, otherMin: number, inner: number) {
  * 页面只提供"两栏内容 + 几个数字"，没有第二套骨架。
  * ```
  *
- * ★ 2026-11-27：不再用 `cloneElement` 往子元素塞样式（自定义组件会丢弃 style prop
- *   ⇒ 宽度不生效）。改为每栏自带一层 wrapper div，尺寸只在 wrapper 上。
- *   `preserveChildStyle` 的「抹掉卡片外观」语义改由 CSS 后代选择器实现
- *   （styles/components.css 的 `.sp-pane--flat`）。
+ * ★ 2026-11-27：**分页组件只管拖拽 + 占位容器**，⛔ 不管子元素长什么样。
+ *   · 每栏自带一层 wrapper（grid，子项 stretch ⇒ 页面自动撑满）
+ *   · 子元素一个 prop 都不用改、不用写 width/height
+ *   · 没有 preserveChildStyle 之类的外观开关（已删除）
  */
 export default function SplitPane({
   children,
@@ -124,7 +122,6 @@ export default function SplitPane({
   renderToggle,
   collapsedSide = 'fixed',
   breakpoint = 520,
-  preserveChildStyle = false,
   resizable = true,
   divider = true,
 }: SplitPaneProps) {
@@ -272,9 +269,7 @@ export default function SplitPane({
       return (
         <div
           key={side}
-          // ★ preserveChildStyle=false（默认）⇒ 抹掉子元素自带的卡片外观
-          //   （原来靠 cloneElement 注入内联样式实现，现在改用 CSS 后代选择器）
-          className={preserveChildStyle ? 'sp-pane' : 'sp-pane sp-pane--flat'}
+          className="sp-pane"
           style={{
             ...size,
             // ★★ 只做「容器」：grid 的单个子项默认 stretch ⇒ 页面自动撑满，

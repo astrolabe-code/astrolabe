@@ -91,16 +91,6 @@ export default function Explorer({
 
   return (
     <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'var(--bg, #fff)' }}>
-      <div style={{
-        height: 32, flex: 'none', display: 'flex', alignItems: 'center', gap: 6,
-        padding: '0 10px', borderBottom: '1px solid var(--divider, #e2e8f0)',
-        fontSize: 12, fontWeight: 600, color: 'var(--text, #1f2937)',
-        background: 'var(--surface, #fafbfc)',
-      }}>
-        <span>目录</span>
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-faint, #94a3b8)' }}>{projectRef}</span>
-      </div>
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {/* ── 代码 ── */}

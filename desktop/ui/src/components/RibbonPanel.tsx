@@ -80,7 +80,10 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
           borderBottom: '1px solid var(--card-border)',
         }}
       >
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{TITLE[kind]}</span>
+        {/* ★ 目录面板已在 Explorer 里分区，这里显示项目名更有用（⛔ 不再重复「目录」） */}
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+          {kind === 'explorer' ? projectRef : TITLE[kind]}
+        </span>
         {kind === 'thinking' ? (
           /* ★ 所有者：「不是打开思考模式，而是新建白板，逻辑跟笔记是一样的」⚠ */
           <button

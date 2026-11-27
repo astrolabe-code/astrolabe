@@ -805,20 +805,20 @@ export default function ProjectGraphPage() {
             </>
           )}
           {/* ★★ 右栏：上下分栏（上=代码/仿写/路径，下=知识点/社区/执行流/问答） */}
-          <RightSidebar
-            projectRef={projectRef}
-            node={selected}
-            upper={upperPanel}
-            onUpperChange={setUpperPanel}
-            source={codeData.source}
-            sourceError={codeData.sourceError}
-            loading={codeData.loading}
-            focusLine={codeData.focusLine}
-            onPickHighlight={pickHighlight}
-            activeKey={highlightKey}
-            nameOf={(v) => nameMap.get(v) || String(v)}
-            onPickNode={(v) => { setSelectedVid(v); setFocusVid(v) }}
-          />
+            <RightSidebar
+              projectRef={projectRef}
+              node={selected}
+              upper={upperPanel}
+              onUpperChange={setUpperPanel}
+              source={codeData.source}
+              sourceError={codeData.sourceError}
+              loading={codeData.loading}
+              focusLine={codeData.focusLine}
+              onPickHighlight={pickHighlight}
+              activeKey={highlightKey}
+              nameOf={(v) => nameMap.get(v) || String(v)}
+              onPickNode={(v) => { setSelectedVid(v); setFocusVid(v) }}
+            />
         </div>
         )}
         </SplitPane>

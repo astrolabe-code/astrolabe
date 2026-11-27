@@ -1,6 +1,5 @@
 import {
   Children,
-  cloneElement,
   isValidElement,
   useCallback,
   useEffect,
@@ -105,8 +104,10 @@ function clampWidth(w: number, min: number, otherMin: number, inner: number) {
  * 页面只提供"两栏内容 + 几个数字"，没有第二套骨架。
  * ```
  *
- * ⚠ 用 `cloneElement` 给两栏注入宽度样式，是为了**不额外包一层 div** ——
- *   列表页左栏的 `position:sticky`、图谱页右栏的边框/圆角都留在页面里照旧生效。
+ * ★ 2026-11-27：不再用 `cloneElement` 往子元素塞样式（自定义组件会丢弃 style prop
+ *   ⇒ 宽度不生效）。改为每栏自带一层 wrapper div，尺寸只在 wrapper 上。
+ *   `preserveChildStyle` 的「抹掉卡片外观」语义改由 CSS 后代选择器实现
+ *   （styles/components.css 的 `.sp-pane--flat`）。
  */
 export default function SplitPane({
   children,
@@ -175,7 +176,10 @@ export default function SplitPane({
         : (el?.clientWidth ?? window.innerWidth)
       const delta = isV ? e.clientY - drag.startY : e.clientX - drag.startX
       const base = isV ? drag.startH : drag.startW
-      setWidth(clampWidth(base + (fx === 'left' ? delta : -delta), mn, om, inner))
+      const next = clampWidth(base + (fx === 'left' ? delta : -delta), mn, om, inner)
+      // eslint-disable-next-line no-console
+      console.log('[SPLIT:move]', { delta, base, next, min: mn, otherMin: om, inner })
+      setWidth(next)
     }
     const onUp = () => {
       dragRef.current = null
@@ -203,6 +207,8 @@ export default function SplitPane({
   const onPointerDown = useCallback(
     (e: ReactPointerEvent) => {
       e.preventDefault()
+      // eslint-disable-next-line no-console
+      console.log('[SPLIT:down]', { direction, fixed, resizable, width, innerWidth })
       const el = ref.current
       dragRef.current = {
         startX: e.clientX,
@@ -228,28 +234,58 @@ export default function SplitPane({
       : collapsedSide
     : null
 
-  const decorate = (el: StyledElement | undefined, isLeft: boolean) => {
-    if (!el) return null
-    const side = isLeft ? 'left' : 'right'
-    if (side === hiddenSide) return null
-    const size: CSSProperties = hiddenSide || sole
-      ? { flex: 1, minWidth: 0, minHeight: 0, width: undefined, height: undefined }
-      : autoStacked
-        ? (direction === 'vertical' ? { height: '100%' } : { width: '100%' })
-        : fixed === side
-          ? (vertical
-              ? { height: width, flex: 'none', minHeight: 0, width: undefined }
-              : { width, flex: 'none', minWidth: 0, height: undefined })
-          : { flex: 1, minWidth: 0, minHeight: 0, width: undefined, height: undefined }
-    // ★★ 两栏是「贴边的平铺面板」，不是两张浮起来的卡片：
-    //   去掉 .card 的边框 / 圆角 / 阴影，中间只靠 1px 分隔线分界
-    const pane: CSSProperties = preserveChildStyle
-      ? {}
-      : { border: 'none', borderRadius: 0, boxShadow: 'none' }
-    return cloneElement(el, {
-      style: { ...(el.props.style || {}), ...size, ...pane, minHeight: 0 },
-    })
-  }
+  // eslint-disable-next-line no-console
+  console.log('[SPLIT:render]', {
+    direction, fixed, collapsed, collapsedSide, hiddenSide,
+    innerWidth, autoStacked, vertical, sole,
+    kids: kids.length, width, min, otherMin,
+    dividerWillRender: divider && !autoStacked && !hiddenSide && !sole && !!rightEl,
+    resizable,
+  })
+
+    /**
+     * ★★★ 给每一栏套一层**自己的** wrapper div，尺寸只作用在这层上。
+     *
+     * ⛔ 不再用 `cloneElement(el, { style })` 往子元素上塞样式 —— 那是隐式契约：
+     *   要求子元素把 style 透传到根 DOM。子元素是 <div> 时侥幸能用；是
+     *   <RibbonPanel /> / <RightSidebar /> 这类**自定义组件**时，React 只把
+     *   style 塞进 props，组件内部不往下传 ⇒ 宽度根本没生效（实测界面纹丝不动）。
+     *
+     * VS Code 的做法是子视图实现 layout(size) 接口、自己应用尺寸；
+     * 这里用 wrapper 表达同一件事：**谁的地盘谁做主**，子元素一个 prop 都不用改。
+     */
+    const decorate = (el: StyledElement | undefined, isLeft: boolean) => {
+      if (!el) return null
+      const side = isLeft ? 'left' : 'right'
+      if (side === hiddenSide) return null
+      const size: CSSProperties = hiddenSide || sole
+        ? { flex: 1, minWidth: 0, minHeight: 0 }
+        : autoStacked
+          ? (direction === 'vertical'
+              ? { height: '100%', minHeight: 0 }
+              : { width: '100%', minWidth: 0 })
+          : fixed === side
+            ? (vertical
+                ? { height: width, flex: 'none', minHeight: 0, minWidth: 0 }
+                : { width, flex: 'none', minWidth: 0, minHeight: 0 })
+            : { flex: 1, minWidth: 0, minHeight: 0 }
+      return (
+        <div
+          key={side}
+          // ★ preserveChildStyle=false（默认）⇒ 抹掉子元素自带的卡片外观
+          //   （原来靠 cloneElement 注入内联样式实现，现在改用 CSS 后代选择器）
+          className={preserveChildStyle ? 'sp-pane' : 'sp-pane sp-pane--flat'}
+          style={{
+            ...size,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {el}
+        </div>
+      )
+    }
 
   return (
     <div

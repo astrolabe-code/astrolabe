@@ -90,7 +90,7 @@ export default function Explorer({
   const total = notesQ.data?.length ?? 0
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg, #fff)' }}>
+    <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'var(--bg, #fff)' }}>
       <div style={{
         height: 32, flex: 'none', display: 'flex', alignItems: 'center', gap: 6,
         padding: '0 10px', borderBottom: '1px solid var(--divider, #e2e8f0)',

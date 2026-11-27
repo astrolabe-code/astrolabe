@@ -524,7 +524,6 @@ export default function ProjectGraphPage() {
             otherMin={620}
             collapsed={!explorerOpen}
             collapsedSide="left"
-            preserveChildStyle
           >
             <Explorer
               projectRef={projectRef}

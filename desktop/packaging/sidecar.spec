@@ -84,8 +84,6 @@ HIDDEN = [
     "projectstore",
     # code viewer: file tree / source read
     "source",
-    # 仿写：一个节点下多份代码卡
-    "imitation",
     # 卡片盒的链（深入 / 参见）
     "links",
     # ★ 图库：拓扑真相（LadybugDB 的二进制由 collect_all 收集）

@@ -42,7 +42,6 @@ import projectstore
 import notefile
 import store
 import source
-import imitation
 import links
 import board
 import graphdb
@@ -257,12 +256,10 @@ R_AICANCEL = re.compile(r"^/api/projects/([^/]+)/ai/cancel/$")
 R_EDGES = re.compile(r"^/api/projects/([^/]+)/edges/$")
 R_TREE = re.compile(r"^/api/projects/([^/]+)/tree/$")
 R_SOURCE = re.compile(r"^/api/projects/([^/]+)/source/$")
-R_IMITS = re.compile(r"^/api/projects/([^/]+)/imitations/$")
 R_CARD_LINKS = re.compile(r"^/api/cards/links/$")
 R_CARDS = re.compile(r"^/api/cards/$")
 R_CARD_PARENT = re.compile(r"^/api/cards/parent/$")
 R_CARD_REF = re.compile(r"^/api/cards/reference/$")
-R_IMIT = re.compile(r"^/api/projects/([^/]+)/imitation/$")
 R_BOARD = re.compile(r"^/api/projects/([^/]+)/board/([^/]+)/$")
 R_BOARDS = re.compile(r"^/api/projects/([^/]+)/boards/$")
 
@@ -664,56 +661,6 @@ def handle(method: str, raw_path: str, body: dict | None) -> tuple[int, dict]:
                 "node_vid": n.get("node_vid") or 0,
             }
         return ok({"cards": cards})
-
-    # ★★★ 仿写：一个节点下的多份代码卡（见 sidecar/imitation.py）⚠
-    #   · 只写 <项目数据目录>/imitations/ —— ⛔ 绝不碰用户源码目录
-    m = R_IMITS.match(path)
-    if m:
-        entry = projectstore.get(m.group(1))
-        if not entry or not entry.get("data"):
-            return bad("项目不存在", 404)
-        try:
-            vid = int(body.get("vid") or 0)
-            if method == "GET":
-                # ⛔ 仿写不参与卡片盒：不补 parent / links / children
-                return ok(imitation.list_items(entry["data"], vid))
-            if method == "POST":
-                return ok(
-                    imitation.create_item(
-                        entry["data"], vid, str(body.get("ext") or "txt")
-                    )
-                )
-            return bad("不支持的方法", 405)
-        except imitation.ImitationError as exc:
-            return bad(f"{exc.message}（{exc.code}）", 400)
-
-    m = R_IMIT.match(path)
-    if m:
-        entry = projectstore.get(m.group(1))
-        if not entry or not entry.get("data"):
-            return bad("项目不存在", 404)
-        try:
-            vid = int(body.get("vid") or 0)
-            name = str(body.get("name") or "")
-            if method == "GET":
-                return ok(imitation.read_item(entry["data"], vid, name))
-            if method == "PUT":
-                return ok(
-                    imitation.write_item(
-                        entry["data"], vid, name, str(body.get("text") or "")
-                    )
-                )
-            if method == "PATCH":
-                return ok(
-                    imitation.rename_item(
-                        entry["data"], vid, name, str(body.get("title") or "")
-                    )
-                )
-            if method == "DELETE":
-                return ok(imitation.remove_item(entry["data"], vid, name))
-            return bad("不支持的方法", 405)
-        except imitation.ImitationError as exc:
-            return bad(f"{exc.message}（{exc.code}）", 400)
 
     # ★★★ 思考白板：一个节点可挂多块白板，按**白板 id** 读写（见 sidecar/board.py）
     m = R_BOARD.match(path)

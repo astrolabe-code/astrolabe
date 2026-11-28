@@ -14,10 +14,9 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 
 import { closeTab, openTab, subscribeTabs, tabs } from '../lib/tabBus'
-import { ribbonActions } from '../lib/ribbonBus'
 
 const BTN = 26
 
@@ -91,16 +90,6 @@ export default function TabBar() {
   const m = currentPath.match(/\/p\/([^/]+)/)
   const projectRef = m ? m[1] : ''
 
-  // ★ 新建笔记：一律走真实路由并带上「当前 / 最近选中节点」
-  //   ⚠ 不用 ribbon 的 createNote 回调：它由 NoteSection 注册，在笔记页/白板页
-  //      会随组件卸载被清掉，那时兜底路径不带 ?node= ⇒ 新建页报「缺少节点信息」
-  const canCreate = !!projectRef
-  const createNote = () => {
-    if (!projectRef) return
-    const vid = ribbonActions().currentNodeVid
-    const q = vid != null ? `?node=${vid}` : ''
-    nav(`/p/${projectRef}/notes/new${q}`)
-  }
 
   const close = (path: string) => {
     const next = closeTab(path)
@@ -148,12 +137,6 @@ export default function TabBar() {
         })}
       </div>
 
-      <IconButton
-        label={canCreate ? '新建笔记' : '先打开一个项目才能写笔记'}
-        onClick={canCreate ? createNote : () => {}}
-      >
-        <Plus size={14} strokeWidth={1.6} />
-      </IconButton>
 
       <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
         <IconButton label="标签列表" onClick={() => setMenu((v) => !v)}>

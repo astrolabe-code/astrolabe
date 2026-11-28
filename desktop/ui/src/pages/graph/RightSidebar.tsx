@@ -1,8 +1,8 @@
 /**
  * 右栏：上下分栏（复用通用 SplitPane，⛔ 不自己写拖动）。
  *
- *   上 = 你正在读/写的东西（代码 / 学习路径）
- *   下 = 关于当前节点的信息（知识点 / 社区 / 执行流 / 问答）
+ *   上 = 代码（你正在读的东西）
+ *   下 = 关于当前节点的信息（知识点 / 社区 / 执行流 / 学习路径 / 问答）
  */
 import { useEffect, useState } from 'react'
 import { personalApi } from '../../api/personal'
@@ -15,14 +15,11 @@ import CommunityPanel from './CommunityPanel'
 import FlowPanel from './FlowPanel'
 import LearningPathPanel from './LearningPathPanel'
 
-export type UpperPanel = 'code' | 'path'
-export type LowerTab = 'concepts' | 'community' | 'flow' | 'qa'
+export type LowerTab = 'concepts' | 'community' | 'flow' | 'path' | 'qa'
 
 interface Props {
   projectRef: string
   node: GraphNode | null
-  upper: UpperPanel
-  onUpperChange: (p: UpperPanel) => void
   source: SourceFile | null
   sourceError: string
   loading: boolean
@@ -33,15 +30,11 @@ interface Props {
   onPickNode?: (vid: number) => void
 }
 
-const UPPER_LABEL: Record<UpperPanel, string> = {
-  code: '代码',
-  path: '学习路径',
-}
-
 const LOWER_LABEL: Record<LowerTab, string> = {
   concepts: '知识点',
   community: '社区',
   flow: '执行流',
+  path: '学习路径',
   qa: '问答',
 }
 
@@ -59,8 +52,6 @@ const tabStyle = (on: boolean) => ({
 export default function RightSidebar({
   projectRef,
   node,
-  upper,
-  onUpperChange,
   source,
   sourceError,
   loading,
@@ -172,29 +163,10 @@ export default function RightSidebar({
         collapsed={lowerCollapsed}
         collapsedSide="right"
       >
-        {/* 上半：代码 / 学习路径 */}
+        {/* 上半：代码（唯一内容，⛔ 不需要 tab） */}
         <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%' }}>
-          <div
-            style={{
-              height: 30,
-              flex: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 2,
-              padding: '0 8px',
-              borderBottom: '1px solid var(--divider, #eef2f7)',
-            }}
-          >
-            {(Object.keys(UPPER_LABEL) as UpperPanel[]).map((k) => (
-              <button key={k} type="button" onClick={() => onUpperChange(k)} style={tabStyle(upper === k)}>
-                {UPPER_LABEL[k]}
-              </button>
-            ))}
-          </div>
-
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            {upper === 'code' ? (
-              loading ? (
+            {loading ? (
                 <div style={{ padding: 20, fontSize: 12.5, color: 'var(--text-muted, #94a3b8)' }}>正在读取…</div>
               ) : sourceError ? (
                 <div style={{ padding: 20, fontSize: 12.5, color: 'var(--text-muted, #94a3b8)' }}>{sourceError}</div>
@@ -214,15 +186,6 @@ export default function RightSidebar({
                   <br />
                   <span style={{ fontSize: 11 }}>或从图谱里点节点，会自动定位到它所在行</span>
                 </div>
-              )
-            ) : (
-              <div style={{ padding: 10 }}>
-                <LearningPathPanel
-                  projectRef={projectRef}
-                  selectedVid={node?.vid ?? null}
-                  onPick={(vid) => onPickNode?.(vid)}
-                />
-              </div>
             )}
           </div>
         </div>
@@ -318,6 +281,14 @@ export default function RightSidebar({
                     nameOf={nameOf}
                     onPick={onPickHighlight}
                     activeKey={activeKey}
+                  />
+                </div>
+              ) : lower === 'path' ? (
+                <div style={{ padding: 10 }}>
+                  <LearningPathPanel
+                    projectRef={projectRef}
+                    selectedVid={node?.vid ?? null}
+                    onPick={(vid) => onPickNode?.(vid)}
                   />
                 </div>
               ) : (

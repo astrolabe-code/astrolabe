@@ -33,7 +33,7 @@ import { patchRibbon, clearRibbon } from '../../lib/ribbonBus'
 import Button from '../../components/ui/Button'
 import EmptyState from '../../components/ui/EmptyState'
 import GraphCanvas from './GraphCanvas'
-import RightSidebar, { type UpperPanel } from './RightSidebar'
+import RightSidebar from './RightSidebar'
 import DetailPane from '../project/DetailPane'
 import { useCodeData } from '../code/useCodeData'
 import LearningPathPanel from './LearningPathPanel'
@@ -134,7 +134,6 @@ export default function ProjectGraphPage() {
   // ★★★ 2026-11-05：**「显示全部」是开关**（所有者：「再点击一次要恢复没点显示全部之前显示的节点」）
   const [showAllNodes, setShowAllNodes] = useState(false)
   // ★ 代码工作区
-  const [upperPanel, setUpperPanel] = useState<UpperPanel>('code')
   const beforeShowAllRef = useRef<number | null>(null)
   const [pathOpen, setPathOpen] = useState(false)
   const [learnPathOpen, setLearnPathOpen] = useState(false)
@@ -741,7 +740,7 @@ export default function ProjectGraphPage() {
                   onSelect={setSelectedVid}
                   onDeselect={() => setSelectedVid(null)}
                   // ★ 全屏代码区已废弃 ⇒ 选中节点并把右栏切到「代码」
-                  onOpenCode={(vid) => { setSelectedVid(vid); setUpperPanel('code') }}
+                  onOpenCode={(vid) => setSelectedVid(vid)}
                   onAddToPath={(vid) => {
                     const node = view?.nodes.find((n) => n.vid === vid)
                     if (node) void addToPath(node)
@@ -850,8 +849,6 @@ export default function ProjectGraphPage() {
               <RightSidebar
                 projectRef={projectRef}
                 node={selected}
-                upper={upperPanel}
-                onUpperChange={setUpperPanel}
                 source={codeData.source}
                 sourceError={codeData.sourceError}
                 loading={codeData.loading}

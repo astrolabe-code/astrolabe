@@ -61,7 +61,7 @@ export default function DetailPane({
         boardId={boardView.boardId}
         notes={notesQ.data || []}
         focusCardId={boardView.focus}
-        onClose={() => nav(`/p/${encodeURIComponent(projectRef)}`)}
+        onClose={() => nav(`/p/${encodeURIComponent(projectRef)}/graph${node ? `?node=${node.vid}` : ''}`)}
       />
     )
   }

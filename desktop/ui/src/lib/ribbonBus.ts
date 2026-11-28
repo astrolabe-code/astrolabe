@@ -17,6 +17,8 @@ export interface RibbonActions {
   toggleCanvasFullscreen?: () => void
   /** ★ 当前选中节点的 vid（ProjectPage 注册；思考面板新建白板用）⚠ */
   currentNodeVid?: number
+  /** ★ 全局「选中节点」入口（图谱页注册；侧栏节点列表点一行时调用） */
+  selectNode?: (vid: number) => void
   /** ★ 白板打开时由 App 注册：收起左侧功能面板 */
   closePanel?: () => void
   createNote?: () => void

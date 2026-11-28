@@ -141,6 +141,8 @@ export default function RibbonPanel({ kind, onClose }: RibbonPanelProps) {
               onPickFile={codeData.pickFile}
               onOpenNote={(n) => go(`/p/${encodeURIComponent(projectRef)}/notes/${encodeURIComponent(n.ref)}`, n.title)}
               onNewNote={() => go(`/p/${encodeURIComponent(projectRef)}/notes/new?node=${curVid ?? 0}`, '新笔记')}
+              selectedVid={curVid ?? null}
+              onSelectNode={(vid) => ribbonActions().selectNode?.(vid)}
             />
           )}
         {kind === 'search' && <SearchPane onNavigate={go} />}

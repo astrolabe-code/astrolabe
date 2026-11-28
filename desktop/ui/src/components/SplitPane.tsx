@@ -334,10 +334,11 @@ export default function SplitPane({
           onMouseLeave={resizable ? () => setHover(false) : undefined}
           title={resizable ? (vertical ? '拖动调整高度' : '拖动调整宽度') : undefined}
           style={{
-            // ★ 垂直分栏：横条（高 1px、撑满宽）；水平分栏：竖条（宽 1px、撑满高）
+            // ★ 两个方向彻底分开：⛔ 不共用 min 值（竖向曾被 minHeight:24 撑成粗条）
+            flex: '0 0 auto',
             ...(vertical
-              ? { height: HANDLE_WIDTH, width: '100%', flexShrink: 0, alignSelf: 'stretch', minWidth: 24 }
-              : { width: HANDLE_WIDTH, height: undefined, flexShrink: 0, alignSelf: 'stretch', minHeight: 24 }),
+              ? { height: HANDLE_WIDTH, minHeight: HANDLE_WIDTH, width: '100%', minWidth: 0 }
+              : { width: HANDLE_WIDTH, minWidth: HANDLE_WIDTH, alignSelf: 'stretch', minHeight: 0 }),
             touchAction: 'none',
             margin: 0,
             position: 'relative',

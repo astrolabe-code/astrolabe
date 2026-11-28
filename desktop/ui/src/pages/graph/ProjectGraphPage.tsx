@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ChevronDown,
   ChevronUp,
@@ -34,6 +34,7 @@ import Button from '../../components/ui/Button'
 import EmptyState from '../../components/ui/EmptyState'
 import GraphCanvas from './GraphCanvas'
 import RightSidebar, { type UpperPanel } from './RightSidebar'
+import DetailPane from '../project/DetailPane'
 import { useCodeData } from '../code/useCodeData'
 import LearningPathPanel from './LearningPathPanel'
 
@@ -90,6 +91,30 @@ export default function ProjectGraphPage() {
   //   ⇒ 所有进入图谱的路径都有焦点（它 + 直接邻居），shownCount 一次确定，
   //     ⛔ 不会出现「先渲染15个再切换」导致的建图两次 ⚠
   const [sp] = useSearchParams()
+  const location = useLocation()
+  /**
+   * ★ 笔记 / 白板现在都在**本页右栏**打开（原 ProjectPage 已删除）。
+   *   URL 决定框里显示什么：阅读 / 编辑 / 新建 / 白板。
+   */
+  const noteView = (() => {
+    const p = location.pathname
+    if (!p.includes('/notes/')) return null
+    const noteId = decodeURIComponent(p.split('/notes/')[1]?.replace(/\/edit$/, '') ?? '')
+    if (p.endsWith('/notes/new')) return { mode: 'edit' as const, ref: null as string | null }
+    if (/\/notes\/[^/]+\/edit$/.test(p)) return { mode: 'edit' as const, ref: noteId || null }
+    return { mode: 'read' as const, ref: noteId || null }
+  })()
+  const noteNodeId = Number(sp.get('node') || 0)
+  const noteParent = sp.get('parent') || ''
+  const boardView = (() => {
+    const mm = location.pathname.match(/\/board\/([^/]+)$/)
+    if (!mm) return null
+    return {
+      boardId: decodeURIComponent(mm[1]),
+      nodeId: Number(sp.get('node') || 0),
+      focus: sp.get('focus') || undefined,
+    }
+  })()
   const urlVid = Number(sp.get('node') || 0) || null
   const navigate = useNavigate()
 
@@ -321,6 +346,22 @@ export default function ProjectGraphPage() {
     patchRibbon({ codeData })
     return () => clearRibbon(['codeData'])
   }, [codeData])
+
+  // ★ 侧栏「节点」分组点一行 ⇒ 选中 + 聚焦（与画布点击等价）
+  useEffect(() => {
+    patchRibbon({
+      selectNode: (vid: number) => {
+        setSelectedVid(vid)
+        setFocusVid(vid)
+      },
+    })
+    return () => clearRibbon(['selectNode'])
+  }, [])
+
+  // ★ 把当前选中节点同步给 ribbonBus（侧栏节点列表高亮 / 思考面板新建白板用）
+  useEffect(() => {
+    patchRibbon({ currentNodeVid: selectedVid ?? undefined })
+  }, [selectedVid])
 
   // ★★ 执行流：点某条链 → 高亮链上节点（传空数组清除）
   const [flowVids, setFlowVids] = useState<number[]>([])
@@ -794,20 +835,33 @@ export default function ProjectGraphPage() {
             </>
           )}
           {/* ★★ 右栏：上下分栏（上=代码/仿写/路径，下=知识点/社区/执行流/问答） */}
-            <RightSidebar
-              projectRef={projectRef}
-              node={selected}
-              upper={upperPanel}
-              onUpperChange={setUpperPanel}
-              source={codeData.source}
-              sourceError={codeData.sourceError}
-              loading={codeData.loading}
-              focusLine={codeData.focusLine}
-              onPickHighlight={pickHighlight}
-              activeKey={highlightKey}
-              nameOf={(v) => nameMap.get(v) || String(v)}
-              onPickNode={(v) => { setSelectedVid(v); setFocusVid(v) }}
-            />
+            {/* ★★ 右栏：有笔记/白板时为正文，否则是代码 + 节点信息上下分栏 */}
+            {noteView || boardView ? (
+              <DetailPane
+                projectRef={projectRef}
+                node={selected}
+                canWrite={canWrite}
+                noteView={
+                  noteView ? { ...noteView, nodeId: noteNodeId, parent: noteParent } : undefined
+                }
+                boardView={boardView ?? undefined}
+              />
+            ) : (
+              <RightSidebar
+                projectRef={projectRef}
+                node={selected}
+                upper={upperPanel}
+                onUpperChange={setUpperPanel}
+                source={codeData.source}
+                sourceError={codeData.sourceError}
+                loading={codeData.loading}
+                focusLine={codeData.focusLine}
+                onPickHighlight={pickHighlight}
+                activeKey={highlightKey}
+                nameOf={(v) => nameMap.get(v) || String(v)}
+                onPickNode={(v) => { setSelectedVid(v); setFocusVid(v) }}
+              />
+            )}
         </div>
         )}
         </SplitPane>

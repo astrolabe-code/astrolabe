@@ -5,7 +5,6 @@ import QuickNote from './pages/notes/QuickNote'
 import PersonalBar from './components/PersonalBar'
 import CommandPalette from './components/CommandPalette'
 import PersonalHome from './pages/home/PersonalHome'
-import ProjectPage from './pages/project/ProjectPage'
 import SettingsPage from './pages/settings/SettingsPage'
 import Ribbon from './components/Ribbon'
 import RibbonPanel from './components/RibbonPanel'
@@ -33,6 +32,19 @@ export default function App() {
   useEffect(() => {
     patchRibbon({ closePanel: () => setPanel(null) })
   }, [])
+  /** 图谱页懒加载 + 统一 fallback（项目内所有路由共用） */
+  const graphRoute = (
+    <Suspense
+      fallback={
+        <div className="faint" style={{ padding: 48, textAlign: 'center', fontSize: 13 }}>
+          正在加载图谱引擎…
+        </div>
+      }
+    >
+      <ProjectGraphPage />
+    </Suspense>
+  )
+
   return (
     /* ★★ 根层锁死一屏：⛔ 窗口本身不再滚动（否则标题栏会被滚走、
        最右侧还会露出一条 Win11 滚动条滑块）。滚动下放到内容区 div。 */
@@ -59,38 +71,23 @@ export default function App() {
       <Routes>
         <Route path="/" element={<PersonalHome />} />
 
-        <Route path="/p/:projectRef" element={<ProjectPage />} />
+        {/* ★★★ 项目内的所有页面都走图谱页（原「节点列表页」已删除）：
+            · 节点列表 → 侧栏「节点」分组
+            · 笔记 / 白板 → 右栏正文区
+            ⛔ 不再有第二个页面骨架 */}
+        <Route path="/p/:projectRef" element={graphRoute} />
+        <Route path="/p/:projectRef/graph" element={graphRoute} />
         <Route path="/p/:projectRef/settings" element={<SettingsPage />} />
-        <Route
-          path="/p/:projectRef/graph"
-          element={
-            <Suspense
-              fallback={
-                <div className="faint" style={{ padding: 48, textAlign: 'center', fontSize: 13 }}>
-                  正在加载图谱引擎…
-                </div>
-              }
-            >
-              <ProjectGraphPage />
-            </Suspense>
-          }
-        />
-        {/* ★ 白板：挂在节点上的一篇「特殊笔记」，和笔记一样有真实路由，
-            也和笔记一样显示在项目页右栏的框里 */}
-        <Route path="/p/:projectRef/board/:boardId" element={<ProjectPage />} />
-
-        {/* ★ 笔记有自己的真实路由，但内容仍显示在项目页右栏的「框」里
-            （ProjectPage 按 URL 决定框里显示阅读 / 编辑 / 新建哪一篇）⚠
-            ⚠ 这两条必须在 `/notes/:noteId` 之前 —— 否则 `new` 会被当成 noteId */}
-        <Route path="/p/:projectRef/notes/new" element={<ProjectPage />} />
-        <Route path="/p/:projectRef/notes/:noteId/edit" element={<ProjectPage />} />
-        <Route path="/p/:projectRef/notes/:noteId" element={<ProjectPage />} />
+        <Route path="/p/:projectRef/board/:boardId" element={graphRoute} />
+        <Route path="/p/:projectRef/notes/new" element={graphRoute} />
+        <Route path="/p/:projectRef/notes/:noteId/edit" element={graphRoute} />
+        <Route path="/p/:projectRef/notes/:noteId" element={graphRoute} />
 
         <Route path="/me/settings" element={<SettingsPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-          </WorkbenchShell>
+        </WorkbenchShell>
     </div>
   )
 }

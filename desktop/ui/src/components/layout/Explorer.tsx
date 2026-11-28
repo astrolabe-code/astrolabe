@@ -10,6 +10,7 @@ import type { FileTreeData, FileTreeNode } from '../../api/code'
 import { useNotes } from '../../query/notes'
 import { KIND_META, NOTE_KINDS } from '../../lib/kindMeta'
 import FileTree from '../../pages/code/FileTree'
+import NodeList from '../../pages/project/NodeList'
 
 interface ExplorerProps {
   projectRef: string
@@ -24,6 +25,10 @@ interface ExplorerProps {
   onOpenNote?: (note: Note) => void
   /** 新建笔记 */
   onNewNote?: () => void
+  /** 当前选中节点（用于节点列表高亮） */
+  selectedVid?: number | null
+  /** 节点列表点一行 */
+  onSelectNode?: (vid: number) => void
 }
 
 function Section({
@@ -73,6 +78,8 @@ export default function Explorer({
   onPickFile,
   onOpenNote,
   onNewNote,
+  selectedVid,
+  onSelectNode,
 }: ExplorerProps) {
   const notesQ = useNotes(projectRef, { limit: 2000 })
   const [openKind, setOpenKind] = useState<NoteKind | null>(null)
@@ -164,6 +171,17 @@ export default function Explorer({
             onClick={() => onNewNote?.()}
           >
             ＋ 写一篇
+          </div>
+        </Section>
+
+        {/* ── 节点（默认折叠，点开才取数） ── */}
+        <Section title="节点" defaultOpen={false}>
+          <div style={{ maxHeight: 420, overflow: 'auto' }}>
+            <NodeList
+              projectRef={projectRef}
+              onSelect={(n) => onSelectNode?.(n.vid)}
+              selectVid={selectedVid ?? undefined}
+            />
           </div>
         </Section>
       </div>

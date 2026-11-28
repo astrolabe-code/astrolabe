@@ -110,7 +110,8 @@ function clampWidth(w: number, min: number, otherMin: number | undefined, inner:
  *
  * ★ 2026-11-27：**分页组件只管拖拽 + 占位容器**，⛔ 不管子元素长什么样。
  *   · 每栏自带一层 wrapper（grid，子项 stretch ⇒ 页面自动撑满）
- *   · 子元素一个 prop 都不用改、不用写 width/height
+ *   · 子元素一个 prop 都不用改、不用写尺寸
+ *   · 内部只有一个 `size` 概念（横向是长、竖向是高），⛔ 不区分 width/height
  *   · 没有 preserveChildStyle 之类的外观开关（已删除）
  */
 export default function SplitPane({
@@ -134,7 +135,7 @@ export default function SplitPane({
 }: SplitPaneProps) {
   const innerRef = useRef<HTMLDivElement>(null)
   const ref = containerRef ?? innerRef
-  const [width, setWidth] = useState(() => {
+  const [size, setSize] = useState(() => {
     if (!storageKey) return initial
     try {
       const n = Number(localStorage.getItem(storageKey))
@@ -156,15 +157,15 @@ export default function SplitPane({
   /** 显式要求上下 或 自动上下 */
   const vertical = direction === 'vertical' || autoStacked
 
-  // ★ 宽度持久化：只在拖完 / 断点重算后落盘，⛔ 不跟每一次 pointermove
+  // ★ 尺寸持久化：只在拖完 / 断点重算后落盘，⛔ 不跟每一次 pointermove
   useEffect(() => {
     if (!storageKey) return
     try {
-      localStorage.setItem(storageKey, String(Math.round(width)))
+      localStorage.setItem(storageKey, String(Math.round(size)))
     } catch {
       /* 写不进去就算了 */
     }
-  }, [width, storageKey])
+  }, [size, storageKey])
 
   useEffect(() => {
     const el = ref.current
@@ -202,7 +203,7 @@ export default function SplitPane({
       const delta = isV ? e.clientY - drag.startY : e.clientX - drag.startX
       const base = drag.startSize
       const next = clampWidth(base + (fx === 'left' ? delta : -delta), mn, om, inner)
-      setWidth(next)
+      setSize(next)
     }
     const onUp = () => {
       dragRef.current = null
@@ -214,7 +215,7 @@ export default function SplitPane({
       const inner = isV
         ? (el?.clientHeight ?? window.innerHeight)
         : (el?.clientWidth ?? window.innerWidth)
-      setWidth((w) => clampWidth(w, mn, om, inner))
+      setSize((w) => clampWidth(w, mn, om, inner))
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -233,11 +234,11 @@ export default function SplitPane({
       dragRef.current = {
         startX: e.clientX,
         startY: e.clientY,
-        startSize: width,
+        startSize: size,
       }
       setDragging(true)
     },
-    [width],
+    [size],
   )
 
   const kids = Children.toArray(children).filter(isValidElement) as StyledElement[]
@@ -256,6 +257,9 @@ export default function SplitPane({
 
     /**
      * ★★★ 给每一栏套一层**自己的** wrapper div，尺寸只作用在这层上。
+ *
+ * 内部只有**一个 size 概念**（横向是长、竖向是高），⛔ 不区分 width/height；
+ * 子页面撑满 wrapper，拖的是 size，子页面自然跟着变。
      *
      * ⛔ 不再用 `cloneElement(el, { style })` 往子元素上塞样式 —— 那是隐式契约：
      *   要求子元素把 style 透传到根 DOM。子元素是 <div> 时侥幸能用；是
@@ -269,7 +273,7 @@ export default function SplitPane({
       if (!el) return null
       const side = isLeft ? 'left' : 'right'
       if (side === hiddenSide) return null
-      const size: CSSProperties = hiddenSide || sole
+      const sizeStyle: CSSProperties = hiddenSide || sole
         ? { flex: 1, minWidth: 0, minHeight: 0 }
         : autoStacked
           ? (direction === 'vertical'
@@ -277,15 +281,15 @@ export default function SplitPane({
               : { width: '100%', minWidth: 0 })
           : fixed === side
             ? (vertical
-                ? { height: width, flex: 'none', minHeight: 0, minWidth: 0 }
-                : { width, flex: 'none', minWidth: 0, minHeight: 0 })
+                ? { height: size, flex: 'none', minHeight: 0, minWidth: 0 }
+                : { width: size, flex: 'none', minWidth: 0, minHeight: 0 })
             : { flex: 1, minWidth: 0, minHeight: 0 }
       return (
         <div
           key={side}
           className="sp-pane"
           style={{
-            ...size,
+            ...sizeStyle,
             // ★★ 只做「容器」：grid 的单个子项默认 stretch ⇒ 页面自动撑满，
             //    子元素**不需要**写 width/height:100%（谁的地盘谁做主）
             display: 'grid',

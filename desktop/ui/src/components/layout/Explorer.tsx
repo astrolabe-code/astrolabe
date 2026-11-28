@@ -44,10 +44,20 @@ function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div style={{ borderBottom: '1px solid var(--divider, #eef2f7)' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        // ★ 展开的分组平分侧栏剩余高度；折叠的只占标题行
+        flex: open ? '1 1 0' : '0 0 auto',
+        minHeight: 0,
+        borderBottom: '1px solid var(--divider, #eef2f7)',
+      }}
+    >
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+          flex: 'none',
           fontSize: 11.5, fontWeight: 600, color: 'var(--text-sub, #475569)',
           cursor: 'pointer', userSelect: 'none',
           background: 'var(--surface, #fafbfc)',
@@ -63,7 +73,8 @@ function Section({
         <span style={{ flex: 1 }} />
         {count && <span style={{ fontSize: 10, color: 'var(--text-faint, #cbd5e1)' }}>{count}</span>}
       </div>
-      {open && <div>{children}</div>}
+      {/* ★ 内容区不滚：每个分组是独立「页面」，自己内部滚动（各自一个滑块） */}
+      {open && <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>{children}</div>}
     </div>
   )
 }
@@ -99,7 +110,6 @@ export default function Explorer({
   return (
     <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: 'var(--bg, #fff)' }}>
 
-      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {/* ── 代码 ── */}
         <Section title="代码" count={tree ? String(countFiles(tree.items)) : undefined}>
           {treeError ? (
@@ -119,6 +129,7 @@ export default function Explorer({
 
         {/* ── 笔记 ── */}
         <Section title="笔记" count={`${total} 篇`}>
+          <div style={{ height: '100%', overflowY: 'auto', minHeight: 0 }}>
           {NOTE_KINDS.map((k) => {
             const meta = KIND_META[k]
             const list = byKind.get(k) ?? []
@@ -172,12 +183,13 @@ export default function Explorer({
           >
             ＋ 写一篇
           </div>
+          </div>
         </Section>
 
         {/* ── 节点（默认折叠，点开才取数） ── */}
         <Section title="节点" defaultOpen={false}>
-          {/* 固定高度 + 不滚动：滚动交给 NodeList 内部（它自己监听到底加载） */}
-          <div style={{ height: 420, overflow: 'hidden' }}>
+          {/* ★ 节点列表自己撑满分组、自己滚（与文件树 / 笔记列表一致：各一个滑块） */}
+          <div style={{ height: '100%' }}>
             <NodeList
               projectRef={projectRef}
               compact
@@ -186,7 +198,6 @@ export default function Explorer({
             />
           </div>
         </Section>
-      </div>
     </div>
   )
 }

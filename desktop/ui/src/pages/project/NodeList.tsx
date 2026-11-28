@@ -75,17 +75,31 @@ export default function NodeList({
    * ★ 滚动到底自动加载下一批（侧栏 compact 模式）。
    *   微博那套：先给一页，用户滚到底再拉 —— ⛔ 不是一次性拉全量。
    */
-  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (!compact) return
-    const el = e.currentTarget
-    if (nodes.isFetching) return
-    if (nodes.data && nodes.data.items.length >= nodes.data.total) return
-    // 距底部 < 80px 视为到底
-    if (el.scrollHeight - el.scrollTop - el.clientHeight > 80) return
-    setLimit((v) => Math.min(2000, v + PAGE))
-  }
+  /**
+   * ★ 滚动到底自动加载（compact：跟随外层容器滚动）。
+   *   用哨兵 + IntersectionObserver —— ⛔ 不给自己加滚动条
+   *   （侧栏只保留一层滑块，节点列表跟着一起滚）。
+   */
 
   const nodes = useGraphNodes(projectRef, { limit })
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!compact) return
+    const el = sentinelRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return
+        if (nodes.isFetching) return
+        if (nodes.data && nodes.data.items.length >= nodes.data.total) return
+        setLimit((v) => Math.min(2000, v + PAGE))
+      },
+      { rootMargin: '80px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [compact, nodes.isFetching, nodes.data])
 
   const items = nodes.data?.items || []
   const total = nodes.data?.total || 0
@@ -201,7 +215,7 @@ export default function NodeList({
       </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1" onScroll={onListScroll}>
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1">
         {nodes.isLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-sub)' }} />
@@ -415,7 +429,10 @@ export default function NodeList({
         />
       )}
 
-      {/* ★ 侧栏里不显示「加载更多」（compact 已一次取满） */}
+      {/* compact：滚到底自动加载的哨兵（高度 1px，不占视觉） */}
+      {compact && items.length < total && <div ref={sentinelRef} style={{ height: 1 }} />}
+
+      {/* 非 compact：保留「加载更多」按钮 */}
       {!compact && items.length < total && (
         <div className="pt-3">
           <Button

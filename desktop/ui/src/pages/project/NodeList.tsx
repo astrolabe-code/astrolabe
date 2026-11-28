@@ -70,7 +70,8 @@ export default function NodeList({
   const prevPtRef = useRef({ x: 0, y: 0 })
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
-  const [limit, setLimit] = useState(PAGE)
+  // ★ 侧栏（compact）不分页：一次取到上限（2000），⛔ 不显示「加载更多」
+  const [limit, setLimit] = useState(compact ? 2000 : PAGE)
 
   const nodes = useGraphNodes(projectRef, { limit })
 
@@ -402,7 +403,8 @@ export default function NodeList({
         />
       )}
 
-      {items.length < total && (
+      {/* ★ 侧栏里不显示「加载更多」（compact 已一次取满） */}
+      {!compact && items.length < total && (
         <div className="pt-3">
           <Button
             block

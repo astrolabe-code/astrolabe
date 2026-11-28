@@ -1,7 +1,7 @@
 /**
  * 右栏：上下分栏（复用通用 SplitPane，⛔ 不自己写拖动）。
  *
- *   上 = 你正在读/写的东西（代码 / 仿写 / 学习路径）
+ *   上 = 你正在读/写的东西（代码 / 学习路径）
  *   下 = 关于当前节点的信息（知识点 / 社区 / 执行流 / 问答）
  */
 import { useEffect, useState } from 'react'
@@ -10,13 +10,12 @@ import type { SourceFile } from '../../api/code'
 import type { GraphNode } from '../../lib/mergeGraph'
 import SplitPane from '../../components/SplitPane'
 import CodeViewer from '../code/CodeViewer'
-import ImitationPanel from '../code/ImitationPanel'
 import QaPanel from '../code/QaPanel'
 import CommunityPanel from './CommunityPanel'
 import FlowPanel from './FlowPanel'
 import LearningPathPanel from './LearningPathPanel'
 
-export type UpperPanel = 'code' | 'imitation' | 'path'
+export type UpperPanel = 'code' | 'path'
 export type LowerTab = 'concepts' | 'community' | 'flow' | 'qa'
 
 interface Props {
@@ -36,7 +35,6 @@ interface Props {
 
 const UPPER_LABEL: Record<UpperPanel, string> = {
   code: '代码',
-  imitation: '仿写',
   path: '学习路径',
 }
 
@@ -174,7 +172,7 @@ export default function RightSidebar({
         collapsed={lowerCollapsed}
         collapsedSide="right"
       >
-        {/* 上半：代码 / 仿写 / 路径 */}
+        {/* 上半：代码 / 学习路径 */}
         <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%' }}>
           <div
             style={{
@@ -217,8 +215,6 @@ export default function RightSidebar({
                   <span style={{ fontSize: 11 }}>或从图谱里点节点，会自动定位到它所在行</span>
                 </div>
               )
-            ) : upper === 'imitation' ? (
-              <ImitationPanel projectRef={projectRef} node={node} />
             ) : (
               <div style={{ padding: 10 }}>
                 <LearningPathPanel

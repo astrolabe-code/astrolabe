@@ -19,7 +19,6 @@ import type {
   CardLink,
   CardSearchHit,
   FileTreeData,
-  ImitationItem,
   SourceFile,
 } from './code'
 import type { GraphNode } from '../lib/mergeGraph'
@@ -518,44 +517,6 @@ export const personalApi = {
   readSource: (ref: string, path: string) =>
     get<SourceFile>(
       `/api/projects/${encodeURIComponent(ref)}/source/?path=${encodeURIComponent(path)}`,
-    ),
-
-  // ---- 仿写（见 sidecar/imitation.py）
-  /** 列出某个节点下的所有仿写 */
-  imitations: (ref: string, vid: number) =>
-    get<{ items: ImitationItem[]; next: number }>(
-      `/api/projects/${encodeURIComponent(ref)}/imitations/?vid=${vid}`,
-    ),
-
-  /** 读一份仿写的代码 */
-  imitation: (ref: string, vid: number, name: string) =>
-    get<ImitationItem & { text: string }>(
-      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
-    ),
-
-  /** 保存一份仿写（不存在则创建） */
-  saveImitation: (ref: string, vid: number, name: string, text: string) =>
-    put<ImitationItem>(
-      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
-      { text },
-    ),
-
-  /** 新建一份空白仿写（标题自动「第 N 版」） */
-  /** ⛔ 仿写不参与卡片盒：没有 parent / link（D139） */
-  createImitation: (ref: string, vid: number, ext: string) =>
-    post<ImitationItem>(`/api/projects/${encodeURIComponent(ref)}/imitations/?vid=${vid}`, {
-      ext,
-    }),
-
-  renameImitation: (ref: string, vid: number, name: string, title: string) =>
-    patch<ImitationItem>(
-      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
-      { title },
-    ),
-
-  deleteImitation: (ref: string, vid: number, name: string) =>
-    del<{ removed: string }>(
-      `/api/projects/${encodeURIComponent(ref)}/imitation/?vid=${vid}&name=${encodeURIComponent(name)}`,
     ),
 
   // ---- 卡片盒（D139）：全局关系表、跨项目 ----

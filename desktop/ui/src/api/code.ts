@@ -23,18 +23,6 @@ export interface SourceFile {
   encoding: string
 }
 
-/** ★ 仿写：一个节点下的一份代码卡 */
-export interface ImitationItem {
-  /** 文件名（含扩展名），也是这份卡片的唯一名 */
-  name: string
-  /** 标题（= 文件名去掉扩展名） */
-  title: string
-  ext: string
-  lines: number
-  /** 秒级时间戳（排序用） */
-  updated_at: number
-}
-
 /** ★ 按后缀猜语言（与 sidecar/source.py 的 LANG_BY_EXT 对齐常用项） */
 const LANG_BY_EXT: Record<string, string> = {
   py: 'python', pyi: 'python',

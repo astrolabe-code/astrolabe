@@ -176,7 +176,7 @@ export default function SplitPane({
     ro.observe(el)
     return () => ro.disconnect()
   }, [ref])
-  const dragRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null)
+  const dragRef = useRef<{ startX: number; startY: number; startSize: number } | null>(null)
   /** ★ hover / 拖动时的蓝色反馈（VSCode sash 口径）：常驻仍是 1px 灰线 */
   const [hover, setHover] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -197,11 +197,11 @@ export default function SplitPane({
       const inner = isV
         ? (el?.clientHeight ?? window.innerHeight)
         : (el?.clientWidth ?? window.innerWidth)
+      // ★ base 必须是「当前这一栏的尺寸」（width state），
+      //   ⛔ 不是容器尺寸 —— 否则一拖就从容器高度起算，直接撞上限（跳变）
       const delta = isV ? e.clientY - drag.startY : e.clientX - drag.startX
-      const base = isV ? drag.startH : drag.startW
+      const base = drag.startSize
       const next = clampWidth(base + (fx === 'left' ? delta : -delta), mn, om, inner)
-      // eslint-disable-next-line no-console
-      console.log('[SPLIT:move]', { delta, base, next, min: mn, otherMin: om, inner })
       setWidth(next)
     }
     const onUp = () => {
@@ -230,14 +230,10 @@ export default function SplitPane({
   const onPointerDown = useCallback(
     (e: ReactPointerEvent) => {
       e.preventDefault()
-      // eslint-disable-next-line no-console
-      console.log('[SPLIT:down]', { direction, fixed, resizable, width, innerWidth })
-      const el = ref.current
       dragRef.current = {
         startX: e.clientX,
         startY: e.clientY,
-        startW: width,
-        startH: el?.clientHeight ?? window.innerHeight,
+        startSize: width,
       }
       setDragging(true)
     },
@@ -257,14 +253,6 @@ export default function SplitPane({
       : collapsedSide
     : null
 
-  // eslint-disable-next-line no-console
-  console.log('[SPLIT:render]', {
-    direction, fixed, collapsed, collapsedSide, hiddenSide,
-    innerWidth, autoStacked, vertical, sole,
-    kids: kids.length, width, min, otherMin,
-    dividerWillRender: divider && !autoStacked && !hiddenSide && !sole && !!rightEl,
-    resizable,
-  })
 
     /**
      * ★★★ 给每一栏套一层**自己的** wrapper div，尺寸只作用在这层上。

@@ -23,8 +23,6 @@ interface ExplorerProps {
   onPickFile: (path: string) => void
   /** 点笔记 → 父组件决定在哪打开 */
   onOpenNote?: (note: Note) => void
-  /** 新建笔记 */
-  onNewNote?: () => void
   /** 当前选中节点（用于节点列表高亮） */
   selectedVid?: number | null
   /** 节点列表点一行 */
@@ -88,7 +86,6 @@ export default function Explorer({
   activePath,
   onPickFile,
   onOpenNote,
-  onNewNote,
   selectedVid,
   onSelectNode,
 }: ExplorerProps) {
@@ -173,16 +170,6 @@ export default function Explorer({
               </div>
             )
           })}
-          <div
-            style={{
-              margin: '8px 10px 10px', padding: 5, textAlign: 'center', fontSize: 11.5,
-              border: '1px dashed var(--card-border, #cbd5e1)', borderRadius: 6,
-              color: 'var(--text-muted, #64748b)', cursor: 'pointer',
-            }}
-            onClick={() => onNewNote?.()}
-          >
-            ＋ 写一篇
-          </div>
           </div>
         </Section>
 

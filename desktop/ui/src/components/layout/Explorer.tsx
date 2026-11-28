@@ -176,7 +176,8 @@ export default function Explorer({
 
         {/* ── 节点（默认折叠，点开才取数） ── */}
         <Section title="节点" defaultOpen={false}>
-          <div style={{ maxHeight: 420, overflow: 'auto' }}>
+          {/* 固定高度 + 不滚动：滚动交给 NodeList 内部（它自己监听到底加载） */}
+          <div style={{ height: 420, overflow: 'hidden' }}>
             <NodeList
               projectRef={projectRef}
               compact

@@ -70,8 +70,20 @@ export default function NodeList({
   const prevPtRef = useRef({ x: 0, y: 0 })
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
-  // ★ 侧栏（compact）不分页：一次取到上限（2000），⛔ 不显示「加载更多」
-  const [limit, setLimit] = useState(compact ? 2000 : PAGE)
+  const [limit, setLimit] = useState(PAGE)
+  /**
+   * ★ 滚动到底自动加载下一批（侧栏 compact 模式）。
+   *   微博那套：先给一页，用户滚到底再拉 —— ⛔ 不是一次性拉全量。
+   */
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!compact) return
+    const el = e.currentTarget
+    if (nodes.isFetching) return
+    if (nodes.data && nodes.data.items.length >= nodes.data.total) return
+    // 距底部 < 80px 视为到底
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 80) return
+    setLimit((v) => Math.min(2000, v + PAGE))
+  }
 
   const nodes = useGraphNodes(projectRef, { limit })
 
@@ -189,7 +201,7 @@ export default function NodeList({
       </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1" onScroll={onListScroll}>
         {nodes.isLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-sub)' }} />

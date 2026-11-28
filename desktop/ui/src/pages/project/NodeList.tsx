@@ -27,6 +27,11 @@ interface NodeListProps {
   projectRef: string
   /** 当前选中的节点 uid（受控） */
   selectedUid?: string | null
+  /**
+   * ★ 紧凑模式：⛔ 不渲染搜索框 / 类型筛选。
+   *   侧栏（Explorer）里用 —— 全局搜索已有 Ribbon 入口，这里重复没意义。
+   */
+  compact?: boolean
   onSelect: (node: GraphNode) => void
   /** ★★ 点一行就去图谱里看它 + 它的直接邻居（⛔ 不再是"只在右栏预览"）⚠ */
   onOpenGraph?: (node: GraphNode) => void
@@ -53,6 +58,7 @@ export default function NodeList({
   onOpenCode,
   autoSelectFirst,
   selectVid,
+  compact,
 }: NodeListProps) {
   // ★ 悬停浮窗（所有者：列表里也要有详情浮窗，重载就靠它分辨）
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
@@ -147,6 +153,7 @@ export default function NodeList({
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {!compact && (
       <div className="flex items-center gap-2 mb-3">
         <div className="relative flex-1">
           <Search
@@ -179,6 +186,7 @@ export default function NodeList({
           </select>
         )}
       </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-y-auto pr-1">
         {nodes.isLoading ? (

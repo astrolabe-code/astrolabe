@@ -179,6 +179,7 @@ export default function Explorer({
           <div style={{ maxHeight: 420, overflow: 'auto' }}>
             <NodeList
               projectRef={projectRef}
+              compact
               onSelect={(n) => onSelectNode?.(n.vid)}
               selectVid={selectedVid ?? undefined}
             />
